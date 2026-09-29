@@ -1,0 +1,4 @@
+# Keep local configuration and database credentials out of CLI deployments.
+.env*
+.credentials/
+supabase/.temp/
