@@ -1,0 +1,7 @@
+.body { margin: 0; }
+.main { align-items: center; background: #f6fafd; color: #0a1931; display: flex; font-family: Arial, Helvetica, sans-serif; min-height: 100vh; padding: 24px; }
+.panel { background: #fff; border: 1px solid #d5e1ea; border-left: 4px solid #b42318; border-radius: 16px; margin: 0 auto; max-width: 720px; padding: 32px; width: 100%; }
+.title { font-size: 24px; font-weight: 700; margin: 0; }
+.description { color: #52677b; line-height: 1.6; margin-top: 12px; }
+.button { background: #1a3d63; border: 0; border-radius: 11px; color: #fff; cursor: pointer; font-weight: 600; margin-top: 24px; padding: 10px 16px; }
+.button:focus-visible { outline: 3px solid #4a7fa7; outline-offset: 3px; }

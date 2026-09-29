@@ -1,0 +1,60 @@
+export type AccountListItem = Readonly<{
+  id: string;
+  name: string;
+  legalName: string | null;
+  segment: string;
+  size: string;
+  status: string;
+  quality: string;
+  peopleCount: number;
+  openOpportunities: number;
+  revision: number;
+}>;
+
+export type AccountDetail = Readonly<{
+  id: string;
+  name: string;
+  legalName: string | null;
+  originalDocument: string | null;
+  originalDomain: string | null;
+  segment: string;
+  size: string;
+  status: string;
+  quality: string;
+  revision: number;
+  parent: Readonly<{ id: string; name: string }> | null;
+  people: readonly Readonly<{
+    roleId: string;
+    contactId: string;
+    name: string;
+    roleType: string;
+    roleTitle: string | null;
+    influence: string;
+    authority: string;
+    validFrom: string;
+  }>[];
+  opportunities: readonly Readonly<{ id: string; name: string; status: string; amountCents: string }>[];
+  committees: readonly Readonly<{
+    id: string;
+    opportunityId: string;
+    name: string;
+    status: string;
+    members: number;
+  }>[];
+  ownership: readonly Readonly<{ id: string; function: string; responsible: string; validFrom: string }>[];
+  leads: readonly Readonly<{ id: string; name: string; status: string; priority: string; href: string }> [];
+  conversations: readonly Readonly<{ id: string; channel: string; status: string; subject: string | null; href: string }> [];
+  contracts: readonly Readonly<{ id: string; number: string; status: string; acceptedAt: string | null }> [];
+  subscriptions: readonly Readonly<{ id: string; number: string; status: string; mrrCents: string }> [];
+  invoices: readonly Readonly<{ id: string; number: string; status: string; totalCents: string; dueAt: string }> [];
+  onboarding: readonly Readonly<{ id: string; status: string; nextAction: string; nextActionAt: string; href: string }> [];
+  customerSuccess: readonly Readonly<{ id: string; state: string; nextAction: string | null; nextActionAt: string | null }> [];
+  requests: readonly Readonly<{ id: string; subject: string; status: string; priority: string; href: string }> [];
+  renewals: readonly Readonly<{ id: string; status: string; risk: string; targetDate: string; href: string }> [];
+  expansionSignals: number;
+  churnEvents: number;
+  timeline: readonly Readonly<{ id: string; type: string; title: string; occurredAt: string; provenance: string; href: string | null }> [];
+  timelinePage: number;
+  timelinePageSize: number;
+  hasMoreTimeline: boolean;
+}>;

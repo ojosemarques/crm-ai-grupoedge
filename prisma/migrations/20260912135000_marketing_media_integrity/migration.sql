@@ -1,0 +1,46 @@
+-- CRM-39 follow-up integrity: composite workspace guards and observed-value checks.
+CREATE UNIQUE INDEX IF NOT EXISTS "marketing_ad_accounts_workspace_channel_id" ON "marketing_ad_accounts"("workspaceId","channelId","id");
+CREATE INDEX IF NOT EXISTS "marketing_channels_workspace_status" ON "marketing_channels"("workspaceId","status","deletedAt");
+CREATE INDEX IF NOT EXISTS "marketing_ad_accounts_workspace_status" ON "marketing_ad_accounts"("workspaceId","channelId","status","deletedAt");
+CREATE INDEX IF NOT EXISTS "marketing_campaigns_workspace_account_status" ON "marketing_campaigns"("workspaceId","adAccountId","status","deletedAt");
+CREATE INDEX IF NOT EXISTS "marketing_ad_groups_workspace_status" ON "marketing_ad_groups"("workspaceId","campaignId","status","deletedAt");
+CREATE INDEX IF NOT EXISTS "marketing_ads_workspace_status" ON "marketing_ads"("workspaceId","adGroupId","status","deletedAt");
+CREATE INDEX IF NOT EXISTS "marketing_creatives_workspace_ad_status" ON "marketing_creatives"("workspaceId","adId","status","deletedAt");
+CREATE INDEX IF NOT EXISTS "marketing_facts_workspace_import" ON "marketing_performance_facts"("workspaceId","importRunId");
+CREATE UNIQUE INDEX IF NOT EXISTS "marketing_import_items_workspace_id" ON "marketing_performance_import_items"("workspaceId","id");
+CREATE INDEX IF NOT EXISTS "marketing_import_items_workspace_outcome" ON "marketing_performance_import_items"("workspaceId","runId","outcome");
+CREATE INDEX IF NOT EXISTS "marketing_reconciliation_runs_workspace_status" ON "marketing_reconciliation_runs"("workspaceId","status","createdAt");
+CREATE UNIQUE INDEX IF NOT EXISTS "marketing_reconciliation_issues_workspace_id" ON "marketing_reconciliation_issues"("workspaceId","id");
+CREATE UNIQUE INDEX IF NOT EXISTS "marketing_hierarchy_backfill_workspace_id" ON "marketing_hierarchy_backfill_runs"("workspaceId","id");
+CREATE INDEX IF NOT EXISTS "marketing_hierarchy_backfill_workspace_status" ON "marketing_hierarchy_backfill_runs"("workspaceId","status","createdAt");
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'marketing_facts_reach_check') THEN
+    ALTER TABLE "marketing_performance_facts" ADD CONSTRAINT "marketing_facts_reach_check" CHECK ("reach" <= "impressions");
+  END IF;
+END $$;
+ALTER TABLE "marketing_channels" ADD CONSTRAINT "marketing_channels_created_actor_fkey" FOREIGN KEY ("workspaceId","createdByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_channels" ADD CONSTRAINT "marketing_channels_updated_actor_fkey" FOREIGN KEY ("workspaceId","updatedByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_ad_accounts" ADD CONSTRAINT "marketing_ad_accounts_created_actor_fkey" FOREIGN KEY ("workspaceId","createdByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_ad_accounts" ADD CONSTRAINT "marketing_ad_accounts_updated_actor_fkey" FOREIGN KEY ("workspaceId","updatedByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_campaigns" ADD CONSTRAINT "marketing_campaigns_channel_account_fkey" FOREIGN KEY ("workspaceId","channelId","adAccountId") REFERENCES "marketing_ad_accounts"("workspaceId","channelId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_campaigns" ADD CONSTRAINT "marketing_campaigns_created_actor_fkey" FOREIGN KEY ("workspaceId","createdByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_campaigns" ADD CONSTRAINT "marketing_campaigns_updated_actor_fkey" FOREIGN KEY ("workspaceId","updatedByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_ad_groups" ADD CONSTRAINT "marketing_ad_groups_created_actor_fkey" FOREIGN KEY ("workspaceId","createdByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_ad_groups" ADD CONSTRAINT "marketing_ad_groups_updated_actor_fkey" FOREIGN KEY ("workspaceId","updatedByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_ads" ADD CONSTRAINT "marketing_ads_created_actor_fkey" FOREIGN KEY ("workspaceId","createdByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_ads" ADD CONSTRAINT "marketing_ads_updated_actor_fkey" FOREIGN KEY ("workspaceId","updatedByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_creatives" ADD CONSTRAINT "marketing_creatives_created_actor_fkey" FOREIGN KEY ("workspaceId","createdByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_creatives" ADD CONSTRAINT "marketing_creatives_updated_actor_fkey" FOREIGN KEY ("workspaceId","updatedByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_performance_import_runs" ADD CONSTRAINT "marketing_import_runs_workspace_fkey" FOREIGN KEY ("workspaceId") REFERENCES "workspaces"("id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_performance_import_runs" ADD CONSTRAINT "marketing_import_runs_actor_fkey" FOREIGN KEY ("workspaceId","requestedByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_performance_facts" ADD CONSTRAINT "marketing_facts_account_fkey" FOREIGN KEY ("workspaceId","adAccountId") REFERENCES "marketing_ad_accounts"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_performance_facts" ADD CONSTRAINT "marketing_facts_group_fkey" FOREIGN KEY ("workspaceId","adGroupId") REFERENCES "marketing_ad_groups"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_performance_facts" ADD CONSTRAINT "marketing_facts_ad_fkey" FOREIGN KEY ("workspaceId","adId") REFERENCES "marketing_ads"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_performance_facts" ADD CONSTRAINT "marketing_facts_actor_fkey" FOREIGN KEY ("workspaceId","createdByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_reconciliation_rule_versions" ADD CONSTRAINT "marketing_reconciliation_rules_workspace_fkey" FOREIGN KEY ("workspaceId") REFERENCES "workspaces"("id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_reconciliation_rule_versions" ADD CONSTRAINT "marketing_reconciliation_rules_actor_fkey" FOREIGN KEY ("workspaceId","createdByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_reconciliation_runs" ADD CONSTRAINT "marketing_reconciliation_runs_actor_fkey" FOREIGN KEY ("workspaceId","requestedByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_reconciliation_issues" ADD CONSTRAINT "marketing_reconciliation_issues_campaign_fkey" FOREIGN KEY ("workspaceId","campaignId") REFERENCES "marketing_campaigns"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_reconciliation_issues" ADD CONSTRAINT "marketing_reconciliation_issues_creative_fkey" FOREIGN KEY ("workspaceId","creativeId") REFERENCES "marketing_creatives"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_hierarchy_backfill_runs" ADD CONSTRAINT "marketing_hierarchy_runs_workspace_fkey" FOREIGN KEY ("workspaceId") REFERENCES "workspaces"("id") ON DELETE RESTRICT;
+ALTER TABLE "marketing_hierarchy_backfill_runs" ADD CONSTRAINT "marketing_hierarchy_runs_actor_fkey" FOREIGN KEY ("workspaceId","requestedByActorId") REFERENCES "actors"("workspaceId","id") ON DELETE RESTRICT;

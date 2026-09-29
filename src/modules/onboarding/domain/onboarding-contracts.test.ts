@@ -1,0 +1,3 @@
+import { describe, expect, it } from "vitest";
+import { canTransitionHandoff, canTransitionOnboarding } from "./onboarding-contracts";
+describe("CRM-51 onboarding policy",()=>{it("separa ganho, aceite e ativação",()=>{expect(canTransitionHandoff("DRAFT","ACCEPTED")).toBe(false);expect(canTransitionHandoff("SENT","ACCEPTED")).toBe(true);expect(canTransitionOnboarding("PENDING","ACTIVATED")).toBe(false);expect(canTransitionOnboarding("IN_PROGRESS","ACTIVATED")).toBe(true);});it("preserva terminais",()=>{expect(canTransitionOnboarding("COMPLETED","IN_PROGRESS")).toBe(false);expect(canTransitionHandoff("CANCELLED","READY")).toBe(false);});});

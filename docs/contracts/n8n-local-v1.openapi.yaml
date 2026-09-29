@@ -1,0 +1,177 @@
+openapi: 3.1.0
+info:
+  title: Politizai CRM n8n local sandbox
+  version: 1.0.0
+  description: Contrato local e sem egress. Não representa integração n8n ativa.
+servers:
+  - url: http://127.0.0.1:3000
+    description: Aplicação local
+paths:
+  /api/local/n8n/v1/events:
+    get:
+      summary: Lista eventos allowlisted do outbox
+      security: [{ machineBearer: [] }]
+      parameters:
+        - { name: after, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 25 } }
+        - { name: eventType, in: query, schema: { $ref: '#/components/schemas/EventType' } }
+      responses:
+        '200':
+          description: Página ordenada e minimizada
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result: { $ref: '#/components/schemas/EventPage' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /api/local/n8n/v1/records/{type}/{id}:
+    get:
+      summary: Consulta DTO mínimo no workspace da máquina
+      security: [{ machineBearer: [] }]
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema: { type: string, enum: [lead, meeting, opportunity, account] }
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Registro mínimo autorizado }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/local/n8n/v1/commands:
+    post:
+      summary: Registra resultado técnico ou cria proposta para revisão humana
+      security: [{ machineBearer: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 8, maxLength: 160 } }
+        - { name: X-Correlation-Id, in: header, required: true, schema: { type: string } }
+        - { name: X-Causation-Id, in: header, required: false, schema: { type: string } }
+        - { name: X-Causation-Depth, in: header, required: false, schema: { type: integer, minimum: 0, maximum: 4, default: 0 } }
+        - { name: X-Politizai-Timestamp, in: header, required: true, schema: { type: string, format: date-time } }
+        - { name: X-Politizai-Nonce, in: header, required: true, schema: { type: string, minLength: 16 } }
+        - { name: X-Politizai-Signature, in: header, required: true, schema: { type: string, pattern: '^[a-f0-9]{64}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Command' }
+      responses:
+        '202': { description: Recibo idempotente ou proposta pendente }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    machineBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-local-token
+  responses:
+    Error:
+      description: Erro canônico, sem segredo
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+  schemas:
+    EventType:
+      type: string
+      enum: [lead.assigned, lead.sla_overdue, lead.followup_overdue, lead.stage_changed, meeting.scheduled, meeting.cancelled, opportunity.won, opportunity.lost, onboarding.blocked, renewal.risk_detected, churn.risk_detected, customer_service.critical_request, ai.suggestion_accepted, ai.suggestion_rejected]
+    EventPage:
+      type: object
+      required: [contractVersion, items, page]
+      properties:
+        contractVersion: { type: string, const: '1.0' }
+        items:
+          type: array
+          items:
+            type: object
+            required: [eventId, type, schemaVersion, workspace, occurredAt, aggregateType, aggregateId, correlationId, payload, redaction]
+            properties:
+              eventId: { type: string, format: uuid }
+              type: { $ref: '#/components/schemas/EventType' }
+              schemaVersion: { type: string, const: '1.0' }
+              workspace:
+                type: object
+                required: [id]
+                properties: { id: { type: string, format: uuid } }
+              occurredAt: { type: string, format: date-time }
+              aggregateType: { type: string }
+              aggregateId: { type: string }
+              correlationId: { type: string }
+              payload: { type: object, additionalProperties: true }
+              redaction: { type: string, const: MINIMIZED }
+        page:
+          type: object
+          required: [limit, hasMore]
+          properties:
+            limit: { type: integer }
+            hasMore: { type: boolean }
+            nextAfter: { type: [string, 'null'], format: date-time }
+    Command:
+      oneOf:
+        - $ref: '#/components/schemas/DraftActivity'
+        - $ref: '#/components/schemas/DraftNextAction'
+        - $ref: '#/components/schemas/AutomationResult'
+        - $ref: '#/components/schemas/ConsequentialAction'
+      discriminator: { propertyName: type }
+    DraftActivity:
+      type: object
+      additionalProperties: false
+      required: [type, targetType, targetId, reason, activityType]
+      properties:
+        type: { const: DRAFT_ACTIVITY }
+        targetType: { const: LEAD }
+        targetId: { type: string, format: uuid }
+        reason: { type: string }
+        activityType: { type: string, enum: [CALL, MESSAGE, NOTE] }
+        observation: { type: string, maxLength: 2000 }
+        expectedVersion: { type: integer, minimum: 1 }
+    DraftNextAction:
+      type: object
+      additionalProperties: false
+      required: [type, targetType, targetId, reason, title, dueAt]
+      properties:
+        type: { const: DRAFT_NEXT_ACTION }
+        targetType: { const: LEAD }
+        targetId: { type: string, format: uuid }
+        reason: { type: string }
+        title: { type: string }
+        dueAt: { type: string, format: date-time }
+        expectedVersion: { type: integer, minimum: 1 }
+    AutomationResult:
+      type: object
+      additionalProperties: false
+      required: [type, targetType, targetId, outcome, resultCode, summary]
+      properties:
+        type: { const: AUTOMATION_RESULT }
+        targetType: { type: string, enum: [LEAD, MEETING, OPPORTUNITY, ACCOUNT] }
+        targetId: { type: string, format: uuid }
+        outcome: { type: string, enum: [SUCCEEDED, SKIPPED, FAILED] }
+        resultCode: { type: string }
+        summary: { type: string }
+    ConsequentialAction:
+      type: object
+      additionalProperties: false
+      required: [type, targetType, targetId, action, reason, proposedValue]
+      properties:
+        type: { const: CONSEQUENTIAL_ACTION }
+        targetType: { type: string, enum: [LEAD, MEETING, OPPORTUNITY, ACCOUNT] }
+        targetId: { type: string, format: uuid }
+        action: { type: string, enum: [CHANGE_OWNER, CHANGE_STAGE, SEND_MESSAGE, CANCEL_MEETING, CLOSE_OPPORTUNITY] }
+        reason: { type: string }
+        proposedValue: { type: string }
+        expectedVersion: { type: integer, minimum: 1 }

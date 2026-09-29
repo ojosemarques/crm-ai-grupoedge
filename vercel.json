@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "pnpm build",
+  "regions": ["gru1"],
+  "functions": {
+    "src/app/api/**/*": {
+      "maxDuration": 60
+    }
+  }
+}

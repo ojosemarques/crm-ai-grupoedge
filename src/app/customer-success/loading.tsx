@@ -1,0 +1,1 @@
+export default function Loading() { return <main className="page-canvas page-canvas-wide" aria-busy="true"><div className="skeleton h-10 w-72"/><div className="mt-6 grid gap-3 sm:grid-cols-3">{Array.from({length:6},(_,i)=><div className="skeleton h-24" key={i}/>)}</div></main>; }

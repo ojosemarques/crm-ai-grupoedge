@@ -1,0 +1,8 @@
+.page { color: var(--brand-navy); font-size: 15px; line-height: 1.55; margin: 40px auto; max-width: 860px; padding: 0 24px; }
+.document :global(h1) { font-size: 28px; }
+.document :global(h2) { font-size: 18px; margin-top: 28px; }
+.document :global(table) { border-collapse: collapse; margin: 24px 0; width: 100%; }
+.document :global(th), .document :global(td) { border-bottom: 1px solid var(--brand-sky); padding: 10px; text-align: left; }
+.document :global(.meta) { color: var(--brand-steel); }
+.document :global(.total) { font-size: 20px; font-weight: 700; }
+@media print { .page { margin: 0 auto; } }

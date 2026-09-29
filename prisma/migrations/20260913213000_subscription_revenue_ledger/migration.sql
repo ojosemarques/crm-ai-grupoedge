@@ -1,0 +1,40 @@
+CREATE TYPE "SubscriptionStatus" AS ENUM ('DRAFT','ACTIVE','CANCELLATION_SCHEDULED','CHURNED','ENDED');
+CREATE TYPE "SubscriptionBillingInterval" AS ENUM ('MONTHLY','QUARTERLY','ANNUAL');
+CREATE TYPE "SubscriptionHistoryEvent" AS ENUM ('CREATED','ACTIVATED','CHANGE_SCHEDULED','CHANGE_APPLIED','RENEWED','CANCELLATION_SCHEDULED','CHURNED','REACTIVATED','MOVEMENT_CORRECTED','ENDED');
+CREATE TYPE "RevenueMovementType" AS ENUM ('NEW','EXPANSION','CONTRACTION','RENEWAL','CHURN','REACTIVATION','REVERSAL');
+CREATE TYPE "RevenueMovementSource" AS ENUM ('HUMAN_ACTION','BACKFILL','CORRECTION','SYSTEM');
+CREATE TYPE "SubscriptionScheduledChangeStatus" AS ENUM ('PENDING','APPLIED','CANCELLED');
+CREATE TYPE "RevenueBackfillMode" AS ENUM ('DRY_RUN','EXECUTE');
+CREATE TYPE "RevenueBackfillStatus" AS ENUM ('RUNNING','COMPLETED','FAILED');
+CREATE TYPE "RevenueBackfillItemStatus" AS ENUM ('ELIGIBLE','CREATED','SKIPPED','REVIEW_REQUIRED');
+
+CREATE TABLE "subscriptions" ("id" UUID PRIMARY KEY,"workspaceId" UUID NOT NULL,"subscriptionNumber" TEXT NOT NULL,"accountId" UUID NOT NULL,"contractId" UUID NOT NULL,"currentContractVersionId" UUID NOT NULL,"ownerMemberId" UUID NOT NULL,"accountNameSnapshot" TEXT NOT NULL,"contractNumberSnapshot" TEXT NOT NULL,"productNameSnapshot" TEXT NOT NULL,"currency" "Currency" NOT NULL DEFAULT 'BRL',"quantity" INTEGER NOT NULL,"recurringPriceCents" BIGINT NOT NULL,"billingInterval" "SubscriptionBillingInterval" NOT NULL,"currentMrrCents" BIGINT NOT NULL DEFAULT 0,"status" "SubscriptionStatus" NOT NULL DEFAULT 'DRAFT',"startsAt" TIMESTAMPTZ(3) NOT NULL,"endsAt" TIMESTAMPTZ(3),"cancellationEffectiveAt" TIMESTAMPTZ(3),"revision" INTEGER NOT NULL DEFAULT 1,"createdByActorId" UUID NOT NULL,"updatedByActorId" UUID NOT NULL,"createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"updatedAt" TIMESTAMPTZ(3) NOT NULL);
+CREATE TABLE "subscription_number_sequences" ("workspaceId" UUID PRIMARY KEY,"nextValue" BIGINT NOT NULL DEFAULT 1,"updatedAt" TIMESTAMPTZ(3) NOT NULL);
+CREATE TABLE "subscription_history" ("id" UUID PRIMARY KEY,"workspaceId" UUID NOT NULL,"subscriptionId" UUID NOT NULL,"sequence" INTEGER NOT NULL,"event" "SubscriptionHistoryEvent" NOT NULL,"previousStatus" "SubscriptionStatus","newStatus" "SubscriptionStatus" NOT NULL,"reason" TEXT NOT NULL,"payload" JSONB,"actorId" UUID NOT NULL,"occurredAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE "subscription_scheduled_changes" ("id" UUID PRIMARY KEY,"workspaceId" UUID NOT NULL,"subscriptionId" UUID NOT NULL,"status" "SubscriptionScheduledChangeStatus" NOT NULL DEFAULT 'PENDING',"effectiveAt" TIMESTAMPTZ(3) NOT NULL,"quantity" INTEGER NOT NULL,"recurringPriceCents" BIGINT NOT NULL,"billingInterval" "SubscriptionBillingInterval" NOT NULL,"normalizedMrrCents" BIGINT NOT NULL,"reason" TEXT NOT NULL,"createdByActorId" UUID NOT NULL,"appliedByActorId" UUID,"createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"appliedAt" TIMESTAMPTZ(3));
+CREATE TABLE "revenue_movements" ("id" UUID PRIMARY KEY,"workspaceId" UUID NOT NULL,"subscriptionId" UUID NOT NULL,"accountId" UUID NOT NULL,"sequence" INTEGER NOT NULL,"type" "RevenueMovementType" NOT NULL,"deltaMrrCents" BIGINT NOT NULL,"currency" "Currency" NOT NULL DEFAULT 'BRL',"effectiveAt" TIMESTAMPTZ(3) NOT NULL,"recordedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"actorId" UUID NOT NULL,"reason" TEXT NOT NULL,"source" "RevenueMovementSource" NOT NULL,"idempotencyKey" TEXT NOT NULL,"correlationId" TEXT NOT NULL,"causationId" TEXT,"reversesMovementId" UUID,"metadata" JSONB);
+CREATE TABLE "revenue_backfill_runs" ("id" UUID PRIMARY KEY,"workspaceId" UUID NOT NULL,"mode" "RevenueBackfillMode" NOT NULL,"status" "RevenueBackfillStatus" NOT NULL DEFAULT 'RUNNING',"idempotencyKey" TEXT NOT NULL,"actorId" UUID NOT NULL,"summary" JSONB,"startedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"completedAt" TIMESTAMPTZ(3));
+CREATE TABLE "revenue_backfill_items" ("id" UUID PRIMARY KEY,"workspaceId" UUID NOT NULL,"runId" UUID NOT NULL,"contractId" UUID NOT NULL,"status" "RevenueBackfillItemStatus" NOT NULL,"reason" TEXT NOT NULL,"subscriptionId" UUID,"createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP);
+
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_workspace_id_key" UNIQUE ("workspaceId","id");
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_workspace_contract_key" UNIQUE ("workspaceId","contractId");
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_workspace_number_key" UNIQUE ("workspaceId","subscriptionNumber");
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_workspace_fk" FOREIGN KEY ("workspaceId") REFERENCES "workspaces"("id") ON DELETE RESTRICT;
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_contract_fk" FOREIGN KEY ("workspaceId","contractId") REFERENCES "commercial_contracts"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_version_fk" FOREIGN KEY ("workspaceId","contractId","currentContractVersionId") REFERENCES "contract_versions"("workspaceId","contractId","id") ON DELETE RESTRICT;
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_account_fk" FOREIGN KEY ("workspaceId","accountId") REFERENCES "accounts"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_owner_fk" FOREIGN KEY ("workspaceId","ownerMemberId") REFERENCES "workspace_members"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_amount_ck" CHECK ("quantity">0 AND "recurringPriceCents">=0 AND "currentMrrCents">=0);
+ALTER TABLE "subscription_history" ADD CONSTRAINT "subscription_history_subscription_fk" FOREIGN KEY ("workspaceId","subscriptionId") REFERENCES "subscriptions"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "revenue_movements" ADD CONSTRAINT "revenue_movements_subscription_fk" FOREIGN KEY ("workspaceId","subscriptionId") REFERENCES "subscriptions"("workspaceId","id") ON DELETE RESTRICT;
+ALTER TABLE "revenue_movements" ADD CONSTRAINT "revenue_movements_reversal_fk" FOREIGN KEY ("reversesMovementId") REFERENCES "revenue_movements"("id") ON DELETE RESTRICT;
+ALTER TABLE "revenue_backfill_items" ADD CONSTRAINT "revenue_backfill_items_run_fk" FOREIGN KEY ("runId") REFERENCES "revenue_backfill_runs"("id") ON DELETE RESTRICT;
+
+CREATE UNIQUE INDEX "subscription_history_workspaceId_subscriptionId_sequence_key" ON "subscription_history"("workspaceId","subscriptionId","sequence");
+CREATE UNIQUE INDEX "revenue_movements_workspaceId_subscriptionId_sequence_key" ON "revenue_movements"("workspaceId","subscriptionId","sequence"); CREATE UNIQUE INDEX "revenue_movements_workspaceId_idempotencyKey_key" ON "revenue_movements"("workspaceId","idempotencyKey"); CREATE UNIQUE INDEX "revenue_movements_one_reversal" ON "revenue_movements"("reversesMovementId") WHERE "reversesMovementId" IS NOT NULL;
+CREATE UNIQUE INDEX "revenue_backfill_runs_workspaceId_idempotencyKey_key" ON "revenue_backfill_runs"("workspaceId","idempotencyKey"); CREATE UNIQUE INDEX "revenue_backfill_items_workspaceId_runId_contractId_key" ON "revenue_backfill_items"("workspaceId","runId","contractId");
+CREATE INDEX "subscriptions_scope_idx" ON "subscriptions"("workspaceId","ownerMemberId","status"); CREATE INDEX "revenue_movements_cutoff_idx" ON "revenue_movements"("workspaceId","effectiveAt","sequence"); CREATE INDEX "subscription_history_timeline_idx" ON "subscription_history"("workspaceId","subscriptionId","occurredAt");
+
+CREATE FUNCTION prevent_revenue_ledger_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'append-only ledger: % is forbidden', TG_OP; END $$;
+CREATE TRIGGER revenue_movements_append_only BEFORE UPDATE OR DELETE ON "revenue_movements" FOR EACH ROW EXECUTE FUNCTION prevent_revenue_ledger_mutation();
+CREATE TRIGGER subscription_history_append_only BEFORE UPDATE OR DELETE ON "subscription_history" FOR EACH ROW EXECUTE FUNCTION prevent_revenue_ledger_mutation();

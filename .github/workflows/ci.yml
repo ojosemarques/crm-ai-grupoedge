@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit SHA exato que deve passar pelos gates
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_call' }}
+
+jobs:
+  quality-gate:
+    name: Quality gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17.10-alpine
+        env:
+          POSTGRES_DB: politizai_crm
+          POSTGRES_USER: politizai
+          POSTGRES_PASSWORD: ci_only_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U politizai -d politizai_crm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      APP_ENV: test
+      PROCESS_ROLE: web
+      DATABASE_URL: postgresql://politizai:ci_only_password@localhost:5432/politizai_crm?schema=public
+      DIRECT_URL: postgresql://politizai:ci_only_password@localhost:5432/politizai_crm?schema=public
+      KEEP_TEST_SCHEMA: "0"
+      NEXT_TELEMETRY_DISABLED: "1"
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - name: Checkout do commit sob validação
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Instalar pnpm fixado
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.14.0
+          run_install: false
+
+      - name: Preparar Node.js fixado e cache do pnpm
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Instalação determinística
+        id: install
+        run: pnpm install --frozen-lockfile
+
+      - name: Política de segredos e artefatos versionáveis
+        run: pnpm security:scan
+
+      - name: Gerar cliente Prisma
+        run: pnpm db:generate
+
+      - name: Aplicar migrations desde zero no PostgreSQL efêmero
+        run: pnpm db:migrate:deploy
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Next typegen e TypeScript
+        run: pnpm typecheck
+
+      - name: Testes unitários
+        run: pnpm test
+
+      - name: Integrações críticas em schema isolado
+        run: >-
+          pnpm test:integration --
+          tests/integration/relational-model.integration.test.ts
+          tests/integration/auth-rbac.integration.test.ts
+          tests/integration/lead-intake.integration.test.ts
+          tests/integration/lead-distribution.integration.test.ts
+          tests/integration/opportunities-sales.integration.test.ts
+          tests/integration/metrics.integration.test.ts
+
+      - name: Auditoria de dependências
+        run: pnpm audit --audit-level=high
+
+      - name: Build Next.js com Webpack
+        run: pnpm build
+
+      - name: Smoke essencial do artefato compilado
+        run: pnpm ci:smoke
+
+      - name: Preparar diretório de evidências
+        run: mkdir -p .cache/release-gate
+
+      - name: Gerar SBOM SPDX JSON
+        id: sbom
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: .cache/release-gate/sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Limpeza defensiva dos schemas controlados
+        if: ${{ always() && steps.install.outcome == 'success' }}
+        run: pnpm db:test:cleanup -- --confirm=DROP_LOCAL_TEST_SCHEMAS
+
+      - name: Gerar relatório do gate
+        if: always()
+        env:
+          RELEASE_COMMIT: ${{ inputs.ref || github.sha }}
+          RELEASE_GATE_STATUS: ${{ job.status }}
+        run: pnpm release:report
+
+      - name: Publicar relatório e SBOM como artefato do CI
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .cache/release-gate/
+          if-no-files-found: error
+          retention-days: 14

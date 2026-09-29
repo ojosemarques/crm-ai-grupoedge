@@ -1,0 +1,1 @@
+export default function GoalsLoading() { return <main className="page-canvas page-canvas-wide" aria-busy="true"><div className="surface-panel h-32 animate-pulse"/><div className="mt-5 grid gap-4 md:grid-cols-3">{Array.from({ length: 3 }, (_, index) => <div className="surface-panel h-40 animate-pulse" key={index}/>)}</div><span className="sr-only">Carregando metas</span></main>; }

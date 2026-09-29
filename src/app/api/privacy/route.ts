@@ -1,0 +1,18 @@
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+
+import { requireApiAuthentication } from "@/modules/auth/http/authentication-guards";
+import { getPrivacyService } from "@/modules/privacy/application/privacy-service";
+import { handleRouteError } from "@/shared/core/errors/route-error-handler";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+export async function GET(request: NextRequest) {
+  try {
+    const context = await requireApiAuthentication(request);
+    return NextResponse.json({ result: await getPrivacyService().getScreen(context) }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    return handleRouteError(error);
+  }
+}

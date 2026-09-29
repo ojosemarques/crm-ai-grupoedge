@@ -1,0 +1,1 @@
+export default function PaymentsLoading(){return <main className="page-canvas"><div aria-label="Carregando pagamentos" className="surface-panel" role="status"><p>Carregando cobranças e pagamentos…</p></div></main>}

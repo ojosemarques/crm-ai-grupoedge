@@ -1,0 +1,823 @@
+.workspace {
+  display: grid;
+  gap: 1.15rem;
+}
+
+.operationalHeader {
+  align-items: end;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.eyebrow {
+  color: var(--brand-steel);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  margin: 0 0 0.2rem;
+  text-transform: uppercase;
+}
+
+.title {
+  color: var(--brand-navy);
+  font-size: clamp(1.65rem, 3vw, 2.25rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.context {
+  color: var(--muted-foreground);
+  font-size: 0.84rem;
+  margin: 0.35rem 0 0;
+}
+
+.headerControls {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+.memberField {
+  color: var(--muted-foreground);
+  display: grid;
+  font-size: 0.72rem;
+  font-weight: 600;
+  gap: 0.3rem;
+  min-width: 12.5rem;
+}
+
+.memberField select {
+  height: 2.35rem;
+  padding: 0 2.25rem 0 0.75rem;
+}
+
+.refreshStatus {
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  min-width: 12rem;
+  text-align: right;
+}
+
+.refreshStatus strong {
+  color: var(--foreground);
+  display: block;
+  font-weight: 600;
+}
+
+.focusCard {
+  background: var(--brand-navy);
+  border: 1px solid color-mix(in oklab, var(--brand-sky) 20%, transparent);
+  border-radius: var(--radius-modal);
+  box-shadow: var(--shadow-card);
+  color: var(--sidebar-foreground);
+  overflow: hidden;
+  padding: clamp(1rem, 2.3vw, 1.6rem);
+  position: relative;
+}
+
+.focusCard::after {
+  background: color-mix(in oklab, var(--brand-steel) 24%, transparent);
+  border-radius: 999px;
+  content: "";
+  height: 15rem;
+  pointer-events: none;
+  position: absolute;
+  right: -6rem;
+  top: -8rem;
+  width: 15rem;
+}
+
+.focusHeader,
+.focusBody {
+  position: relative;
+  z-index: 1;
+}
+
+.focusHeader {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.focusLabel {
+  align-items: center;
+  color: var(--brand-sky);
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 600;
+  gap: 0.45rem;
+  letter-spacing: 0.08em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.focusLabel::before {
+  background: var(--success);
+  border: 2px solid color-mix(in oklab, var(--success) 28%, white);
+  border-radius: 999px;
+  content: "";
+  height: 0.55rem;
+  width: 0.55rem;
+}
+
+.focusBody {
+  align-items: start;
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: minmax(0, 1.25fr) minmax(11rem, 0.55fr) minmax(13rem, 0.62fr);
+  margin-top: 1rem;
+}
+
+.focusIdentity h2 {
+  font-size: clamp(1.4rem, 2.5vw, 2rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.focusIdentity h2 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.focusIdentity h2 a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.focusMeta {
+  color: color-mix(in oklab, var(--sidebar-foreground) 76%, transparent);
+  font-size: 0.78rem;
+  margin: 0.35rem 0 0;
+}
+
+.focusPain {
+  color: color-mix(in oklab, var(--sidebar-foreground) 90%, transparent);
+  font-size: 0.9rem;
+  margin: 0.9rem 0 0;
+  max-width: 52rem;
+}
+
+.focusReason {
+  background: color-mix(in oklab, var(--brand-blue) 72%, transparent);
+  border: 1px solid color-mix(in oklab, var(--brand-sky) 20%, transparent);
+  border-radius: var(--radius-control);
+  color: var(--sidebar-foreground);
+  font-size: 0.78rem;
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+}
+
+.focusReason strong {
+  color: var(--brand-sky);
+}
+
+.focusMetrics {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.focusMetric {
+  border-left: 1px solid color-mix(in oklab, var(--brand-sky) 24%, transparent);
+  padding-left: 0.9rem;
+}
+
+.focusMetric span {
+  color: var(--brand-sky);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.focusMetric strong {
+  display: block;
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-top: 0.08rem;
+}
+
+.focusMetric [data-sla-band="HEALTHY"] {
+  color: color-mix(in oklab, var(--success) 38%, white);
+}
+
+.focusMetric [data-sla-band="ATTENTION"] {
+  color: color-mix(in oklab, var(--warning) 34%, white);
+}
+
+.focusMetric [data-sla-band="CRITICAL"] {
+  color: color-mix(in oklab, var(--danger) 34%, white);
+}
+
+.focusActions {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.focusPrimary {
+  background: var(--surface) !important;
+  color: var(--brand-navy) !important;
+  min-height: 2.75rem;
+}
+
+.focusPrimary:hover {
+  background: var(--brand-sky) !important;
+}
+
+.focusSecondary {
+  color: var(--brand-sky);
+  font-size: 0.78rem;
+  font-weight: 600;
+  justify-self: center;
+  text-underline-offset: 0.2em;
+}
+
+.focusSecondary:hover {
+  color: var(--sidebar-foreground);
+  text-decoration: underline;
+}
+
+.afterAction {
+  color: color-mix(in oklab, var(--sidebar-foreground) 68%, transparent);
+  font-size: 0.7rem;
+  line-height: 1.4;
+  margin: 0.15rem 0 0;
+  text-align: center;
+}
+
+.emptyFocus {
+  background: color-mix(in oklab, var(--brand-blue) 66%, transparent);
+  border: 1px dashed color-mix(in oklab, var(--brand-sky) 35%, transparent);
+  border-radius: var(--radius-panel);
+  margin-top: 1rem;
+  padding: 1.15rem;
+  position: relative;
+  z-index: 1;
+}
+
+.emptyFocus h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.emptyFocus p {
+  color: var(--brand-sky);
+  font-size: 0.78rem;
+  margin: 0.25rem 0 0;
+}
+
+.summaryStrip {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.summaryButton {
+  align-items: center;
+  background: var(--surface-subtle);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--muted-foreground);
+  display: flex;
+  gap: 0.65rem;
+  justify-content: space-between;
+  min-height: 3.25rem;
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+  transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.summaryButton:hover {
+  background: var(--surface-selected);
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.summaryButton strong {
+  color: var(--brand-navy);
+  font-size: 1.2rem;
+  font-weight: 700;
+  order: 2;
+}
+
+.summaryButton span {
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.contentGrid {
+  align-items: start;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem);
+}
+
+.queuePanel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-card);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tabsScroller {
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  padding: 0.55rem;
+  scrollbar-width: thin;
+}
+
+.tabList {
+  display: flex;
+  gap: 0.3rem;
+  min-width: max-content;
+}
+
+.tab {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--muted-foreground);
+  display: inline-flex;
+  font-size: 0.74rem;
+  font-weight: 500;
+  gap: 0.4rem;
+  min-height: 2.2rem;
+  padding: 0.4rem 0.68rem;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  background: var(--surface-selected);
+  color: var(--foreground);
+}
+
+.tab[aria-selected="true"] {
+  background: var(--brand-navy);
+  color: var(--sidebar-foreground);
+  font-weight: 600;
+}
+
+.tabCount {
+  align-items: center;
+  background: color-mix(in oklab, currentColor 10%, transparent);
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  font-size: 0.67rem;
+  height: 1.2rem;
+  justify-content: center;
+  min-width: 1.2rem;
+  padding: 0 0.32rem;
+}
+
+.queueContent {
+  padding: 1rem;
+}
+
+.queueHeader {
+  align-items: start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.queueHeader h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.queueHeader p {
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+  margin: 0.25rem 0 0;
+}
+
+.drilldown {
+  color: var(--link);
+  flex: none;
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.drilldown:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.queueList {
+  display: grid;
+  gap: 0;
+  margin-top: 0.7rem;
+}
+
+.queueRow {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: minmax(11rem, 1.3fr) minmax(8rem, 0.75fr) minmax(10rem, 0.85fr) minmax(8rem, auto);
+  padding: 0.8rem 0;
+}
+
+.identityLink {
+  color: var(--foreground);
+  font-size: 0.83rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.identityLink:hover {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.rowMeta,
+.rowPain,
+.rowReason,
+.rowActionMeta,
+.rowDisclosure {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+}
+
+.rowMeta,
+.rowPain,
+.rowReason,
+.rowActionMeta {
+  margin: 0.18rem 0 0;
+}
+
+.rowPain {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.scoreLine {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.priority {
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  font-size: 0.67rem;
+  font-weight: 600;
+  padding: 0.18rem 0.45rem;
+}
+
+.priority[data-priority="P1"] {
+  background: var(--warning-surface);
+  color: var(--warning);
+}
+
+.priority[data-priority="P2"] {
+  background: var(--info-surface);
+  color: var(--brand-blue);
+}
+
+.priority[data-priority="P3"],
+.priority:not([data-priority]) {
+  background: var(--inactive-surface);
+  color: var(--inactive);
+}
+
+.score {
+  color: var(--foreground);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.slaBadge {
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.22rem 0.48rem;
+}
+
+.slaBadge[data-sla-band="HEALTHY"] {
+  background: var(--success-surface);
+  color: var(--success);
+}
+
+.slaBadge[data-sla-band="ATTENTION"] {
+  background: var(--warning-surface);
+  color: var(--warning);
+}
+
+.slaBadge[data-sla-band="CRITICAL"] {
+  background: var(--danger-surface);
+  color: var(--danger);
+}
+
+.slaBadge[data-sla-band="UNKNOWN"] {
+  background: var(--inactive-surface);
+  color: var(--inactive);
+}
+
+.nextAction {
+  color: var(--foreground);
+  font-size: 0.74rem;
+  font-weight: 500;
+  margin: 0.3rem 0 0;
+}
+
+.missingAction {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.rowAction {
+  justify-self: end;
+  max-width: 11rem;
+  width: 100%;
+}
+
+.rowDisclosure {
+  grid-column: 1 / -1;
+  margin-top: -0.25rem;
+}
+
+.rowDisclosure summary {
+  color: var(--link);
+  cursor: pointer;
+  display: inline-block;
+  font-weight: 500;
+  padding: 0.2rem 0;
+}
+
+.rowDisclosure p {
+  background: var(--surface-subtle);
+  border-radius: var(--radius-control);
+  margin: 0.3rem 0 0;
+  padding: 0.6rem 0.75rem;
+}
+
+.emptyQueue {
+  background: var(--surface-subtle);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-control);
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  margin-top: 0.8rem;
+  padding: 1rem;
+}
+
+.resultNote {
+  color: var(--muted-foreground);
+  font-size: 0.69rem;
+  margin: 0.7rem 0 0;
+  text-align: right;
+}
+
+.sidePanel {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.sideCard {
+  background: var(--surface-subtle);
+  border: 1px solid color-mix(in oklab, var(--border) 74%, transparent);
+  border-radius: var(--radius-panel);
+  padding: 0.85rem;
+}
+
+.sideCard[data-tone="danger"] {
+  background: color-mix(in oklab, var(--danger-surface) 58%, var(--surface));
+}
+
+.sideCard[data-tone="warning"] {
+  background: color-mix(in oklab, var(--warning-surface) 58%, var(--surface));
+}
+
+.sideCardHeader {
+  align-items: center;
+  display: flex;
+  gap: 0.65rem;
+  justify-content: space-between;
+}
+
+.sideCardHeader h2 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.sideCount {
+  align-items: center;
+  background: var(--surface);
+  border-radius: var(--radius-pill);
+  color: var(--foreground);
+  display: inline-flex;
+  font-size: 0.68rem;
+  font-weight: 700;
+  height: 1.45rem;
+  justify-content: center;
+  min-width: 1.45rem;
+  padding: 0 0.4rem;
+}
+
+.sideList {
+  display: grid;
+  gap: 0.45rem;
+  list-style: none;
+  margin: 0.65rem 0 0;
+  padding: 0;
+}
+
+.sideItem {
+  border-top: 1px solid color-mix(in oklab, var(--border) 78%, transparent);
+  padding-top: 0.45rem;
+}
+
+.sideItem a {
+  color: var(--foreground);
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.sideItem a:hover {
+  color: var(--link);
+  text-decoration: underline;
+}
+
+.sideItem p,
+.sideEmpty {
+  color: var(--muted-foreground);
+  font-size: 0.67rem;
+  margin: 0.12rem 0 0;
+}
+
+.sideOpenButton {
+  background: none;
+  border: 0;
+  color: var(--link);
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-top: 0.55rem;
+  padding: 0.15rem 0;
+}
+
+.sideOpenButton:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+@media (max-width: 1279px) {
+  .contentGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidePanel {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1023px) {
+  .focusBody {
+    grid-template-columns: minmax(0, 1.2fr) minmax(10rem, 0.7fr);
+  }
+
+  .focusActions {
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(12rem, 18rem) auto;
+  }
+
+  .afterAction {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+
+  .queueRow {
+    grid-template-columns: minmax(10rem, 1.2fr) minmax(8rem, 0.8fr) minmax(9rem, 0.9fr);
+  }
+
+  .rowAction {
+    grid-column: 1 / -1;
+    justify-self: start;
+    max-width: 14rem;
+  }
+
+  .sidePanel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .operationalHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .headerControls {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .memberField,
+  .refreshStatus {
+    min-width: 0;
+    text-align: left;
+    width: 100%;
+  }
+
+  .focusBody {
+    align-items: stretch;
+    gap: 1rem;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .focusActions {
+    grid-column: auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .afterAction {
+    grid-column: auto;
+    text-align: center;
+  }
+
+  .summaryStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .summaryButton:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .queueHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .drilldown {
+    align-self: start;
+  }
+
+  .queueRow {
+    gap: 0.65rem;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .queueRow > :nth-child(3),
+  .rowAction,
+  .rowDisclosure {
+    grid-column: 1 / -1;
+  }
+
+  .rowAction {
+    max-width: none;
+  }
+
+  .sidePanel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 430px) {
+  .summaryStrip {
+    gap: 0.45rem;
+  }
+
+  .summaryButton {
+    min-height: 3rem;
+    padding-inline: 0.6rem;
+  }
+
+  .queueContent {
+    padding: 0.8rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .summaryButton {
+    transition: none;
+  }
+
+  .summaryButton:hover {
+    transform: none;
+  }
+}

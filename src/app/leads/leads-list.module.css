@@ -1,0 +1,258 @@
+.workspace {
+  display: grid;
+  gap: 1rem;
+}
+
+.loadingNotice,
+.notice {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-size: 0.875rem;
+  padding: 0.65rem 0.8rem;
+}
+
+.loadingNotice { background: var(--info-surface); color: var(--brand-blue); }
+.notice[data-kind="success"] { background: var(--success-surface); border-color: color-mix(in oklab, var(--success) 32%, var(--border)); color: var(--success); }
+.notice[data-kind="error"] { background: var(--danger-surface); border-color: color-mix(in oklab, var(--danger) 32%, var(--border)); color: var(--danger); }
+
+.filterSurface,
+.resultSurface {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-card);
+  min-width: 0;
+}
+
+.filterSurface { padding: 1rem; }
+
+.filterHeading,
+.resultHeader,
+.filterFooter,
+.dialogHeader,
+.drawerActions {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.filterHeading { gap: 1rem; margin-bottom: 0.85rem; }
+.filterHeading h2,
+.resultHeader h2,
+.dialogHeader h2,
+.groupHeading h3 { font-weight: 600; letter-spacing: -0.015em; }
+.filterHeading h2,
+.resultHeader h2 { font-size: 1rem; }
+.filterHeading p,
+.resultHeader p,
+.dialogHeader p,
+.groupHeading p { color: var(--muted-foreground); font-size: 0.78rem; margin-top: 0.12rem; }
+
+.resultCount,
+.countBadge,
+.selectionCount,
+.toolSummary {
+  background: var(--surface-selected);
+  border-radius: var(--radius-pill);
+  color: var(--brand-blue);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.resultCount { padding: 0.35rem 0.65rem; }
+
+.primaryBar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.searchField,
+.slaControl { display: block; min-width: 0; }
+.searchField { flex: 2 1 19rem; }
+.slaControl { flex: 1 1 10rem; }
+
+.filterTrigger {
+  flex: 1 1 10rem;
+  justify-content: space-between;
+  min-width: 0;
+  padding-inline: 0.75rem;
+}
+
+.filterTrigger > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.triggerChevron { color: var(--muted-foreground); font-size: 1rem; margin-left: 0.5rem; }
+.countBadge { margin-left: 0.45rem; min-width: 1.35rem; padding: 0.15rem 0.38rem; text-align: center; }
+
+.activeFilters {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+}
+
+.activeLabel { color: var(--muted-foreground); flex: 0 0 auto; font-size: 0.75rem; font-weight: 600; }
+.chipList { display: flex; flex: 1; flex-wrap: wrap; gap: 0.4rem; min-width: 0; }
+
+.filterChip {
+  align-items: center;
+  background: var(--surface-selected);
+  border: 1px solid color-mix(in oklab, var(--brand-steel) 40%, var(--border));
+  border-radius: var(--radius-pill);
+  color: var(--brand-blue);
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 500;
+  gap: 0.4rem;
+  min-height: 1.85rem;
+  padding: 0.25rem 0.6rem;
+}
+
+.filterChip:hover { background: var(--surface-priority); border-color: var(--brand-steel); }
+.filterChip:disabled,
+.clearLink:disabled { cursor: wait; opacity: 0.55; }
+.clearLink { color: var(--brand-blue); flex: 0 0 auto; font-size: 0.75rem; font-weight: 600; text-decoration: underline; text-underline-offset: 0.2rem; }
+
+.filterFooter { border-top: 1px solid var(--border); gap: 0.75rem; margin-top: 0.85rem; padding-top: 0.75rem; }
+.viewTools,
+.savedViews { align-items: center; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.viewTools button,
+.savedViews button { min-height: 2.25rem; }
+.toolSummary { margin-left: 0.45rem; max-width: 10rem; overflow: hidden; padding: 0.15rem 0.45rem; text-overflow: ellipsis; }
+.savedViews select { height: 2.25rem; min-width: 12rem; }
+
+.resultSurface { overflow: clip; }
+.resultHeader { gap: 1rem; padding: 0.85rem 1rem; }
+.resultHeader > span { color: var(--muted-foreground); font-size: 0.72rem; white-space: nowrap; }
+
+.bulkBar {
+  align-items: center;
+  background: var(--brand-navy);
+  border-block: 1px solid color-mix(in oklab, var(--brand-sky) 28%, var(--brand-navy));
+  color: var(--sidebar-foreground);
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: auto minmax(11rem, 0.65fr) minmax(14rem, 1fr) auto;
+  padding: 0.7rem 1rem;
+  position: sticky;
+  top: 4rem;
+  z-index: 18;
+}
+
+.bulkBar select,
+.bulkBar input { background: var(--surface); color: var(--foreground); }
+.bulkReason { min-width: 0; }
+
+.tableViewport { border-top: 1px solid var(--border); max-width: 100%; overflow: auto; }
+.leadTable { border-collapse: collapse; min-width: max-content; text-align: left; width: 100%; }
+.leadTable thead { position: sticky; top: 0; z-index: 10; }
+.leadTable th { padding: 0.6rem 0.75rem; white-space: nowrap; }
+.leadTable td { border-top: 1px solid var(--border); line-height: 1.35rem; max-width: 18rem; padding: 0.7rem 0.75rem; vertical-align: top; }
+.selectColumn { width: 2.8rem; }
+
+.pagination { align-items: center; border-top: 1px solid var(--border); display: flex; gap: 0.75rem; justify-content: space-between; padding: 0.75rem 1rem; }
+.pagination span { font-size: 0.8rem; }
+.emptyState { border-top: 1px solid var(--border); padding: 3.5rem 1.5rem; text-align: center; }
+.emptyState h3 { font-size: 1.05rem; font-weight: 600; }
+.emptyState p { color: var(--muted-foreground); font-size: 0.85rem; margin: 0.35rem auto 1rem; }
+
+.dialogHeader { align-items: flex-start; gap: 1rem; margin-bottom: 1rem; }
+.dialogHeader h2 { font-size: 1.2rem; }
+.dialogEyebrow { color: var(--brand-blue) !important; font-size: 0.68rem !important; font-weight: 600; letter-spacing: 0.08em; margin: 0 0 0.18rem !important; text-transform: uppercase; }
+
+.closeButton {
+  align-items: center;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: var(--foreground);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 1.25rem;
+  height: 2.25rem;
+  justify-content: center;
+  width: 2.25rem;
+}
+
+.closeButton:hover { background: var(--surface-selected); }
+.selectionDialog { width: min(100%, 32rem) !important; }
+.compactDialog { width: min(100%, 34rem) !important; }
+.advancedDrawer { height: calc(100vh - 2rem); margin-left: auto; width: min(100%, 66rem) !important; }
+
+.advancedGroups { display: grid; gap: 0.9rem; grid-template-columns: repeat(2, minmax(0, 1fr)); padding-bottom: 4.5rem; }
+.filterGroup { align-content: start; align-self: start; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: var(--radius-panel); display: grid; gap: 0.8rem; padding: 0.9rem; }
+.groupHeading { align-items: flex-start; display: flex; gap: 0.65rem; }
+.groupHeading > span { align-items: center; background: var(--brand-navy); border-radius: var(--radius-control); color: var(--sidebar-foreground); display: inline-flex; flex: 0 0 auto; font-size: 0.68rem; font-weight: 600; height: 1.75rem; justify-content: center; width: 1.75rem; }
+.groupHeading h3 { font-size: 0.95rem; }
+
+.checkboxFieldset { min-width: 0; }
+.checkboxFieldset legend { align-items: center; display: flex; font-size: 0.78rem; font-weight: 600; gap: 0.5rem; justify-content: space-between; width: 100%; }
+.selectionCount { padding: 0.14rem 0.42rem; }
+.optionSearch { display: block; margin-top: 0.45rem; }
+.checkboxOptions { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control); display: grid; gap: 0.15rem; margin-top: 0.45rem; max-height: 12rem; overflow-y: auto; padding: 0.35rem; }
+.checkboxOption { align-items: flex-start; border-radius: calc(var(--radius-control) - 0.2rem); cursor: pointer; display: flex; font-size: 0.8rem; gap: 0.55rem; min-height: 2rem; padding: 0.4rem 0.5rem; }
+.checkboxOption:hover { background: var(--surface-selected); }
+.checkboxOption input { flex: 0 0 auto; margin-top: 0.1rem; }
+.optionEmpty { color: var(--muted-foreground); font-size: 0.8rem; padding: 0.65rem; text-align: center; }
+
+.twoFields,
+.dialogFields { display: grid; gap: 0.7rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dialogFields { grid-template-columns: 1fr; }
+.fieldLabel { display: grid; font-size: 0.78rem; font-weight: 500; gap: 0.3rem; }
+.columnGrid { display: grid; gap: 0.3rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.dialogActions,
+.drawerActions > div { align-items: center; display: flex; gap: 0.55rem; justify-content: flex-end; }
+.dialogActions { border-top: 1px solid var(--border); margin-top: 1rem; padding-top: 0.85rem; }
+.drawerActions { background: var(--surface); border-top: 1px solid var(--border); bottom: -1.25rem; gap: 1rem; margin-inline: -1.25rem; padding: 0.8rem 1.25rem; position: sticky; z-index: 5; }
+
+@media (max-width: 1100px) {
+  .filterFooter { align-items: flex-start; flex-direction: column; }
+  .savedViews { width: 100%; }
+  .bulkBar { grid-template-columns: auto minmax(10rem, 0.7fr) minmax(12rem, 1fr); }
+  .bulkBar button { grid-column: 3; }
+}
+
+@media (max-width: 760px) {
+  .filterSurface { padding: 0.8rem; }
+  .filterHeading p { display: none; }
+  .searchField { flex-basis: 100%; }
+  .filterTrigger,
+  .slaControl { flex-basis: calc(50% - 0.3rem); }
+  .activeFilters { align-items: flex-start; flex-direction: column; }
+  .chipList { width: 100%; }
+  .filterChip { max-width: 100%; }
+  .filterChip span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .savedViews label,
+  .savedViews select { flex: 1; min-width: 9rem; }
+  .resultHeader { align-items: flex-start; flex-direction: column; }
+  .bulkBar { grid-template-columns: 1fr; top: 3.75rem; }
+  .bulkBar button { grid-column: auto; }
+  .advancedDrawer { height: calc(100vh - 1rem); }
+  .advancedGroups,
+  .twoFields,
+  .columnGrid { grid-template-columns: 1fr; }
+  .drawerActions { align-items: stretch; flex-direction: column; }
+  .drawerActions > div,
+  .drawerActions button { width: 100%; }
+}
+
+@media (max-width: 470px) {
+  .primaryBar > * { width: 100%; }
+  .filterTrigger,
+  .slaControl { flex-basis: 100%; }
+  .viewTools,
+  .savedViews { align-items: stretch; display: grid; grid-template-columns: 1fr 1fr; }
+  .viewTools button:first-child,
+  .savedViews label { grid-column: 1 / -1; }
+  .savedViews select { width: 100%; }
+  .pagination span { font-size: 0.72rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .filterChip,
+  .checkboxOption { transition-duration: 0.01ms; }
+}

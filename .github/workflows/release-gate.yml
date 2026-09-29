@@ -1,0 +1,40 @@
+name: Release Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: SHA completo (40 caracteres) que será validado sem deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate-commit:
+    name: Validate explicit commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.validate.outputs.commit }}
+    steps:
+      - name: Validar formato e existência do commit no repositório
+        id: validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ inputs.commit }}
+        run: |
+          if [[ ! "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "O release exige um SHA completo em minúsculas." >&2
+            exit 1
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_COMMIT}" --silent
+          echo "commit=${RELEASE_COMMIT}" >> "$GITHUB_OUTPUT"
+
+  quality-gate:
+    name: Gate without deployment
+    needs: validate-commit
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.validate-commit.outputs.commit }}

@@ -1,0 +1,11 @@
+import { expect, test, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { DEMO_SEED_PASSWORD, DEMO_USERS, DEMO_WORKSPACE_SLUG } from "@/modules/settings/application/demo-seed-service";
+
+async function login(page:Page,email:string){await page.goto("/login");await page.getByLabel("Workspace").fill(DEMO_WORKSPACE_SLUG);await page.getByLabel("E-mail").fill(email);await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);await page.getByRole("button",{name:"Entrar"}).click();await expect(page).toHaveURL(/\/$/);}
+
+test("pagamentos mostra dados persistidos, limites locais e não cria overflow",async({page},testInfo)=>{await login(page,DEMO_USERS[0]!.email);for(const viewport of [{width:1440,height:900},{width:390,height:844}]){await page.setViewportSize(viewport);await page.goto("/pagamentos");await expect(page.getByRole("heading",{name:"Cobranças e pagamentos",level:1})).toBeVisible();await expect(page.getByText("Modo LOCAL_SANDBOX")).toBeVisible();await expect(page.getByRole("heading",{name:"Nova cobrança",level:2})).toBeVisible();await expect(page.getByLabel("Assinatura")).toContainText("SUB-CRM54");const dimensions=await page.evaluate(()=>({clientWidth:document.documentElement.clientWidth,scrollWidth:document.documentElement.scrollWidth}));expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);await page.screenshot({path:testInfo.outputPath(`payments-${viewport.width}x${viewport.height}.png`),fullPage:true});}});
+
+test("visualizador lê pagamentos mas não recebe ação de criação",async({page})=>{await login(page,DEMO_USERS.at(-1)!.email);await page.goto("/pagamentos");await expect(page.getByRole("heading",{name:"Cobranças e pagamentos",level:1})).toBeVisible();await expect(page.getByRole("heading",{name:"Nova cobrança"})).toHaveCount(0);});
+
+test("@local-only webhook de pagamento rejeita assinatura inválida antes de persistir",async({request})=>{const response=await request.post("/api/local/payments/webhook",{headers:{"content-type":"application/json","x-politizai-workspace-id":randomUUID(),"x-politizai-payment-timestamp":new Date().toISOString(),"x-politizai-payment-signature":"sha256=invalid"},data:{invalid:true}});expect(response.status()).toBe(401);});

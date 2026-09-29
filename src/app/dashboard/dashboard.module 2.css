@@ -1,0 +1,797 @@
+.dashboard {
+  display: grid;
+  gap: 1.35rem;
+  margin-inline: auto;
+  max-width: 96rem;
+}
+
+.hero {
+  align-items: flex-end;
+  display: flex;
+  gap: 1.5rem;
+  justify-content: space-between;
+  min-height: 7.5rem;
+}
+
+.heroCopy {
+  min-width: 0;
+}
+
+.eyebrow {
+  align-items: center;
+  color: var(--primary);
+  display: flex;
+  font-size: 0.7rem;
+  font-weight: 600;
+  gap: 0.45rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.eyebrow::before {
+  background: var(--primary);
+  border-radius: 999px;
+  content: "";
+  height: 0.45rem;
+  width: 0.45rem;
+}
+
+.hero h1 {
+  font-size: clamp(2rem, 3.8vw, 3rem);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  margin-top: 0.55rem;
+}
+
+.heroIntro {
+  color: var(--muted-foreground);
+  font-size: 0.92rem;
+  margin-top: 0.65rem;
+}
+
+.heroIntro strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.heroMeta {
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  margin-top: 0.45rem;
+}
+
+.heroActions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.65rem;
+}
+
+.primaryAction,
+.secondaryAction {
+  align-items: center;
+  border-radius: var(--radius-control);
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 600;
+  gap: 0.45rem;
+  min-height: 2.65rem;
+  padding: 0.55rem 0.95rem;
+  text-decoration: none;
+}
+
+.primaryAction {
+  background: var(--primary);
+  box-shadow: 0 9px 22px color-mix(in oklab, var(--primary) 20%, transparent);
+  color: var(--primary-foreground);
+}
+
+.primaryAction:hover {
+  background: var(--primary-hover);
+}
+
+.secondaryAction {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+.secondaryAction:hover {
+  border-color: color-mix(in oklab, var(--primary) 35%, var(--border));
+  color: var(--primary);
+}
+
+.toolbar {
+  align-items: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  box-shadow: 0 8px 26px color-mix(in oklab, var(--foreground) 4%, transparent);
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 0.65rem;
+}
+
+.periodNav {
+  background: var(--muted);
+  border-radius: var(--radius-control);
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+}
+
+.periodLink {
+  border-radius: calc(var(--radius-control) - 2px);
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+  font-weight: 600;
+  min-width: 4.25rem;
+  padding: 0.5rem 0.75rem;
+  text-align: center;
+  text-decoration: none;
+}
+
+.periodLink:hover {
+  color: var(--foreground);
+}
+
+.periodActive {
+  background: var(--card);
+  box-shadow: 0 2px 8px color-mix(in oklab, var(--foreground) 8%, transparent);
+  color: var(--primary);
+}
+
+.filterDetails {
+  position: relative;
+}
+
+.filterSummary {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  display: flex;
+  font-size: 0.78rem;
+  font-weight: 600;
+  gap: 0.45rem;
+  list-style: none;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.75rem;
+  user-select: none;
+}
+
+.filterSummary::-webkit-details-marker {
+  display: none;
+}
+
+.filterSummary:hover,
+.filterDetails[open] .filterSummary {
+  border-color: color-mix(in oklab, var(--primary) 40%, var(--border));
+  color: var(--primary);
+}
+
+.filterCount {
+  align-items: center;
+  background: color-mix(in oklab, var(--primary) 10%, white);
+  border-radius: 999px;
+  color: var(--primary);
+  display: inline-flex;
+  font-size: 0.68rem;
+  height: 1.35rem;
+  justify-content: center;
+  min-width: 1.35rem;
+  padding-inline: 0.35rem;
+}
+
+.filterPanel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-floating);
+  margin-top: 0.6rem;
+  padding: 1.1rem;
+  position: absolute;
+  right: 0;
+  width: min(70rem, calc(100vw - 3rem));
+  z-index: 30;
+}
+
+.filterPanelHeader {
+  align-items: flex-start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.filterPanelHeader strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.filterPanelHeader span {
+  color: var(--muted-foreground);
+  display: block;
+  font-size: 0.72rem;
+  margin-top: 0.15rem;
+}
+
+.filterForm {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.field {
+  color: var(--muted-foreground);
+  display: grid;
+  font-size: 0.7rem;
+  font-weight: 500;
+  gap: 0.35rem;
+}
+
+.field input,
+.field select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: var(--foreground);
+  font-size: 0.78rem;
+  font-weight: 500;
+  min-height: 2.55rem;
+  padding: 0.45rem 0.65rem;
+}
+
+.field select[multiple] {
+  min-height: 6rem;
+}
+
+.filterActions {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  margin-top: 0.15rem;
+}
+
+.filterApply,
+.filterClear {
+  border-radius: var(--radius-control);
+  font-size: 0.78rem;
+  font-weight: 600;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.9rem;
+}
+
+.filterApply {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.filterClear {
+  align-items: center;
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  display: inline-flex;
+  text-decoration: none;
+}
+
+.sectionHeader {
+  align-items: flex-end;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+
+.sectionHeader h2,
+.panelHeader h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.sectionHeader p,
+.panelHeader p {
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+  margin-top: 0.2rem;
+}
+
+.sectionTag {
+  color: var(--primary);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.kpiGrid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: 1.35fr repeat(3, minmax(0, 1fr));
+}
+
+.metricCard {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  color: var(--foreground);
+  display: flex;
+  flex-direction: column;
+  min-height: 11rem;
+  padding: 1rem;
+  text-decoration: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.metricCard:hover {
+  border-color: color-mix(in oklab, var(--primary) 38%, var(--border));
+  box-shadow: var(--shadow-card);
+  transform: translateY(-2px);
+}
+
+.metricFeatured {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.metricFeatured:hover {
+  border-color: color-mix(in oklab, white 35%, var(--primary));
+  box-shadow: 0 20px 45px color-mix(in oklab, var(--primary) 25%, transparent);
+}
+
+.metricHeader {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.metricIcon {
+  align-items: center;
+  background: color-mix(in oklab, var(--primary) 9%, white);
+  border-radius: var(--radius-control);
+  color: var(--primary);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 2.15rem;
+  justify-content: center;
+  width: 2.15rem;
+}
+
+.metricFeatured .metricIcon {
+  background: color-mix(in oklab, white 17%, transparent);
+  color: white;
+}
+
+.metricLabel {
+  color: var(--muted-foreground);
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 500;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.metricFeatured .metricLabel,
+.metricFeatured .metricDetail,
+.metricFeatured .metricRatio {
+  color: color-mix(in oklab, white 74%, transparent);
+}
+
+.metricValue {
+  display: block;
+  font-size: clamp(1.55rem, 2.4vw, 2.25rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  margin-top: 0.85rem;
+}
+
+.metricDetail {
+  color: var(--muted-foreground);
+  display: block;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  margin-top: 0.65rem;
+}
+
+.metricFooter {
+  align-items: flex-end;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 0.75rem;
+}
+
+.metricRatio {
+  color: var(--muted-foreground);
+  font-size: 0.66rem;
+}
+
+.metricArrow {
+  align-items: center;
+  background: var(--foreground);
+  border-radius: 50%;
+  color: white;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 1.75rem;
+  justify-content: center;
+  width: 1.75rem;
+}
+
+.metricFeatured .metricArrow {
+  background: white;
+  color: var(--primary);
+}
+
+.secondaryKpis {
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-top: 0.85rem;
+}
+
+.smallKpi {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  color: var(--foreground);
+  display: grid;
+  gap: 0.25rem;
+  min-height: 5.5rem;
+  padding: 0.85rem;
+  text-decoration: none;
+}
+
+.smallKpi:hover {
+  border-color: color-mix(in oklab, var(--primary) 38%, var(--border));
+}
+
+.smallKpi span {
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+
+.smallKpi strong {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.emptyState {
+  background: color-mix(in oklab, var(--primary) 4%, white);
+  border: 1px dashed color-mix(in oklab, var(--primary) 30%, var(--border));
+  border-radius: var(--radius-panel);
+  padding: 1.35rem;
+  text-align: center;
+}
+
+.emptyState h2 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.emptyState p {
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  margin: 0.25rem auto 0;
+  max-width: 44rem;
+}
+
+.mainGrid,
+.analysisGrid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: minmax(0, 1.35fr) minmax(19rem, 0.65fr);
+}
+
+.analysisGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  box-shadow: 0 8px 28px color-mix(in oklab, var(--foreground) 4%, transparent);
+  min-width: 0;
+  padding: 1.1rem;
+}
+
+.panelHeader {
+  align-items: flex-start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.panelLink {
+  align-items: center;
+  color: var(--primary);
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 600;
+  gap: 0.3rem;
+  text-decoration: none;
+}
+
+.panelLink:hover {
+  text-decoration: underline;
+}
+
+.funnelList {
+  display: grid;
+  gap: 0.55rem;
+  list-style: none;
+  margin-top: 1.1rem;
+}
+
+.funnelItem {
+  align-items: center;
+  color: var(--foreground);
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 8rem minmax(0, 1fr) 4rem;
+  text-decoration: none;
+}
+
+.funnelItem:hover .funnelLabel {
+  color: var(--primary);
+}
+
+.funnelLabel {
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+  font-weight: 500;
+}
+
+.funnelTrack {
+  background: var(--muted);
+  border-radius: var(--radius-control);
+  height: 2.05rem;
+  overflow: hidden;
+}
+
+.funnelBar {
+  align-items: center;
+  background: color-mix(in oklab, var(--primary) 88%, white);
+  border-radius: var(--radius-control);
+  display: flex;
+  height: 100%;
+  min-width: 2.1rem;
+  transition: filter 140ms ease;
+}
+
+.funnelBar[data-empty="true"] {
+  min-width: 0;
+}
+
+.funnelItem:nth-child(2) .funnelBar { background: color-mix(in oklab, var(--primary) 76%, white); }
+.funnelItem:nth-child(3) .funnelBar { background: color-mix(in oklab, var(--primary) 64%, white); }
+.funnelItem:nth-child(4) .funnelBar { background: color-mix(in oklab, var(--success) 78%, white); }
+.funnelItem:nth-child(5) .funnelBar { background: color-mix(in oklab, var(--warning) 70%, white); }
+.funnelItem:nth-child(6) .funnelBar { background: var(--success); }
+
+.funnelBar:hover {
+  filter: brightness(0.94);
+}
+
+.funnelConversion {
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  text-align: right;
+}
+
+.attentionList {
+  display: grid;
+  gap: 0.55rem;
+  list-style: none;
+  margin-top: 1rem;
+}
+
+.attentionLink {
+  align-items: center;
+  background: var(--background);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--foreground);
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 3.6rem;
+  padding: 0.65rem;
+  text-decoration: none;
+}
+
+.attentionLink:hover {
+  border-color: var(--border);
+  background: var(--card);
+}
+
+.attentionIcon {
+  align-items: center;
+  background: color-mix(in oklab, var(--warning) 18%, white);
+  border-radius: var(--radius-control);
+  color: var(--warning);
+  display: inline-flex;
+  height: 2.2rem;
+  justify-content: center;
+  width: 2.2rem;
+}
+
+.attentionText strong,
+.attentionText span {
+  display: block;
+}
+
+.attentionText strong {
+  font-size: 0.76rem;
+}
+
+.attentionText span {
+  color: var(--muted-foreground);
+  font-size: 0.66rem;
+  margin-top: 0.1rem;
+}
+
+.attentionValue {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.segmentList {
+  display: grid;
+  gap: 0.45rem;
+  list-style: none;
+  margin-top: 1rem;
+}
+
+.segmentLink {
+  border-radius: var(--radius-control);
+  color: var(--foreground);
+  display: block;
+  padding: 0.55rem;
+  text-decoration: none;
+}
+
+.segmentLink:hover {
+  background: var(--background);
+}
+
+.segmentRow {
+  align-items: center;
+  display: flex;
+  font-size: 0.73rem;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.segmentRow span:first-child {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.segmentRow strong {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+}
+
+.barTrack {
+  background: var(--muted);
+  border-radius: 999px;
+  height: 0.34rem;
+  margin-top: 0.45rem;
+  overflow: hidden;
+}
+
+.barFill {
+  background: var(--primary);
+  border-radius: 999px;
+  display: block;
+  height: 100%;
+}
+
+.segmentMeta {
+  color: var(--muted-foreground);
+  display: block;
+  font-size: 0.64rem;
+  margin-top: 0.35rem;
+}
+
+.segmentEmpty {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-control);
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  text-align: center;
+}
+
+.details {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+}
+
+.details > summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  font-size: 0.8rem;
+  font-weight: 600;
+  gap: 0.55rem;
+  justify-content: space-between;
+  list-style: none;
+  min-height: 3.6rem;
+  padding: 0.85rem 1.05rem;
+}
+
+.details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.details > summary span {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.detailsContent {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0.9rem;
+}
+
+@media (max-width: 1180px) {
+  .kpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .secondaryKpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .filterForm { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 820px) {
+  .hero { align-items: flex-start; flex-direction: column; min-height: auto; }
+  .toolbar { align-items: stretch; flex-direction: column; }
+  .periodNav { overflow-x: auto; }
+  .periodLink { flex: 1 0 auto; }
+  .filterDetails { width: 100%; }
+  .filterSummary { justify-content: center; }
+  .filterPanel { left: 0; right: auto; width: 100%; }
+  .filterForm { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mainGrid, .analysisGrid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 580px) {
+  .dashboard { gap: 1.05rem; }
+  .hero h1 { font-size: 2rem; }
+  .heroActions { width: 100%; }
+  .primaryAction, .secondaryAction { flex: 1; justify-content: center; }
+  .kpiGrid, .secondaryKpis, .filterForm, .detailsContent { grid-template-columns: 1fr; }
+  .metricCard { min-height: 9.5rem; }
+  .filterPanel { position: static; width: 100%; }
+  .funnelItem { grid-template-columns: 5.7rem minmax(0, 1fr); }
+  .funnelConversion { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .metricCard,
+  .funnelBar {
+    transition: none;
+  }
+
+  .metricCard:hover {
+    transform: none;
+  }
+}

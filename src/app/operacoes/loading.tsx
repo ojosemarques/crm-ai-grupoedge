@@ -1,0 +1,3 @@
+export default function OperationsLoading() {
+  return <main aria-busy="true" aria-label="Carregando console operacional" className="page-canvas page-canvas-wide space-y-4"><div className="h-24 animate-pulse rounded-[var(--radius-panel)] bg-muted" /><div className="grid gap-4 md:grid-cols-3"><div className="h-32 animate-pulse rounded-[var(--radius-panel)] bg-muted" /><div className="h-32 animate-pulse rounded-[var(--radius-panel)] bg-muted" /><div className="h-32 animate-pulse rounded-[var(--radius-panel)] bg-muted" /></div><div className="h-96 animate-pulse rounded-[var(--radius-panel)] bg-muted" /></main>;
+}

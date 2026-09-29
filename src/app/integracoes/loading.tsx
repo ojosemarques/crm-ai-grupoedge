@@ -1,0 +1,1 @@
+export default function Loading() { return <main className="page-canvas page-canvas-wide space-y-4" aria-label="Carregando integrações"><div className="h-24 animate-pulse rounded-[var(--radius-panel)] bg-muted" /><div className="h-56 animate-pulse rounded-[var(--radius-panel)] bg-muted" /></main>; }
