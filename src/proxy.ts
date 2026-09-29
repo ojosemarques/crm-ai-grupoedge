@@ -24,6 +24,10 @@ export function proxy(request: NextRequest): NextResponse {
     ?? request.headers.get("host")
     ?? request.nextUrl.host;
   const trustedHosts = new Set((process.env.APP_TRUSTED_HOSTS ?? "").split(",").map((item) => item.trim()).filter(Boolean));
+  // Vercel Cron invokes the unique deployment URL, which changes on each deploy.
+  if (process.env.VERCEL === "1" && process.env.VERCEL_URL) {
+    trustedHosts.add(process.env.VERCEL_URL);
+  }
 
   const apiRoute = request.nextUrl.pathname.startsWith("/api/");
   const response = remote && !trustedHosts.has(requestedHost)

@@ -52,4 +52,18 @@ describe("proteção otimista de rotas", () => {
     expect(response.status).toBe(421);
     vi.unstubAllEnvs();
   });
+
+  it("aceita somente a URL única do deployment informada pela Vercel para o cron", () => {
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("APP_TRUSTED_HOSTS", "crm.example");
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("VERCEL_URL", "crm-deploy-team.vercel.app");
+
+    const cron = proxy(new NextRequest("https://crm-deploy-team.vercel.app/api/internal/worker/tick"));
+    const other = proxy(new NextRequest("https://outro-deploy.vercel.app/api/internal/worker/tick"));
+
+    expect(cron.status).toBe(200);
+    expect(other.status).toBe(421);
+    vi.unstubAllEnvs();
+  });
 });

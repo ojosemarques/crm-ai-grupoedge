@@ -41,7 +41,9 @@ do contrato em `src/shared/core/config/environment-contract.ts`; marque
 Os dois segredos do worker devem ter o mesmo valor e pelo menos 32 caracteres.
 O cron chama `GET /api/internal/worker/tick` a cada minuto; a rota exige
 `Authorization: Bearer <segredo>` e possui kill switch
-`SERVERLESS_WORKER_ENABLED`.
+`SERVERLESS_WORKER_ENABLED`. O proxy aceita a URL única do deployment somente
+quando ela vem da variável de sistema `VERCEL_URL`, pois o cron usa esse host
+em vez do alias canônico.
 
 Antes de publicar alterações, execute `pnpm lint`, `pnpm typecheck`,
 `pnpm test`, `pnpm build`, `pnpm security:scan` e o preflight de produção com
