@@ -5,7 +5,7 @@
 - Código: `ojosemarques/crm-ai-grupoedge`, branch `main`.
 - Banco: projeto Supabase `zbzztpzviyjxpprqcegs`, região `ca-central-1`.
 - Web: projeto Vercel `crm-ai-grupoedge`, equipe Grupo Edge, funções em `yul1`.
-- URL canônica: `https://crm-ai-grupoedge.vercel.app`.
+- URL canônica: `https://crm-ai-grupoedge-ejosemarquess-gmailcoms-projects.vercel.app`.
 
 Os identificadores e URLs acima não são credenciais. Senhas, URLs de conexão
 com senha e segredos ficam fora do Git. O diretório `.credentials/` e os
