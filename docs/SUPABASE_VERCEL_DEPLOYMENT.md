@@ -26,11 +26,12 @@ migrations que adicionarem tabelas ou sequências. Execute-o com uma identidade
 de migração somente depois de revisar o diff da migration.
 
 `DATABASE_URL` de produção usa o pooler transacional Supabase, porta 6543,
-`schema=crm`, TLS e usuário de runtime. `DIRECT_URL` deve existir apenas no
-processo de migração, nunca como variável do projeto web Vercel. Para maior
-garantia de identidade TLS, instale a CA do projeto Supabase no processo web;
-`sslmode=require` com `uselibpqcompat=true` cifra a conexão, mas não valida o
-certificado do servidor.
+`schema=crm`, usuário de runtime e `sslmode=verify-full` com
+`sslrootcert=certs/supabase-root-ca-2021.crt`. O certificado público foi
+baixado da seção SSL do painel Supabase e é incluído nas funções Next.js via
+`outputFileTracingIncludes`. A CA atual expira em 26/04/2031 e deve ser
+substituída quando o Supabase publicar uma nova. `DIRECT_URL` deve existir
+apenas no processo de migração, nunca como variável do projeto web Vercel.
 
 ## Deploy e automações
 

@@ -9,6 +9,9 @@ const useHsts = (process.env.APP_ENV === "staging" || process.env.APP_ENV === "p
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
+  outputFileTracingIncludes: {
+    "/*": ["./certs/supabase-root-ca-2021.crt"],
+  },
   async headers() {
     return [
       {

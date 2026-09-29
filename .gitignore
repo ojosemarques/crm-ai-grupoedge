@@ -65,6 +65,7 @@ credentials/
 *.p12
 *.pfx
 *.crt
+!certs/supabase-root-ca-2021.crt
 *.cer
 *.mobileprovision
 
