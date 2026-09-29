@@ -178,6 +178,38 @@ body { letter-spacing: -0.012em; }
 .inbox-message[data-direction="OUTBOUND"] { background: color-mix(in srgb, var(--primary) 20%, var(--surface)); border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); }
 .inbox-composer { background: var(--surface); }
 
+/* The analytics references use a light workspace even when the CRM shell is dark. */
+.analytics-canvas {
+  color-scheme: light;
+  --background: #f4f5f7;
+  --foreground: #252934;
+  --surface: #fff;
+  --surface-subtle: #f1f3f5;
+  --surface-selected: #f1eafd;
+  --card: #fff;
+  --card-foreground: #252934;
+  --muted: #eef0f3;
+  --muted-foreground: #626979;
+  --border: #e1e4e8;
+  --border-strong: #bec4cd;
+  --link: #6427d4;
+  --info: #2472b7;
+  --info-surface: #e8f2fc;
+  --success: #147654;
+  --success-surface: #e0f6eb;
+  --warning: #936011;
+  --warning-surface: #fff1d9;
+  --danger: #b93d52;
+  --danger-surface: #ffe9ed;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 1.5rem;
+  box-shadow: var(--shadow-card);
+  color: var(--foreground);
+  padding: clamp(1rem, 2vw, 1.6rem);
+}
+.app-content:has(.analytics-canvas) { background: radial-gradient(circle at 78% 0%, #f7bb9e 0, transparent 28%), radial-gradient(circle at 8% 80%, #d8c8ed 0, transparent 31%), #e8e9ed; }
+
 /* Existing semantic notices use fixed Tailwind colors; keep them readable in dark mode. */
 :root[data-theme="dark"] .app-shell :is([class~="bg-white"], [class~="bg-blue-50"], [class~="bg-blue-100"]) { background-color: var(--surface); }
 :root[data-theme="dark"] .app-shell :is([class~="bg-red-50"], [class~="bg-red-50/70"]) { background-color: var(--danger-surface); }

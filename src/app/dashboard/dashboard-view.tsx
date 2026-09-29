@@ -211,7 +211,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
   const previousPeriodLabel = periodLabel(screen.comparisonPeriod.fromDate, screen.comparisonPeriod.toDate);
 
   return (
-    <div className={styles.dashboard}>
+    <div className={`analytics-canvas ${styles.dashboard}`}>
       <header className={styles.dashboardHeader}>
         <div><p className={styles.eyebrow}>Visão executiva · {scopeLabel}</p><h1>Olá, {displayName.split(/\s+/)[0]}.</h1><p className={styles.headerIntro}>Acompanhe resultado, velocidade e riscos da operação em um só lugar.</p></div>
         <div className={styles.headerActions}><Link className={styles.primaryAction} href={focusAction.href}>{focusAction.label}<Icon name="seta-direita" size={15} /></Link></div>

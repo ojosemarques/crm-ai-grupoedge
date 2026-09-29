@@ -105,7 +105,7 @@ function ForecastBars({ screen }: Readonly<{ screen: RevenueMetricsScreen }>) {
 export function RevenueMetricsWorkspace({ screen, section, drilldown }: Readonly<{ screen: RevenueMetricsScreen; section: string; drilldown: RevenueDrilldownPage | null }>) {
   const query = persistedQuery(screen);
   const filterCount = Object.values(screen.query.filters).reduce((total, values) => total + values.length, 0);
-  return <div className={styles.workspace}>
+  return <div className={`analytics-canvas ${styles.workspace}`}>
     <section className={styles.hero}><div><span>Indicadores auditáveis · {screen.scope === "WORKSPACE" ? "Visão geral" : screen.scope === "TEAM" ? "Equipe" : "Meus registros"}</span><h1>Resultado, recorrência e previsão.</h1><p>Indicadores comerciais e financeiros com origem e estado explícitos.</p></div><div className={styles.heroMeta}><span>Período selecionado</span><strong>{screen.query.period.fromDate} a {screen.query.period.toDate}</strong><small>{filterCount} filtro(s) dimensional(is) · atualizado em {new Date(screen.generatedAt).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</small></div></section>
     <Surface className={styles.filterPanel} tone="subtle">
       <form className={styles.filterForm} method="get">
