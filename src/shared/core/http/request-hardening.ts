@@ -115,6 +115,7 @@ function getSharedRateLimiter(): SharedRateLimiter {
 
 export const sensitiveEndpointPolicies = {
   login: { limit: 30, windowMs: 5 * 60_000 },
+  passwordChange: { limit: 10, windowMs: 5 * 60_000 },
   csvImport: { limit: 20, windowMs: 60_000 },
   localLeadEntry: { limit: 60, windowMs: 60_000 },
   artificialIntelligence: { limit: 30, windowMs: 60_000 },

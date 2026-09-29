@@ -8,6 +8,7 @@ import {
 } from "@/modules/auth/domain/auth-errors";
 import {
   consumeDummyPasswordCheck,
+  hashPassword,
   verifyPassword,
 } from "@/modules/auth/domain/password";
 import type {
@@ -16,6 +17,7 @@ import type {
 } from "@/modules/auth/application/authenticated-context";
 import { getApplicationConfig } from "@/shared/core/config/application-config";
 import { getDatabaseClient } from "@/shared/core/database/client";
+import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const LAST_SEEN_WRITE_INTERVAL_MS = 5 * 60_000;
 
@@ -437,7 +439,69 @@ export function createAuthenticationService(options: AuthenticationServiceOption
     return true;
   }
 
-  return Object.freeze({ login, validateSession, logout });
+  async function changePassword(
+    context: AuthenticatedContext,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
+    if (
+      newPassword.length < 16 ||
+      newPassword.length > 128 ||
+      !/[a-z]/.test(newPassword) ||
+      !/[A-Z]/.test(newPassword) ||
+      !/\d/.test(newPassword) ||
+      !/[^A-Za-z0-9]/.test(newPassword)
+    ) {
+      throw new ApplicationError("A nova senha deve ter de 16 a 128 caracteres, com maiúscula, minúscula, número e símbolo.", {
+        code: "PASSWORD_POLICY_VIOLATION", statusCode: 400, expose: true,
+      });
+    }
+
+    const credential = await options.database.localCredential.findUnique({
+      where: { userId: context.userId },
+      select: { id: true, passwordHash: true, credentialVersion: true },
+    });
+    if (!credential || !await verifyPassword(currentPassword, credential.passwordHash)) {
+      throw new ApplicationError("Senha atual incorreta.", {
+        code: "CURRENT_PASSWORD_INVALID", statusCode: 400, expose: true,
+      });
+    }
+    if (await verifyPassword(newPassword, credential.passwordHash)) {
+      throw new ApplicationError("Escolha uma senha diferente da atual.", {
+        code: "PASSWORD_UNCHANGED", statusCode: 400, expose: true,
+      });
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+    const occurredAt = now();
+    await options.database.$transaction(async (transaction) => {
+      const updated = await transaction.localCredential.updateMany({
+        where: { id: credential.id, credentialVersion: credential.credentialVersion },
+        data: {
+          passwordHash,
+          credentialVersion: { increment: 1 },
+          passwordChangedAt: occurredAt,
+          failedAttempts: 0,
+          lockedUntil: null,
+        },
+      });
+      if (updated.count !== 1) throw new SessionExpiredError();
+
+      await transaction.authSession.updateMany({
+        where: { userId: context.userId, revokedAt: null },
+        data: { revokedAt: occurredAt },
+      });
+      await appendAuditLog(transaction, {
+        workspaceId: context.workspaceId,
+        actorId: context.actorId,
+        action: "auth.password.changed",
+        entityId: context.sessionId,
+        changes: { sessionsRevoked: true },
+      });
+    });
+  }
+
+  return Object.freeze({ login, validateSession, logout, changePassword });
 }
 
 let authenticationService:

@@ -123,6 +123,7 @@ const routeTitles: readonly Readonly<{ prefix: string; title: string }>[] = [
   { prefix: "/aquisicao", title: "Aquisição e atribuição" },
   { prefix: "/inteligencia-geografica", title: "Inteligência geográfica" },
   { prefix: "/configuracoes", title: "Configurações" },
+  { prefix: "/perfil", title: "Minha conta" },
   { prefix: "/contatos/", title: "Contact 360" },
   { prefix: "/", title: "Início" },
 ];
@@ -241,10 +242,10 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             </nav>
           )}
 
-          <div className="app-sidebar__account">
+          <Link aria-label="Abrir minha conta" className="app-sidebar__account" href="/perfil" onClick={() => setMenuOpen(false)}>
             <span aria-hidden="true" className="app-avatar">{initials(session?.user.displayName ?? "Usuário")}</span>
             <span><strong>{session?.user.displayName ?? "Sessão local"}</strong><small>{session?.user.role.name ?? "Carregando perfil…"}</small></span>
-          </div>
+          </Link>
         </aside>
 
         <div className="app-shell__main">
