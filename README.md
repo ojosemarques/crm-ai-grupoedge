@@ -1,5 +1,15 @@
 # Politizai CRM
 
+## Ambiente atual do CRM
+
+Este checkout está vinculado ao repositório
+[`ojosemarques/crm-ai-grupoedge`](https://github.com/ojosemarques/crm-ai-grupoedge),
+ao projeto Supabase `zbzztpzviyjxpprqcegs` e ao projeto Vercel
+`crm-ai-grupoedge` da equipe Grupo Edge. A configuração e os procedimentos
+atuais estão em [`docs/SUPABASE_VERCEL_DEPLOYMENT.md`](docs/SUPABASE_VERCEL_DEPLOYMENT.md).
+Os relatórios abaixo descrevem ambientes e datas anteriores e não representam
+o estado deste novo projeto.
+
 Ambiente web protegido de staging: <https://crm-politizai-staging.vercel.app>.
 O acesso exige autenticação no team Vercel antes do login do CRM.
 Use apenas dados sintéticos; limites, credenciais locais e evidências estão em

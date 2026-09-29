@@ -2,7 +2,13 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "buildCommand": "pnpm build",
-  "regions": ["gru1"],
+  "regions": ["yul1"],
+  "crons": [
+    {
+      "path": "/api/internal/worker/tick",
+      "schedule": "* * * * *"
+    }
+  ],
   "functions": {
     "src/app/api/**/*": {
       "maxDuration": 60

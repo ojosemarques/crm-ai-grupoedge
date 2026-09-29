@@ -33,6 +33,13 @@ function request(options: Readonly<{ authorization?: string; query?: string }> =
   });
 }
 
+function cronRequest(authorization?: string) {
+  return new Request("https://staging.example/api/internal/worker/tick", {
+    method: "GET",
+    headers: authorization ? { authorization } : {},
+  });
+}
+
 describe("POST /api/internal/worker/tick", () => {
   beforeEach(() => {
     vi.stubEnv("APP_ENV", validEnvironment.APP_ENV);
@@ -77,6 +84,20 @@ describe("POST /api/internal/worker/tick", () => {
       maxDurationMs: 35_000,
     });
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("processa a chamada GET autenticada enviada pelo cron da Vercel", async () => {
+    const { GET } = await import("@/app/api/internal/worker/tick/route");
+    const response = await GET(cronRequest(`Bearer ${validEnvironment.SERVERLESS_WORKER_SECRET}`));
+    expect(response.status).toBe(200);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("rejeita a chamada GET sem o segredo do cron", async () => {
+    const { GET } = await import("@/app/api/internal/worker/tick/route");
+    const response = await GET(cronRequest());
+    expect(response.status).toBe(401);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it.each([

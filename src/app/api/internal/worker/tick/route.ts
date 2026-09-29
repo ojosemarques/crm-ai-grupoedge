@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-export async function POST(request: Request): Promise<NextResponse> {
+async function runTick(request: Request): Promise<NextResponse> {
   const correlationId = resolveCorrelationId(request.headers);
   let runtimeWorker: ReturnType<typeof createDefaultWorkerBatchRunner> | undefined;
   try {
@@ -53,3 +53,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     await runtimeWorker?.database.$disconnect();
   }
 }
+
+export const GET = runTick;
+export const POST = runTick;
