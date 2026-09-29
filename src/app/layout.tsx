@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 
 import "./globals.css";
+import "./crm-design-system.css";
 
 const plusJakartaSans = Plus_Jakarta_Sans({
   display: "swap",
@@ -23,7 +24,7 @@ export const dynamic = "force-dynamic";
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html className={plusJakartaSans.variable} lang="pt-BR">
+    <html className={plusJakartaSans.variable} data-theme="dark" lang="pt-BR">
       <body><AppShell>{children}</AppShell></body>
     </html>
   );

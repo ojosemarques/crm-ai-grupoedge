@@ -149,7 +149,24 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const pathname = usePathname();
   const [session, setSession] = useState<SessionView | null | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const publicRoute = publicRoutes.has(pathname);
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("politizai-crm-theme");
+    if (savedTheme === "light") {
+      document.documentElement.dataset.theme = "light";
+      const frame = window.requestAnimationFrame(() => setTheme("light"));
+      return () => window.cancelAnimationFrame(frame);
+    }
+  }, []);
+
+  function toggleTheme() {
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = nextTheme;
+    window.localStorage.setItem("politizai-crm-theme", nextTheme);
+    setTheme(nextTheme);
+  }
 
   useEffect(() => {
     if (publicRoute) return;
@@ -276,8 +293,9 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
                   <Icon name="notificacoes" size={18} />
                 </Link>
               ) : null}
-              <span className="app-environment" title="Aplicação executada somente neste computador"><span aria-hidden="true" />Local</span>
-              {session ? <span className="app-workspace">{session.workspace.slug}</span> : null}
+              <button aria-label={`Ativar tema ${theme === "dark" ? "claro" : "escuro"}`} className="app-topbar__theme" onClick={toggleTheme} title={`Ativar tema ${theme === "dark" ? "claro" : "escuro"}`} type="button">
+                <Icon name={theme === "dark" ? "sol" : "lua"} size={17} />
+              </button>
               <LogoutButton />
             </div>
           </header>

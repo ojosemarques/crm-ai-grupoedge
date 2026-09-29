@@ -65,7 +65,7 @@
 .filterApply { background: var(--primary); border: 1px solid var(--primary); color: var(--primary-foreground); cursor: pointer; }
 .filterClear { align-items: center; border: 1px solid var(--border); color: var(--foreground); display: inline-flex; text-decoration: none; }
 
-.emptyState { align-items: center; background: var(--info-surface); border: 1px dashed var(--brand-steel); border-radius: var(--radius-panel); color: var(--brand-blue); display: flex; gap: 0.8rem; padding: 1rem; }
+.emptyState { align-items: center; background: var(--info-surface); border: 1px dashed var(--brand-steel); border-radius: var(--radius-panel); color: var(--info); display: flex; gap: 0.8rem; padding: 1rem; }
 .emptyState h2 { font-size: 0.9rem; font-weight: 700; }
 .emptyState p { color: var(--muted-foreground); font-size: 0.76rem; margin-top: 0.1rem; }
 
@@ -138,9 +138,9 @@
 .pulseStrip { background: var(--surface-selected); border: 1px solid var(--brand-sky); border-radius: var(--radius-panel); display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); overflow: hidden; }
 .pulseStrip a { color: var(--foreground); display: grid; gap: 0.12rem; min-width: 0; padding: 0.72rem 0.8rem; text-decoration: none; }
 .pulseStrip a + a { border-left: 1px solid var(--brand-sky); }
-.pulseStrip a:hover { background: color-mix(in oklab, var(--brand-sky) 25%, white); }
+.pulseStrip a:hover { background: color-mix(in oklab, var(--primary) 16%, var(--surface-selected)); }
 .pulseStrip span { color: var(--muted-foreground); font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pulseStrip strong { color: var(--brand-navy); font-size: 1.08rem; font-weight: 700; }
+.pulseStrip strong { color: var(--foreground); font-size: 1.08rem; font-weight: 700; }
 .pulseStrip small { color: var(--primary); font-size: 0.6rem; }
 
 .funnelList { display: grid; gap: 0.48rem; list-style: none; }

@@ -162,7 +162,7 @@ export function PreSalesPipelineWorkspace({
         <Button asChild variant="secondary"><Link href="/leads">Abrir lista completa de leads</Link></Button>
       </div>
 
-      {notice ? <p className={`rounded-md border p-3 text-sm ${notice.kind === "error" ? "border-red-300 bg-red-50 text-red-950" : "border-emerald-300 bg-emerald-50 text-emerald-950"}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
+      {notice ? <p className="feedback-banner rounded-md border p-3 text-sm" data-tone={notice.kind === "error" ? "danger" : "success"} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
 
       <nav aria-label="Contagens por etapa" className="flex gap-2 overflow-x-auto pb-1">
         {screen.stages.map((stage) => (
@@ -175,11 +175,11 @@ export function PreSalesPipelineWorkspace({
       {visibleStages.every((stage) => stage.count === 0) ? (
         <EmptyState description="Ajuste os filtros ou simule uma entrada de lead." title="Nenhum lead neste recorte" />
       ) : view === "board" ? (
-        <section aria-label="Quadro do pipeline" className="flex snap-x gap-3 overflow-x-auto pb-5">
+        <section aria-label="Quadro do pipeline" className="crm-kanban flex snap-x overflow-x-auto pb-5">
           {visibleStages.map((stage) => (
             <section
               aria-label={`Etapa ${stage.name}`}
-              className="w-72 shrink-0 snap-start rounded-[var(--radius-panel)] border bg-[var(--surface-subtle)] p-3"
+              className="crm-kanban__lane shrink-0 snap-start"
               key={stage.id}
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => void dropOnStage(event, stage)}
@@ -187,14 +187,12 @@ export function PreSalesPipelineWorkspace({
               <header className="mb-3 flex items-center justify-between gap-2"><h2><span className="stage-badge">{stage.name}</span></h2><span aria-label={`${stage.count} leads nesta etapa`} className="rounded bg-background px-2 py-1 text-xs font-semibold">{stage.count}</span></header>
               <div className="space-y-3">
                 {stage.leads.map((lead) => (
-                  <article className="rounded-[0.875rem] border bg-card p-3 text-sm shadow-sm" draggable={screen.canWrite} key={lead.id} onDragStart={(event) => startDrag(event, lead)}>
-                    <Link className="font-semibold underline" href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link>
-                    <p className="mt-1 text-xs text-muted-foreground">{lead.jobTitle ?? "Atuação não informada"}</p>
-                    <dl className="mt-3 space-y-1 text-xs">
-                      <div className="flex items-center justify-between gap-2"><dt>Prioridade</dt><dd>{lead.score === null ? "Ausente" : <><span className="priority-badge" data-priority={lead.priorityCode}>{lead.priorityCode}</span> <span>{lead.score}/100</span></>}</dd></div>
-                      <div className="flex justify-between gap-2"><dt>Responsável</dt><dd className="text-right">{lead.responsibleName}</dd></div>
-                      <div><dt className="text-muted-foreground">Próxima ação</dt><dd>{lead.nextActionDescription ?? "Ausente"} · {formatDate(lead.nextActionAt, screen.timeZone)}</dd></div>
-                    </dl>
+                  <article className="crm-kanban__card text-sm" draggable={screen.canWrite} key={lead.id} onDragStart={(event) => startDrag(event, lead)}>
+                    <div className="crm-kanban__card-top"><span className="crm-kanban__kind">Lead</span><span className="priority-badge" data-priority={lead.priorityCode}>{lead.score === null ? "Sem score" : `${lead.priorityCode} · ${lead.score}/100`}</span></div>
+                    <Link href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link>
+                    <p className="crm-kanban__card-subtitle">{lead.jobTitle ?? "Atuação não informada"}</p>
+                    <div className="crm-kanban__card-owner"><span aria-hidden="true" className="crm-kanban__avatar">{lead.responsibleName.slice(0, 1).toUpperCase()}</span><span>{lead.responsibleName}</span></div>
+                    <p className="crm-kanban__next"><span>Próxima ação</span><strong>{lead.nextActionDescription ?? "Ausente"}</strong><small>{formatDate(lead.nextActionAt, screen.timeZone)}</small></p>
                     <Button className="mt-3 w-full" disabled={!screen.canWrite || pending} onClick={() => setSelectedLeadId(lead.id)} size="sm" type="button" variant="secondary">Alterar etapa</Button>
                   </article>
                 ))}

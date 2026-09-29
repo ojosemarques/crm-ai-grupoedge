@@ -21,7 +21,9 @@ export type IconName =
   | "seta-direita"
   | "tendencia"
   | "vendas"
-  | "configuracoes";
+  | "configuracoes"
+  | "sol"
+  | "lua";
 
 type IconProps = Readonly<{
   name: IconName;
@@ -72,6 +74,10 @@ function IconPaths({ name }: Readonly<{ name: IconName }>) {
       return <path d="M12 5v14M5 12h14" />;
     case "seta-direita":
       return <><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></>;
+    case "sol":
+      return <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></>;
+    case "lua":
+      return <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" />;
   }
 }
 
