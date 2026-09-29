@@ -24,9 +24,9 @@ export default function LoginPage() {
           <span><Image alt="" priority src={politizaiMark} /></span>
           <strong>POLITIZAI <small>CRM comercial</small></strong>
         </div>
-        <p className="eyebrow">Acesso local seguro</p>
+        <p className="eyebrow">Acesso seguro</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight" id="login-title">Entrar</h1>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">Use o workspace, o e-mail e a senha fornecidos pelo administrador.</p>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">Entre no CRM da Politizai com seu e-mail e senha.</p>
         <LoginForm />
       </section>
     </main>

@@ -5,6 +5,8 @@ import { FormEvent, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 
+const LOGIN_WORKSPACE = "politizai";
+
 type LoginErrorResponse = {
   error?: { message?: string };
 };
@@ -25,7 +27,7 @@ export function LoginForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          workspace: formData.get("workspace"),
+          workspace: LOGIN_WORKSPACE,
           email: formData.get("email"),
           password: formData.get("password"),
         }),
@@ -50,17 +52,6 @@ export function LoginForm() {
 
   return (
     <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
-      <label className="block text-sm font-medium">
-        Workspace
-        <input
-          autoComplete="organization"
-          className="mt-2 h-11 w-full rounded-md border bg-card px-3 outline-none focus:ring-2 focus:ring-ring"
-          name="workspace"
-          placeholder="slug-do-workspace"
-          required
-        />
-      </label>
-
       <label className="block text-sm font-medium">
         E-mail
         <input
