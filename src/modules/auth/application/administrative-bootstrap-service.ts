@@ -138,22 +138,23 @@ export function createAdministrativeBootstrapService(database: PrismaClient) {
             updatedByActorId: systemActor.id,
           },
         });
-        for (const definition of permissionCatalog) {
-          const permission = await transaction.permission.upsert({
-            where: { key: definition.key },
-            update: {},
-            create: definition,
-          });
-          await transaction.rolePermission.create({
-            data: {
-              workspaceId: createdWorkspace.id,
-              roleId: role.id,
-              permissionId: permission.id,
-              scope: "WORKSPACE",
-              createdByActorId: systemActor.id,
-            },
-          });
+        await transaction.permission.createMany({ data: [...permissionCatalog], skipDuplicates: true });
+        const permissions = await transaction.permission.findMany({
+          where: { key: { in: permissionCatalog.map(({ key }) => key) } },
+          select: { id: true },
+        });
+        if (permissions.length !== permissionCatalog.length) {
+          fail("Catálogo de permissões incompleto durante o bootstrap.", "ADMIN_BOOTSTRAP_PERMISSIONS_INCOMPLETE");
         }
+        await transaction.rolePermission.createMany({
+          data: permissions.map(({ id }) => ({
+            workspaceId: createdWorkspace.id,
+            roleId: role.id,
+            permissionId: id,
+            scope: "WORKSPACE",
+            createdByActorId: systemActor.id,
+          })),
+        });
         const user = await transaction.user.create({
           data: { email: input.adminEmail, normalizedEmail: input.adminEmail, displayName: input.adminDisplayName },
         });
