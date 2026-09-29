@@ -1,4 +1,5 @@
 .dashboard {
+  --chart-accent: #fa8750;
   display: grid;
   gap: 1.5rem;
   grid-template-columns: minmax(0, 1fr);
@@ -91,6 +92,7 @@
 .comparisonFeatured .comparisonPrevious { border-color: color-mix(in oklab, var(--brand-sky) 18%, transparent); }
 .comparisonFeatured .comparisonPrevious span, .comparisonFeatured .comparisonPeriod { color: var(--sidebar-muted); }
 .comparisonPeriod { color: var(--muted-foreground); font-size: 0.61rem; }
+.comparisonBase { color: var(--muted-foreground); font-size: 0.67rem; }
 .cardLink { align-items: center; color: var(--link); display: inline-flex; font-size: 0.68rem; font-weight: 700; gap: 0.3rem; margin-top: 0.15rem; text-decoration: none; width: fit-content; }
 .cardLink:hover { text-decoration: underline; }
 .comparisonFeatured .cardLink { color: var(--sidebar-foreground); }
@@ -112,6 +114,9 @@
 .chartSelectorButton:hover { border-color: var(--border-strong); color: var(--foreground); }
 .chartSelectorButton[aria-pressed="true"] { background: var(--brand-blue); color: var(--primary-foreground); }
 .chartCanvas { height: 18.5rem; min-width: 0; width: 100%; }
+.flowChart { height: 17rem; min-width: 0; width: 100%; }
+.sparkline { height: 3.6rem; min-width: 0; width: 100%; }
+.sparklineEmpty { align-items: center; color: var(--muted-foreground); display: flex; font-size: 0.64rem; height: 3.6rem; }
 .chartEmpty { align-items: center; background: var(--surface-subtle); border: 1px dashed var(--border-strong); border-radius: var(--radius-control); color: var(--muted-foreground); display: flex; flex-direction: column; gap: 0.25rem; justify-content: center; min-height: 16rem; padding: 1rem; text-align: center; }
 .chartEmpty strong { color: var(--foreground); font-size: 0.86rem; }
 .chartEmpty span { font-size: 0.72rem; max-width: 26rem; }
@@ -213,6 +218,49 @@
 .detailsContent { border-top: 1px solid var(--border); display: grid; gap: 0.8rem; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0.8rem; }
 
 .srOnly { clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+
+/* Analytics surfaces share a warmer, denser language than operational forms. */
+.dashboard { gap: 1.25rem; }
+.dashboardHeader { background: radial-gradient(circle at 88% -40%, #f78a5970, transparent 36%), radial-gradient(circle at 45% 120%, #753ecb55, transparent 42%), var(--surface); border: 1px solid var(--border); border-radius: 1.4rem; min-height: 10rem; padding: clamp(1.25rem, 2.6vw, 2rem); }
+.dashboardHeader h1 { font-size: clamp(2rem, 3.5vw, 3.25rem); letter-spacing: -0.055em; }
+.eyebrow, .sectionTag, .panelEyebrow { color: #fa9461; letter-spacing: .105em; }
+.contextStrip { background: var(--surface); border-color: var(--border); color: var(--foreground); box-shadow: var(--shadow-card); }
+.contextStrip > div { padding: 1rem 1.1rem; }
+.contextStrip > div + div { border-color: var(--border); }
+.contextStrip span { color: var(--muted-foreground); }
+.contextStrip small { color: var(--muted-foreground); }
+.periodNav { background: var(--surface); }
+.periodActive, .periodActive:hover { background: #fa8750; color: #27140d; }
+.comparisonGrid { gap: .7rem; }
+.comparisonCard { border-radius: 1.2rem; box-shadow: var(--shadow-card); min-height: 15.25rem; padding: 1.15rem; }
+.comparisonCard:nth-child(2) { --chart-accent: #6c8cff; }
+.comparisonCard:nth-child(3) { --chart-accent: #aa75ee; }
+.comparisonCard:nth-child(4) { --chart-accent: #45c7a0; }
+.comparisonFeatured { background: linear-gradient(145deg, #fa9057, #f06672 72%, #d75c9c); border-color: #fa9057; color: #231925; }
+.comparisonHeader { font-size: .78rem; }
+.comparisonFeatured .comparisonHeader, .comparisonFeatured .comparisonPeriod, .comparisonFeatured .comparisonPrevious span, .comparisonFeatured .comparisonBase { color: #35253ed9; }
+.comparisonFeatured .comparisonIcon { background: #fff7; color: #322034; }
+.comparisonFeatured .comparisonDelta { color: #35253e; }
+.comparisonFeatured[data-interpretation="POSITIVE"] .comparisonDelta, .comparisonFeatured[data-interpretation="NEGATIVE"] .comparisonDelta { color: #35253e; }
+.comparisonFeatured .comparisonPrevious { border-color: #492c4140; }
+.comparisonFeatured .cardLink { color: #302038; }
+.comparisonValue { font-size: clamp(1.55rem, 2.6vw, 2.35rem); }
+.comparisonDelta { font-size: .72rem; }
+.panel { border-radius: 1.2rem; box-shadow: var(--shadow-card); padding: 1.2rem; }
+.panelHeader h2 { font-size: 1.15rem; }
+.chartCanvas { height: 19.5rem; }
+.chartSelectorButton[aria-pressed="true"] { background: #fa8750; color: #27140d; }
+.attentionPanel { background: linear-gradient(155deg, #28212f, #1d1a23); border-color: #49404c; }
+.pulseStrip { background: var(--surface); border-color: var(--border); box-shadow: var(--shadow-card); }
+.pulseStrip a + a { border-color: var(--border); }
+.pulseStrip small { color: #fa8750; }
+.flowPanel { --chart-accent: #fa8750; }
+.flowPanel .panelHeader p { max-width: 60rem; }
+.ticketBadge { border-color: #fa875066; color: #f4a177; }
+.analysisGrid .panel:nth-child(2) { background: var(--surface-subtle); }
+:global(:root[data-theme="light"]) .dashboardHeader { background: radial-gradient(circle at 92% 0%, #f9bb9c, transparent 35%), radial-gradient(circle at 5% 110%, #e9e2fb, transparent 42%), #fff; }
+:global(:root[data-theme="light"]) .attentionPanel { background: linear-gradient(155deg, #28212f, #1d1a23); }
+:global(:root[data-theme="light"]) .ticketBadge { color: #a2481a; }
 
 @media (max-width: 1599px) {
   .contextStrip { grid-template-columns: repeat(2, minmax(0, 1fr)); }

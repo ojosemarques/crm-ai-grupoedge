@@ -26,5 +26,6 @@ Estados funcionais usam `--success`, `--warning`, `--danger` e `--info`, com as 
 - **Pipelines:** `.crm-kanban`, `.crm-kanban__lane` e `.crm-kanban__card` definem colunas, cards, avatar, prioridade, valor e próxima ação. A rolagem horizontal preserva a leitura em telas estreitas.
 - **Conversas:** três áreas de lista, conversa e contexto; mensagens de saída recebem o acento violeta.
 - **Modais e formulários:** superfícies com borda perceptível, foco visível e campos que acompanham o tema. Avisos preservam cores semânticas com contraste no tema escuro.
+- **Dashboard e métricas:** cards e gráficos usam acento quente (`#fa8750`) sobre as superfícies semânticas de cada tema. Séries monetárias são convertidas de centavos apenas para visualização; os valores exatos e estados de cobertura permanecem disponíveis em tabelas e drilldowns. Comparações preservam período anterior e denominador; cenários de forecast são barras independentes, nunca partes de um total empilhado.
 
 O conteúdo e as ações de cada tela continuam governados pelos dados e permissões existentes. As imagens orientam cor, densidade, formas e hierarquia, sem incorporar marcas ou dados fictícios de outros produtos.

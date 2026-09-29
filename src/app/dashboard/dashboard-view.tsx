@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { CommercialEvolutionChart, RevenueSalesChart } from "@/app/dashboard/dashboard-charts";
+import { CommercialEvolutionChart, CommercialFlowChart, KpiSparkline, RevenueSalesChart } from "@/app/dashboard/dashboard-charts";
 import styles from "@/app/dashboard/dashboard.module.css";
 import { Icon, type IconName } from "@/components/ui/icon";
 import type {
@@ -10,6 +10,7 @@ import type {
   DashboardQuery,
   DashboardScreen,
   DashboardSegment,
+  DashboardTimeSeries,
 } from "@/modules/metrics/domain/dashboard-contracts";
 
 function paramsFor(query: DashboardQuery, extras: Record<string, string> = {}) {
@@ -82,14 +83,16 @@ const comparisonIcons: Readonly<Record<string, IconName>> = {
   "sla-median": "relogio",
 };
 
-function ComparisonCard({ comparison, featured, query }: Readonly<{ comparison: DashboardComparison; featured?: boolean; query: DashboardQuery }>) {
+function ComparisonCard({ comparison, featured, query, series }: Readonly<{ comparison: DashboardComparison; featured?: boolean; query: DashboardQuery; series: DashboardTimeSeries | undefined }>) {
   return (
     <article className={`${styles.comparisonCard} ${featured ? styles.comparisonFeatured : ""}`} data-interpretation={comparison.interpretation}>
       <div className={styles.comparisonHeader}><span className={styles.comparisonIcon}><Icon name={comparisonIcons[comparison.id] ?? "tendencia"} size={18} /></span><span>{comparison.label}</span></div>
       <strong className={styles.comparisonValue}>{formatValue(comparison.kind, comparison.current.value)}</strong>
       <p className={styles.comparisonDelta}><span aria-hidden="true">{comparison.direction === "UP" ? "↑" : comparison.direction === "DOWN" ? "↓" : "→"}</span>{comparisonSentence(comparison)}</p>
+      <KpiSparkline label={comparison.label} series={series} />
       <div className={styles.comparisonPrevious}><span>Anterior</span><strong>{formatValue(comparison.kind, comparison.previous.value)}</strong></div>
       <p className={styles.comparisonPeriod}>{periodLabel(comparison.previousPeriod.fromDate, comparison.previousPeriod.toDate)}</p>
+      {comparison.current.denominator !== null ? <p className={styles.comparisonBase}>Base: {Number(comparison.current.numerator).toLocaleString("pt-BR")} de {comparison.current.denominator.toLocaleString("pt-BR")}</p> : null}
       <Link aria-label={`${comparison.label}: abrir registros`} className={styles.cardLink} href={dashboardHref(query, comparison.current.drilldownId)}>Abrir registros <Icon name="seta-direita" size={14} /></Link>
     </article>
   );
@@ -210,7 +213,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
   return (
     <div className={styles.dashboard}>
       <header className={styles.dashboardHeader}>
-        <div><p className={styles.eyebrow}>Visão executiva · {scopeLabel}</p><h1>Dashboard comercial</h1><p className={styles.headerIntro}>{displayName.split(/\s+/)[0]}, acompanhe resultado, velocidade e riscos da operação em um só lugar.</p></div>
+        <div><p className={styles.eyebrow}>Visão executiva · {scopeLabel}</p><h1>Olá, {displayName.split(/\s+/)[0]}.</h1><p className={styles.headerIntro}>Acompanhe resultado, velocidade e riscos da operação em um só lugar.</p></div>
         <div className={styles.headerActions}><Link className={styles.primaryAction} href={focusAction.href}>{focusAction.label}<Icon name="seta-direita" size={15} /></Link></div>
       </header>
 
@@ -236,7 +239,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
 
       {!screen.hasData ? <section className={styles.emptyState}><Icon name="tendencia" size={22} /><div><h2>Nenhum dado no período</h2><p>Altere o período ou os filtros. Indicadores permanecem zerados e nenhum gráfico exibe séries fictícias.</p></div></section> : null}
 
-      <section aria-labelledby="kpis-title"><header className={styles.sectionHeader}><div><span className={styles.sectionTag}>Comparação principal</span><h2 id="kpis-title">Indicadores acionáveis</h2><p>Valor atual, base anterior e interpretação correta da direção.</p></div></header><div className={styles.comparisonGrid}>{primaryComparisons.map((comparison, index) => <ComparisonCard comparison={comparison} featured={index === 0} key={comparison.id} query={q} />)}</div></section>
+      <section aria-labelledby="kpis-title"><header className={styles.sectionHeader}><div><span className={styles.sectionTag}>Comparação principal</span><h2 id="kpis-title">Indicadores acionáveis</h2><p>Valores, tendências reais e base anterior no mesmo recorte.</p></div></header><div className={styles.comparisonGrid}>{primaryComparisons.map((comparison, index) => <ComparisonCard comparison={comparison} featured={index === 0} key={comparison.id} query={q} series={screen.timeSeries.find((series) => series.id === comparison.id)} />)}</div></section>
 
       <div className={styles.primaryGrid}>
         <section className={`${styles.panel} ${styles.evolutionPanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Evolução comercial</span><h2>Da entrada à venda</h2><p>Selecione a série e compare os mesmos buckets dos dois períodos.</p></div></header><CommercialEvolutionChart currentPeriodLabel={currentPeriodLabel} description="Evolução dos principais marcos comerciais" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Evolução comercial" /></section>
@@ -244,6 +247,8 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
       </div>
 
       <section className={styles.pulseStrip} aria-label="Marcos operacionais do período">{operationalPulse.map((metric) => <Link href={dashboardHref(q, metric.drilldownId)} key={metric.id}><span>{metric.label}</span><strong>{metricValue(metric)}</strong><small>{metric.denominator === null ? `${metric.numerator} registros` : `${metric.numerator} de ${metric.denominator}`}</small></Link>)}</section>
+
+      <section className={`${styles.panel} ${styles.flowPanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Volume por marco</span><h2>Movimento do funil no período</h2><p>Recebidos, qualificados, agendados e vendas em buckets reais. As séries não são somadas como se fossem categorias exclusivas.</p></div></header><CommercialFlowChart series={screen.timeSeries} /></section>
 
       <div className={styles.commercialGrid}>
         <section className={`${styles.panel} ${styles.revenuePanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Receita e vendas</span><h2>Resultado ao longo do tempo</h2><p>Moeda e quantidade usam visualizações separadas para não misturar escalas.</p></div><span className={styles.ticketBadge}>Ticket {formatMoney(screen.overview.averageTicket.cents)}</span></header><RevenueSalesChart currentPeriodLabel={currentPeriodLabel} description="Receita e vendas por bucket temporal" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Receita e vendas" /></section>

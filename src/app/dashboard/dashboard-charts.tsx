@@ -2,10 +2,13 @@
 
 import { useState } from "react";
 import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   Legend,
   Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -25,6 +28,34 @@ type TrendChartProps = Readonly<{
   currentPeriodLabel: string;
   previousPeriodLabel: string;
 }>;
+
+const flowSeries = [
+  { id: "leads", label: "Recebidos", color: "#f98b52" },
+  { id: "qualified", label: "Qualificados", color: "#6c8cff" },
+  { id: "scheduled", label: "Agendados", color: "#b475fa" },
+  { id: "sales", label: "Vendas", color: "#43c7a0" },
+] as const;
+
+export function KpiSparkline({ series, label }: Readonly<{ series: DashboardTimeSeries | undefined; label: string }>) {
+  const points = series?.points.map((point) => numericValue(series, point.value)) ?? [];
+  if (!points.some((value) => value !== null && value !== 0)) return <span className={styles.sparklineEmpty}>Sem eventos no período</span>;
+  const values = points.map((value, index) => ({ index, value }));
+  return <div aria-label={`Tendência de ${label}`} className={styles.sparkline} role="img"><ResponsiveContainer height="100%" width="100%"><AreaChart data={values} margin={{ top: 3, right: 2, bottom: 1, left: 2 }}><Area dataKey="value" dot={false} fill="var(--chart-accent)" fillOpacity={0.12} isAnimationActive={false} stroke="var(--chart-accent)" strokeWidth={2} type="monotone" /></AreaChart></ResponsiveContainer></div>;
+}
+
+export function CommercialFlowChart({ series }: Readonly<{ series: readonly DashboardTimeSeries[] }>) {
+  const present = flowSeries.flatMap((item) => {
+    const data = series.find((source) => source.id === item.id);
+    return data ? [{ ...item, data, byBucket: new Map(data.points.map((point) => [point.bucket, point.value])) }] : [];
+  });
+  const buckets = present[0]?.data?.points ?? [];
+  const data = buckets.map((point) => Object.fromEntries([
+    ["bucket", point.bucket],
+    ...present.map((item) => [item.id, numericValue(item.data, item.byBucket.get(point.bucket) ?? null)]),
+  ]));
+  if (!data.some((point) => present.some((item) => Number(point[item.id] ?? 0) > 0))) return <div className={styles.chartEmpty}><strong>Sem movimento na jornada</strong><span>O gráfico será preenchido quando houver eventos reais neste período.</span></div>;
+  return <div aria-label="Volume de marcos comerciais por período" className={styles.flowChart} role="img"><ResponsiveContainer height="100%" width="100%"><BarChart accessibilityLayer barGap={2} data={data} margin={{ top: 12, right: 8, bottom: 2, left: 0 }}><CartesianGrid stroke="var(--border)" strokeDasharray="3 5" vertical={false} /><XAxis axisLine={false} dataKey="bucket" minTickGap={20} tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} tickFormatter={compactBucket} tickLine={false} /><YAxis axisLine={false} allowDecimals={false} tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} tickLine={false} width={36} /><Tooltip contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "12px", color: "var(--foreground)" }} /><Legend iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />{present.map((item) => <Bar dataKey={item.id} fill={item.color} isAnimationActive={false} key={item.id} maxBarSize={18} name={item.label} radius={[4, 4, 0, 0]} />)}</BarChart></ResponsiveContainer></div>;
+}
 
 function numericValue(series: DashboardTimeSeries, value: number | string | null): number | null {
   if (value === null) return null;
@@ -130,7 +161,8 @@ function TrendChart({
           role="img"
         >
           <ResponsiveContainer height="100%" width="100%">
-            <LineChart accessibilityLayer data={data} margin={{ top: 12, right: 12, bottom: 4, left: 0 }}>
+            <AreaChart accessibilityLayer data={data} margin={{ top: 12, right: 12, bottom: 4, left: 0 }}>
+              <defs><linearGradient id={`chart-fill-${title.replace(/\W+/g, "-").toLowerCase()}`} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="var(--chart-accent)" stopOpacity={0.3} /><stop offset="100%" stopColor="var(--chart-accent)" stopOpacity={0} /></linearGradient></defs>
               <CartesianGrid stroke="var(--border)" strokeDasharray="3 5" vertical={false} />
               <XAxis
                 axisLine={false}
@@ -153,13 +185,14 @@ function TrendChart({
                 labelFormatter={(label) => `Bucket atual: ${String(label)}`}
               />
               <Legend iconType="line" verticalAlign="top" wrapperStyle={{ color: "var(--muted-foreground)", fontSize: 12, paddingBottom: 16 }} />
-              <Line
+              <Area
                 activeDot={{ r: 5 }}
                 dataKey="current"
                 dot={data.length <= 14}
+                fill={`url(#chart-fill-${title.replace(/\W+/g, "-").toLowerCase()})`}
                 isAnimationActive={false}
                 name={`Atual · ${currentPeriodLabel}`}
-                stroke="var(--brand-blue)"
+                stroke="var(--chart-accent)"
                 strokeWidth={2.5}
                 type="monotone"
               />
@@ -173,7 +206,7 @@ function TrendChart({
                 strokeWidth={2}
                 type="monotone"
               />
-            </LineChart>
+            </AreaChart>
           </ResponsiveContainer>
         </div>
       )}

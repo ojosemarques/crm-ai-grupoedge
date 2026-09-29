@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { PageHeader } from "@/components/layout/page-header";
 import { requirePageAuthentication } from "@/modules/auth/http/authentication-guards";
 import { getRevenueMetricsService } from "@/modules/metrics/application/revenue-metrics-service";
 import type { RevenueDrilldownPage, RevenueMetricsScreen } from "@/modules/metrics/domain/revenue-metrics-contracts";
@@ -18,5 +17,5 @@ export default async function RevenueMetricsPage({ searchParams }: Readonly<{ se
     screen = await service.getScreen(context, input);
     drilldown = section === "drilldown" && typeof raw.metric === "string" ? await service.getDrilldown(context, input) : null;
   } catch (error) { if (error instanceof AccessDeniedError) redirect("/acesso-negado"); throw error; }
-  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Revenue Operations" title="Métricas de receita" description="Aquisição, conversão, contratos, MRR, retenção e forecast com definições únicas e drilldown." meta={`${context.displayName} · ${screen.scope}`} /><RevenueMetricsWorkspace screen={screen} section={section} drilldown={drilldown} /></main>;
+  return <main className="page-canvas page-canvas-wide"><RevenueMetricsWorkspace screen={screen} section={section} drilldown={drilldown} /></main>;
 }
