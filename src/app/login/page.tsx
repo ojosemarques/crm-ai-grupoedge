@@ -6,29 +6,34 @@ import politizaiMark from "../../../public/brand/politizai-mark.png";
 export default function LoginPage() {
   return (
     <main className="login-shell">
-      <section className="login-context" aria-labelledby="product-title">
-        <div className="login-brand">
-          <span><Image alt="" priority src={politizaiMark} /></span>
-          <strong>POLITIZAI <small>CRM comercial</small></strong>
-        </div>
-        <h2 id="product-title">Operação comercial com contexto e próxima ação.</h2>
-        <p>Leads, SLA, reuniões e oportunidades em uma fonte única e auditável.</p>
-        <ul aria-label="Princípios do produto">
-          <li><span aria-hidden="true">01</span> Prioridade explicável</li>
-          <li><span aria-hidden="true">02</span> Histórico persistido</li>
-          <li><span aria-hidden="true">03</span> Decisão humana</li>
-        </ul>
-      </section>
-      <section className="login-panel" aria-labelledby="login-title">
-        <div className="login-brand login-brand--mobile">
-          <span><Image alt="" priority src={politizaiMark} /></span>
-          <strong>POLITIZAI <small>CRM comercial</small></strong>
-        </div>
-        <p className="eyebrow">Acesso seguro</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight" id="login-title">Entrar</h1>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">Entre no CRM da Politizai com seu e-mail e senha.</p>
-        <LoginForm />
-      </section>
+      <div className="login-card">
+        <section className="login-context" aria-labelledby="product-title">
+          <div className="login-context__copy">
+            <h2 id="product-title">Simplifique processos.<br />Acelere resultados.</h2>
+            <p>Foque no que importa enquanto a Politizai organiza os detalhes da operação.</p>
+          </div>
+        </section>
+
+        <section className="login-panel" aria-labelledby="login-title">
+          <header className="login-panel__header">
+            <div className="login-brand">
+              <Image alt="" height={21} priority src={politizaiMark} width={21} />
+              <strong>Politizai</strong>
+            </div>
+            <h1 id="login-title">Entre na sua conta</h1>
+            <p>Bem-vindo de volta. Informe seus dados para continuar.</p>
+          </header>
+
+          <LoginForm />
+
+          <div className="login-panel__assurance">
+            <p className="login-panel__divider"><span>Acesso da equipe Politizai</span></p>
+            <div className="login-panel__assurance-pill"><span aria-hidden="true">✦</span> Seu acesso é individual e protegido</div>
+            <div className="login-panel__assurance-pill"><span aria-hidden="true">●</span> Contas gerenciadas pela Politizai</div>
+            <p className="login-panel__footnote">Ainda não tem acesso? Fale com o administrador.</p>
+          </div>
+        </section>
+      </div>
     </main>
   );
 }

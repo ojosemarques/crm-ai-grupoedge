@@ -3,8 +3,6 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
-import { Button } from "@/components/ui/button";
-
 const LOGIN_WORKSPACE = "politizai";
 
 type LoginErrorResponse = {
@@ -51,39 +49,47 @@ export function LoginForm() {
   }
 
   return (
-    <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
-      <label className="block text-sm font-medium">
+    <form className="login-form" onSubmit={handleSubmit}>
+      <label className="login-field">
         E-mail
         <input
           autoComplete="username"
-          className="mt-2 h-11 w-full rounded-md border bg-card px-3 outline-none focus:ring-2 focus:ring-ring"
+          className="login-field__input"
           name="email"
+          placeholder="voce@empresa.com"
           required
           type="email"
         />
       </label>
 
-      <label className="block text-sm font-medium">
+      <label className="login-field">
         Senha
         <input
           autoComplete="current-password"
-          className="mt-2 h-11 w-full rounded-md border bg-card px-3 outline-none focus:ring-2 focus:ring-ring"
+          className="login-field__input"
           minLength={12}
           name="password"
+          placeholder="••••••••••••"
           required
           type="password"
         />
       </label>
 
+      <div className="login-form__meta">
+        <span><span className="login-form__secure-mark" aria-hidden="true" /> Acesso protegido</span>
+        <span>Esqueceu a senha? Fale com o administrador</span>
+      </div>
+
       {errorMessage ? (
-        <p className="rounded-md border border-danger/30 bg-[var(--danger-surface)] p-3 text-sm text-danger" role="alert">
+        <p className="login-form__error" role="alert">
           {errorMessage}
         </p>
       ) : null}
 
-      <Button className="w-full" disabled={isSubmitting} type="submit">
-        {isSubmitting ? "Entrando..." : "Entrar"}
-      </Button>
+      <button className="login-form__submit" disabled={isSubmitting} type="submit">
+        <span>{isSubmitting ? "Entrando..." : "Entrar"}</span>
+        <span aria-hidden="true">→</span>
+      </button>
     </form>
   );
 }
