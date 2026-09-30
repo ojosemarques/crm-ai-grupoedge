@@ -6,13 +6,16 @@ import {
   channelCapabilities,
   channelPrivacyChannel,
   composeMessageSchema,
+  conversationContextSchema,
   conversationCommandSchema,
   conversationSlaState,
   deliveryScenarioSchema,
   inboxQuerySchema,
+  internalNoteSchema,
   localInboundSchema,
   normalizeChannelAddress,
   OMNICHANNEL_CONTRACT_VERSION,
+  OMNICHANNEL_FIRST_RESPONSE_TARGET_SECONDS,
   shouldProjectMessageStatus,
   templateInputSchema,
   type SupportedConversationChannel,
@@ -21,6 +24,7 @@ import { evaluateWhatsAppOutboundPolicy, WHATSAPP_LOCAL_PROVIDER_KEY } from "@/m
 import { createStableMessageId, EMAIL_PROVIDER_KEY, normalizeMessageId, normalizeReferenceChain } from "@/modules/integrations/domain/email-contracts";
 import { cancelPendingOutboundForContactInTransaction, evaluatePrivacyInTransaction } from "@/modules/privacy/application/privacy-service";
 import { cancelIncompatibleAccountPlanActionsForLeadInTransaction } from "@/modules/opportunities/application/account-plan-service";
+import { createOpportunityService } from "@/modules/opportunities/application/opportunity-service";
 import type { ResourceScope } from "@/modules/users/permissions/authorization-service";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -78,6 +82,7 @@ function parseInboxQuery(raw: unknown) {
     ...candidate,
     channels: splitList(candidate.channels),
     priorities: splitList(candidate.priorities),
+    statuses: splitList(candidate.statuses),
   });
 }
 
@@ -190,7 +195,7 @@ async function getScopedWhere(options: Options, context: AuthenticatedContext): 
 async function loadConversation(options: Options, context: AuthenticatedContext, conversationId: string, permission: typeof PermissionKeys.INBOX_READ | typeof PermissionKeys.MESSAGES_COMPOSE | typeof PermissionKeys.MESSAGES_SEND | typeof PermissionKeys.MESSAGES_REPLAY | typeof PermissionKeys.CONVERSATIONS_ASSIGN | typeof PermissionKeys.CONVERSATIONS_MANAGE) {
   const row = await options.database.conversation.findFirst({
     where: { id: conversationId, workspaceId: context.workspaceId, deletedAt: null },
-    include: { queue: { select: { id: true, name: true, teamId: true } } },
+    include: { queue: { select: { id: true, name: true, teamId: true, conversationServiceType: true, conversationSlaSeconds: true } } },
   });
   if (!row) fail("Conversa não encontrada neste workspace.", "CONVERSATION_NOT_FOUND", 404);
   await options.authorization.assertAuthorized(context, permission, conversationResource(row));
@@ -203,6 +208,7 @@ export function createOmnichannelService(options: Options) {
   async function getInbox(context: AuthenticatedContext, raw: unknown) {
     const query = parseInboxQuery(raw);
     const scoped = await getScopedWhere(options, context);
+    const canViewSensitive = await options.authorization.authorize(context, PermissionKeys.MESSAGES_VIEW_SENSITIVE, { workspaceId: context.workspaceId, resourceType: "Conversation", ownerMemberId: context.memberId });
     const now = options.now();
     const where: Prisma.ConversationWhereInput = {
       workspaceId: context.workspaceId,
@@ -211,10 +217,15 @@ export function createOmnichannelService(options: Options) {
       ...(query.conversationId ? { id: query.conversationId } : {}),
       ...(query.channels.length ? { channel: { in: query.channels } } : {}),
       ...(query.priorities.length ? { priority: { in: query.priorities } } : {}),
+      ...(query.statuses.length ? { status: { in: query.statuses } } : {}),
+      ...(query.queueId ? { queueId: query.queueId } : {}),
+      ...(query.assigneeMemberId ? { assigneeMemberId: query.assigneeMemberId } : {}),
+      ...(query.business === "WITH_OPPORTUNITY" ? { opportunityId: { not: null } } : {}),
+      ...(query.business === "WITHOUT_OPPORTUNITY" ? { opportunityId: null } : {}),
       ...(query.cursor ? { lastMessageAt: { lt: new Date(query.cursor) } } : {}),
       ...(query.view === "MINE" ? { assigneeMemberId: context.memberId } : {}),
       ...(query.view === "UNREAD" ? { unreadCount: { gt: 0 } } : {}),
-      ...(query.view === "OVERDUE" ? { status: "PENDING_INTERNAL", waitingSince: { lt: new Date(now.getTime() - 180_000) } } : {}),
+      ...(query.view === "OVERDUE" ? { status: "PENDING_INTERNAL", slaDueAt: { lt: now } } : {}),
       ...(query.view === "WAITING_INTERNAL" ? { status: "PENDING_INTERNAL" } : {}),
       ...(query.view === "WAITING_CUSTOMER" ? { status: "WAITING_CUSTOMER" } : {}),
       ...(query.search ? {
@@ -223,10 +234,11 @@ export function createOmnichannelService(options: Options) {
           { lead: { fullName: { contains: query.search, mode: "insensitive" } } },
           { contact: { preferredName: { contains: query.search, mode: "insensitive" } } },
           { account: { name: { contains: query.search, mode: "insensitive" } } },
+          ...(canViewSensitive.allowed ? [{ messages: { some: { body: { contains: query.search, mode: "insensitive" as const }, deletedAt: null } } }] : []),
         ],
       } : {}),
     };
-    const [rows, counts, canCompose, canAssign, canManage, canReplay, canViewSensitive, members, queues, templates, metrics] = await Promise.all([
+    const [rows, counts, canCompose, canAssign, canManage, canReplay, members, queues, templates, metrics] = await Promise.all([
       options.database.conversation.findMany({
         where,
         orderBy: [{ priority: "desc" }, { unreadCount: "desc" }, { lastMessageAt: "desc" }, { id: "desc" }],
@@ -236,7 +248,7 @@ export function createOmnichannelService(options: Options) {
           contact: { select: { id: true, preferredName: true, legalName: true } },
           account: { select: { id: true, name: true } },
           assignee: { select: { id: true, user: { select: { displayName: true } } } },
-          queue: { select: { id: true, name: true, teamId: true } },
+          queue: { select: { id: true, name: true, teamId: true, conversationServiceType: true, conversationSlaSeconds: true } },
           messages: { where: { deletedAt: null }, orderBy: [{ occurredAt: "desc" }, { id: "desc" }], take: 1, select: { id: true, body: true, direction: true, status: true, occurredAt: true, isSimulated: true, redactedAt: true } },
           identityReviews: { where: { status: "OPEN" }, select: { id: true }, take: 1 },
         },
@@ -246,9 +258,8 @@ export function createOmnichannelService(options: Options) {
       options.authorization.authorize(context, PermissionKeys.CONVERSATIONS_ASSIGN, { workspaceId: context.workspaceId, resourceType: "Conversation", ownerMemberId: context.memberId }),
       options.authorization.authorize(context, PermissionKeys.CONVERSATIONS_MANAGE, { workspaceId: context.workspaceId, resourceType: "Conversation", ownerMemberId: context.memberId }),
       options.authorization.authorize(context, PermissionKeys.MESSAGES_REPLAY, { workspaceId: context.workspaceId, resourceType: "Conversation", ownerMemberId: context.memberId }),
-      options.authorization.authorize(context, PermissionKeys.MESSAGES_VIEW_SENSITIVE, { workspaceId: context.workspaceId, resourceType: "Conversation", ownerMemberId: context.memberId }),
       options.database.workspaceMember.findMany({ where: { workspaceId: context.workspaceId, status: "ACTIVE", deletedAt: null }, orderBy: { user: { displayName: "asc" } }, select: { id: true, user: { select: { displayName: true } } } }),
-      options.database.queue.findMany({ where: { workspaceId: context.workspaceId, deletedAt: null }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+      options.database.queue.findMany({ where: { workspaceId: context.workspaceId, deletedAt: null }, orderBy: { name: "asc" }, select: { id: true, name: true, conversationServiceType: true, conversationSlaSeconds: true } }),
       options.database.messageTemplate.findMany({ where: { workspaceId: context.workspaceId, status: "ACTIVE_LOCAL" }, orderBy: { name: "asc" }, include: { versions: { orderBy: { version: "desc" }, take: 1 } } }),
       getMetrics(context),
     ]);
@@ -262,7 +273,7 @@ export function createOmnichannelService(options: Options) {
       unreadCount: row.unreadCount,
       lastMessageAt: row.lastMessageAt?.toISOString() ?? null,
       waitingSince: row.waitingSince?.toISOString() ?? null,
-      sla: conversationSlaState({ status: row.status, waitingSince: row.waitingSince, now }),
+      sla: conversationSlaState({ status: row.status, waitingSince: row.waitingSince, now, targetSeconds: row.slaTargetSeconds, dueAt: row.slaDueAt, serviceType: row.serviceType }),
       revision: row.revision,
       lead: row.lead,
       contactName: row.contact?.preferredName ?? row.contact?.legalName ?? row.lead?.fullName ?? "Contato não identificado",
@@ -285,14 +296,18 @@ export function createOmnichannelService(options: Options) {
       selected: detail,
       pagination: { hasMore, nextCursor: hasMore ? visible.at(-1)?.lastMessageAt ?? null : null },
       options: { members: members.map((item) => ({ id: item.id, name: item.user.displayName })), queues, templates: templates.map((item) => ({ id: item.id, name: item.name, channel: item.channel, version: item.versions[0] ? { id: item.versions[0].id, version: item.versions[0].version, bodyTemplate: item.versions[0].bodyTemplate, variables: item.versions[0].variables } : null })) },
-      capabilities: { compose: canCompose.allowed, assign: canAssign.allowed, manage: canManage.allowed, replay: canReplay.allowed, viewSensitive: canViewSensitive.allowed },
+      capabilities: { compose: canCompose.allowed, assign: canAssign.allowed, manage: canManage.allowed, addNote: canManage.allowed, editContext: canManage.allowed, replay: canReplay.allowed, viewSensitive: canViewSensitive.allowed },
     };
   }
 
   async function getConversation(context: AuthenticatedContext, conversationId: string) {
     const row = await loadConversation(options, context, conversationId, PermissionKeys.INBOX_READ);
-    const sensitive = await options.authorization.authorize(context, PermissionKeys.MESSAGES_VIEW_SENSITIVE, conversationResource(row));
-    const [messages, assignments, participants] = await Promise.all([
+    const [sensitive, compose, send] = await Promise.all([
+      options.authorization.authorize(context, PermissionKeys.MESSAGES_VIEW_SENSITIVE, conversationResource(row)),
+      options.authorization.authorize(context, PermissionKeys.MESSAGES_COMPOSE, conversationResource(row)),
+      options.authorization.authorize(context, PermissionKeys.MESSAGES_SEND, conversationResource(row)),
+    ]);
+    const [messages, assignments, participants, opportunityScreen] = await Promise.all([
       options.database.message.findMany({
         where: { workspaceId: context.workspaceId, conversationId, deletedAt: null },
         orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
@@ -301,6 +316,14 @@ export function createOmnichannelService(options: Options) {
       }),
       options.database.conversationAssignmentHistory.findMany({ where: { workspaceId: context.workspaceId, conversationId }, orderBy: { occurredAt: "asc" }, include: { previousOwner: { select: { user: { select: { displayName: true } } } }, newOwner: { select: { user: { select: { displayName: true } } } }, previousQueue: { select: { name: true } }, newQueue: { select: { name: true } } } }),
       options.database.conversationParticipant.findMany({ where: { workspaceId: context.workspaceId, conversationId }, orderBy: { createdAt: "asc" } }),
+      row.leadId
+        ? createOpportunityService({ database: options.database, authorization: options.authorization, now: options.now })
+            .getLeadScreen(context, { leadId: row.leadId })
+            .catch((error: unknown) => {
+              if (error instanceof ApplicationError && error.statusCode === 403) return null;
+              throw error;
+            })
+        : Promise.resolve(null),
     ]);
     return {
       id: row.id,
@@ -315,9 +338,13 @@ export function createOmnichannelService(options: Options) {
       assigneeMemberId: row.assigneeMemberId,
       queueId: row.queueId,
       queue: row.queue,
+      canReply: row.assigneeMemberId === context.memberId && compose.allowed && send.allowed,
+      opportunityId: row.opportunityId,
+      opportunities: opportunityScreen?.opportunities.map((item) => ({ id: item.id, name: item.name, status: item.status, stageName: item.stageName })) ?? [],
       openedAt: row.openedAt.toISOString(),
       lastMessageAt: row.lastMessageAt?.toISOString() ?? null,
       waitingSince: row.waitingSince?.toISOString() ?? null,
+      sla: conversationSlaState({ status: row.status, waitingSince: row.waitingSince, now: options.now(), targetSeconds: row.slaTargetSeconds, dueAt: row.slaDueAt, serviceType: row.serviceType }),
       firstInboundAt: row.firstInboundAt?.toISOString() ?? null,
       lastCustomerInboundAt: row.lastCustomerInboundAt?.toISOString() ?? null,
       serviceWindowExpiresAt: row.serviceWindowExpiresAt?.toISOString() ?? null,
@@ -364,6 +391,12 @@ export function createOmnichannelService(options: Options) {
       const lead = exact?.contact.leads[0] ?? null;
       const ownerMemberId = lead?.ownerMemberId ?? null;
       const queueId = ownerMemberId ? null : lead?.queueId ?? foundation.queue.id;
+      const serviceQueue = queueId
+        ? await tx.queue.findFirst({ where: { id: queueId, workspaceId: context.workspaceId, deletedAt: null } })
+        : null;
+      const serviceType = serviceQueue?.conversationServiceType ?? "SALES";
+      const slaTargetSeconds = serviceQueue?.conversationSlaSeconds ?? OMNICHANNEL_FIRST_RESPONSE_TARGET_SECONDS;
+      const inboundOccurredAt = new Date(input.occurredAt);
       const referencedEmail = input.channel === "EMAIL" && input.inReplyToHeader
         ? await tx.emailMessageProfile.findFirst({ where: { workspaceId: context.workspaceId, messageIdHeader: normalizeMessageId(input.inReplyToHeader) }, include: { message: { include: { conversation: true } } } })
         : null;
@@ -387,14 +420,19 @@ export function createOmnichannelService(options: Options) {
           status: "PENDING_INTERNAL",
           subject: input.subject ?? null,
           priority: lead?.priority ?? "MEDIUM",
+          serviceType,
+          slaTargetSeconds,
+          slaDueAt: new Date(inboundOccurredAt.getTime() + slaTargetSeconds * 1_000),
           externalThreadId: `local:${normalized.success ? normalized.hash : sha256(input.address)}`,
-          firstInboundAt: new Date(input.occurredAt),
-          waitingSince: new Date(input.occurredAt),
-          openedAt: new Date(input.occurredAt),
+          firstInboundAt: inboundOccurredAt,
+          waitingSince: inboundOccurredAt,
+          openedAt: inboundOccurredAt,
           createdByActorId: foundation.actor.id,
           updatedByActorId: foundation.actor.id,
         },
       });
+      const activeServiceType = createdNew ? serviceType : conversation.serviceType;
+      const activeSlaTargetSeconds = createdNew ? slaTargetSeconds : conversation.slaTargetSeconds;
       let participant = await tx.conversationParticipant.findFirst({ where: { workspaceId: context.workspaceId, conversationId: conversation.id, identifierKey: normalized.success ? normalized.hash : sha256(input.address), activeUntil: null } });
       participant ??= await tx.conversationParticipant.create({ data: { workspaceId: context.workspaceId, conversationId: conversation.id, role: exact ? "CONTACT" : "UNKNOWN_EXTERNAL", contactId: exact?.contactId ?? null, contactPointId: exact?.id ?? null, identifierKey: normalized.success ? normalized.hash : sha256(input.address), externalAddressMasked: normalized.success ? normalized.masked : "endereço inválido" } });
       const message = await tx.message.create({ data: { workspaceId: context.workspaceId, conversationId: conversation.id, senderActorId: foundation.actor.id, senderParticipantId: participant.id, direction: "INBOUND", type: "TEXT", status: "RECEIVED", subject: input.subject ?? null, body: input.body, bodyHash: sha256(input.body), providerKey: "LOCAL_SIMULATOR", externalMessageId: input.externalEventId, idempotencyKey: `inbound:${input.externalEventId}`, clientCorrelationId: input.externalEventId, isSimulated: true, simulationLabel: "Evento recebido apenas pelo simulador local; nenhum provider externo foi acionado.", occurredAt: new Date(input.occurredAt), receivedAt: now } });
@@ -411,7 +449,14 @@ export function createOmnichannelService(options: Options) {
       const inbox = await tx.webhookInbox.create({ data: { workspaceId: context.workspaceId, connectionId: foundation.connection.id, providerEventId: input.externalEventId, eventType: "communication.message.received", contractVersion: OMNICHANNEL_CONTRACT_VERSION, payloadHash, nonceHash: sha256(`nonce:${input.externalEventId}`), payloadSizeBytes: Buffer.byteLength(input.body, "utf8"), payload: json({ channel: input.channel, scenario: input.scenario, addressHash: normalized.success ? normalized.hash : null }), dataClass: "OPERATIONAL", signatureStatus: "VERIFIED", externalOccurredAt: new Date(input.occurredAt), receivedAt: now, status: "PROCESSED", attempts: 1, processedAt: now, correlationId: input.externalEventId, messageId: message.id } });
       await tx.job.create({ data: { workspaceId: context.workspaceId, type: "WEBHOOK", status: "SUCCEEDED", idempotencyKey: `omnichannel-webhook:${input.externalEventId}`, payload: json({ inboxId: inbox.id, messageId: message.id, externalEgress: false }), result: json({ processed: true }), createdByActorId: foundation.actor.id, updatedByActorId: foundation.actor.id, runAt: now, finishedAt: now, attempts: 1, lastAttemptAt: now } });
       const previous = { status: conversation.status, assigneeMemberId: conversation.assigneeMemberId, queueId: conversation.queueId };
-      conversation = await tx.conversation.update({ where: { id: conversation.id }, data: { status: "PENDING_INTERNAL", unreadCount: { increment: 1 }, lastMessageAt: new Date(input.occurredAt), waitingSince: new Date(input.occurredAt), firstInboundAt: conversation.firstInboundAt ?? new Date(input.occurredAt), updatedByActorId: foundation.actor.id, revision: { increment: 1 } } });
+      const projectsLatest = !conversation.lastMessageAt || inboundOccurredAt >= conversation.lastMessageAt;
+      const firstInboundAt = !conversation.firstInboundAt || inboundOccurredAt < conversation.firstInboundAt ? inboundOccurredAt : conversation.firstInboundAt;
+      const lastCustomerInboundAt = !conversation.lastCustomerInboundAt || inboundOccurredAt > conversation.lastCustomerInboundAt ? inboundOccurredAt : conversation.lastCustomerInboundAt;
+      conversation = await tx.conversation.update({ where: { id: conversation.id }, data: {
+        unreadCount: { increment: 1 }, firstInboundAt, lastCustomerInboundAt,
+        ...(projectsLatest ? { status: "PENDING_INTERNAL" as const, lastMessageAt: inboundOccurredAt, waitingSince: inboundOccurredAt, serviceType: activeServiceType, slaTargetSeconds: activeSlaTargetSeconds, slaDueAt: new Date(inboundOccurredAt.getTime() + activeSlaTargetSeconds * 1_000) } : {}),
+        updatedByActorId: foundation.actor.id, revision: { increment: 1 },
+      } });
       if (createdNew || previous.assigneeMemberId !== conversation.assigneeMemberId || previous.queueId !== conversation.queueId) {
         await tx.conversationAssignmentHistory.create({ data: { workspaceId: context.workspaceId, conversationId: conversation.id, previousOwnerMemberId: null, previousQueueId: null, newOwnerMemberId: conversation.assigneeMemberId, newQueueId: conversation.queueId, reason: exact ? "Identidade exata vinculada à responsabilidade operacional existente." : "Identidade não resolvida encaminhada explicitamente à Fila Geral.", actorId: foundation.actor.id, occurredAt: now } });
       }
@@ -428,7 +473,7 @@ export function createOmnichannelService(options: Options) {
           await cancelPendingOutboundForContactInTransaction(tx, { workspaceId: context.workspaceId, contactId: exact!.contactId, contactPointId: exact!.id, actorId: foundation.actor.id, now, reasonCode: "PRIVACY_INBOUND_OPT_OUT" });
         }
       }
-      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: foundation.actor.id, action: "communication.inbound.received_local", entityType: "Message", entityId: message.id, origin: "SYSTEM", requestId: input.externalEventId, changes: json({ channel: input.channel, identity: exact && lead ? "EXACT" : "REVIEW_REQUIRED", conversationStatus: "PENDING_INTERNAL", externalEgress: false }) } });
+      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: foundation.actor.id, action: "communication.inbound.received_local", entityType: "Message", entityId: message.id, origin: "SYSTEM", requestId: input.externalEventId, changes: json({ channel: input.channel, identity: exact && lead ? "EXACT" : "REVIEW_REQUIRED", conversationStatus: conversation.status, projectedAsLatest: projectsLatest, externalEgress: false }) } });
       return { outcome: exact && lead ? "ATTACHED" as const : "REVIEW_REQUIRED" as const, webhookId: inbox.id, messageId: message.id, conversationId: conversation.id, leadId: lead?.id ?? null };
     });
   }
@@ -439,7 +484,7 @@ export function createOmnichannelService(options: Options) {
     await options.authorization.assertAuthorized(context, PermissionKeys.MESSAGES_SEND, conversationResource(conversation));
     const now = options.now();
     return withSerializableRetry(options.database, async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`omnichannel-outbound:${context.workspaceId}:${input.idempotencyKey}`}, 0))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`omnichannel-outbound:${context.workspaceId}:${input.conversationId}`}, 0))`;
       const existing = await tx.message.findFirst({ where: { workspaceId: context.workspaceId, idempotencyKey: input.idempotencyKey }, include: { outboxEvents: true } });
       if (existing) {
         if (existing.conversationId !== input.conversationId || existing.bodyHash !== sha256(input.body)) fail("A chave idempotente já foi usada com outro conteúdo.", "IDEMPOTENCY_CONFLICT", 409);
@@ -447,6 +492,8 @@ export function createOmnichannelService(options: Options) {
       }
       const row = await tx.conversation.findFirst({ where: { id: conversation.id, workspaceId: context.workspaceId }, include: { contactPoint: true, connection: true } });
       if (!row) fail("Conversa não encontrada.", "CONVERSATION_NOT_FOUND", 404);
+      if (row.revision !== input.expectedRevision) fail("A conversa foi alterada por outra pessoa. Atualize antes de responder.", "CONVERSATION_CONFLICT", 409);
+      if (row.assigneeMemberId !== context.memberId) fail("Assuma a conversa antes de enviar uma resposta.", "CONVERSATION_OWNERSHIP_REQUIRED", 409);
       if (row.channel === "EMAIL" && !input.subject?.trim()) fail("E-mail exige assunto.", "EMAIL_SUBJECT_REQUIRED", 422);
       const privacy = row.leadId ? await evaluatePrivacy(tx, { workspaceId: context.workspaceId, actorId: context.actorId, leadId: row.leadId, contactPointId: row.contactPointId, channel: channelPrivacyChannel(row.channel as SupportedConversationChannel), intendedAction: "OMNICHANNEL_OUTBOUND_SEND", persist: true }) : null;
       const templateVersion = input.templateVersionId ? await tx.messageTemplateVersion.findFirst({ where: { id: input.templateVersionId, workspaceId: context.workspaceId }, include: { template: true } }) : null;
@@ -484,10 +531,52 @@ export function createOmnichannelService(options: Options) {
         outboxId = outbox.id;
       }
       const firstHumanResponseAt = row.firstHumanResponseAt ?? now;
-      await tx.conversation.update({ where: { id: row.id }, data: { status: allowed ? "WAITING_CUSTOMER" : row.status, lastMessageAt: now, firstHumanResponseAt, firstResponseSeconds: row.firstInboundAt && !row.firstHumanResponseAt ? Math.max(0, Math.floor((now.getTime() - row.firstInboundAt.getTime()) / 1_000)) : row.firstResponseSeconds, waitingSince: allowed ? now : row.waitingSince, unreadCount: allowed ? 0 : row.unreadCount, updatedByActorId: context.actorId, revision: { increment: 1 } } });
+      await tx.conversation.update({ where: { id: row.id }, data: { status: allowed ? "WAITING_CUSTOMER" : row.status, lastMessageAt: now, firstHumanResponseAt, firstResponseSeconds: row.firstInboundAt && !row.firstHumanResponseAt ? Math.max(0, Math.floor((now.getTime() - row.firstInboundAt.getTime()) / 1_000)) : row.firstResponseSeconds, waitingSince: allowed ? now : row.waitingSince, slaDueAt: allowed ? null : row.slaDueAt, unreadCount: allowed ? 0 : row.unreadCount, updatedByActorId: context.actorId, revision: { increment: 1 } } });
       if (row.leadId) await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: row.leadId, messageId: message.id, type: "MESSAGE_SENT", direction: "OUTBOUND", result: allowed ? "SENT" : "OTHER", subject: allowed ? "Mensagem enfileirada no inbox" : "Mensagem bloqueada pela privacidade", description: allowed ? "Entrega simulada aguardando processamento local." : "Nenhum envio ocorreu; decisão exige revisão ou bloqueia contato.", occurredAt: now, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: allowed ? "communication.message.queued" : "communication.message.blocked_by_policy", entityType: "Message", entityId: message.id, changes: json({ privacyOutcome: privacy?.outcome ?? "REVIEW_REQUIRED", channel: row.channel, whatsappPolicy: whatsappPolicy ? { allowed: whatsappPolicy.allowed, code: whatsappPolicy.code } : null, emailSuppressed: suppressed, channelReady, externalEgress: false }) } });
       return { messageId: message.id, status: allowed ? "QUEUED" as const : "BLOCKED_BY_POLICY" as const, idempotent: false, outboxId, privacyOutcome: privacy?.outcome ?? "REVIEW_REQUIRED", policyCode: policyReason };
+    });
+  }
+
+  async function addInternalNote(context: AuthenticatedContext, raw: unknown) {
+    const input = internalNoteSchema.parse(raw);
+    await loadConversation(options, context, input.conversationId, PermissionKeys.CONVERSATIONS_MANAGE);
+    const now = options.now();
+    return withSerializableRetry(options.database, async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`conversation-note:${context.workspaceId}:${input.conversationId}`}, 0))`;
+      const current = await tx.conversation.findFirst({ where: { id: input.conversationId, workspaceId: context.workspaceId, deletedAt: null } });
+      if (!current) fail("Conversa não encontrada.", "CONVERSATION_NOT_FOUND", 404);
+      if (current.revision !== input.expectedRevision) fail("A conversa foi alterada por outra pessoa. Atualize antes de registrar a nota.", "CONVERSATION_CONFLICT", 409);
+      const message = await tx.message.create({ data: { workspaceId: context.workspaceId, conversationId: current.id, senderActorId: context.actorId, direction: "INTERNAL", type: "NOTE", status: "RECEIVED", body: input.body, bodyHash: sha256(input.body), providerKey: "INTERNAL", idempotencyKey: `note:${context.actorId}:${current.id}:${current.revision}`, clientCorrelationId: `note:${current.id}:${current.revision}`, isSimulated: false, occurredAt: now, receivedAt: now } });
+      const updated = await tx.conversation.update({ where: { id: current.id }, data: { lastMessageAt: now, updatedByActorId: context.actorId, revision: { increment: 1 } } });
+      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "conversation.internal_note.added", entityType: "Message", entityId: message.id, changes: json({ conversationId: current.id, direction: "INTERNAL" }) } });
+      return { messageId: message.id, conversationId: current.id, revision: updated.revision };
+    });
+  }
+
+  async function updateContext(context: AuthenticatedContext, raw: unknown) {
+    const input = conversationContextSchema.parse(raw);
+    const conversation = await loadConversation(options, context, input.conversationId, PermissionKeys.CONVERSATIONS_MANAGE);
+    if (input.opportunityId) {
+      if (!conversation.leadId) fail("A conversa não possui lead para vincular um negócio.", "OPPORTUNITY_CONTEXT_MISMATCH", 422);
+      const opportunityScreen = await createOpportunityService({ database: options.database, authorization: options.authorization, now: options.now })
+        .getLeadScreen(context, { leadId: conversation.leadId });
+      if (!opportunityScreen.canRead || !opportunityScreen.opportunities.some((item) => item.id === input.opportunityId)) {
+        fail("Negócio indisponível para este atendimento.", "OPPORTUNITY_CONTEXT_FORBIDDEN", 403);
+      }
+    }
+    return withSerializableRetry(options.database, async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`conversation-context:${context.workspaceId}:${input.conversationId}`}, 0))`;
+      const current = await tx.conversation.findFirst({ where: { id: input.conversationId, workspaceId: context.workspaceId, deletedAt: null } });
+      if (!current) fail("Conversa não encontrada.", "CONVERSATION_NOT_FOUND", 404);
+      if (current.revision !== input.expectedRevision) fail("A conversa foi alterada por outra pessoa. Atualize antes de editar o contexto.", "CONVERSATION_CONFLICT", 409);
+      if (input.opportunityId) {
+        const opportunity = await tx.opportunity.findFirst({ where: { id: input.opportunityId, workspaceId: context.workspaceId, deletedAt: null } });
+        if (!opportunity || (current.leadId && opportunity.leadId !== current.leadId) || (current.accountId && opportunity.accountId !== current.accountId)) fail("Negócio não pertence ao contexto desta conversa.", "OPPORTUNITY_CONTEXT_MISMATCH", 422);
+      }
+      const updated = await tx.conversation.update({ where: { id: current.id }, data: { ...(input.opportunityId !== undefined ? { opportunityId: input.opportunityId } : {}), ...(input.priority !== undefined ? { priority: input.priority } : {}), ...(input.subject !== undefined ? { subject: input.subject } : {}), updatedByActorId: context.actorId, revision: { increment: 1 } } });
+      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "conversation.context.updated", entityType: "Conversation", entityId: current.id, changes: json({ previousOpportunityId: current.opportunityId, opportunityId: updated.opportunityId, previousPriority: current.priority, priority: updated.priority, previousSubject: current.subject, subject: updated.subject }) } });
+      return { id: updated.id, opportunityId: updated.opportunityId, priority: updated.priority, subject: updated.subject, revision: updated.revision };
     });
   }
 
@@ -537,7 +626,7 @@ export function createOmnichannelService(options: Options) {
         const foundation = await localFoundation(tx, context.workspaceId, message.conversation.channel as SupportedConversationChannel);
         const reply = await tx.message.create({ data: { workspaceId: context.workspaceId, conversationId: message.conversationId, senderActorId: foundation.actor.id, replyToMessageId: message.id, direction: "INBOUND", status: "RECEIVED", body: "SIMULAÇÃO LOCAL — resposta recebida.", bodyHash: sha256("SIMULAÇÃO LOCAL — resposta recebida."), providerKey: "LOCAL_SIMULATOR", externalMessageId: `${input.externalEventId}:reply`, idempotencyKey: `reply:${input.externalEventId}`, clientCorrelationId: input.externalEventId, isSimulated: true, simulationLabel: "Resposta criada pelo simulador local.", occurredAt: now, receivedAt: now } });
         await appendStatus(tx, { workspaceId: context.workspaceId, messageId: reply.id, status: "RECEIVED", source: "LOCAL_SIMULATOR", actorId: foundation.actor.id, externalEventId: `${input.externalEventId}:reply`, providerOccurredAt: now, providerReported: true, reasonCode: "SIMULATED_REPLY", now });
-        await tx.conversation.update({ where: { id: message.conversationId }, data: { status: "PENDING_INTERNAL", unreadCount: { increment: 1 }, waitingSince: now, lastMessageAt: now, updatedByActorId: foundation.actor.id, revision: { increment: 1 } } });
+        await tx.conversation.update({ where: { id: message.conversationId }, data: { status: "PENDING_INTERNAL", unreadCount: { increment: 1 }, waitingSince: now, slaDueAt: new Date(now.getTime() + message.conversation.slaTargetSeconds * 1_000), lastMessageAt: now, updatedByActorId: foundation.actor.id, revision: { increment: 1 } } });
       }
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "communication.delivery.simulated", entityType: "Message", entityId: message.id, requestId: input.externalEventId, changes: json({ scenario: input.scenario, status, externalEgress: false }) } });
       return { messageId: message.id, status, idempotent: false, retryAt: retryAt?.toISOString() ?? null };
@@ -554,11 +643,11 @@ export function createOmnichannelService(options: Options) {
       const current = await tx.conversation.findFirst({ where: { id: input.conversationId, workspaceId: context.workspaceId } });
       if (!current) fail("Conversa não encontrada.", "CONVERSATION_NOT_FOUND", 404);
       if (current.revision !== input.expectedRevision) fail("A conversa foi alterada por outra pessoa. Atualize antes de tentar novamente.", "CONVERSATION_CONFLICT", 409);
-      let data: Prisma.ConversationUncheckedUpdateInput;
+      let data: Prisma.ConversationUncheckedUpdateInput = {};
       if (input.action === "MARK_READ") data = { unreadCount: input.unread ? Math.max(1, current.unreadCount) : 0 };
-      else if (input.action === "RESOLVE") data = { status: "RESOLVED", resolvedAt: now, waitingSince: null };
-      else if (input.action === "REOPEN") data = { status: "PENDING_INTERNAL", resolvedAt: null, closedAt: null, archivedAt: null, waitingSince: now };
-      else if (input.action === "ARCHIVE") data = { status: "ARCHIVED", archivedAt: now, waitingSince: null };
+      else if (input.action === "RESOLVE") data = { status: "RESOLVED", resolvedAt: now, waitingSince: null, slaDueAt: null };
+      else if (input.action === "REOPEN") data = { status: "PENDING_INTERNAL", resolvedAt: null, closedAt: null, archivedAt: null, waitingSince: now, slaDueAt: new Date(now.getTime() + current.slaTargetSeconds * 1_000) };
+      else if (input.action === "ARCHIVE") data = { status: "ARCHIVED", archivedAt: now, waitingSince: null, slaDueAt: null };
       else if (input.action === "CLAIM") data = { assigneeMemberId: context.memberId, queueId: null };
       else {
         if (input.memberId) {
@@ -568,8 +657,9 @@ export function createOmnichannelService(options: Options) {
         if (input.queueId) {
           const queue = await tx.queue.findFirst({ where: { id: input.queueId, workspaceId: context.workspaceId, deletedAt: null } });
           if (!queue) fail("Fila não encontrada neste workspace.", "QUEUE_NOT_FOUND", 404);
+          data = { assigneeMemberId: null, queueId: queue.id, serviceType: queue.conversationServiceType, slaTargetSeconds: queue.conversationSlaSeconds, ...(current.status === "PENDING_INTERNAL" && current.waitingSince ? { slaDueAt: new Date(current.waitingSince.getTime() + queue.conversationSlaSeconds * 1_000) } : {}) };
         }
-        data = input.memberId ? { assigneeMemberId: input.memberId, queueId: null } : { assigneeMemberId: null, queueId: input.queueId! };
+        if (input.memberId) data = { assigneeMemberId: input.memberId, queueId: null };
       }
       const updated = await tx.conversation.update({ where: { id: current.id }, data: { ...data, updatedByActorId: context.actorId, revision: { increment: 1 } } });
       if (input.action === "CLAIM" || input.action === "TRANSFER") await tx.conversationAssignmentHistory.create({ data: { workspaceId: context.workspaceId, conversationId: current.id, previousOwnerMemberId: current.assigneeMemberId, previousQueueId: current.queueId, newOwnerMemberId: updated.assigneeMemberId, newQueueId: updated.queueId, reason: input.reason, actorId: context.actorId, occurredAt: now } });
@@ -625,7 +715,7 @@ export function createOmnichannelService(options: Options) {
     const [open, unread, overdue, waitingCustomer, reviews, inbound, outbound, responses] = await Promise.all([
       options.database.conversation.count({ where: { ...base, status: { in: ["OPEN", "PENDING_INTERNAL", "WAITING_CUSTOMER"] } } }),
       options.database.conversation.count({ where: { ...base, unreadCount: { gt: 0 } } }),
-      options.database.conversation.count({ where: { ...base, status: "PENDING_INTERNAL", waitingSince: { lt: new Date(now.getTime() - 180_000) } } }),
+      options.database.conversation.count({ where: { ...base, status: "PENDING_INTERNAL", slaDueAt: { lt: now } } }),
       options.database.conversation.count({ where: { ...base, status: "WAITING_CUSTOMER" } }),
       options.database.messageIdentityReview.count({ where: { workspaceId: context.workspaceId, status: "OPEN", conversation: base } }),
       options.database.message.count({ where: { workspaceId: context.workspaceId, direction: "INBOUND", conversation: base } }),
@@ -635,7 +725,7 @@ export function createOmnichannelService(options: Options) {
     return { open, unread, overdue, waitingCustomer, identityReview: reviews, inboundMessages: inbound, outboundMessages: outbound, firstResponseAverageSeconds: responses._avg.firstResponseSeconds, firstResponseCount: responses._count.firstResponseSeconds, generatedAt: now.toISOString(), drilldowns: { open: "/inbox?view=ALL", unread: "/inbox?view=UNREAD", overdue: "/inbox?view=OVERDUE", waitingCustomer: "/inbox?view=WAITING_CUSTOMER" } };
   }
 
-  return Object.freeze({ getInbox, getConversation, getLeadSummary, receiveLocal, composeAndEnqueue, simulateDelivery, command, saveTemplate, getMetrics });
+  return Object.freeze({ getInbox, getConversation, getLeadSummary, receiveLocal, composeAndEnqueue, addInternalNote, updateContext, simulateDelivery, command, saveTemplate, getMetrics });
 }
 
 let service: ReturnType<typeof createOmnichannelService> | undefined;

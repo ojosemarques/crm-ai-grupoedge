@@ -59,6 +59,10 @@ export const inboxQuerySchema = z.object({
   view: z.enum(["ALL", "MINE", "UNREAD", "OVERDUE", "WAITING_INTERNAL", "WAITING_CUSTOMER"]).default("ALL"),
   channels: z.array(z.enum(supportedConversationChannels)).default([]),
   priorities: z.array(z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"])).default([]),
+  statuses: z.array(z.enum(["OPEN", "PENDING_INTERNAL", "WAITING_CUSTOMER", "RESOLVED", "CLOSED", "ARCHIVED"])).default([]),
+  queueId: z.string().uuid().optional(),
+  assigneeMemberId: z.string().uuid().optional(),
+  business: z.enum(["ALL", "WITH_OPPORTUNITY", "WITHOUT_OPPORTUNITY"]).default("ALL"),
   search: z.string().trim().max(120).default(""),
   cursor: z.string().datetime({ offset: true }).optional(),
   take: z.coerce.number().int().min(1).max(100).default(40),
@@ -79,12 +83,30 @@ export const localInboundSchema = z.object({
 
 export const composeMessageSchema = z.object({
   conversationId: z.string().uuid(),
+  expectedRevision: z.number().int().positive(),
   body: z.string().trim().min(1).max(10_000),
   subject: z.string().trim().max(240).nullable().optional(),
   idempotencyKey: z.string().trim().min(8).max(180),
   clientCorrelationId: z.string().trim().min(8).max(180),
   templateVersionId: z.string().uuid().nullable().optional(),
 }).strict();
+
+export const internalNoteSchema = z.object({
+  conversationId: z.string().uuid(),
+  body: z.string().trim().min(1).max(10_000),
+  expectedRevision: z.number().int().positive(),
+}).strict();
+
+export const conversationContextSchema = z.object({
+  conversationId: z.string().uuid(),
+  opportunityId: z.string().uuid().nullable().optional(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
+  subject: z.string().trim().max(240).nullable().optional(),
+  expectedRevision: z.number().int().positive(),
+}).strict().refine(
+  (value) => value.opportunityId !== undefined || value.priority !== undefined || value.subject !== undefined,
+  { message: "Informe ao menos um campo para atualizar." },
+);
 
 export const deliveryScenarioSchema = z.object({
   messageId: z.string().uuid(),
@@ -196,8 +218,11 @@ export function renderMessageTemplate(template: string, allowedVariables: readon
   return rendered;
 }
 
-export function conversationSlaState(input: Readonly<{ status: ConversationStatus; waitingSince: Date | null; now: Date }>) {
-  if (input.status !== "PENDING_INTERNAL" || !input.waitingSince) return { state: "NOT_RUNNING" as const, elapsedSeconds: null };
+export function conversationSlaState(input: Readonly<{ status: ConversationStatus; waitingSince: Date | null; now: Date; targetSeconds?: number; dueAt?: Date | null; serviceType?: "SALES" | "SPECIALIST" | "CUSTOMER_SUCCESS" }>) {
+  const targetSeconds = Math.max(1, input.targetSeconds ?? OMNICHANNEL_FIRST_RESPONSE_TARGET_SECONDS);
+  const dueAt = input.dueAt ?? (input.waitingSince ? new Date(input.waitingSince.getTime() + targetSeconds * 1_000) : null);
+  const base = { targetSeconds, dueAt: dueAt?.toISOString() ?? null, serviceType: input.serviceType ?? "SALES" as const };
+  if (input.status !== "PENDING_INTERNAL" || !input.waitingSince) return { ...base, state: "NOT_RUNNING" as const, elapsedSeconds: null };
   const elapsedSeconds = Math.max(0, Math.floor((input.now.getTime() - input.waitingSince.getTime()) / 1_000));
-  return { state: elapsedSeconds > OMNICHANNEL_FIRST_RESPONSE_TARGET_SECONDS ? "OVERDUE" as const : "RUNNING" as const, elapsedSeconds };
+  return { ...base, state: dueAt && input.now > dueAt ? "OVERDUE" as const : "RUNNING" as const, elapsedSeconds };
 }

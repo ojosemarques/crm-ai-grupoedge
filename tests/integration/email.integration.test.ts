@@ -31,6 +31,7 @@ let system: ServiceActorContext;
 let leadId: string;
 let emailAddress: string;
 let conversationId: string;
+let initialLeadOwnerId: string;
 
 function allowedOmnichannel() {
   return createOmnichannelService({
@@ -50,6 +51,12 @@ async function context(email: string) {
   return { sessionId: randomUUID(), workspaceId, workspaceSlug: "politizai", userId: member.userId, memberId: member.id, actorId: actor.id, roleId: member.roleId, roleKey: member.role.key, roleName: member.role.name, displayName: member.user.displayName } satisfies AuthenticatedContext;
 }
 
+async function assignAndRevision(omnichannel: ReturnType<typeof createOmnichannelService>) {
+  const current = await database.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+  if (current.assigneeMemberId === admin.memberId) return current.revision;
+  return (await omnichannel.command(admin, { action: "TRANSFER", conversationId, memberId: admin.memberId, queueId: null, reason: "Assumir atendimento de e-mail no teste", expectedRevision: current.revision })).revision;
+}
+
 beforeAll(async () => {
   workspaceId = (await seedDemoDatabase(database, { DATABASE_URL: connectionString, NODE_ENV: "test" })).workspaceId;
   [admin, viewer] = await Promise.all([context("admin@demo.politizai.local"), context("viewer@demo.politizai.local")]);
@@ -66,6 +73,7 @@ beforeAll(async () => {
     database.purposeVersion.findFirstOrThrow({ where: { workspaceId, purpose: { code: "legacy-commercial-contact" } }, orderBy: { version: "desc" } }),
   ]);
   if (!lead.contactId) throw new Error("CRM-45 fixture requires canonical Contact.");
+  initialLeadOwnerId = lead.ownerMemberId!;
   await createPrivacyService({ database, now: () => now }).recordConsent(admin, { leadId, contactPointId: point.id, purposeVersionId: purpose.id, channel: "EMAIL", action: "GRANTED", evidenceReference: "crm45-fixture-explicit-consent", occurredAt: now, idempotencyKey: "crm45-consent-known-email", reason: "Consentimento explícito da fixture local CRM-45." });
 });
 
@@ -93,7 +101,8 @@ describe("CRM-45 e-mail local, seguro e canônico", () => {
 
   it("enfileira, revalida política e aceita somente no sink local sem egress", async () => {
     const omnichannel = allowedOmnichannel();
-    const queued = await omnichannel.composeAndEnqueue(admin, { conversationId, subject: "Retorno CRM-45", body: "Resposta segura em ambiente local.", idempotencyKey: "crm45-local-outbound-001", clientCorrelationId: "crm45-local-outbound-001" });
+    const expectedRevision = await assignAndRevision(omnichannel);
+    const queued = await omnichannel.composeAndEnqueue(admin, { conversationId, expectedRevision, subject: "Retorno CRM-45", body: "Resposta segura em ambiente local.", idempotencyKey: "crm45-local-outbound-001", clientCorrelationId: "crm45-local-outbound-001" });
     expect(queued).toMatchObject({ status: "QUEUED", idempotent: false });
     const worker = createEmailMessageWorkerService({ database, transport: localEmailSinkTransport, now: () => now });
     await expect(worker.processNext("crm45-email-worker")).resolves.toMatchObject({ status: "SUCCEEDED", simulated: true, externalEgress: false });
@@ -103,7 +112,9 @@ describe("CRM-45 e-mail local, seguro e canônico", () => {
   });
 
   it("faz retry com backoff, cria uma tentativa por execução e encerra em dead-letter", async () => {
-    const queued = await allowedOmnichannel().composeAndEnqueue(admin, { conversationId, subject: "Retry controlado CRM-45", body: "Falha determinística somente local.", idempotencyKey: "crm45-local-retry-001", clientCorrelationId: "crm45-local-retry-001" });
+    const omnichannel = allowedOmnichannel();
+    const expectedRevision = await assignAndRevision(omnichannel);
+    const queued = await omnichannel.composeAndEnqueue(admin, { conversationId, expectedRevision, subject: "Retry controlado CRM-45", body: "Falha determinística somente local.", idempotencyKey: "crm45-local-retry-001", clientCorrelationId: "crm45-local-retry-001" });
     const attempt = await database.messageDeliveryAttempt.findFirstOrThrow({ where: { workspaceId, messageId: queued.messageId } });
     await database.job.update({ where: { id: attempt.jobId! }, data: { maxAttempts: 2 } });
     const failingWorker = createEmailMessageWorkerService({ database, transport: { externalEgress: false, send: async () => { throw new Error("CRM45_LOCAL_TRANSIENT_FAULT"); } }, now: () => now, backoffBaseSeconds: 5 });
@@ -125,7 +136,8 @@ describe("CRM-45 e-mail local, seguro e canônico", () => {
     const sent = await database.message.findFirstOrThrow({ where: { workspaceId, conversationId, direction: "OUTBOUND", status: "PROVIDER_ACCEPTED" }, orderBy: { occurredAt: "desc" } });
     await expect(service.simulateStatus(admin, { messageId: sent.id, externalEventId: "email-hard-bounce-001", status: "HARD_BOUNCE", occurredAt: now.toISOString() })).resolves.toMatchObject({ status: "HARD_BOUNCE" });
     expect(await database.emailSuppression.count({ where: { workspaceId, normalizedEmail: emailAddress, action: "APPLIED", reasonCode: "HARD_BOUNCE" } })).toBe(1);
-    const blocked = await omnichannel.composeAndEnqueue(admin, { conversationId, subject: "Não deve sair", body: "Bloqueado pela supressão.", idempotencyKey: "crm45-blocked-outbound-002", clientCorrelationId: "crm45-blocked-outbound-002" });
+    const expectedRevision = await assignAndRevision(omnichannel);
+    const blocked = await omnichannel.composeAndEnqueue(admin, { conversationId, expectedRevision, subject: "Não deve sair", body: "Bloqueado pela supressão.", idempotencyKey: "crm45-blocked-outbound-002", clientCorrelationId: "crm45-blocked-outbound-002" });
     expect(blocked).toMatchObject({ status: "BLOCKED_BY_POLICY", policyCode: "PRIVACY_DENY" });
     expect(blocked.outboxId).toBeNull();
   });
@@ -152,7 +164,8 @@ describe("CRM-45 e-mail local, seguro e canônico", () => {
   it("mantém ownership canônico do lead na conversa conhecida", async () => {
     const [lead, conversation] = await Promise.all([database.lead.findUniqueOrThrow({ where: { id: leadId } }), database.conversation.findUniqueOrThrow({ where: { id: conversationId } })]);
     expect(conversation.assigneeMemberId ?? conversation.queueId).toBeTruthy();
-    expect(conversation.assigneeMemberId).toBe(lead.ownerMemberId);
+    expect(lead.ownerMemberId).toBe(initialLeadOwnerId);
+    expect(conversation.assigneeMemberId).toBe(admin.memberId);
   });
 
   it("semeia três cenários de e-mail após normalizar leads legados e permanece idempotente", async () => {

@@ -1489,6 +1489,12 @@ enum ConversationStatus {
   ARCHIVED
 }
 
+enum ConversationServiceType {
+  SALES
+  SPECIALIST
+  CUSTOMER_SUCCESS
+}
+
 enum MessageDirection {
   INBOUND
   OUTBOUND
@@ -1716,6 +1722,7 @@ enum ConversationParticipantRole {
 
 enum OmnichannelMessageType {
   TEXT
+  NOTE
   TEMPLATE
   MEDIA_REFERENCE
   EMAIL_HTML_REFERENCE
@@ -3083,6 +3090,8 @@ model Queue {
   key              String
   name             String
   isGeneral        Boolean   @default(false)
+  conversationServiceType ConversationServiceType @default(SALES)
+  conversationSlaSeconds Int @default(180)
   createdByActorId String    @db.Uuid
   updatedByActorId String    @db.Uuid
   createdAt        DateTime  @default(now()) @db.Timestamptz(3)
@@ -6164,6 +6173,9 @@ model Conversation {
   status                 ConversationStatus  @default(OPEN)
   subject                String?
   priority               LeadPriority        @default(MEDIUM)
+  serviceType            ConversationServiceType @default(SALES)
+  slaTargetSeconds       Int                 @default(180)
+  slaDueAt               DateTime?           @db.Timestamptz(3)
   externalThreadId       String?
   unreadCount            Int                 @default(0)
   firstInboundAt         DateTime?           @db.Timestamptz(3)
@@ -6219,6 +6231,7 @@ model Conversation {
   @@index([workspaceId, connectionId, externalThreadId])
   @@index([workspaceId, unreadCount, lastMessageAt])
   @@index([workspaceId, nextActionAt, status])
+  @@index([workspaceId, slaDueAt, status])
   @@map("conversations")
 }
 

@@ -33,6 +33,10 @@ export async function POST(request: NextRequest) {
       ? await service.receiveLocal(context, body.data)
       : body.action === "COMPOSE_AND_ENQUEUE"
         ? await service.composeAndEnqueue(context, body.data)
+        : body.action === "ADD_INTERNAL_NOTE"
+          ? await service.addInternalNote(context, body.data)
+          : body.action === "UPDATE_CONTEXT"
+            ? await service.updateContext(context, body.data)
         : body.action === "SIMULATE_DELIVERY"
           ? await service.simulateDelivery(context, body.data)
           : body.action === "COMMAND"

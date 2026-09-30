@@ -35,8 +35,8 @@ describe("CRM-43/44 contratos omnichannel", () => {
     expect(nextConversationStatus("OUTBOUND", "PENDING_INTERNAL")).toBe("WAITING_CUSTOMER");
     expect(nextConversationStatus("INBOUND", "ARCHIVED")).toBe("ARCHIVED");
     const now = new Date("2046-01-01T12:03:01.000Z");
-    expect(conversationSlaState({ status: "PENDING_INTERNAL", waitingSince: new Date("2046-01-01T12:00:00.000Z"), now })).toEqual({ state: "OVERDUE", elapsedSeconds: 181 });
-    expect(conversationSlaState({ status: "WAITING_CUSTOMER", waitingSince: new Date(), now })).toEqual({ state: "NOT_RUNNING", elapsedSeconds: null });
+    expect(conversationSlaState({ status: "PENDING_INTERNAL", waitingSince: new Date("2046-01-01T12:00:00.000Z"), now })).toEqual({ state: "OVERDUE", elapsedSeconds: 181, targetSeconds: 180, dueAt: "2046-01-01T12:03:00.000Z", serviceType: "SALES" });
+    expect(conversationSlaState({ status: "WAITING_CUSTOMER", waitingSince: new Date("2046-01-01T12:00:00.000Z"), now, targetSeconds: 900, serviceType: "SPECIALIST" })).toEqual({ state: "NOT_RUNNING", elapsedSeconds: null, targetSeconds: 900, dueAt: "2046-01-01T12:15:00.000Z", serviceType: "SPECIALIST" });
   });
 
   it("renderiza templates apenas com variáveis permitidas e escape seguro", () => {

@@ -123,14 +123,14 @@ Cada etapa pode virar uma issue/épico. Dentro dela, `Txx.y` é a task e os iten
 
 ### Etapa 07 — Inbox e atendimento unificado
 
-- [ ] **T07.1 — Evoluir a fonte canônica existente.**
-  - [ ] Completar busca, filtros, estados, setores, transferência, notas, respostas rápidas e edição contextual do negócio no inbox.
-  - [ ] Preservar `Conversation`/`Message`, identidade por canal, timeline, eventos de entrega e revisão de correspondência ambígua.
-- [ ] **T07.2 — Governar atendimento humano.**
-  - [ ] Definir owner/fila e SLA por tipo; handoff entre vendedor, especialista e CS sem trocar dono do lead silenciosamente.
-  - [ ] Exercitar concorrência, opt-out, anexo e retorno de mensagem fora de ordem.
+- [x] **T07.1 — Evoluir a fonte canônica existente.**
+  - [x] Completar busca, filtros, estados, setores, transferência, notas, respostas rápidas e edição contextual do negócio no inbox.
+  - [x] Preservar `Conversation`/`Message`, identidade por canal, timeline, eventos de entrega e revisão de correspondência ambígua.
+- [x] **T07.2 — Governar atendimento humano.**
+  - [x] Definir owner/fila e SLA por tipo; handoff entre vendedor, especialista e CS sem trocar dono do lead silenciosamente.
+  - [x] Exercitar concorrência, opt-out, anexo e retorno de mensagem fora de ordem.
 
-**Aceite:** conversa, card e atividade mostram a mesma história; duas pessoas não enviam resposta concorrente; transferência mantém contexto e auditoria. **Dependência:** 03–05.
+**Aceite:** conversa, card e atividade mostram a mesma história; duas pessoas não enviam resposta concorrente; transferência mantém contexto e auditoria. [Contrato, matriz e cenário executado](./INBOX_UNIFIED_STAGE07.md). **Dependência:** 03–05.
 
 ### Etapa 08 — WhatsApp Oficial e templates
 

@@ -60,6 +60,13 @@ async function intake(phoneSuffix: string) {
   return database.lead.findUniqueOrThrow({ where: { id: result.leadId }, include: { contact: { include: { points: true } } } });
 }
 
+async function assignAndRevision(conversationId: string, actor = manager) {
+  const current = await database.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+  if (current.assigneeMemberId === actor.memberId) return current.revision;
+  const assigned = await service.command(actor, { action: "TRANSFER", conversationId, memberId: actor.memberId, queueId: null, reason: "Assumir atendimento no teste", expectedRevision: current.revision });
+  return assigned.revision;
+}
+
 beforeAll(async () => {
   const seeded = await seedDemoDatabase(database, { DATABASE_URL: databaseUrl, NODE_ENV: "test" });
   admin = await context(DEMO_USERS[0].email);
@@ -111,7 +118,8 @@ describe("CRM-43 inbox omnichannel canônico", () => {
   it("bloqueia saída sem evidência de privacidade e não cria outbox", async () => {
     const lead = await intake("4302");
     const received = await service.receiveLocal(manager, { externalEventId: `evt:${randomUUID()}`, channel: "INTERNAL_SIMULATOR", address: lead.contact!.points.find((point) => point.type === "PHONE")!.normalizedValue, body: "Preciso de ajuda", occurredAt: now.toISOString(), scenario: "RECEIVED" });
-    const outbound = await service.composeAndEnqueue(manager, { conversationId: received.conversationId!, body: "Resposta local", idempotencyKey: `send:${randomUUID()}`, clientCorrelationId: `correlation:${randomUUID()}` });
+    const expectedRevision = await assignAndRevision(received.conversationId!);
+    const outbound = await service.composeAndEnqueue(manager, { conversationId: received.conversationId!, expectedRevision, body: "Resposta local", idempotencyKey: `send:${randomUUID()}`, clientCorrelationId: `correlation:${randomUUID()}` });
     expect(outbound).toMatchObject({ status: "BLOCKED_BY_POLICY", outboxId: null, privacyOutcome: "REVIEW_REQUIRED" });
   });
 
@@ -120,7 +128,8 @@ describe("CRM-43 inbox omnichannel canônico", () => {
     const point = lead.contact!.points.find((item) => item.type === "PHONE")!;
     const received = await service.receiveLocal(manager, { externalEventId: `evt:${randomUUID()}`, channel: "INTERNAL_SIMULATOR", address: point.normalizedValue, body: "Pode responder", occurredAt: now.toISOString(), scenario: "RECEIVED" });
     const key = `send:${randomUUID()}`;
-    const outbound = await allowedService.composeAndEnqueue(manager, { conversationId: received.conversationId!, body: "Resposta autorizada", idempotencyKey: key, clientCorrelationId: `correlation:${randomUUID()}` });
+    const expectedRevision = await assignAndRevision(received.conversationId!);
+    const outbound = await allowedService.composeAndEnqueue(manager, { conversationId: received.conversationId!, expectedRevision, body: "Resposta autorizada", idempotencyKey: key, clientCorrelationId: `correlation:${randomUUID()}` });
     expect(outbound.status).toBe("QUEUED");
     const acceptedId = `callback:${randomUUID()}`;
     await allowedService.simulateDelivery(manager, { messageId: outbound.messageId, scenario: "ACCEPTED", externalEventId: acceptedId });
@@ -138,7 +147,8 @@ describe("CRM-43 inbox omnichannel canônico", () => {
     const point = lead.contact!.points.find((item) => item.type === "PHONE")!;
     const purpose = await database.purposeVersion.findFirstOrThrow({ where: { workspaceId: admin.workspaceId }, include: { legalBasis: true } });
     const received = await service.receiveLocal(manager, { externalEventId: `evt:${randomUUID()}`, channel: "INTERNAL_SIMULATOR", address: point.normalizedValue, body: "Pode responder", occurredAt: now.toISOString(), scenario: "RECEIVED" });
-    const message = await allowedService.composeAndEnqueue(manager, { conversationId: received.conversationId!, body: "Resposta que falhará temporariamente", idempotencyKey: `send:${randomUUID()}`, clientCorrelationId: `correlation:${randomUUID()}` });
+    const expectedRevision = await assignAndRevision(received.conversationId!);
+    const message = await allowedService.composeAndEnqueue(manager, { conversationId: received.conversationId!, expectedRevision, body: "Resposta que falhará temporariamente", idempotencyKey: `send:${randomUUID()}`, clientCorrelationId: `correlation:${randomUUID()}` });
     expect(message.status).toBe("QUEUED");
     const transient = await allowedService.simulateDelivery(manager, { messageId: message.messageId, scenario: "TRANSIENT_FAILURE", externalEventId: `callback:${randomUUID()}` });
     expect(transient.idempotent).toBe(false);
@@ -151,7 +161,8 @@ describe("CRM-43 inbox omnichannel canônico", () => {
     const lead = await intake("4305");
     const point = lead.contact!.points.find((item) => item.type === "PHONE")!;
     const received = await service.receiveLocal(manager, { externalEventId: `evt:${randomUUID()}`, channel: "INTERNAL_SIMULATOR", address: point.normalizedValue, body: "Início do atendimento", occurredAt: now.toISOString(), scenario: "RECEIVED" });
-    const outbound = await allowedService.composeAndEnqueue(manager, { conversationId: received.conversationId!, body: "Resposta pendente", idempotencyKey: `send:${randomUUID()}`, clientCorrelationId: `correlation:${randomUUID()}` });
+    const expectedRevision = await assignAndRevision(received.conversationId!);
+    const outbound = await allowedService.composeAndEnqueue(manager, { conversationId: received.conversationId!, expectedRevision, body: "Resposta pendente", idempotencyKey: `send:${randomUUID()}`, clientCorrelationId: `correlation:${randomUUID()}` });
     await service.receiveLocal(manager, { externalEventId: `evt:${randomUUID()}`, channel: "INTERNAL_SIMULATOR", address: point.normalizedValue, body: "Não quero mais receber mensagens", occurredAt: now.toISOString(), scenario: "OPT_OUT" });
     expect((await database.message.findUniqueOrThrow({ where: { id: outbound.messageId } })).status).toBe("CANCELLED");
     expect((await database.contactPoint.findUniqueOrThrow({ where: { id: point.id } })).doNotContact).toBe(true);
@@ -169,6 +180,61 @@ describe("CRM-43 inbox omnichannel canônico", () => {
     if (mine) await expect(service.command(sdr, { action: "RESOLVE", conversationId: mine.id, reason: "Não autorizado", expectedRevision: mine.revision })).rejects.toBeInstanceOf(AccessDeniedError);
     const any = await database.conversation.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, deletedAt: null } });
     await expect(service.command(manager, { action: "RESOLVE", conversationId: any.id, reason: "Atendimento concluído", expectedRevision: any.revision + 1 })).rejects.toMatchObject({ code: "CONVERSATION_CONFLICT" });
+  });
+
+  it("unifica nota, contexto, SLA por fila, busca, anexo e resposta concorrente sem perder a história", async () => {
+    const lead = await intake("4307");
+    const point = lead.contact!.points.find((item) => item.type === "PHONE")!;
+    const received = await service.receiveLocal(manager, { externalEventId: `evt:${randomUUID()}`, channel: "INTERNAL_SIMULATOR", address: point.normalizedValue, body: "Palavra única conselho-4307", occurredAt: now.toISOString(), scenario: "RECEIVED" });
+    const conversationId = received.conversationId!;
+    const inbound = await database.message.findUniqueOrThrow({ where: { id: received.messageId! } });
+    await expect(database.activity.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, leadId: lead.id, messageId: inbound.id } })).resolves.toMatchObject({ type: "MESSAGE_RECEIVED" });
+
+    const attachment = await database.attachmentReference.create({ data: { workspaceId: admin.workspaceId, messageId: inbound.id, opaqueReference: `private://stage7/${randomUUID()}`, fileName: "briefing.pdf", contentHash: "stage7-safe-attachment-hash", sizeBytes: 3210, mimeType: "application/pdf", scanStatus: "CLEAN", createdByActorId: admin.actorId } });
+    const searched = await service.getInbox(manager, { search: "conselho-4307", statuses: "PENDING_INTERNAL", business: "WITHOUT_OPPORTUNITY" });
+    expect(searched.conversations.some((item) => item.id === conversationId)).toBe(true);
+    const projectedAttachment = (await service.getConversation(manager, conversationId)).messages.find((item) => item.id === inbound.id)!.attachments[0]!;
+    expect(projectedAttachment).toMatchObject({ id: attachment.id, fileName: "briefing.pdf", mimeType: "application/pdf", sizeBytes: 3210, scanStatus: "CLEAN" });
+    expect(projectedAttachment).not.toHaveProperty("opaqueReference");
+
+    let revision = await assignAndRevision(conversationId);
+    const note = await service.addInternalNote(manager, { conversationId, body: "Nota interna sem saída externa.", expectedRevision: revision });
+    expect(await database.outboxEvent.count({ where: { workspaceId: admin.workspaceId, messageId: note.messageId } })).toBe(0);
+    expect(await database.message.findUniqueOrThrow({ where: { id: note.messageId } })).toMatchObject({ direction: "INTERNAL", type: "NOTE" });
+
+    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, entityType: "OPPORTUNITY", deletedAt: null }, include: { stages: { orderBy: { position: "asc" }, take: 1 } } });
+    const opportunity = await database.opportunity.create({ data: { workspaceId: admin.workspaceId, leadId: lead.id, accountId: lead.accountId, pipelineId: pipeline.id, currentStageId: pipeline.stages[0]!.id, ownerMemberId: manager.memberId, name: "Negócio contextual 4307", interestDescription: "Fixture do inbox", amountCents: 100000, probabilityBps: 1000, createdByActorId: manager.actorId, updatedByActorId: manager.actorId } });
+    revision = note.revision;
+    const contextResult = await service.updateContext(manager, { conversationId, opportunityId: opportunity.id, priority: "URGENT", subject: "Conselho municipal", expectedRevision: revision });
+    expect(contextResult).toMatchObject({ opportunityId: opportunity.id, priority: "URGENT" });
+
+    const leadOwnerBefore = (await database.lead.findUniqueOrThrow({ where: { id: lead.id } })).ownerMemberId;
+    const specialistQueue = await database.queue.create({ data: { workspaceId: admin.workspaceId, key: `specialist-${randomUUID()}`, name: "Especialistas Stage 7", conversationServiceType: "SPECIALIST", conversationSlaSeconds: 900, createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
+    const transferred = await service.command(manager, { action: "TRANSFER", conversationId, memberId: null, queueId: specialistQueue.id, reason: "Especialista necessário", expectedRevision: contextResult.revision });
+    expect(await database.conversation.findUniqueOrThrow({ where: { id: conversationId } })).toMatchObject({ queueId: specialistQueue.id, assigneeMemberId: null, serviceType: "SPECIALIST", slaTargetSeconds: 900 });
+    expect((await database.lead.findUniqueOrThrow({ where: { id: lead.id } })).ownerMemberId).toBe(leadOwnerBefore);
+
+    const csQueue = await database.queue.create({ data: { workspaceId: admin.workspaceId, key: `cs-${randomUUID()}`, name: "Customer Success Stage 7", conversationServiceType: "CUSTOMER_SUCCESS", conversationSlaSeconds: 1800, createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
+    const transferredToCs = await service.command(admin, { action: "TRANSFER", conversationId, memberId: null, queueId: csQueue.id, reason: "Handoff para Customer Success", expectedRevision: transferred.revision });
+    expect(await database.conversation.findUniqueOrThrow({ where: { id: conversationId } })).toMatchObject({ queueId: csQueue.id, serviceType: "CUSTOMER_SUCCESS", slaTargetSeconds: 1800 });
+    expect(await database.conversationAssignmentHistory.count({ where: { workspaceId: admin.workspaceId, conversationId, newQueueId: { in: [specialistQueue.id, csQueue.id] } } })).toBe(2);
+    expect((await database.lead.findUniqueOrThrow({ where: { id: lead.id } })).ownerMemberId).toBe(leadOwnerBefore);
+
+    revision = (await service.command(admin, { action: "TRANSFER", conversationId, memberId: manager.memberId, queueId: null, reason: "CS assume resposta", expectedRevision: transferredToCs.revision })).revision;
+    const attempts = await Promise.allSettled([
+      allowedService.composeAndEnqueue(manager, { conversationId, expectedRevision: revision, body: "Resposta concorrente A", idempotencyKey: `send:${randomUUID()}`, clientCorrelationId: `correlation:${randomUUID()}` }),
+      allowedService.composeAndEnqueue(admin, { conversationId, expectedRevision: revision, body: "Resposta concorrente B", idempotencyKey: `send:${randomUUID()}`, clientCorrelationId: `correlation:${randomUUID()}` }),
+    ]);
+    expect(attempts.filter((item) => item.status === "fulfilled")).toHaveLength(1);
+    expect(attempts.filter((item) => item.status === "rejected")).toHaveLength(1);
+    expect(await database.message.count({ where: { workspaceId: admin.workspaceId, conversationId, direction: "OUTBOUND", body: { in: ["Resposta concorrente A", "Resposta concorrente B"] } } })).toBe(1);
+
+    const latestBeforeDelayed = await database.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+    await service.receiveLocal(manager, { externalEventId: `evt:${randomUUID()}`, channel: "INTERNAL_SIMULATOR", address: point.normalizedValue, body: "Evento atrasado preservado na timeline", occurredAt: new Date(now.getTime() - 86_400_000).toISOString(), scenario: "RECEIVED" });
+    const afterDelayed = await database.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+    expect(afterDelayed.status).toBe(latestBeforeDelayed.status);
+    expect(afterDelayed.lastMessageAt).toEqual(latestBeforeDelayed.lastMessageAt);
+    expect(afterDelayed.waitingSince).toEqual(latestBeforeDelayed.waitingSince);
   });
 
   it("mantém fatos append-only e executa backfill conservador com replay idempotente", async () => {
