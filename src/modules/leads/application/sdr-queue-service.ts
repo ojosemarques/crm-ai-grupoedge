@@ -17,6 +17,7 @@ import { getAuthorizationService } from "@/modules/users/permissions/authorizati
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 import { z } from "zod";
 
 const queueQuerySchema = z.object({
@@ -216,6 +217,9 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     }
     const selectedMemberId =
       parsed.data.memberId ?? (scope.scope === "OWN" ? context.memberId : null);
+    const productivityMemberIds = selectedMemberId
+      ? [selectedMemberId]
+      : members.filter((member) => member.status === "ACTIVE" && member.user.status === "ACTIVE").map((member) => member.id);
     const memberFilter =
       selectedMemberId && scope.scope !== "OWN"
         ? Prisma.sql`AND l."ownerMemberId" = ${selectedMemberId}::uuid`
@@ -300,7 +304,8 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       ${memberFilter}
     `;
     const order = operationalOrderSql(now);
-    const rowsBySection = await Promise.all(
+    const [rowsBySection, productivityMembers] = await Promise.all([
+      Promise.all(
       sectionDefinitions.map((definition) =>
         options.database.$queryRaw<RawQueueRow[]>(Prisma.sql`
           SELECT
@@ -337,7 +342,71 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           LIMIT ${definition.limit}
         `),
       ),
-    );
+      ),
+      options.database.workspaceMember.findMany({
+        where: { workspaceId: context.workspaceId, id: { in: productivityMemberIds }, deletedAt: null },
+        select: { userId: true },
+      }),
+    ]);
+
+    const actorIds = (await options.database.actor.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        type: "HUMAN",
+        userId: { in: productivityMembers.map((member) => member.userId) },
+      },
+      select: { id: true },
+    })).map((actor) => actor.id);
+    const today = workspaceDayRange(workspaceDateAt(now, workspace.timeZone), workspace.timeZone);
+    const [activityCounts, tasksDue, meetingsScheduled, meetingsCompleted] = await Promise.all([
+      options.database.activity.groupBy({
+        by: ["type"],
+        where: {
+          workspaceId: context.workspaceId,
+          createdByActorId: { in: actorIds },
+          occurredAt: { gte: today.start, lt: today.end },
+          deletedAt: null,
+          type: { in: ["CALL", "CALL_CONNECTED", "CALL_UNANSWERED", "MESSAGE_SENT", "EMAIL"] },
+        },
+        _count: { _all: true },
+      }),
+      options.database.task.count({
+        where: {
+          workspaceId: context.workspaceId,
+          assigneeMemberId: { in: productivityMemberIds },
+          dueAt: { gte: today.start, lt: today.end },
+          status: { in: ["OPEN", "IN_PROGRESS"] },
+          deletedAt: null,
+        },
+      }),
+      options.database.meeting.count({
+        where: {
+          workspaceId: context.workspaceId,
+          OR: [
+            { ownerMemberId: { in: productivityMemberIds } },
+            { lead: { ownerMemberId: { in: productivityMemberIds } } },
+          ],
+          startsAt: { gte: today.start, lt: today.end },
+          status: { not: "CANCELLED" },
+          deletedAt: null,
+        },
+      }),
+      options.database.meeting.count({
+        where: {
+          workspaceId: context.workspaceId,
+          OR: [
+            { ownerMemberId: { in: productivityMemberIds } },
+            { lead: { ownerMemberId: { in: productivityMemberIds } } },
+          ],
+          completedAt: { gte: today.start, lt: today.end },
+          status: "COMPLETED",
+          deletedAt: null,
+        },
+      }),
+    ]);
+    const activityCount = (types: readonly string[]) => activityCounts
+      .filter((item) => types.includes(item.type))
+      .reduce((total, item) => total + item._count._all, 0);
 
     const sections: SdrQueueSection[] = sectionDefinitions.map((definition, index) => {
       const rawRows = rowsBySection[index] ?? [];
@@ -406,6 +475,14 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         name: member.user.displayName,
         active: member.status === "ACTIVE" && member.user.status === "ACTIVE",
       })),
+      dailyProduction: {
+        calls: activityCount(["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"]),
+        messages: activityCount(["MESSAGE_SENT"]),
+        emails: activityCount(["EMAIL"]),
+        tasksDue,
+        meetingsScheduled,
+        meetingsCompleted,
+      },
       sections,
     };
   }

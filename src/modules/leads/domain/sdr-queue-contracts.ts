@@ -80,6 +80,14 @@ export type SdrQueueScreen = Readonly<{
     name: string;
     active: boolean;
   }>[];
+  dailyProduction: Readonly<{
+    calls: number;
+    messages: number;
+    emails: number;
+    tasksDue: number;
+    meetingsScheduled: number;
+    meetingsCompleted: number;
+  }>;
   sections: readonly SdrQueueSection[];
 }>;
 

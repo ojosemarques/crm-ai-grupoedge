@@ -145,7 +145,7 @@ function QuickLeadDialog({
           <label className="text-sm font-medium">Telefone<input autoComplete="tel" className={quickInputClass} name="phone" placeholder="(11) 98765-4321" required /></label>
           <label className="text-sm font-medium">E-mail<input autoComplete="email" className={quickInputClass} name="email" type="email" /></label>
           <label className="text-sm font-medium">Cargo ou atuação<input className={quickInputClass} name="jobTitle" /></label>
-          <label className="text-sm font-medium">Organização<input autoComplete="organization" className={quickInputClass} name="organizationName" /></label>
+          <label className="text-sm font-medium">Partido, mandato ou equipe<input autoComplete="organization" className={quickInputClass} name="organizationName" /></label>
           <label className="text-sm font-medium">Orçamento (R$)<input className={quickInputClass} inputMode="decimal" name="budgetBrl" placeholder="6500,00" /></label>
           <label className="text-sm font-medium">Cidade<input autoComplete="address-level2" className={quickInputClass} name="city" /></label>
           <label className="text-sm font-medium">UF<input autoComplete="address-level1" className={quickInputClass} maxLength={2} name="stateCode" /></label>
@@ -316,8 +316,9 @@ export function PreSalesPipelineWorkspace({
                     </div>
                     <footer className={styles.cardFooter}>
                       <span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatar} title={lead.responsibleName}>{lead.responsibleName.slice(0, 1).toUpperCase()}</span>
-                      <Link aria-label={`Abrir atividades de ${lead.fullName}`} href={`/leads/${lead.id}/historico`} title="Atividades e histórico"><Icon name="meu-dia" size={13} /></Link>
-                      <Link aria-label={`Abrir contato de ${lead.fullName}`} href={`/leads/${lead.id}`} title="Contato"><Icon name="leads" size={13} /></Link>
+                      <Link aria-label={`Adicionar atividade para ${lead.fullName}`} href={`/leads/${lead.id}/historico#registrar-atividade`} title="Adicionar atividade"><Icon name="meu-dia" size={13} /></Link>
+                      <Link aria-label={`Criar lembrete para ${lead.fullName}`} href={`/leads/${lead.id}/historico#criar-tarefa`} title="Criar lembrete"><Icon name="agenda" size={13} /></Link>
+                      <Link aria-label={`Agendar reunião com ${lead.fullName}`} href={`/leads/${lead.id}/historico#reunioes`} title="Agendar reunião"><Icon name="mais" size={13} /></Link>
                       <span className={styles.activity} title={`${lead.nextActionDescription ?? "Sem próxima atividade"} · ${formatDate(lead.nextActionAt, screen.timeZone)}`}><Icon name="relogio" size={12} />{lead.nextActionAt ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: screen.timeZone }).format(new Date(lead.nextActionAt)) : "Sem prazo"}</span>
                       <button aria-label={`Alterar etapa de ${lead.fullName}`} className={styles.moveButton} disabled={!screen.canWrite || pending} onClick={() => void openTransition(lead)} title="Alterar etapa" type="button"><Icon name="seta-direita" size={13} /></button>
                     </footer>

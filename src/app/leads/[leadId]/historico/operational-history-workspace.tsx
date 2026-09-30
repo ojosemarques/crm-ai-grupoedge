@@ -39,8 +39,7 @@ type TabKey =
   | "timeline"
   | "meetings"
   | "opportunity"
-  | "intelligence"
-  | "audit";
+  | "intelligence";
 
 const inputClass =
   "mt-1.5 h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring";
@@ -83,7 +82,7 @@ const tabs: readonly Readonly<{ key: TabKey; label: string }>[] = [
   { key: "timeline", label: "Atividades" },
   { key: "summary", label: "Resumo" },
   { key: "identity", label: "Contato" },
-  { key: "pacto", label: "PACTO" },
+  { key: "pacto", label: "Qualificação" },
   { key: "meetings", label: "Reuniões" },
   { key: "opportunity", label: "Negócios" },
   { key: "intelligence", label: "Inteligência" },
@@ -208,15 +207,6 @@ function NextActionFields() {
   );
 }
 
-function EmptyIntegration({ title, description }: Readonly<{ title: string; description: string }>) {
-  return (
-    <section className="surface-panel border-dashed p-6">
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>
-    </section>
-  );
-}
-
 export function OperationalHistoryWorkspace({
   initialOperations,
   initialPacto,
@@ -278,6 +268,8 @@ export function OperationalHistoryWorkspace({
         }, 0);
       } else if (window.location.hash === "#oportunidade") {
         setActiveTab("opportunity");
+      } else if (window.location.hash === "#reunioes") {
+        setActiveTab("meetings");
       }
     };
     openLinkedPanel();
@@ -529,9 +521,7 @@ export function OperationalHistoryWorkspace({
     Math.floor((clock - new Date(operations.lead.receivedAt).getTime()) / 1_000),
   );
 
-  const visibleTabs = operations.permissions.canReadAudit
-    ? [...tabs, { key: "audit" as const, label: "Auditoria" }]
-    : tabs;
+  const visibleTabs = tabs;
 
   function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     const keyToIndex: Readonly<Record<string, number>> = {
@@ -567,9 +557,7 @@ export function OperationalHistoryWorkspace({
               ) : null}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              {operations.lead.jobTitle ?? "Atuação não informada"} · {operations.lead.account ? (
-                <Link className="font-medium text-primary underline-offset-4 hover:underline" href={`/contas/${operations.lead.account.id}`}>{operations.lead.account.name}</Link>
-              ) : operations.lead.organizationName ? `${operations.lead.organizationName} · vínculo aguardando revisão humana` : "Organização não informada"}
+              {operations.lead.jobTitle ?? "Atuação não informada"} · {operations.lead.organizationName ?? operations.lead.account?.name ?? "Partido, mandato ou equipe não informado"}
             </p>
           </div>
           <div className={`rounded-md border px-3 py-2 text-right ${sla.className}`}>
@@ -594,7 +582,6 @@ export function OperationalHistoryWorkspace({
 
       <details className={styles.quickActions}><summary><Icon name="mais" size={14} /> Ações do contato</summary>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button asChild size="sm" variant="secondary"><Link href={`/integracoes/telefonia?leadId=${operations.lead.id}`}>Abrir telefonia</Link></Button>
           <Button disabled={!operations.permissions.canWrite} onClick={() => openOperationalAction("CALL_UNANSWERED")} size="sm" type="button">Registrar ligação</Button>
           <Button disabled={!operations.permissions.canWrite} onClick={() => openOperationalAction("MESSAGE_SENT")} size="sm" type="button" variant="secondary">Registrar mensagem</Button>
           <Button disabled={!operations.permissions.canWrite} onClick={() => openOperationalAction("NOTE")} size="sm" type="button" variant="secondary">Adicionar nota</Button>
@@ -606,7 +593,6 @@ export function OperationalHistoryWorkspace({
           <Button disabled={!pacto.canWrite} key="Qualificar" onClick={() => setActiveTab("pacto")} size="sm" type="button" variant="secondary">Qualificar</Button>
           <Button disabled={!initialMeetings.canSchedule} onClick={() => setActiveTab("meetings")} size="sm" type="button" variant="secondary">Agendar reunião</Button>
           <Button disabled={!initialOpportunities.canCreate} onClick={() => setActiveTab("opportunity")} size="sm" type="button" variant="secondary">Criar oportunidade</Button>
-          <Button disabled size="sm" title="Integração futura ainda não implementada" type="button" variant="secondary">Pedir análise da IA</Button>
         </div>
         {!operations.permissions.canWrite ? (
           <p className="mt-3 text-sm text-muted-foreground">Seu perfil possui acesso somente para leitura neste lead.</p>
@@ -752,7 +738,7 @@ export function OperationalHistoryWorkspace({
                   <label className="text-sm sm:col-span-2">Nome<input className={inputClass} defaultValue={operations.lead.fullName} name="fullName" required /></label>
                   <label className="text-sm sm:col-span-2">E-mail<input className={inputClass} defaultValue={operations.lead.normalizedEmail ?? ""} name="normalizedEmail" type="email" /></label>
                   <label className="text-sm">Cargo ou atuação<input className={inputClass} defaultValue={operations.lead.jobTitle ?? ""} name="jobTitle" /></label>
-                  <label className="text-sm">Organização<input className={inputClass} defaultValue={operations.lead.organizationName ?? ""} name="organizationName" /></label>
+                  <label className="text-sm">Partido, mandato ou equipe<input className={inputClass} defaultValue={operations.lead.organizationName ?? ""} name="organizationName" /></label>
                   <label className="text-sm">Cidade<input className={inputClass} defaultValue={operations.lead.city ?? ""} name="city" /></label>
                   <label className="text-sm">Estado<input className={inputClass} defaultValue={operations.lead.stateCode ?? ""} maxLength={2} name="stateCode" placeholder="SP" /></label>
                   <label className="text-sm sm:col-span-2">Dor ou interesse<textarea className={textareaClass} defaultValue={operations.lead.interestSummary ?? ""} name="interestSummary" /></label>
@@ -922,13 +908,12 @@ export function OperationalHistoryWorkspace({
         </div>
       ) : null}
       {activeTab === "intelligence" ? <LeadIntelligencePanel initialForbidden={intelligenceForbidden} initialScreen={initialIntelligence} leadId={operations.lead.id} onCommitted={refresh} /> : null}
-      {activeTab === "audit" && operations.permissions.canReadAudit ? <EmptyIntegration description="Seu perfil pode consultar auditoria. A visualização detalhada e pesquisável será implementada na CRM-24; os logs já continuam sendo gravados pelas operações suportadas." title="Visualização de auditoria ainda não implementada" /> : null}
         </div>
         <aside className={styles.context}>
-          <section><h2>Empresa</h2>{operations.lead.account ? <Link href={`/contas/${operations.lead.account.id}`}><Icon name="vendas" size={17} /><strong>{operations.lead.account.name}</strong></Link> : <p>{operations.lead.organizationName ?? "Sem empresa vinculada"}</p>}</section>
+          <section><h2>Contexto político</h2><p>{operations.lead.organizationName ?? operations.lead.account?.name ?? "Partido, mandato ou equipe não informado"}</p></section>
           <section><h2>Próxima atividade</h2>{operations.lead.nextAction ? <><strong>{operations.lead.nextAction.title}</strong><p>{formatDate(operations.lead.nextAction.dueAt, operations.timeZone)}</p><Button variant="secondary" size="sm" onClick={() => openOperationalAction("NOTE", "tarefas")}>Ver atividade</Button></> : <p>Nenhuma atividade agendada.</p>}</section>
           <section><h2>Negócios</h2>{initialOpportunities.canRead ? <Button onClick={() => setActiveTab("opportunity")} size="sm" variant="secondary">Ver negócios do contato</Button> : <p>Acesso restrito ao seu perfil.</p>}</section>
-          <section><h2>Conversas</h2>{communicationsForbidden ? <p>Acesso restrito ao seu perfil.</p> : <><p>{initialCommunications?.conversationCount ?? 0} conversas vinculadas</p><Link href={initialCommunications?.recent[0] ? `/inbox?conversationId=${initialCommunications.recent[0].id}` : "/inbox"}>Abrir atendimento <Icon name="seta-direita" size={14} /></Link></>}</section>
+          <section><h2>Conversas</h2>{communicationsForbidden ? <p>Acesso restrito ao seu perfil.</p> : <><p>{initialCommunications?.conversationCount ?? 0} conversas vinculadas</p><Link href={initialCommunications?.recent[0] ? `/inbox?conversationId=${initialCommunications.recent[0].id}` : "/inbox"}>Abrir conversa <Icon name="seta-direita" size={14} /></Link></>}</section>
           <section><h2>Privacidade</h2><span className="status-badge" data-tone={initialPrivacy?.outcome === "ALLOW" ? "success" : initialPrivacy?.outcome === "DENY" ? "danger" : "warning"}>{privacyForbidden ? "Acesso restrito" : initialPrivacy?.outcome === "ALLOW" ? "Autorizado" : initialPrivacy?.outcome === "DENY" ? "Contato bloqueado" : "Revisão necessária"}</span></section>
         </aside>
       </div>

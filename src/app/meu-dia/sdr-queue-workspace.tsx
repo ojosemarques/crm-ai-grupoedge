@@ -14,7 +14,6 @@ import {
 import styles from "@/app/meu-dia/meu-dia.module.css";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
-import { AccountPlanCommitments } from "@/components/opportunities/account-plan-commitments";
 import {
   getSlaBand,
   sdrQueueBuckets,
@@ -656,6 +655,24 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         </div>
       </header>
 
+      <section aria-labelledby="producao-hoje" className={styles.productionPanel}>
+        <div className={styles.productionHeading}>
+          <div>
+            <p className={styles.eyebrow}>Execução diária</p>
+            <h2 id="producao-hoje">Produção de hoje</h2>
+          </div>
+          <Link href="/metas">Ver metas e quotas</Link>
+        </div>
+        <div className={styles.productionGrid}>
+          <Link href="/atividades"><span>Ligações registradas</span><strong>{screen.dailyProduction.calls}</strong></Link>
+          <Link href="/atividades"><span>Mensagens enviadas</span><strong>{screen.dailyProduction.messages}</strong></Link>
+          <Link href="/atividades"><span>E-mails enviados</span><strong>{screen.dailyProduction.emails}</strong></Link>
+          <Link href="/atividades"><span>Tarefas para hoje</span><strong>{screen.dailyProduction.tasksDue}</strong></Link>
+          <Link href="/agenda"><span>Reuniões de hoje</span><strong>{screen.dailyProduction.meetingsScheduled}</strong></Link>
+          <Link href="/agenda"><span>Reuniões realizadas</span><strong>{screen.dailyProduction.meetingsCompleted}</strong></Link>
+        </div>
+      </section>
+
       <nav aria-label="Resumo operacional" className={styles.summaryStrip}>
         {summaryBuckets.map((summary) => {
           const section = sectionsByKey.get(summary.key);
@@ -676,8 +693,6 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
       </nav>
 
       <FocusLead item={focusLead} nowMs={nowMs} screen={screen} />
-
-      <AccountPlanCommitments timeZone={screen.timeZone} />
 
       <div className={styles.contentGrid}>
         <section aria-label="Navegador de filas" className={styles.queuePanel}>

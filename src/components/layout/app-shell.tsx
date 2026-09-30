@@ -27,9 +27,9 @@ type NavigationItem = Readonly<{
 }>;
 
 const publicRoutes = new Set(["/login", "/acesso-negado", "/sessao-expirada"]);
-const operationalRoles = ["administrator", "commercial_manager", "sdr"] as const;
+const operationalRoles = ["administrator", "commercial_manager", "sdr", "closer"] as const;
 const commercialRoles = ["administrator", "commercial_manager", "closer", "viewer"] as const;
-const leadRoles = ["administrator", "commercial_manager", "sdr", "viewer"] as const;
+const leadRoles = ["administrator", "commercial_manager", "sdr", "closer", "viewer"] as const;
 const managerRoles = ["administrator", "commercial_manager"] as const;
 
 const navigationGroups: ReadonlyArray<Readonly<{
@@ -37,41 +37,33 @@ const navigationGroups: ReadonlyArray<Readonly<{
   items: readonly NavigationItem[];
 }>> = [
   {
-    label: "Principal",
+    label: "Trabalho",
     items: [
-      { href: "/", icon: "meu-dia", label: "Início" },
-      { href: "/dashboard", icon: "dashboard", label: "Dashboard" },
-      { href: "/metas", icon: "dashboard", label: "Metas" },
-      { href: "/forecast", icon: "receita", label: "Forecast", roles: commercialRoles },
-      { href: "/metricas-receita", icon: "dashboard", label: "Métricas de receita", roles: commercialRoles },
       { href: "/meu-dia", icon: "meu-dia", label: "Meu Dia", roles: operationalRoles },
-      { href: "/inbox", icon: "inbox", label: "Inbox" },
-      { href: "/leads", icon: "leads", label: "Leads", roles: leadRoles },
-      { href: "/contas", icon: "equipe", label: "Contas", roles: commercialRoles },
       { href: "/pipeline", icon: "pipeline", label: "Pipeline", roles: leadRoles },
+      { href: "/leads", icon: "leads", label: "Leads", roles: leadRoles },
       { href: "/agenda", icon: "agenda", label: "Agenda" },
+      { href: "/inbox", icon: "inbox", label: "Conversas" },
       { href: "/atividades", icon: "meu-dia", label: "Atividades", roles: commercialRoles },
-      { href: "/oportunidades", icon: "vendas", label: "Vendas", roles: commercialRoles },
-      { href: "/contratos", icon: "receita", label: "Contratos", roles: commercialRoles },
-      { href: "/onboarding", icon: "pipeline", label: "Onboarding", roles: commercialRoles },
-      { href: "/customer-success", icon: "equipe", label: "Customer Success", roles: commercialRoles },
-      { href: "/customer-service", icon: "inbox", label: "Atendimento", roles: commercialRoles },
-      { href: "/farmer", icon: "receita", label: "Farmer", roles: commercialRoles },
-      { href: "/receita", icon: "receita", label: "Receita", roles: commercialRoles },
-      { href: "/pagamentos", icon: "receita", label: "Pagamentos", roles: commercialRoles },
     ],
   },
   {
-    label: "Ferramentas",
+    label: "Indicadores",
     items: [
-      { href: "/leads/entrada", icon: "entrada", label: "Entrada de leads", roles: operationalRoles },
-      { href: "/portabilidade", icon: "entrada", label: "Portabilidade comercial", roles: managerRoles },
+      { href: "/dashboard", icon: "dashboard", label: "Visão geral" },
+      { href: "/metas", icon: "dashboard", label: "Metas" },
+      { href: "/forecast", icon: "receita", label: "Forecast", roles: commercialRoles },
+      { href: "/metricas-receita", icon: "dashboard", label: "Receita e retenção", roles: commercialRoles },
+      { href: "/receita", icon: "receita", label: "Receita", roles: commercialRoles },
+      { href: "/analises", icon: "dashboard", label: "Análises", roles: managerRoles },
+    ],
+  },
+  {
+    label: "Assistentes",
+    items: [
       { href: "/copilot", icon: "copilot", label: "Copilot gerencial", roles: managerRoles },
       { href: "/assistente", icon: "copilot", label: "Assistente", roles: managerRoles },
-      { href: "/governanca-ia", icon: "copilot", label: "Governança de IA", roles: managerRoles },
-      { href: "/agentes", icon: "copilot", label: "Agentes de IA", roles: managerRoles },
       { href: "/notificacoes", icon: "notificacoes", label: "Notificações" },
-      { href: "/campanhas", icon: "inbox", label: "Campanhas de envio", roles: ["administrator"] },
     ],
   },
   {
@@ -83,9 +75,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
       { href: "/qualidade-dados", icon: "auditoria", label: "Qualidade de dados", roles: managerRoles },
       { href: "/operacoes", icon: "auditoria", label: "Operações e segurança", roles: managerRoles },
       { href: "/privacidade", icon: "auditoria", label: "Privacidade", roles: managerRoles },
-      { href: "/integracoes", icon: "configuracoes", label: "Integrações", roles: managerRoles },
       { href: "/aquisicao", icon: "dashboard", label: "Aquisição", roles: managerRoles },
-      { href: "/analises", icon: "dashboard", label: "Análises", roles: managerRoles },
       { href: "/inteligencia-geografica", icon: "dashboard", label: "Geografia", roles: managerRoles },
       { href: "/configuracoes", icon: "configuracoes", label: "Configurações", roles: ["administrator"] },
     ],
@@ -93,22 +83,17 @@ const navigationGroups: ReadonlyArray<Readonly<{
 ];
 
 const sections = [
-  { key: "deals", label: "Negócios", icon: "vendas", paths: ["/pipeline", "/oportunidades", "/contratos", "/onboarding", "/customer-success", "/farmer"] },
-  { key: "contacts", label: "Contatos", icon: "leads", paths: ["/leads", "/contas", "/leads/entrada", "/portabilidade"] },
-  { key: "activities", label: "Atividades", icon: "agenda", paths: ["/meu-dia", "/agenda", "/atividades", "/notificacoes"] },
-  { key: "inbox", label: "Atendimento", icon: "inbox", paths: ["/inbox", "/customer-service"] },
-  { key: "automation", label: "Automações", icon: "automacoes", paths: ["/automacoes", "/campanhas", "/integracoes", "/copilot", "/assistente", "/governanca-ia", "/agentes"] },
-  { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/analises", "/metricas-receita", "/metas", "/forecast", "/aquisicao", "/inteligencia-geografica", "/receita", "/pagamentos"] },
+  { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/pipeline", "/leads", "/agenda", "/inbox", "/atividades"] },
+  { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/metas", "/forecast", "/metricas-receita", "/receita", "/analises"] },
+  { key: "assistants", label: "Assistentes", icon: "copilot", paths: ["/copilot", "/assistente", "/notificacoes"] },
   { key: "settings", label: "Configurações", icon: "configuracoes", paths: ["/configuracoes", "/administracao", "/auditoria", "/qualidade-dados", "/operacoes", "/privacidade"] },
 ] as const;
 
 const labels: Record<string, string> = {
-  "/pipeline": "Pré-vendas", "/oportunidades": "Vendas", "/leads": "Todos os contatos",
-  "/contas": "Empresas", "/inbox": "Conversas", "/customer-service": "Tickets de atendimento",
-  "/portabilidade": "Portabilidade comercial",
+  "/pipeline": "Negócios", "/leads": "Leads",
+  "/inbox": "Conversas",
   "/atividades": "Fila de atividades",
   "/campanhas": "Campanhas de envio",
-  "/agentes": "Agentes de IA",
   "/assistente": "Assistente",
   "/automacoes": "Fluxos de automação", "/dashboard": "Visão geral", "/analises": "Análises", "/metricas-receita": "Receita e retenção",
 };
@@ -213,7 +198,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const canCreateLead = roleKey ? operationalRoles.some((role) => role === roleKey) : false;
   const allowedItems = navigationGroups.flatMap((group) => group.items).filter((item) => !item.roles || (roleKey && item.roles.includes(roleKey)));
   const availableSections = sections.map((section) => ({ ...section, items: section.paths.flatMap((href) => allowedItems.filter((item) => item.href === href)) })).filter((section) => section.items.length > 0);
-  const activeSection = availableSections.find((section) => section.items.some((item) => isActive(pathname, item.href))) ?? availableSections.find((section) => section.key === (pathname.startsWith("/contatos/") ? "contacts" : "analytics"));
+  const activeSection = availableSections.find((section) => section.items.some((item) => isActive(pathname, item.href))) ?? availableSections.find((section) => section.key === "work");
   const mobileCriticalItems = ["/meu-dia", "/pipeline", "/inbox", "/atividades", "/dashboard"]
     .flatMap((href) => allowedItems.filter((item) => item.href === href));
   const closeMenus = (event: React.MouseEvent<HTMLElement>) => {

@@ -70,6 +70,66 @@
   font-weight: 600;
 }
 
+.productionPanel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  padding: 18px;
+}
+
+.productionHeading {
+  align-items: end;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.productionHeading h2 {
+  font-size: 1rem;
+  font-weight: 650;
+  margin: 0;
+}
+
+.productionHeading > a {
+  color: var(--primary);
+  font-size: .75rem;
+  font-weight: 600;
+}
+
+.productionGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.productionGrid a {
+  background: var(--surface-muted);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--text-muted);
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  text-decoration: none;
+}
+
+.productionGrid a:hover {
+  border-color: var(--primary);
+}
+
+.productionGrid span {
+  font-size: .68rem;
+  line-height: 1.35;
+}
+
+.productionGrid strong {
+  color: var(--foreground);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
 .focusCard {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -697,6 +757,10 @@
 }
 
 @media (max-width: 1023px) {
+  .productionGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .focusBody {
     grid-template-columns: minmax(0, 1.2fr) minmax(10rem, 0.7fr);
   }
@@ -727,6 +791,10 @@
 }
 
 @media (max-width: 767px) {
+  .productionGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .operationalHeader {
     align-items: stretch;
     flex-direction: column;
