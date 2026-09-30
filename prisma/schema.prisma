@@ -8115,6 +8115,118 @@ model AIEvaluationResult {
   @@map("ai_evaluation_results")
 }
 
+model GovernedAgent {
+  id              String   @id @default(uuid()) @db.Uuid
+  workspaceId     String   @db.Uuid
+  key             String
+  name            String
+  objective       String
+  status          String   @default("DRAFT")
+  draftRevision   Int      @default(1)
+  draftDefinition Json
+  activeVersionId String?  @db.Uuid
+  createdByActorId String  @db.Uuid
+  updatedByActorId String  @db.Uuid
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, key])
+  @@index([workspaceId, status, updatedAt])
+  @@map("governed_agents")
+}
+
+model GovernedAgentVersion {
+  id                   String   @id @default(uuid()) @db.Uuid
+  workspaceId          String   @db.Uuid
+  agentId              String   @db.Uuid
+  version              Int
+  definition           Json
+  definitionHash       String   @db.Char(64)
+  knowledgeBaseVersion Int
+  evaluation           Json
+  rollbackOfVersionId  String?  @db.Uuid
+  createdByActorId     String   @db.Uuid
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, agentId, version])
+  @@index([workspaceId, agentId, createdAt])
+  @@map("governed_agent_versions")
+}
+
+model AgentKnowledgeDocument {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @db.Uuid
+  agentId          String   @db.Uuid
+  version          Int
+  title            String
+  content          String   @db.Text
+  contentHash      String   @db.Char(64)
+  sourceReference  String
+  approved         Boolean  @default(false)
+  createdByActorId String   @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, agentId, version, contentHash])
+  @@index([workspaceId, agentId, version])
+  @@map("agent_knowledge_documents")
+}
+
+model AgentConversationLease {
+  id                 String   @id @default(uuid()) @db.Uuid
+  workspaceId        String   @db.Uuid
+  conversationId     String   @db.Uuid
+  agentId            String   @db.Uuid
+  agentVersionId     String   @db.Uuid
+  status             String
+  leaseToken         String
+  pausedReason       String?
+  humanOwnerMemberId String?  @db.Uuid
+  lastTriggerKey     String
+  acquiredAt         DateTime @db.Timestamptz(3)
+  pausedAt           DateTime? @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, conversationId])
+  @@unique([workspaceId, lastTriggerKey])
+  @@index([workspaceId, agentId, status, updatedAt])
+  @@map("agent_conversation_leases")
+}
+
+model AgentConversationTurn {
+  id                    String   @id @default(uuid()) @db.Uuid
+  workspaceId           String   @db.Uuid
+  leaseId               String   @db.Uuid
+  conversationId        String   @db.Uuid
+  agentVersionId        String   @db.Uuid
+  idempotencyKey        String
+  status                String
+  userMessageFingerprint String  @db.Char(64)
+  response              String?  @db.Text
+  summary               String?  @db.Text
+  sources               Json
+  proposedFields        Json
+  confidenceBps         Int
+  sensitiveAction       String?
+  approvalStatus        String?
+  approvalReason        String?
+  approvedByActorId     String?  @db.Uuid
+  corrected             Boolean  @default(false)
+  costCents             Int      @default(0)
+  externalEgress        Boolean  @default(false)
+  createdAt             DateTime @default(now()) @db.Timestamptz(3)
+  completedAt           DateTime? @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, conversationId, createdAt])
+  @@index([workspaceId, status, approvalStatus, createdAt])
+  @@map("agent_conversation_turns")
+}
+
 model DataQualityRuleVersion {
   id                String                @id @default(uuid()) @db.Uuid
   workspaceId       String                @db.Uuid

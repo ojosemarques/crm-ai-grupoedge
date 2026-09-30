@@ -494,6 +494,7 @@ export function createOmnichannelService(options: Options) {
     const now = options.now();
     return withSerializableRetry(options.database, async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`omnichannel-outbound:${context.workspaceId}:${input.conversationId}`}, 0))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`agent-conversation:${context.workspaceId}:${input.conversationId}`}, 0))`;
       const existing = await tx.message.findFirst({ where: { workspaceId: context.workspaceId, idempotencyKey: input.idempotencyKey }, include: { outboxEvents: true } });
       if (existing) {
         if (existing.conversationId !== input.conversationId || existing.bodyHash !== sha256(input.body)) fail("A chave idempotente já foi usada com outro conteúdo.", "IDEMPOTENCY_CONFLICT", 409);
@@ -504,6 +505,10 @@ export function createOmnichannelService(options: Options) {
       if (row.revision !== input.expectedRevision) fail("A conversa foi alterada por outra pessoa. Atualize antes de responder.", "CONVERSATION_CONFLICT", 409);
       if (row.assigneeMemberId !== context.memberId) fail("Assuma a conversa antes de enviar uma resposta.", "CONVERSATION_OWNERSHIP_REQUIRED", 409);
       if (row.channel === "EMAIL" && !input.subject?.trim()) fail("E-mail exige assunto.", "EMAIL_SUBJECT_REQUIRED", 422);
+      const pausedAgentLease = await tx.agentConversationLease.updateMany({
+        where: { workspaceId: context.workspaceId, conversationId: row.id, status: "ACTIVE" },
+        data: { status: "HUMAN_PAUSED", pausedAt: now, pausedReason: "HUMAN_REPLY", humanOwnerMemberId: context.memberId },
+      });
       const privacy = row.leadId ? await evaluatePrivacy(tx, { workspaceId: context.workspaceId, actorId: context.actorId, leadId: row.leadId, contactPointId: row.contactPointId, channel: channelPrivacyChannel(row.channel as SupportedConversationChannel), intendedAction: "OMNICHANNEL_OUTBOUND_SEND", persist: true }) : null;
       const templateVersion = input.templateVersionId ? await tx.messageTemplateVersion.findFirst({ where: { id: input.templateVersionId, workspaceId: context.workspaceId }, include: { template: true } }) : null;
       if (input.templateVersionId && (!templateVersion || templateVersion.template.channel !== row.channel)) fail("Template não pertence ao canal desta conversa.", "MESSAGE_TEMPLATE_CHANNEL_MISMATCH", 422);
@@ -542,8 +547,8 @@ export function createOmnichannelService(options: Options) {
       const firstHumanResponseAt = row.firstHumanResponseAt ?? now;
       await tx.conversation.update({ where: { id: row.id }, data: { status: allowed ? "WAITING_CUSTOMER" : row.status, lastMessageAt: now, firstHumanResponseAt, firstResponseSeconds: row.firstInboundAt && !row.firstHumanResponseAt ? Math.max(0, Math.floor((now.getTime() - row.firstInboundAt.getTime()) / 1_000)) : row.firstResponseSeconds, waitingSince: allowed ? now : row.waitingSince, slaDueAt: allowed ? null : row.slaDueAt, unreadCount: allowed ? 0 : row.unreadCount, updatedByActorId: context.actorId, revision: { increment: 1 } } });
       if (row.leadId) await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: row.leadId, messageId: message.id, type: "MESSAGE_SENT", direction: "OUTBOUND", result: allowed ? "SENT" : "OTHER", subject: allowed ? "Mensagem enfileirada no inbox" : "Mensagem bloqueada pela privacidade", description: allowed ? "Entrega simulada aguardando processamento local." : "Nenhum envio ocorreu; decisão exige revisão ou bloqueia contato.", occurredAt: now, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
-      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: allowed ? "communication.message.queued" : "communication.message.blocked_by_policy", entityType: "Message", entityId: message.id, changes: json({ privacyOutcome: privacy?.outcome ?? "REVIEW_REQUIRED", channel: row.channel, whatsappPolicy: whatsappPolicy ? { allowed: whatsappPolicy.allowed, code: whatsappPolicy.code } : null, emailSuppressed: suppressed, channelReady, externalEgress: false }) } });
-      return { messageId: message.id, status: allowed ? "QUEUED" as const : "BLOCKED_BY_POLICY" as const, idempotent: false, outboxId, privacyOutcome: privacy?.outcome ?? "REVIEW_REQUIRED", policyCode: policyReason };
+      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: allowed ? "communication.message.queued" : "communication.message.blocked_by_policy", entityType: "Message", entityId: message.id, changes: json({ privacyOutcome: privacy?.outcome ?? "REVIEW_REQUIRED", channel: row.channel, whatsappPolicy: whatsappPolicy ? { allowed: whatsappPolicy.allowed, code: whatsappPolicy.code } : null, emailSuppressed: suppressed, channelReady, agentPausedByHumanReply: pausedAgentLease.count > 0, externalEgress: false }) } });
+      return { messageId: message.id, status: allowed ? "QUEUED" as const : "BLOCKED_BY_POLICY" as const, idempotent: false, outboxId, privacyOutcome: privacy?.outcome ?? "REVIEW_REQUIRED", policyCode: policyReason, agentPaused: pausedAgentLease.count > 0 };
     });
   }
 

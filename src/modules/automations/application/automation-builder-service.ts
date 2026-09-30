@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
+import { startGovernedConversationInTransaction } from "@/modules/ai-agents/application/governed-agent-service";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import {
   automationGraphSchema,
   evaluateGraphCondition,
   nextNodeId,
+  readGraphPayloadPath,
   validateAutomationGraph,
   type AutomationGraph,
 } from "@/modules/automations/domain/automation-graph-contracts";
@@ -43,17 +45,20 @@ const catalog = Object.freeze({
   ].map(([type, label]) => ({ type, label })),
   controls: [
     { type: "CONDITION", label: "Condição E/OU", branches: ["TRUE", "FALSE"] },
+    { type: "AGENT_ROUTE", label: "Ramificar intenção/sem resposta", branches: ["INTENT", "NO_RESPONSE"] },
     { type: "DELAY", label: "Espera", limits: { minMinutes: 1, maxMinutes: 43_200 } },
     { type: "SCHEDULE_WINDOW", label: "Janela de horário" },
   ],
   actions: [
     ["ACTION_TRIAGE", "Triagem"], ["ACTION_CREATE_TASK", "Criar tarefa"], ["ACTION_TAG", "Aplicar tag"],
-    ["ACTION_ASSIGN", "Atribuir responsável"], ["ACTION_NOTIFICATION", "Notificar"], ["HUMAN_HANDOFF", "Handoff humano"], ["END", "Encerrar"],
+    ["ACTION_ASSIGN", "Atribuir responsável"], ["ACTION_NOTIFICATION", "Notificar"],
+    ["AGENT_START_CONVERSATION", "Iniciar conversa com agente"], ["AGENT_COLLECT_FIELDS", "Coletar campos propostos"],
+    ["HUMAN_HANDOFF", "Handoff humano"], ["END", "Encerrar"],
   ].map(([type, label]) => ({ type, label })),
   forbidden: ["ciclo", "webhook arbitrário", "URL arbitrária"],
-  nodeTypes: ["TRIGGER_CONTACT", "TRIGGER_OPPORTUNITY", "TRIGGER_FIELD", "TRIGGER_TIME", "TRIGGER_CHANNEL", "TRIGGER_CAMPAIGN", "TRIGGER_MANUAL", "CONDITION", "DELAY", "SCHEDULE_WINDOW", "ACTION_CREATE_TASK", "ACTION_TRIAGE", "ACTION_TAG", "ACTION_ASSIGN", "ACTION_NOTIFICATION", "HUMAN_HANDOFF", "END"],
+  nodeTypes: ["TRIGGER_CONTACT", "TRIGGER_OPPORTUNITY", "TRIGGER_FIELD", "TRIGGER_TIME", "TRIGGER_CHANNEL", "TRIGGER_CAMPAIGN", "TRIGGER_MANUAL", "CONDITION", "DELAY", "SCHEDULE_WINDOW", "ACTION_CREATE_TASK", "ACTION_TRIAGE", "ACTION_TAG", "ACTION_ASSIGN", "ACTION_NOTIFICATION", "AGENT_START_CONVERSATION", "AGENT_COLLECT_FIELDS", "AGENT_ROUTE", "HUMAN_HANDOFF", "END"],
   triggerTypes: ["TRIGGER_CONTACT", "TRIGGER_OPPORTUNITY", "TRIGGER_FIELD", "TRIGGER_TIME", "TRIGGER_CHANNEL", "TRIGGER_CAMPAIGN", "TRIGGER_MANUAL"],
-  actionTypes: ["ACTION_TRIAGE", "ACTION_CREATE_TASK", "ACTION_TAG", "ACTION_ASSIGN", "ACTION_NOTIFICATION", "HUMAN_HANDOFF", "END"],
+  actionTypes: ["ACTION_TRIAGE", "ACTION_CREATE_TASK", "ACTION_TAG", "ACTION_ASSIGN", "ACTION_NOTIFICATION", "AGENT_START_CONVERSATION", "AGENT_COLLECT_FIELDS", "HUMAN_HANDOFF", "END"],
 });
 
 export const acceptanceGraph: AutomationGraph = {
@@ -95,6 +100,59 @@ function resource(workspaceId: string, id?: string): ResourceScope {
   return { workspaceId, resourceType: "AutomationRule", ...(id ? { resourceId: id } : {}) };
 }
 
+const sensitiveAgentFields = new Set(["price", "preco", "preço", "proposal", "proposta", "stage", "etapa"]);
+
+export function selectAutomationNodeBranch(node: AutomationGraph["nodes"][number], input: Record<string, unknown>) {
+  if (node.type !== "AGENT_ROUTE") return null;
+  const noResponsePath = typeof node.config.noResponsePath === "string" ? node.config.noResponsePath : "agentTurn.noResponse";
+  return readGraphPayloadPath(input, noResponsePath) === true ? "NO_RESPONSE" as const : "INTENT" as const;
+}
+
+export function buildGovernedAgentNodeSnapshot(node: AutomationGraph["nodes"][number], input: Record<string, unknown>, effectKey: string): Record<string, unknown> | null {
+  if (node.type === "AGENT_START_CONVERSATION") {
+    const conversationIdPath = typeof node.config.conversationIdPath === "string" ? node.config.conversationIdPath : "conversationId";
+    const messagePath = typeof node.config.messagePath === "string" ? node.config.messagePath : "message";
+    const conversationId = readGraphPayloadPath(input, conversationIdPath);
+    const message = readGraphPayloadPath(input, messagePath);
+    return {
+      kind: "AGENT_CONVERSATION_START_PROPOSED",
+      status: "PENDING_AGENT_RUNTIME",
+      action: "START_CONVERSATION",
+      agentId: node.config.agentId,
+      conversationId: typeof conversationId === "string" ? conversationId : null,
+      idempotencyKey: effectKey,
+      messagePresent: typeof message === "string" && message.trim().length > 0,
+      externalEgress: false,
+    };
+  }
+  if (node.type === "AGENT_COLLECT_FIELDS") {
+    const proposedSource = record(readGraphPayloadPath(input, "agentTurn.proposedFields") ?? input.proposedFields);
+    const configuredFields = Array.isArray(node.config.fields) ? node.config.fields.filter((field): field is string => typeof field === "string") : [];
+    const proposedFields = Object.fromEntries(configuredFields.map((field) => [field, readGraphPayloadPath(proposedSource, field)]).filter((entry) => entry[1] !== undefined));
+    const sensitiveFields = configuredFields.filter((field) => sensitiveAgentFields.has(field.split(".").at(-1)!.toLocaleLowerCase("pt-BR")));
+    return {
+      kind: "AGENT_FIELDS_PROPOSED",
+      status: sensitiveFields.length > 0 ? "PENDING_HUMAN_APPROVAL" : "PROPOSED",
+      agentId: node.config.agentId,
+      proposedFields,
+      sensitiveFields,
+      authoritativeMutation: false,
+    };
+  }
+  if (node.type === "AGENT_ROUTE") {
+    const intentPath = typeof node.config.intentPath === "string" ? node.config.intentPath : "agentTurn.intent";
+    const intent = readGraphPayloadPath(input, intentPath);
+    return {
+      kind: "AGENT_ROUTE_SELECTED",
+      agentId: node.config.agentId,
+      route: selectAutomationNodeBranch(node, input),
+      intent: typeof intent === "string" ? intent : null,
+      authoritativeMutation: false,
+    };
+  }
+  return null;
+}
+
 function simulate(graph: AutomationGraph, input: Record<string, unknown>) {
   const validation = validateAutomationGraph(graph);
   if (!validation.valid) return { validation, steps: [], effectsProduced: 0 };
@@ -104,8 +162,9 @@ function simulate(graph: AutomationGraph, input: Record<string, unknown>) {
   while (current && steps.length <= graph.nodes.length) {
     const node = byId.get(current)!;
     const condition = node.type === "CONDITION" ? evaluateGraphCondition(node.config, input) : null;
-    const branch = condition === null ? "ALWAYS" : condition ? "TRUE" : "FALSE";
-    steps.push({ nodeId: node.id, type: node.type, branch, outcome: node.type === "HUMAN_HANDOFF" ? "PAUSA_HUMANA" : "SIMULATED" });
+    const branch = selectAutomationNodeBranch(node, input) ?? (condition === null ? "ALWAYS" : condition ? "TRUE" : "FALSE");
+    const outcome = node.type === "HUMAN_HANDOFF" ? "PAUSA_HUMANA" : node.type.startsWith("AGENT_") ? "PROPOSTA_SEGURA" : "SIMULATED";
+    steps.push({ nodeId: node.id, type: node.type, branch, outcome });
     current = nextNodeId(graph, node.id, branch);
   }
   return { validation, steps, effectsProduced: 0 };
@@ -254,8 +313,38 @@ export function createAutomationBuilderService(options: Options) {
       if (last?.status === "SUCCEEDED" && payload.expectedNodeId === node.id) return { runId, nodeId: node.id, duplicated: true, output: last.outputSnapshot };
       const visit = (last?.visit ?? 0) + 1; const key = `${run.id}:node:${node.id}:visit:${visit}`; const input = record(record(run.inputPayload).payload);
       const condition = node.type === "CONDITION" ? evaluateGraphCondition(node.config, input) : null;
-      const branch = condition === null ? "ALWAYS" : condition ? "TRUE" : "FALSE"; const next = nextNodeId(graph, node.id, branch);
+      const branch = selectAutomationNodeBranch(node, input) ?? (condition === null ? "ALWAYS" : condition ? "TRUE" : "FALSE"); const next = nextNodeId(graph, node.id, branch);
       let domainEffect: Record<string, unknown> | null = null;
+      domainEffect = buildGovernedAgentNodeSnapshot(node, input, `${run.id}:node:${node.id}`);
+      if (node.type === "AGENT_START_CONVERSATION") {
+        await options.authorization.assertAuthorized(context, PermissionKeys.AI_USE, { workspaceId: context.workspaceId, resourceType: "Workspace", resourceId: context.workspaceId });
+        const conversationIdPath = typeof node.config.conversationIdPath === "string" ? node.config.conversationIdPath : "conversationId";
+        const messagePath = typeof node.config.messagePath === "string" ? node.config.messagePath : "message";
+        const conversationId = readGraphPayloadPath(input, conversationIdPath);
+        const message = readGraphPayloadPath(input, messagePath);
+        if (typeof conversationId !== "string" || !uuid.safeParse(conversationId).success || typeof message !== "string" || !message.trim()) {
+          fail("O nó de agente exige conversationId e mensagem válidos no payload.", "AGENT_RUNTIME_INPUT_REQUIRED", 422);
+        }
+        const turn = await startGovernedConversationInTransaction(tx, context, {
+          agentId: String(node.config.agentId),
+          conversationId,
+          idempotencyKey: `${run.id}:node:${node.id}`,
+          message,
+        }, options.now);
+        domainEffect = {
+          kind: "AGENT_CONVERSATION_STARTED",
+          turnId: turn.turnId,
+          status: turn.status,
+          confidenceBps: turn.confidenceBps,
+          sources: turn.sources,
+          summary: turn.summary,
+          proposedFields: turn.proposedFields,
+          response: turn.response,
+          duplicated: turn.duplicated,
+          externalEgress: false,
+          authoritativeMutation: false,
+        };
+      }
       if (run.leadId && node.type === "ACTION_TRIAGE") {
         const priority = ["LOW", "MEDIUM", "HIGH", "URGENT"].includes(String(node.config.priority)) ? String(node.config.priority) as "LOW" | "MEDIUM" | "HIGH" | "URGENT" : "MEDIUM";
         await tx.lead.updateMany({ where: { id: run.leadId, workspaceId: context.workspaceId, deletedAt: null }, data: { priority, updatedByActorId: context.actorId } });

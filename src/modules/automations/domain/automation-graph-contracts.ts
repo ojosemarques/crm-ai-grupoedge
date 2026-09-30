@@ -6,8 +6,12 @@ export const automationNodeTypeSchema = z.enum([
   "TRIGGER_CONTACT", "TRIGGER_OPPORTUNITY", "TRIGGER_FIELD", "TRIGGER_TIME",
   "TRIGGER_CHANNEL", "TRIGGER_CAMPAIGN", "TRIGGER_MANUAL", "CONDITION",
   "DELAY", "SCHEDULE_WINDOW", "ACTION_CREATE_TASK", "ACTION_TRIAGE",
-  "ACTION_TAG", "ACTION_ASSIGN", "ACTION_NOTIFICATION", "HUMAN_HANDOFF", "END",
+  "ACTION_TAG", "ACTION_ASSIGN", "ACTION_NOTIFICATION", "AGENT_START_CONVERSATION",
+  "AGENT_COLLECT_FIELDS", "AGENT_ROUTE", "HUMAN_HANDOFF", "END",
 ]);
+
+export const automationEdgeBranchSchema = z.enum(["ALWAYS", "TRUE", "FALSE", "INTENT", "NO_RESPONSE"]);
+export type AutomationEdgeBranch = z.infer<typeof automationEdgeBranchSchema>;
 
 const nodeConfigSchema = z.record(z.string().trim().min(1).max(80), z.unknown())
   .refine((value) => JSON.stringify(value).length <= 10_000, "Configuração do nó excede 10 KB.");
@@ -24,7 +28,7 @@ export const automationGraphEdgeSchema = z.object({
   id: z.string().trim().min(1).max(80).regex(/^[a-zA-Z0-9_-]+$/),
   source: z.string().trim().min(1).max(80),
   target: z.string().trim().min(1).max(80),
-  branch: z.enum(["ALWAYS", "TRUE", "FALSE"]).default("ALWAYS"),
+  branch: automationEdgeBranchSchema.default("ALWAYS"),
 }).strict();
 
 export const automationGraphSchema = z.object({
@@ -51,6 +55,13 @@ const triggerTypes = new Set<AutomationGraphNode["type"]>([
   "TRIGGER_CHANNEL", "TRIGGER_CAMPAIGN", "TRIGGER_MANUAL",
 ]);
 
+const agentNodeTypes = new Set<AutomationGraphNode["type"]>([
+  "AGENT_START_CONVERSATION", "AGENT_COLLECT_FIELDS", "AGENT_ROUTE",
+]);
+
+const safePath = /^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/;
+const citizenDataSegments = new Set(["cpf", "titulo_eleitor", "título_eleitor", "cidadao", "cidadão", "citizen", "eleitor", "zona_eleitoral", "secao_eleitoral", "seção_eleitoral"]);
+
 export function validateAutomationGraph(input: unknown): GraphValidation {
   const parsed = automationGraphSchema.safeParse(input);
   if (!parsed.success) {
@@ -74,6 +85,30 @@ export function validateAutomationGraph(input: unknown): GraphValidation {
     if (node.type === "ACTION_ASSIGN" && typeof node.config.memberId !== "string") issues.push(`Responsável ausente no nó ${node.id}.`);
     if (node.type === "ACTION_NOTIFICATION" && typeof node.config.title !== "string") issues.push(`Título da notificação ausente no nó ${node.id}.`);
     if (node.type === "HUMAN_HANDOFF" && typeof node.config.reason !== "string") issues.push(`Motivo do handoff ausente no nó ${node.id}.`);
+    if (agentNodeTypes.has(node.type) && !z.string().uuid().safeParse(node.config.agentId).success) issues.push(`Agente inválido no nó ${node.id}.`);
+    if (node.type === "AGENT_START_CONVERSATION") {
+      for (const key of ["conversationIdPath", "messagePath"] as const) {
+        const path = node.config[key];
+        if (path !== undefined && (typeof path !== "string" || !safePath.test(path))) issues.push(`Caminho ${key} inválido no nó ${node.id}.`);
+      }
+    }
+    if (node.type === "AGENT_COLLECT_FIELDS") {
+      const fields = node.config.fields;
+      if (!Array.isArray(fields) || fields.length < 1 || fields.length > 20 || fields.some((field) => typeof field !== "string" || !safePath.test(field))) {
+        issues.push(`Campos propostos inválidos no nó ${node.id}.`);
+      } else if (new Set(fields).size !== fields.length) {
+        issues.push(`Campos propostos duplicados no nó ${node.id}.`);
+      }
+      if (Array.isArray(fields) && fields.some((field) => typeof field === "string" && field.split(".").some((segment) => citizenDataSegments.has(segment.toLocaleLowerCase("pt-BR"))))) {
+        issues.push(`Dados cidadãos do OS são proibidos no nó ${node.id}.`);
+      }
+    }
+    if (node.type === "AGENT_ROUTE") {
+      for (const key of ["intentPath", "noResponsePath"] as const) {
+        const path = node.config[key];
+        if (path !== undefined && (typeof path !== "string" || !safePath.test(path))) issues.push(`Caminho ${key} inválido no nó ${node.id}.`);
+      }
+    }
     if (/webhook|https?:\/\//i.test(JSON.stringify(node.config))) issues.push(`Webhook arbitrário proibido no nó ${node.id}.`);
   }
   const triggers = graph.nodes.filter((node) => triggerTypes.has(node.type));
@@ -93,6 +128,8 @@ export function validateAutomationGraph(input: unknown): GraphValidation {
     const edges = outgoing.get(node.id) ?? [];
     if (node.type === "CONDITION") {
       if (edges.filter((edge) => edge.branch === "TRUE").length !== 1 || edges.filter((edge) => edge.branch === "FALSE").length !== 1) issues.push(`Condição ${node.id} exige ramos TRUE e FALSE.`);
+    } else if (node.type === "AGENT_ROUTE") {
+      if (edges.filter((edge) => edge.branch === "INTENT").length !== 1 || edges.filter((edge) => edge.branch === "NO_RESPONSE").length !== 1) issues.push(`Roteamento de agente ${node.id} exige ramos INTENT e NO_RESPONSE.`);
     } else {
       if (edges.some((edge) => edge.branch !== "ALWAYS")) issues.push(`Ramificação só é permitida após condição (${node.id}).`);
       if (edges.length > 1) issues.push(`Nó ${node.id} permite no máximo uma saída.`);
@@ -124,9 +161,13 @@ export function validateAutomationGraph(input: unknown): GraphValidation {
   return Object.freeze({ valid: issues.length === 0, issues: Object.freeze(issues), topologicalOrder: Object.freeze(order), estimatedCostCents });
 }
 
-export function nextNodeId(graph: AutomationGraph, nodeId: string, branch: "TRUE" | "FALSE" | "ALWAYS" = "ALWAYS"): string | null {
+export function nextNodeId(graph: AutomationGraph, nodeId: string, branch: AutomationEdgeBranch = "ALWAYS"): string | null {
   const edges = graph.edges.filter((edge) => edge.source === nodeId);
   return edges.find((edge) => edge.branch === branch)?.target ?? edges.find((edge) => edge.branch === "ALWAYS")?.target ?? null;
+}
+
+export function readGraphPayloadPath(payload: Readonly<Record<string, unknown>>, path: string): unknown {
+  return path.split(".").reduce<unknown>((value, key) => value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>)[key] : undefined, payload);
 }
 
 export function evaluateGraphCondition(config: Readonly<Record<string, unknown>>, payload: Readonly<Record<string, unknown>>): boolean {
@@ -135,7 +176,7 @@ export function evaluateGraphCondition(config: Readonly<Record<string, unknown>>
   const values = raw.map((candidate) => {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
     const rule = candidate as Record<string, unknown>;
-    const actual = typeof rule.path === "string" ? rule.path.split(".").reduce<unknown>((value, key) => value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined, payload) : undefined;
+    const actual = typeof rule.path === "string" ? readGraphPayloadPath(payload, rule.path) : undefined;
     return rule.operator === "EXISTS" ? actual !== undefined : rule.operator === "NOT_EQUALS" ? actual !== rule.value : actual === rule.value;
   });
   return mode === "ANY" ? values.some(Boolean) : values.every(Boolean);
