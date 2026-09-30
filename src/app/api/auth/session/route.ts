@@ -24,6 +24,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           workspace: {
             id: context.workspaceId,
             slug: context.workspaceSlug,
+            name: context.workspaceName ?? context.workspaceSlug,
           },
         },
       },

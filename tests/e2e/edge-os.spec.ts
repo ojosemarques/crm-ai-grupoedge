@@ -1,3 +1,4 @@
+import { enterDemoCompany } from "./helpers/company-hub";
 import { expect, test } from "@playwright/test";
 import { DEMO_SEED_PASSWORD, DEMO_USERS } from "@/modules/settings/application/demo-seed-service";
 
@@ -7,7 +8,7 @@ test("operação integrada expõe módulos e Copilot em desktop e mobile", async
   await page.goto("/login");
   await page.getByLabel("E-mail", { exact: true }).fill(DEMO_USERS[0]!.email);
   await page.getByLabel("Senha", { exact: true }).fill(DEMO_SEED_PASSWORD);
-  await page.getByRole("button", { name: "Entrar", exact: true }).click();
+  await page.getByRole("button", { name: "Entrar", exact: true }).click(); await enterDemoCompany(page);
   await expect(page).not.toHaveURL(/\/login/);
   for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);

@@ -1,3 +1,4 @@
+import { enterDemoCompany } from "./helpers/company-hub";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 import {
@@ -16,7 +17,7 @@ async function login(page: Page) {
   await page.goto("/login");
   await page.getByLabel("E-mail").fill(DEMO_USERS[1].email);
   await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
-  await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByRole("button", { name: "Entrar" }).click(); await enterDemoCompany(page);
   await expect(page).toHaveURL(/\/$/);
 }
 

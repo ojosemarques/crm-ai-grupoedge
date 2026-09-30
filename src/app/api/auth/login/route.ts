@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const loginSchema = z.object({
-  workspace: z.string().trim().min(1).max(80),
+  workspace: z.string().trim().min(1).max(80).optional(),
   email: z.string().trim().email().max(254),
   password: z.string().min(1).max(128),
 });
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const result = await getAuthenticationService().login({
-      workspaceSlug: parsed.data.workspace,
+      ...(parsed.data.workspace ? { workspaceSlug: parsed.data.workspace } : {}),
       email: parsed.data.email,
       password: parsed.data.password,
       request: getRequestMetadata(request),
@@ -50,6 +50,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     await clearRateLimit("auth-login", clientKey);
     const response = NextResponse.json(
       {
+        redirectTo: "/hub",
         session: {
           expiresAt: result.expiresAt.toISOString(),
           user: {

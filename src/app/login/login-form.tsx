@@ -1,16 +1,12 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
-
-const LOGIN_WORKSPACE = "politizai";
 
 type LoginErrorResponse = {
   error?: { message?: string };
 };
 
 export function LoginForm() {
-  const router = useRouter();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -25,7 +21,6 @@ export function LoginForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          workspace: formData.get("workspace") || LOGIN_WORKSPACE,
           email: formData.get("email"),
           password: formData.get("password"),
         }),
@@ -39,8 +34,7 @@ export function LoginForm() {
         return;
       }
 
-      router.replace("/");
-      router.refresh();
+      window.location.assign(new URL("/hub", window.location.origin).href);
     } catch {
       setErrorMessage("Não foi possível conectar à aplicação. Tente novamente.");
     } finally {
@@ -50,10 +44,6 @@ export function LoginForm() {
 
   return (
     <form className="login-form" method="post" onSubmit={handleSubmit}>
-      <label className="login-field">
-        Empresa
-        <input className="login-field__input" name="workspace" defaultValue={LOGIN_WORKSPACE} required pattern="[a-z0-9][a-z0-9-]*" autoComplete="organization" aria-label="Workspace" />
-      </label>
       <label className="login-field">
         E-mail
         <input

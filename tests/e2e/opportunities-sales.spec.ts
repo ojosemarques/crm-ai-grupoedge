@@ -1,3 +1,4 @@
+import { enterDemoCompany } from "./helpers/company-hub";
 import { createHash, randomUUID } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
@@ -6,7 +7,6 @@ import { PrismaClient } from "@/generated/prisma/client";
 import {
   DEMO_SEED_PASSWORD,
   DEMO_USERS,
-  DEMO_WORKSPACE_SLUG,
 } from "@/modules/settings/application/demo-seed-service";
 import { pactoDimensions } from "@/modules/qualification/domain/pacto-contracts";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
@@ -20,10 +20,9 @@ test.afterAll(async () => database.$disconnect());
 
 async function login(page: import("@playwright/test").Page) {
   await page.goto("/login");
-  await page.getByLabel("Workspace").fill(DEMO_WORKSPACE_SLUG);
   await page.getByLabel("E-mail").fill(DEMO_USERS[1].email);
   await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
-  await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByRole("button", { name: "Entrar" }).click(); await enterDemoCompany(page);
   await expect(page).toHaveURL(/\/$/);
 }
 

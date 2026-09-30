@@ -1,3 +1,4 @@
+import { enterDemoCompany } from "./helpers/company-hub";
 import { randomUUID } from "node:crypto";
 
 import { expect, test, type Page } from "@playwright/test";
@@ -13,10 +14,9 @@ import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
 
 async function login(page: Page, email: string) {
   await page.goto("/login");
-  await page.getByLabel("Workspace").fill(DEMO_WORKSPACE_SLUG);
   await page.getByLabel("E-mail").fill(email);
   await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
-  await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByRole("button", { name: "Entrar" }).click(); await enterDemoCompany(page);
   await expect(page).toHaveURL(/\/$/);
 }
 

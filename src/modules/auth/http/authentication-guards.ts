@@ -9,6 +9,7 @@ import {
   SessionExpiredError,
 } from "@/modules/auth/domain/auth-errors";
 import { SESSION_COOKIE_NAME } from "@/modules/auth/http/session-cookie";
+import { ApplicationError } from "@/shared/core/errors/application-error";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import {
   getAuthorizationService,
@@ -19,9 +20,14 @@ import type { PermissionKey } from "@/modules/users/permissions/permission-keys"
 export async function requireApiAuthentication(
   request: NextRequest,
 ): Promise<AuthenticatedContext> {
-  return getAuthenticationService().validateSession(
+  const context = await getAuthenticationService().validateSession(
     request.cookies.get(SESSION_COOKIE_NAME)?.value,
   );
+  const expectedSession = request.headers.get("x-crm-session");
+  if (expectedSession && expectedSession !== context.sessionId) {
+    throw new ApplicationError("A empresa ou sessão mudou em outra aba. Abra o hub novamente.", { code: "COMPANY_SESSION_CHANGED", statusCode: 409, expose: true });
+  }
+  return context;
 }
 
 export async function requireApiPermission(

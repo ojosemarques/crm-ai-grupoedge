@@ -1,8 +1,9 @@
+import { enterDemoCompany } from "./helpers/company-hub";
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { DEMO_SEED_PASSWORD, DEMO_USERS, DEMO_WORKSPACE_SLUG } from "@/modules/settings/application/demo-seed-service";
+import { DEMO_SEED_PASSWORD, DEMO_USERS, } from "@/modules/settings/application/demo-seed-service";
 
-async function login(page:Page,email:string){await page.goto("/login");await page.getByLabel("Workspace").fill(DEMO_WORKSPACE_SLUG);await page.getByLabel("E-mail").fill(email);await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);await page.getByRole("button",{name:"Entrar"}).click();await expect(page).toHaveURL(/\/$/);}
+async function login(page:Page,email:string){await page.goto("/login");await page.getByLabel("E-mail").fill(email);await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);await page.getByRole("button",{name:"Entrar"}).click(); await enterDemoCompany(page);await expect(page).toHaveURL(/\/$/);}
 
 test("pagamentos mostra dados persistidos, recebimentos e não cria overflow",async({page},testInfo)=>{await login(page,DEMO_USERS[0]!.email);for(const viewport of [{width:1440,height:900},{width:390,height:844}]){await page.setViewportSize(viewport);await page.goto("/pagamentos");await expect(page.getByRole("heading",{name:"Cobranças e pagamentos",level:1})).toBeVisible();await expect(page.getByText("Registre pagamentos recebidos pela página da cobrança.", {exact:false})).toBeVisible();await page.locator("summary").filter({hasText:"Nova cobrança"}).click();await expect(page.getByLabel("Assinatura")).toContainText("SUB-CRM54");const dimensions=await page.evaluate(()=>({clientWidth:document.documentElement.clientWidth,scrollWidth:document.documentElement.scrollWidth}));expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);await page.screenshot({path:testInfo.outputPath(`payments-${viewport.width}x${viewport.height}.png`),fullPage:true});}});
 

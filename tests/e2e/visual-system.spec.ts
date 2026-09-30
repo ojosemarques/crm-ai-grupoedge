@@ -1,3 +1,4 @@
+import { enterDemoCompany } from "./helpers/company-hub";
 import { createHash, randomUUID } from "node:crypto";
 
 import { expect, test, type Page } from "@playwright/test";
@@ -5,7 +6,6 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   DEMO_SEED_PASSWORD,
   DEMO_USERS,
-  DEMO_WORKSPACE_SLUG,
 } from "@/modules/settings/application/demo-seed-service";
 
 async function login(page: Page) {
@@ -15,10 +15,9 @@ async function login(page: Page) {
     // Interact only after the compiled client form has hydrated.
     await page.reload();
     await page.waitForLoadState("networkidle");
-    await page.getByLabel("Workspace").fill(DEMO_WORKSPACE_SLUG);
     await page.getByLabel("E-mail").fill(DEMO_USERS[0].email);
     await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
-    await page.getByRole("button", { name: "Entrar" }).click();
+    await page.getByRole("button", { name: "Entrar" }).click(); await enterDemoCompany(page);
     try {
       await expect(page).toHaveURL(/\/$/, { timeout: 8_000 });
       return;

@@ -1,7 +1,8 @@
+import { enterDemoCompany } from "./helpers/company-hub";
 import { expect, test, type Page } from "@playwright/test";
-import { DEMO_SEED_PASSWORD, DEMO_USERS, DEMO_WORKSPACE_SLUG } from "@/modules/settings/application/demo-seed-service";
+import { DEMO_SEED_PASSWORD, DEMO_USERS, } from "@/modules/settings/application/demo-seed-service";
 
-async function login(page:Page,email:string){await page.goto("/login");await page.getByLabel("Workspace").fill(DEMO_WORKSPACE_SLUG);await page.getByLabel("E-mail").fill(email);await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);await page.getByRole("button",{name:"Entrar"}).click();await expect(page).toHaveURL(/\/$/);}
+async function login(page:Page,email:string){await page.goto("/login");await page.getByLabel("E-mail").fill(email);await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);await page.getByRole("button",{name:"Entrar"}).click(); await enterDemoCompany(page);await expect(page).toHaveURL(/\/$/);}
 
 test("carteira de Customer Success mostra saúde explicável e ação",async({page})=>{await login(page,DEMO_USERS[0]!.email);await page.goto("/customer-success");await expect(page.getByRole("heading",{name:"Customer Success",level:1})).toBeVisible();await expect(page.getByText("Saúde explicável").first()).toBeVisible();await expect(page.getByText("Dados insuficientes",{exact:true}).first()).toBeVisible();await expect(page.getByRole("button",{name:"Recalcular saúde"}).first()).toBeVisible();});
 

@@ -1,3 +1,4 @@
+import { enterDemoCompany } from "./helpers/company-hub";
 import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import { DEMO_SEED_PASSWORD, DEMO_USERS } from "@/modules/settings/application/demo-seed-service";
@@ -20,7 +21,7 @@ test("Copilot monta, reordena e confirma um plano inteiro; cancelamento e histó
   await page.goto("/login");
   await page.getByLabel("E-mail", { exact: true }).fill(DEMO_USERS[0]!.email);
   await page.getByLabel("Senha", { exact: true }).fill(DEMO_SEED_PASSWORD);
-  await page.getByRole("button", { name: "Entrar", exact: true }).click();
+  await page.getByRole("button", { name: "Entrar", exact: true }).click(); await enterDemoCompany(page);
   await expect(page).not.toHaveURL(/\/login/);
 
   const suffix = randomUUID();

@@ -10,6 +10,7 @@ export type AuthenticatedContext = WorkspaceContext &
     roleKey: string;
     roleName: string;
     displayName: string;
+    workspaceName?: string;
   }>;
 
 export type RequestMetadata = Readonly<{

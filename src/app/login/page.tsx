@@ -8,7 +8,7 @@ export default function LoginPage() {
         <section className="login-context" aria-labelledby="product-title">
           <div className="login-context__copy">
             <h2 id="product-title">Simplifique processos.<br />Acelere resultados.</h2>
-            <p>Foque no que importa enquanto a Politizai organiza os detalhes da operação.</p>
+            <p>As empresas do grupo, suas equipes e os resultados da operação em um só lugar.</p>
           </div>
         </section>
 
@@ -18,15 +18,15 @@ export default function LoginPage() {
               <BrandLogo appearance="light" />
             </div>
             <h1 id="login-title">Entre na sua conta</h1>
-            <p>Bem-vindo de volta. Informe seus dados para continuar.</p>
+            <p>Entre com e-mail e senha. Depois, escolha sua empresa.</p>
           </header>
 
           <LoginForm />
 
           <div className="login-panel__assurance">
-            <p className="login-panel__divider"><span>Acesso da equipe Politizai</span></p>
+            <p className="login-panel__divider"><span>Acesso às empresas do grupo</span></p>
             <div className="login-panel__assurance-pill"><span aria-hidden="true">✦</span> Seu acesso é individual e protegido</div>
-            <div className="login-panel__assurance-pill"><span aria-hidden="true">●</span> Contas gerenciadas pela Politizai</div>
+            <div className="login-panel__assurance-pill"><span aria-hidden="true">●</span> Empresas disponíveis conforme suas permissões</div>
             <p className="login-panel__footnote">Ainda não tem acesso? Fale com o administrador.</p>
           </div>
         </section>

@@ -1,3 +1,4 @@
+import { enterDemoCompany } from "./helpers/company-hub";
 import { expect, test } from "@playwright/test";
 import { DEMO_SEED_PASSWORD } from "@/modules/settings/application/demo-seed-service";
 
@@ -5,7 +6,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/login", { waitUntil: "networkidle" });
   await page.getByLabel("E-mail").fill("admin@demo.politizai.local");
   await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
-  await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByRole("button", { name: "Entrar" }).click(); await enterDemoCompany(page);
   await expect(page).toHaveURL(/\/$/);
 });
 
@@ -118,7 +119,7 @@ test("login não coloca credenciais na URL quando JavaScript está indisponível
     await page.getByLabel("Senha").fill("SyntheticTestOnly123!");
     await page.route(`${baseURL}/login**`, (route) => route.fulfill({ status: 403, body: "JavaScript necessário" }));
     const submission = page.waitForRequest((request) => request.isNavigationRequest());
-    await page.getByRole("button", { name: "Entrar", exact: true }).click();
+    await page.getByRole("button", { name: "Entrar", exact: true }).click(); await enterDemoCompany(page);
     const request = await submission;
     expect(request.method()).toBe("POST");
     expect(new URL(request.url()).search).toBe("");

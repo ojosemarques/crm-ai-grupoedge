@@ -31,7 +31,7 @@ type AuthenticationServiceOptions = Readonly<{
 }>;
 
 export type LoginInput = Readonly<{
-  workspaceSlug: string;
+  workspaceSlug?: string;
   email: string;
   password: string;
   request: RequestMetadata;
@@ -72,7 +72,7 @@ function buildContext(session: {
   userId: string;
   workspaceMemberId: string;
   actorId: string;
-  workspace: { slug: string };
+  workspace: { slug: string; name?: string };
   user: { displayName: string };
   member: { roleId: string; role: { key: string; name: string } };
 }): AuthenticatedContext {
@@ -80,6 +80,7 @@ function buildContext(session: {
     sessionId: session.id,
     workspaceId: session.workspaceId,
     workspaceSlug: session.workspace.slug,
+    workspaceName: session.workspace.name ?? session.workspace.slug,
     userId: session.userId,
     memberId: session.workspaceMemberId,
     actorId: session.actorId,
@@ -169,7 +170,16 @@ export function createAuthenticationService(options: AuthenticationServiceOption
   async function login(input: LoginInput): Promise<LoginResult> {
     const occurredAt = now();
     const normalizedEmail = normalizeEmail(input.email);
-    const workspaceSlug = normalizeWorkspaceSlug(input.workspaceSlug);
+    // Identity is global; choose an authorized starting context, then show the hub.
+    // Legacy API clients can still request one of their own companies explicitly.
+    const firstMembership = input.workspaceSlug ? null : await options.database.workspaceMember.findFirst({
+      where: { status: "ACTIVE", deletedAt: null, role: { deletedAt: null },
+        workspace: { status: "ACTIVE", deletedAt: null },
+        user: { normalizedEmail, status: "ACTIVE", deletedAt: null } },
+      select: { workspace: { select: { slug: true } } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    const workspaceSlug = normalizeWorkspaceSlug(input.workspaceSlug ?? firstMembership?.workspace.slug ?? "");
     const workspace = await options.database.workspace.findFirst({
       where: {
         slug: workspaceSlug,
@@ -501,7 +511,38 @@ export function createAuthenticationService(options: AuthenticationServiceOption
     });
   }
 
-  return Object.freeze({ login, validateSession, logout, changePassword });
+  async function switchWorkspace(token: string | undefined, workspaceId: string, request: RequestMetadata): Promise<LoginResult> {
+    const context = await validateSession(token);
+    const occurredAt = now();
+    const nextToken = generateToken();
+    return options.database.$transaction(async (transaction) => {
+      const current = await transaction.authSession.findFirst({
+        where: { id: context.sessionId, userId: context.userId, revokedAt: null, expiresAt: { gt: occurredAt } },
+        include: { user: { include: { credential: true } } },
+      });
+      const member = await transaction.workspaceMember.findFirst({
+        where: { workspaceId, userId: context.userId, status: "ACTIVE", deletedAt: null,
+          role: { deletedAt: null }, workspace: { status: "ACTIVE", deletedAt: null } },
+      });
+      const actor = await transaction.actor.findFirst({ where: { workspaceId, userId: context.userId, type: "HUMAN" } });
+      if (!current || current.user.status !== "ACTIVE" || current.user.deletedAt ||
+          current.user.credential?.credentialVersion !== current.credentialVersion) throw new SessionExpiredError();
+      if (!member || !actor) throw new ApplicationError("Você não tem acesso a esta empresa.", { code: "WORKSPACE_ACCESS_DENIED", statusCode: 403, expose: true });
+      const revoked = await transaction.authSession.updateMany({ where: { id: current.id, revokedAt: null }, data: { revokedAt: occurredAt } });
+      if (revoked.count !== 1) throw new SessionExpiredError();
+      const session = await transaction.authSession.create({
+        data: { workspaceId, userId: context.userId, workspaceMemberId: member.id, actorId: actor.id,
+          tokenHash: hashSessionToken(nextToken), credentialVersion: current.credentialVersion,
+          expiresAt: current.expiresAt, createdAt: occurredAt, lastSeenAt: occurredAt, ipAddress: request.ipAddress, userAgent: request.userAgent },
+        include: { workspace: true, user: true, member: { include: { role: true } } },
+      });
+      await appendAuditLog(transaction, { workspaceId: context.workspaceId, actorId: context.actorId, action: "auth.workspace.left", entityId: current.id });
+      await appendAuditLog(transaction, { workspaceId, actorId: actor.id, action: "auth.workspace.selected", entityId: session.id });
+      return { token: nextToken, expiresAt: session.expiresAt, context: buildContext(session) };
+    });
+  }
+
+  return Object.freeze({ login, validateSession, logout, changePassword, switchWorkspace });
 }
 
 let authenticationService:

@@ -1,3 +1,4 @@
+import { enterDemoCompany } from "./helpers/company-hub";
 import { createHash, randomUUID } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
@@ -5,15 +6,13 @@ import { expect, test } from "@playwright/test";
 import {
   DEMO_SEED_PASSWORD,
   DEMO_USERS,
-  DEMO_WORKSPACE_SLUG,
 } from "@/modules/settings/application/demo-seed-service";
 
 async function login(page: import("@playwright/test").Page, email: string) {
   await page.goto("/login");
-  await page.getByLabel("Workspace").fill(DEMO_WORKSPACE_SLUG);
   await page.getByLabel("E-mail").fill(email);
   await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
-  await page.getByRole("button", { name: "Entrar" }).click();
+  await page.getByRole("button", { name: "Entrar" }).click(); await enterDemoCompany(page);
   await expect(page).toHaveURL(/\/$/);
 }
 

@@ -102,6 +102,17 @@ async function ensureSalesPipeline(tx: Prisma.TransactionClient, workspaceId: st
 export async function ensureProductionFoundation(database: PrismaClient, workspaceSlug: string, dryRun = false) {
   try {
     return await database.$transaction(async (tx) => {
+    const result = await ensureProductionFoundationInTransaction(tx, workspaceSlug);
+      if (dryRun) throw new DryRunRollback(result);
+      return result;
+    }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 90_000 });
+  } catch (error) {
+    if (error instanceof DryRunRollback) return error.created;
+    throw error;
+  }
+}
+
+export async function ensureProductionFoundationInTransaction(tx: Prisma.TransactionClient, workspaceSlug: string) {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`politizai_foundation:${workspaceSlug}`}))`;
     const workspace = await tx.workspace.findFirstOrThrow({ where: { slug: workspaceSlug, deletedAt: null } });
     const actor = await tx.actor.findFirstOrThrow({ where: { workspaceId: workspace.id, type: "SYSTEM", key: "system" } });
@@ -165,11 +176,5 @@ export async function ensureProductionFoundation(database: PrismaClient, workspa
       const existing = await tx.disqualificationReason.findFirst({ where: { workspaceId, key, deletedAt: null } });
       if (!existing) { await tx.disqualificationReason.create({ data: { workspaceId, key, name, position, createdByActorId: actorId, updatedByActorId: actorId } }); result.reasons += 1; }
     }
-      if (dryRun) throw new DryRunRollback(result);
-      return result;
-    }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 90_000 });
-  } catch (error) {
-    if (error instanceof DryRunRollback) return error.created;
-    throw error;
-  }
+  return result;
 }

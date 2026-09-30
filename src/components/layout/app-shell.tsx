@@ -6,18 +6,20 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 
 import { CopilotDrawer } from "@/components/layout/copilot-drawer";
 import { GlobalSearch } from "@/components/layout/global-search";
+import { useCompanySession } from "@/components/layout/use-company-session";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { cn } from "@/shared/core/ui/class-names";
 import styles from "./app-shell.module.css";
 
 type SessionView = Readonly<{
+  id: string;
   user: Readonly<{
     displayName: string;
     role: Readonly<{ key: string; name: string }>;
     permissionKeys: readonly string[];
   }>;
-  workspace: Readonly<{ slug: string }>;
+  workspace: Readonly<{ slug: string; name: string }>;
 }>;
 
 type NavigationItem = Readonly<{
@@ -28,7 +30,7 @@ type NavigationItem = Readonly<{
   roles?: readonly string[];
 }>;
 
-const publicRoutes = new Set(["/login", "/acesso-negado", "/sessao-expirada"]);
+const publicRoutes = new Set(["/login", "/acesso-negado", "/sessao-expirada", "/hub"]);
 const operationalRoles = ["administrator", "commercial_manager", "sdr", "closer"] as const;
 const commercialRoles = ["administrator", "commercial_manager", "closer", "viewer"] as const;
 const leadRoles = ["administrator", "commercial_manager", "sdr", "closer", "viewer"] as const;
@@ -167,6 +169,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const isMobile = useSyncExternalStore(subscribeToMobileLayout, mobileLayoutSnapshot, serverLayoutSnapshot);
   const menuRef = useRef<HTMLElement>(null);
   const publicRoute = publicRoutes.has(pathname);
+  useCompanySession(publicRoute ? undefined : session?.id);
 
   useEffect(() => {
     const savedTheme = window.localStorage.getItem("politizai-crm-theme-v2");
@@ -246,6 +249,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             ))}
           </nav>
           <div className={styles.actions}>
+            <Link aria-label="Trocar empresa" className={styles.companyButton} href="/hub" title="Escolher empresa">{session?.workspace.name ?? "Empresas"}<span aria-hidden="true">⌄</span></Link>
             {session ? <GlobalSearch /> : null}
             {canCreateLead ? <Link aria-label="Novo lead" className={styles.newButton} href="/leads/entrada"><Icon name="mais" size={14} /><span>Novo</span></Link> : null}
             <Link aria-label="Notificações" className={styles.iconButton} href="/notificacoes"><Icon name="notificacoes" size={17} /></Link>
@@ -263,7 +267,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             ))}
           </nav>
           <div className={styles.sidebarBottom}>
-            <Link aria-label="Meu workspace" href="/" onClick={() => setMenuOpen(false)} title="Meu workspace"><Icon name="meu-dia" size={16} /><span>Meu workspace</span></Link>
+            <Link aria-label="Minhas empresas" href="/hub" onClick={() => setMenuOpen(false)} title="Minhas empresas"><Icon name="meu-dia" size={16} /><span>Minhas empresas</span></Link>
             {availableSections.find((section) => section.key === "settings") ? <Link aria-label="Configurações" href={availableSections.find((section) => section.key === "settings")!.items[0]!.href} onClick={() => setMenuOpen(false)} title="Configurações"><Icon name="configuracoes" size={16} /><span>Configurações</span></Link> : null}
             <Link aria-label="Minha conta" className={styles.account} href="/perfil" onClick={() => setMenuOpen(false)} title="Minha conta"><span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span><span><strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small></span></Link>
           </div>

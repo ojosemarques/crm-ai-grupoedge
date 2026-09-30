@@ -2,7 +2,7 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 
 export class InvalidCredentialsError extends ApplicationError {
   constructor() {
-    super("Workspace, e-mail ou senha inválidos.", {
+    super("E-mail ou senha inválidos, ou acesso indisponível.", {
       code: "INVALID_CREDENTIALS",
       statusCode: 401,
       expose: true,
