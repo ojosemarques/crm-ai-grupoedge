@@ -312,7 +312,7 @@ describe("seed estrutural de demonstração", () => {
     expect(snapshot.users.every(({ credential }) => credential !== null)).toBe(true);
     expect(snapshot.actors).toHaveLength(11);
     expect(snapshot.roles).toHaveLength(5);
-    expect(snapshot.grants).toHaveLength(458);
+    expect(snapshot.grants).toHaveLength(462);
     expect(snapshot.members).toHaveLength(8);
     expect(snapshot.teams).toHaveLength(2);
     expect(snapshot.teamMembers).toHaveLength(7);

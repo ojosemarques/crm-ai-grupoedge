@@ -15,6 +15,7 @@ type SessionView = Readonly<{
   user: Readonly<{
     displayName: string;
     role: Readonly<{ key: string; name: string }>;
+    permissionKeys: readonly string[];
   }>;
   workspace: Readonly<{ slug: string }>;
 }>;
@@ -23,6 +24,7 @@ type NavigationItem = Readonly<{
   href: string;
   icon: IconName;
   label: string;
+  permission?: string;
   roles?: readonly string[];
 }>;
 
@@ -45,17 +47,24 @@ const navigationGroups: ReadonlyArray<Readonly<{
       { href: "/agenda", icon: "agenda", label: "Agenda" },
       { href: "/inbox", icon: "inbox", label: "Conversas" },
       { href: "/atividades", icon: "meu-dia", label: "Atividades", roles: commercialRoles },
+      { href: "/automacoes", icon: "automacoes", label: "Automações", permission: "automations.read" },
     ],
   },
   {
     label: "Indicadores",
     items: [
-      { href: "/dashboard", icon: "dashboard", label: "Visão geral" },
-      { href: "/metas", icon: "dashboard", label: "Metas" },
-      { href: "/forecast", icon: "receita", label: "Forecast", roles: commercialRoles },
-      { href: "/metricas-receita", icon: "dashboard", label: "Receita e retenção", roles: commercialRoles },
-      { href: "/receita", icon: "receita", label: "Receita", roles: commercialRoles },
-      { href: "/analises", icon: "dashboard", label: "Análises", roles: managerRoles },
+      { href: "/dashboard", icon: "dashboard", label: "Visão geral", permission: "metrics.read" },
+      { href: "/metas", icon: "dashboard", label: "Metas", permission: "metrics.read" },
+      { href: "/forecast", icon: "receita", label: "Forecast", permission: "metrics.read" },
+      { href: "/metricas-receita", icon: "dashboard", label: "Receita e retenção", permission: "metrics.read" },
+      { href: "/receita", icon: "receita", label: "Receita", permission: "metrics.read" },
+      { href: "/analises", icon: "dashboard", label: "Análises", permission: "metrics.read" },
+    ],
+  },
+  {
+    label: "Financeiro",
+    items: [
+      { href: "/financeiro", icon: "receita", label: "Financeiro", permission: "finance.read" },
     ],
   },
   {
@@ -70,7 +79,6 @@ const navigationGroups: ReadonlyArray<Readonly<{
     label: "Gestão",
     items: [
       { href: "/administracao", icon: "equipe", label: "Pessoas e equipes", roles: managerRoles },
-      { href: "/automacoes", icon: "automacoes", label: "Automações", roles: managerRoles },
       { href: "/auditoria", icon: "auditoria", label: "Auditoria e saúde", roles: managerRoles },
       { href: "/qualidade-dados", icon: "auditoria", label: "Qualidade de dados", roles: managerRoles },
       { href: "/operacoes", icon: "auditoria", label: "Operações e segurança", roles: managerRoles },
@@ -83,8 +91,9 @@ const navigationGroups: ReadonlyArray<Readonly<{
 ];
 
 const sections = [
-  { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/pipeline", "/leads", "/agenda", "/inbox", "/atividades"] },
+  { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/pipeline", "/leads", "/agenda", "/inbox", "/atividades", "/automacoes"] },
   { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/metas", "/forecast", "/metricas-receita", "/receita", "/analises"] },
+  { key: "finance", label: "Financeiro", icon: "receita", paths: ["/financeiro"] },
   { key: "assistants", label: "Assistentes", icon: "copilot", paths: ["/copilot", "/assistente", "/notificacoes"] },
   { key: "settings", label: "Configurações", icon: "configuracoes", paths: ["/configuracoes", "/administracao", "/auditoria", "/qualidade-dados", "/operacoes", "/privacidade"] },
 ] as const;
@@ -195,8 +204,12 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   if (publicRoute) return children;
 
   const roleKey = session?.user.role.key;
+  const permissionKeys = new Set(session?.user.permissionKeys ?? []);
   const canCreateLead = roleKey ? operationalRoles.some((role) => role === roleKey) : false;
-  const allowedItems = navigationGroups.flatMap((group) => group.items).filter((item) => !item.roles || (roleKey && item.roles.includes(roleKey)));
+  const allowedItems = navigationGroups.flatMap((group) => group.items).filter((item) =>
+    (!item.permission || permissionKeys.has(item.permission)) &&
+    (!item.roles || (roleKey && item.roles.includes(roleKey))),
+  );
   const availableSections = sections.map((section) => ({ ...section, items: section.paths.flatMap((href) => allowedItems.filter((item) => item.href === href)) })).filter((section) => section.items.length > 0);
   const activeSection = availableSections.find((section) => section.items.some((item) => isActive(pathname, item.href))) ?? availableSections.find((section) => section.key === "work");
   const mobileCriticalItems = ["/meu-dia", "/pipeline", "/inbox", "/atividades", "/dashboard"]

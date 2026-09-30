@@ -75,4 +75,29 @@ describe("authorization service", () => {
     expect(actorFindFirst).toHaveBeenCalledTimes(1);
     expect(rolePermissionFindFirst).toHaveBeenCalledTimes(1);
   });
+
+  it("lista somente as permissões efetivas do papel autenticado", async () => {
+    const rolePermissionFindMany = vi.fn().mockResolvedValue([
+      { permission: { key: PermissionKeys.FINANCE_READ } },
+      { permission: { key: PermissionKeys.METRICS_READ } },
+    ]);
+    const service = createAuthorizationService({
+      database: {
+        workspaceMember: { findFirst: vi.fn().mockResolvedValue({ id: context.memberId }) },
+        actor: { findFirst: vi.fn().mockResolvedValue({ id: context.actorId }) },
+        rolePermission: { findMany: rolePermissionFindMany },
+      } as never,
+    });
+
+    await expect(service.getEffectivePermissionKeys(context)).resolves.toEqual([
+      PermissionKeys.FINANCE_READ,
+      PermissionKeys.METRICS_READ,
+    ]);
+    expect(rolePermissionFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        workspaceId: context.workspaceId,
+        roleId: context.roleId,
+      }),
+    }));
+  });
 });

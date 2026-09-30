@@ -348,7 +348,13 @@ describe("autenticação local, RBAC e isolamento", () => {
     expect(sessionResponse.status).toBe(200);
     await expect(sessionResponse.json()).resolves.toMatchObject({
       session: {
-        user: { id: member.userId },
+        user: {
+          id: member.userId,
+          permissionKeys: expect.arrayContaining([
+            PermissionKeys.FINANCE_READ,
+            PermissionKeys.METRICS_READ,
+          ]),
+        },
         workspace: { id: workspaceA.id },
       },
     });

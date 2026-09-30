@@ -306,6 +306,26 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
     return { allowed: true, scope: grant.scope };
   }
 
+  async function getEffectivePermissionKeys(
+    context: AuthenticatedContext,
+  ): Promise<readonly string[]> {
+    if (!(await hasValidContext(context))) {
+      throw new AccessDeniedError();
+    }
+
+    const rows = await options.database.rolePermission.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        roleId: context.roleId,
+        role: { deletedAt: null },
+      },
+      select: { permission: { select: { key: true } } },
+      orderBy: { permission: { key: "asc" } },
+    });
+
+    return Object.freeze(rows.map(({ permission }) => permission.key));
+  }
+
   async function assertAuthorized(
     context: AuthenticatedContext,
     permissionKey: PermissionKey,
@@ -344,7 +364,7 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
     throw new AccessDeniedError();
   }
 
-  return Object.freeze({ authorize, assertAuthorized });
+  return Object.freeze({ authorize, assertAuthorized, getEffectivePermissionKeys });
 }
 
 let authorizationService: ReturnType<typeof createAuthorizationService> | undefined;

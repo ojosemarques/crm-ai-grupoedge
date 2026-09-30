@@ -13297,3 +13297,151 @@ model ConsumptionLedgerEntry {
   @@index([workspaceId, resourceType, resourceKey, occurredAt])
   @@map("consumption_ledger_entries")
 }
+enum FinancialCategoryKind {
+  INCOME
+  EXPENSE
+}
+
+enum FinancialAccountType {
+  CASH
+  BANK
+  OTHER
+}
+
+enum FinancialEntryDirection {
+  INCOME
+  EXPENSE
+}
+
+enum FinancialEntryStatus {
+  PLANNED
+  SETTLED
+  CANCELLED
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+}
+
+model FinancialCategory {
+  id               String                @id @default(uuid()) @db.Uuid
+  workspaceId      String                @db.Uuid
+  key              String
+  name             String
+  kind             FinancialCategoryKind
+  dreGroup         String?
+  active           Boolean               @default(true)
+  createdByActorId String                @db.Uuid
+  updatedByActorId String                @db.Uuid
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, key])
+  @@index([workspaceId, kind, active, name])
+  @@map("financial_categories")
+}
+
+model FinancialAccount {
+  id                  String               @id @default(uuid()) @db.Uuid
+  workspaceId         String               @db.Uuid
+  name                String
+  type                FinancialAccountType
+  currency            Currency             @default(BRL)
+  openingBalanceCents BigInt               @default(0)
+  active              Boolean              @default(true)
+  createdByActorId    String               @db.Uuid
+  updatedByActorId    String               @db.Uuid
+  createdAt           DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime             @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, name])
+  @@index([workspaceId, active, name])
+  @@map("financial_accounts")
+}
+
+model FinancialEntry {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  workspaceId        String                  @db.Uuid
+  categoryId         String                  @db.Uuid
+  financialAccountId String                  @db.Uuid
+  customerAccountId  String?                 @db.Uuid
+  direction          FinancialEntryDirection
+  status             FinancialEntryStatus    @default(PLANNED)
+  description        String
+  counterparty       String?
+  amountCents        BigInt
+  currency           Currency                @default(BRL)
+  competenceAt       DateTime                @db.Timestamptz(3)
+  dueAt              DateTime                @db.Timestamptz(3)
+  settledAt          DateTime?               @db.Timestamptz(3)
+  cancelledAt        DateTime?               @db.Timestamptz(3)
+  cancellationReason String?
+  idempotencyKey     String
+  revision           Int                     @default(1)
+  createdByActorId   String                  @db.Uuid
+  updatedByActorId   String                  @db.Uuid
+  createdAt          DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, status, dueAt])
+  @@index([workspaceId, direction, competenceAt])
+  @@index([workspaceId, financialAccountId, settledAt])
+  @@index([workspaceId, customerAccountId, dueAt])
+  @@map("financial_entries")
+}
+
+model CommissionRule {
+  id               String    @id @default(uuid()) @db.Uuid
+  workspaceId      String    @db.Uuid
+  sellerMemberId   String    @db.Uuid
+  percentageBps    Int
+  active           Boolean   @default(true)
+  effectiveFrom    DateTime  @db.Timestamptz(3)
+  effectiveTo      DateTime? @db.Timestamptz(3)
+  createdByActorId String    @db.Uuid
+  updatedByActorId String    @db.Uuid
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, sellerMemberId, active, effectiveFrom])
+  @@map("commission_rules")
+}
+
+model Commission {
+  id                String           @id @default(uuid()) @db.Uuid
+  workspaceId       String           @db.Uuid
+  ruleId            String           @db.Uuid
+  sellerMemberId    String           @db.Uuid
+  opportunityId     String           @db.Uuid
+  contractId        String?          @db.Uuid
+  status            CommissionStatus @default(PENDING)
+  basisCents        BigInt
+  percentageBps     Int
+  amountCents       BigInt
+  currency          Currency         @default(BRL)
+  earnedAt          DateTime         @db.Timestamptz(3)
+  approvedAt        DateTime?        @db.Timestamptz(3)
+  approvedByActorId String?          @db.Uuid
+  paidAt            DateTime?        @db.Timestamptz(3)
+  paidByActorId     String?          @db.Uuid
+  idempotencyKey    String
+  revision          Int              @default(1)
+  createdByActorId  String           @db.Uuid
+  updatedByActorId  String           @db.Uuid
+  createdAt         DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@unique([workspaceId, opportunityId, ruleId])
+  @@index([workspaceId, sellerMemberId, status, earnedAt])
+  @@index([workspaceId, status, paidAt])
+  @@map("commissions")
+}
