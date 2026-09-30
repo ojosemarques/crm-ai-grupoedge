@@ -185,6 +185,9 @@ enum LeadIntakeChannel {
   CSV
   LOCAL_WEBHOOK
   SIMULATOR
+  FORM
+  LANDING_PAGE
+  AD
 }
 
 enum LeadIntakeOutcome {
@@ -3764,6 +3767,8 @@ model LeadFormSubmission {
   submittedInterestSummary   String?
   submittedBudgetCents       BigInt?
   submittedContactPreference ContactPreference?
+  requestedCatalogItemId     String?            @db.Uuid
+  requestedCatalogVersion    Int?
   submittedAt                DateTime           @db.Timestamptz(3)
   rawPayload                 Json
   createdByActorId           String             @db.Uuid
@@ -3780,6 +3785,7 @@ model LeadFormSubmission {
   slaCycle         LeadSlaCycle?
   pactoSuggestions PactoSuggestion[]
   scores           LeadScore[]
+  requestedProduct Product?             @relation("SubmissionRequestedProduct", fields: [workspaceId, requestedCatalogItemId, requestedCatalogVersion], references: [workspaceId, catalogItemId, version], onDelete: Restrict)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey])
@@ -4481,6 +4487,7 @@ model Product {
   opportunityOutcomeSnapshots OpportunityOutcomeSnapshot[]
   bundleLines                 CatalogBundleLine[]
   offerLines                  OfferLine[]
+  requestedBySubmissions      LeadFormSubmission[]         @relation("SubmissionRequestedProduct")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, catalogItemId, version])
@@ -6701,14 +6708,140 @@ model Tag {
   updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
   deletedAt        DateTime? @db.Timestamptz(3)
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  createdBy Actor     @relation("TagCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
-  updatedBy Actor     @relation("TagUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
-  leads     LeadTag[]
+  workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdBy         Actor                 @relation("TagCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy         Actor                 @relation("TagUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  leads             LeadTag[]
+  entityAssignments CommercialEntityTag[]
 
   @@unique([workspaceId, id])
   @@index([workspaceId, name, deletedAt])
   @@map("tags")
+}
+
+enum CommercialEntityType {
+  CONTACT
+  ACCOUNT
+  LEAD
+  OPPORTUNITY
+}
+
+enum CustomFieldDataType {
+  TEXT
+  NUMBER
+  BOOLEAN
+  DATE
+  SELECT
+  MULTI_SELECT
+}
+
+enum PortabilityBulkAction {
+  ADD_TAG
+  REMOVE_TAG
+  SET_CUSTOM_FIELD
+}
+
+enum PortabilityBulkStatus {
+  PREVIEWED
+  EXECUTED
+  EXPIRED
+}
+
+model CommercialEntityTag {
+  id               String               @id @default(uuid()) @db.Uuid
+  workspaceId      String               @db.Uuid
+  tagId            String               @db.Uuid
+  entityType       CommercialEntityType
+  entityId         String               @db.Uuid
+  createdByActorId String               @db.Uuid
+  createdAt        DateTime             @default(now()) @db.Timestamptz(3)
+
+  tag Tag @relation(fields: [workspaceId, tagId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, tagId, entityType, entityId])
+  @@index([workspaceId, entityType, entityId])
+  @@map("commercial_entity_tags")
+}
+
+model CustomFieldDefinition {
+  id               String               @id @default(uuid()) @db.Uuid
+  workspaceId      String               @db.Uuid
+  entityType       CommercialEntityType
+  key              String
+  name             String
+  dataType         CustomFieldDataType
+  options          Json?
+  required         Boolean              @default(false)
+  active           Boolean              @default(true)
+  revision         Int                  @default(1)
+  createdByActorId String               @db.Uuid
+  updatedByActorId String               @db.Uuid
+  createdAt        DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime             @updatedAt @db.Timestamptz(3)
+  values           CustomFieldValue[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, entityType, key])
+  @@index([workspaceId, entityType, active])
+  @@map("custom_field_definitions")
+}
+
+model CustomFieldValue {
+  id               String               @id @default(uuid()) @db.Uuid
+  workspaceId      String               @db.Uuid
+  definitionId     String               @db.Uuid
+  entityType       CommercialEntityType
+  entityId         String               @db.Uuid
+  value            Json
+  revision         Int                  @default(1)
+  updatedByActorId String               @db.Uuid
+  createdAt        DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime             @updatedAt @db.Timestamptz(3)
+
+  definition CustomFieldDefinition @relation(fields: [workspaceId, definitionId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, definitionId, entityType, entityId])
+  @@index([workspaceId, entityType, entityId])
+  @@map("custom_field_values")
+}
+
+model PortabilityBulkOperation {
+  id               String                         @id @default(uuid()) @db.Uuid
+  workspaceId      String                         @db.Uuid
+  entityType       CommercialEntityType
+  action           PortabilityBulkAction
+  entityIds        Json
+  payload          Json
+  fingerprint      String
+  reason           String
+  expectedCount    Int
+  status           PortabilityBulkStatus          @default(PREVIEWED)
+  previewExpiresAt DateTime                       @db.Timestamptz(3)
+  executedAt       DateTime?                      @db.Timestamptz(3)
+  createdByActorId String                         @db.Uuid
+  createdAt        DateTime                       @default(now()) @db.Timestamptz(3)
+  items            PortabilityBulkOperationItem[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, fingerprint])
+  @@index([workspaceId, status, createdAt])
+  @@map("portability_bulk_operations")
+}
+
+model PortabilityBulkOperationItem {
+  id          String                   @id @default(uuid()) @db.Uuid
+  workspaceId String                   @db.Uuid
+  operationId String                   @db.Uuid
+  entityId    String                   @db.Uuid
+  before      Json?
+  after       Json?
+  status      String
+  createdAt   DateTime                 @default(now()) @db.Timestamptz(3)
+  operation   PortabilityBulkOperation @relation(fields: [workspaceId, operationId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, operationId, entityId])
+  @@index([workspaceId, entityId])
+  @@map("portability_bulk_operation_items")
 }
 
 model LeadTag {

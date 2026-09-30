@@ -285,8 +285,9 @@ describe("CRM-22 — automações de entrada", () => {
     const testClock = clock("2046-01-03T12:00:00.000Z");
     const local = services(testClock);
     const phone = testPhone(`duplicate:${randomUUID()}`);
+    const email = `duplicate-${randomUUID()}@example.invalid`;
     const first = await local.intake.intake(
-      intakePayload("duplicate-first", { phone }),
+      intakePayload("duplicate-first", { phone, email }),
       manager,
     );
     if (first.outcome === "REJECTED") throw new Error("Entrada inicial rejeitada.");
@@ -294,6 +295,7 @@ describe("CRM-22 — automações de entrada", () => {
     const second = await local.intake.intake(
       intakePayload("duplicate-second", {
         phone,
+        email,
         fullName: "Nome divergente não confiável",
         interestSummary: "Nova conversão com outra dor; preservar ambas.",
       }),

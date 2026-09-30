@@ -70,6 +70,9 @@ function buildFields(
   row: Readonly<Record<string, string>>,
   request: CsvImportRequest,
 ): LeadEntryFields {
+  const catalogItemId = field(row, request.mapping, "requestedCatalogItemId");
+  const catalogVersion = field(row, request.mapping, "requestedCatalogVersion");
+  const acquisition = { utmSource: field(row, request.mapping, "utmSource"), utmMedium: field(row, request.mapping, "utmMedium"), utmCampaign: field(row, request.mapping, "utmCampaign"), utmContent: field(row, request.mapping, "utmContent"), utmTerm: field(row, request.mapping, "utmTerm") };
   return leadEntryFieldsSchema.parse({
     fullName: field(row, request.mapping, "fullName"),
     phone: field(row, request.mapping, "phone"),
@@ -93,6 +96,8 @@ function buildFields(
     priorityBandCode:
       field(row, request.mapping, "priorityBandCode") ||
       request.defaults.priorityBandCode,
+    ...(catalogItemId && catalogVersion ? { requestedOffer: { catalogItemId, version: Number(catalogVersion) } } : {}),
+    ...(Object.values(acquisition).some(Boolean) ? { acquisition } : {}),
   });
 }
 

@@ -1,0 +1,3 @@
+import { describe,expect,it } from "vitest";
+import { mayAutomaticallyAttachBySharedPhone } from "@/modules/portability/domain/commercial-identity-policy";
+describe("identidade comercial",()=>{it("não funde pessoas por telefone compartilhado",()=>{expect(mayAutomaticallyAttachBySharedPhone({submittedEmail:null,candidateEmail:null})).toBe(false);expect(mayAutomaticallyAttachBySharedPhone({submittedEmail:"assessor@a.test",candidateEmail:"gabinete@a.test"})).toBe(false);});it("permite replay com telefone e e-mail coincidentes",()=>{expect(mayAutomaticallyAttachBySharedPhone({submittedEmail:"a@b.test",candidateEmail:"a@b.test"})).toBe(true);});});

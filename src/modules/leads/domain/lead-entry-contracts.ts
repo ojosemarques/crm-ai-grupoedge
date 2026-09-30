@@ -42,6 +42,7 @@ export const leadEntryFieldsSchema = z
     doNotContact: z.boolean().optional(),
     priorityBandCode: z.enum(["P1", "P2", "P3"]),
     acquisition: marketingEvidenceInputSchema.optional(),
+    requestedOffer: z.object({ catalogItemId: z.string().uuid(), version: z.number().int().positive() }).strict().optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -126,6 +127,13 @@ export const csvColumnMappingSchema = z
     consent: optionalText(200),
     doNotContact: optionalText(200),
     priorityBandCode: optionalText(200),
+    requestedCatalogItemId: optionalText(200),
+    requestedCatalogVersion: optionalText(200),
+    utmSource: optionalText(200),
+    utmMedium: optionalText(200),
+    utmCampaign: optionalText(200),
+    utmContent: optionalText(200),
+    utmTerm: optionalText(200),
   })
   .strict();
 

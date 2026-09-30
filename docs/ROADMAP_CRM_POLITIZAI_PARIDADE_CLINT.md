@@ -79,14 +79,14 @@ Cada etapa pode virar uma issue/épico. Dentro dela, `Txx.y` é a task e os iten
 
 ### Etapa 03 — Contatos, contas, entrada e portabilidade
 
-- [ ] **T03.1 — Completar identidade comercial.**
-  - [ ] Preservar `Contact`/`Account` e implementar vínculo datado, múltiplos negócios, tags e campos customizáveis por entidade com revisão humana de colisão.
-  - [ ] Garantir histórico quando assessor muda de gabinete e impedir fusão por telefone compartilhado.
-- [ ] **T03.2 — Unificar entrada e saída.**
-  - [ ] Reutilizar intake manual/CSV/webhook para formulário, landing e anúncio; mapear origem/UTM, oferta e consentimento sem criar oportunidade para toda mensagem.
-  - [ ] Acrescentar prévia de importação, exportação CSV autorizada de contatos/negócios e ações em massa com dry-run, motivo e auditoria.
+- [x] **T03.1 — Completar identidade comercial.**
+  - [x] Preservar `Contact`/`Account` e implementar vínculo datado, múltiplos negócios, tags e campos customizáveis por entidade com revisão humana de colisão.
+  - [x] Garantir histórico quando assessor muda de gabinete e impedir fusão por telefone compartilhado.
+- [x] **T03.2 — Unificar entrada e saída.**
+  - [x] Reutilizar intake manual/CSV/webhook para formulário, landing e anúncio; mapear origem/UTM, oferta e consentimento sem criar oportunidade para toda mensagem.
+  - [x] Acrescentar prévia de importação, exportação CSV autorizada de contatos/negócios e ações em massa com dry-run, motivo e auditoria.
 
-**Aceite:** um contato com dois vínculos e dois negócios mantém históricos separados; CSV import/export faz roundtrip sem duplicação nem vazamento entre workspaces. **Dependência:** 02.
+**Aceite:** um contato com dois vínculos e dois negócios mantém históricos separados; CSV import/export faz roundtrip sem duplicação nem vazamento entre workspaces. [Contrato funcional e matriz de evidências](./CONTACTS_ACCOUNTS_PORTABILITY.md). **Dependência:** 02.
 
 ### Etapa 04 — Origens, modelos e pipelines configuráveis
 

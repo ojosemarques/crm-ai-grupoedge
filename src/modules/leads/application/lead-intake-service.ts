@@ -9,6 +9,7 @@ import type {
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import type { ServiceActorContext } from "@/modules/auth/application/service-actor-context";
 import { ensureContactForLeadInTransaction } from "@/modules/contacts/application/contact-identity-service";
+import { mayAutomaticallyAttachBySharedPhone } from "@/modules/portability/domain/commercial-identity-policy";
 import type {
   InternalAutomationEvent,
   PublicationResult,
@@ -41,7 +42,7 @@ const optionalText = (maximum: number) =>
     .optional()
     .transform((value) => (value ? value : undefined));
 
-function privacySource(channel: "MANUAL" | "CSV" | "LOCAL_WEBHOOK" | "SIMULATOR") {
+function privacySource(channel: "MANUAL" | "CSV" | "LOCAL_WEBHOOK" | "SIMULATOR" | "FORM" | "LANDING_PAGE" | "AD") {
   if (channel === "CSV") return "IMPORT" as const;
   if (channel === "SIMULATOR") return "SIMULATOR" as const;
   if (channel === "LOCAL_WEBHOOK") return "API" as const;
@@ -50,7 +51,7 @@ function privacySource(channel: "MANUAL" | "CSV" | "LOCAL_WEBHOOK" | "SIMULATOR"
 
 const leadIntakeSchema = z
   .object({
-    channel: z.enum(["MANUAL", "CSV", "LOCAL_WEBHOOK", "SIMULATOR"]),
+    channel: z.enum(["MANUAL", "CSV", "LOCAL_WEBHOOK", "SIMULATOR", "FORM", "LANDING_PAGE", "AD"]),
     idempotencyKey: z.string().trim().min(1).max(160),
     formIdentifier: optionalText(160),
     fullName: z.string().trim().min(2).max(200),
@@ -82,6 +83,7 @@ const leadIntakeSchema = z
     rawPayload: z.record(z.string(), z.json()),
     priorityBandCode: z.enum(["P1", "P2", "P3"]).default("P3"),
     acquisition: marketingEvidenceInputSchema.optional(),
+    requestedOffer: z.object({ catalogItemId: z.string().uuid(), version: z.number().int().positive() }).strict().optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -423,6 +425,25 @@ async function findReferences(
     );
   }
 
+  if (input.requestedOffer) {
+    const requestedProduct = await transaction.product.findFirst({
+      where: {
+        workspaceId,
+        catalogItemId: input.requestedOffer.catalogItemId,
+        version: input.requestedOffer.version,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!requestedProduct) {
+      return rejected(
+        "REFERENCE_NOT_FOUND",
+        "requestedOffer",
+        "A versão da oferta solicitada não existe neste workspace.",
+      );
+    }
+  }
+
   return { source, campaign, creative, queue, pipeline, stage, priorityBand };
 }
 
@@ -535,6 +556,8 @@ function submissionData(
     submittedInterestSummary: input.interestSummary ?? null,
     submittedBudgetCents: input.budgetCents,
     submittedContactPreference: input.submittedContactPreference,
+    requestedCatalogItemId: input.requestedOffer?.catalogItemId ?? null,
+    requestedCatalogVersion: input.requestedOffer?.version ?? null,
     submittedAt: input.submittedAt ?? input.receivedAt,
     rawPayload: input.rawPayload,
     createdByActorId: actorId,
@@ -782,13 +805,17 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         );
       }
 
-      const existingLead = await transaction.lead.findFirst({
+      const phoneCandidates = await transaction.lead.findMany({
         where: {
           workspaceId: context.workspaceId,
           normalizedPhone: parsed.normalizedPhone,
           deletedAt: null,
         },
       });
+      // Telefone é um ponto de contato compartilhável, não uma identidade forte.
+      // A associação automática só ocorre quando o e-mail normalizado também coincide;
+      // os demais candidatos seguem como pessoas separadas e entram em revisão humana.
+      const existingLead = phoneCandidates.find((candidate) => mayAutomaticallyAttachBySharedPhone({ submittedEmail: parsed.normalizedEmail, candidateEmail: candidate.normalizedEmail })) ?? null;
       const preparedScore = await prepareFormProvisionalScore(
         transaction,
         context.workspaceId,

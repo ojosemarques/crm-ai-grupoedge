@@ -204,7 +204,7 @@ describe("canais locais de entrada da CRM-07", () => {
       succeededRows: 2,
       failedRows: 1,
     });
-    expect(execution.report.map((row) => row.outcome)).toEqual(["CREATED", "ATTACHED", "REJECTED"]);
+    expect(execution.report.map((row) => row.outcome)).toEqual(["CREATED", "CREATED", "REJECTED"]);
     const report = await service.errorReport(execution.job.id, managerContext);
     expect(report.content).toContain("linha;status;erros");
     expect(report.content).toContain("4;REJECTED");

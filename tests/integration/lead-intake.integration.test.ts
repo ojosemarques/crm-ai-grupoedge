@@ -421,7 +421,7 @@ describe("serviço único de entrada de leads", () => {
     ).resolves.toEqual([1, 3, 1, 1, 1, 1, 1]);
   });
 
-  it("anexa duplicidade, preserva campos confiáveis e mantém opt-out", async () => {
+  it("mantém pessoas separadas quando compartilham telefone e têm e-mails diferentes", async () => {
     const fixture = await createFixture("duplicate");
     const first = await service().intake(
       payload("11 98888-1111", {
@@ -445,56 +445,42 @@ describe("serviço único de entrada de leads", () => {
     );
 
     expect(first.outcome).toBe("CREATED");
-    expect(second).toMatchObject({
-      outcome: "ATTACHED",
-      conversionCount: 2,
-      idempotentReplay: false,
-    });
+    expect(second).toMatchObject({ outcome: "CREATED", conversionCount: 1, idempotentReplay: false });
     if (first.outcome === "REJECTED" || second.outcome === "REJECTED") {
       throw new Error("entrada rejeitada");
     }
-    expect(second.leadId).toBe(first.leadId);
+    expect(second.leadId).not.toBe(first.leadId);
 
     const lead = await database.lead.findUniqueOrThrow({
       where: { id: first.leadId },
-    });
-    const review = await database.leadIdentityReview.findUniqueOrThrow({
-      where: { id: second.reviewId! },
     });
     expect(lead).toMatchObject({
       fullName: "Maria da Silva",
       normalizedEmail: "maria@example.test",
       organizationName: "Organização Exemplo",
       interestSummary: "Organizar o processo comercial",
-      latestInterestSummary: "Interesse mais recente",
+      latestInterestSummary: "Organizar o processo comercial",
       contactPreference: "DO_NOT_CONTACT",
-      conversionCount: 2,
-      needsIdentityReview: true,
+      conversionCount: 1,
     });
-    expect(review).toMatchObject({
-      leadId: lead.id,
-      assignedTeamId: fixture.teamId,
-      reason: "DUPLICATE_PHONE",
-      status: "OPEN",
+    const secondLead = await database.lead.findUniqueOrThrow({ where: { id: second.leadId } });
+    expect(secondLead).toMatchObject({
+      fullName: "Outro nome submetido",
+      normalizedEmail: "outro@example.test",
+      organizationName: "Outra organização",
+      latestInterestSummary: "Interesse mais recente",
+      contactPreference: "CONSENTED",
+      conversionCount: 1,
     });
-    expect(review.divergenceFields).toEqual(
-      expect.arrayContaining([
-        "FULL_NAME",
-        "EMAIL",
-        "ORGANIZATION",
-        "INTEREST",
-        "CONTACT_PREFERENCE",
-      ]),
-    );
+    expect(secondLead.contactId).not.toBe(lead.contactId);
     expect(
       await database.contactIdentityReview.findMany({
-        where: { workspaceId: fixture.workspaceId, leadId: lead.id, status: "OPEN" },
+        where: { workspaceId: fixture.workspaceId, leadId: secondLead.id, status: "OPEN" },
         select: { reason: true },
       }),
     ).toEqual(
       expect.arrayContaining([
-        { reason: "NAME_DIVERGENCE" },
-        { reason: "EMAIL_DIVERGENCE" },
+        { reason: "SHARED_PHONE" },
       ]),
     );
     expect(
@@ -507,23 +493,9 @@ describe("serviço único de entrada de leads", () => {
         },
       }),
     ).toMatchObject({ doNotContact: true });
-    await expect(
-      Promise.all([
-        database.lead.count({ where: { workspaceId: fixture.workspaceId } }),
-        database.leadFormSubmission.count({ where: { leadId: lead.id } }),
-        database.activity.count({ where: { leadId: lead.id } }),
-        database.notification.count({
-          where: {
-            leadId: lead.id,
-            recipientMemberId: fixture.managerMemberId,
-            type: "SYSTEM",
-          },
-        }),
-        database.auditLog.count({
-          where: { entityId: lead.id, action: "lead.intake.attached" },
-        }),
-      ]),
-    ).resolves.toEqual([1, 2, 8, 1, 1]);
+    await expect(database.lead.count({ where: { workspaceId: fixture.workspaceId } })).resolves.toBe(2);
+    await expect(database.leadFormSubmission.count({ where: { leadId: lead.id } })).resolves.toBe(1);
+    await expect(database.leadFormSubmission.count({ where: { leadId: secondLead.id } })).resolves.toBe(1);
   });
 
   it("isola a identidade por workspace mesmo para o mesmo telefone", async () => {

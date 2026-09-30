@@ -64,6 +64,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
     label: "Ferramentas",
     items: [
       { href: "/leads/entrada", icon: "entrada", label: "Entrada de leads", roles: operationalRoles },
+      { href: "/portabilidade", icon: "entrada", label: "Portabilidade comercial", roles: managerRoles },
       { href: "/copilot", icon: "copilot", label: "Copilot gerencial", roles: managerRoles },
       { href: "/governanca-ia", icon: "copilot", label: "Governança de IA", roles: managerRoles },
       { href: "/notificacoes", icon: "notificacoes", label: "Notificações" },
@@ -88,7 +89,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
 
 const sections = [
   { key: "deals", label: "Negócios", icon: "vendas", paths: ["/pipeline", "/oportunidades", "/contratos", "/onboarding", "/customer-success", "/farmer"] },
-  { key: "contacts", label: "Contatos", icon: "leads", paths: ["/leads", "/contas", "/leads/entrada"] },
+  { key: "contacts", label: "Contatos", icon: "leads", paths: ["/leads", "/contas", "/leads/entrada", "/portabilidade"] },
   { key: "activities", label: "Atividades", icon: "agenda", paths: ["/meu-dia", "/agenda", "/notificacoes"] },
   { key: "inbox", label: "Atendimento", icon: "inbox", paths: ["/inbox", "/customer-service"] },
   { key: "automation", label: "Automações", icon: "automacoes", paths: ["/automacoes", "/integracoes", "/copilot", "/governanca-ia"] },
@@ -99,6 +100,7 @@ const sections = [
 const labels: Record<string, string> = {
   "/pipeline": "Pré-vendas", "/oportunidades": "Vendas", "/leads": "Todos os contatos",
   "/contas": "Empresas", "/inbox": "Conversas", "/customer-service": "Tickets de atendimento",
+  "/portabilidade": "Portabilidade comercial",
   "/automacoes": "Fluxos de automação", "/dashboard": "Visão geral", "/metricas-receita": "Receita e retenção",
 };
 
