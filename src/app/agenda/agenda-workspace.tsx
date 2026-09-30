@@ -50,13 +50,14 @@ async function responseMessage(response: Response) {
   return body;
 }
 
-export function AgendaWorkspace({ initialScreen }: Readonly<{ initialScreen: AgendaScreen }>) {
+export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<{ initialLeadId?: string; initialScreen: AgendaScreen }>) {
   const router = useRouter();
+  const scopedInitialLeadId = initialScreen.leadOptions.some((lead) => lead.id === initialLeadId) ? initialLeadId : "";
   const [updatedScreen, setScreen] = useState<AgendaScreen | null>(null);
   const screen = updatedScreen ?? initialScreen;
   const [display, setDisplay] = useState<"calendar" | "list">("calendar");
-  const [showSchedule, setShowSchedule] = useState(false);
-  const [scheduleLeadId, setScheduleLeadId] = useState("");
+  const [showSchedule, setShowSchedule] = useState(Boolean(scopedInitialLeadId));
+  const [scheduleLeadId, setScheduleLeadId] = useState(scopedInitialLeadId);
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
   const [hiddenStatuses, setHiddenStatuses] = useState<string[]>([]);
   const selectedMeeting = screen.meetings.find((meeting) => meeting.id === selectedMeetingId);

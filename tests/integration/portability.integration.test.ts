@@ -48,7 +48,13 @@ beforeAll(async () => {
     roleName: role.name, displayName: "Admin",
   };
 
-  for (const key of [PermissionKeys.PORTABILITY_READ, PermissionKeys.PORTABILITY_EXPORT, PermissionKeys.PORTABILITY_MANAGE]) {
+  for (const key of [
+    PermissionKeys.PORTABILITY_READ,
+    PermissionKeys.PORTABILITY_EXPORT,
+    PermissionKeys.PORTABILITY_MANAGE,
+    PermissionKeys.BULK_ACTIONS_EXECUTE,
+    PermissionKeys.EXPORTS_EXECUTE,
+  ]) {
     const permission = await database.permission.upsert({ where: { key }, update: {}, create: { key, description: key } });
     await database.rolePermission.create({
       data: { workspaceId, roleId: role.id, permissionId: permission.id, scope: "WORKSPACE", createdByActorId: system.id },

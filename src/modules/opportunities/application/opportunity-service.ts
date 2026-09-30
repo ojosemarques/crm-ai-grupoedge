@@ -160,12 +160,14 @@ function notFound(message: string): never {
 
 function opportunityResource(
   workspaceId: string,
-  opportunity: Readonly<{ id: string; ownerMemberId: string; lead?: { routingQueue?: { teamId: string | null } | null; queue?: { teamId: string | null } | null } }>,
+  opportunity: Readonly<{ id: string; ownerMemberId: string; lead?: { sourceId?: string; routingQueue?: { teamId: string | null } | null; queue?: { teamId: string | null } | null } }>,
 ): ResourceScope {
   return {
     workspaceId,
     resourceType: "Opportunity",
     resourceId: opportunity.id,
+    opportunityId: opportunity.id,
+    ...(opportunity.lead?.sourceId ? { sourceId: opportunity.lead.sourceId } : {}),
     ownerMemberId: opportunity.ownerMemberId,
     teamId: opportunity.lead?.routingQueue?.teamId ?? opportunity.lead?.queue?.teamId ?? null,
   };
@@ -175,6 +177,7 @@ function leadResource(
   workspaceId: string,
   lead: Readonly<{
     id: string;
+    sourceId?: string;
     ownerMemberId: string | null;
     queueId: string | null;
     routingQueue?: { teamId: string | null } | null;
@@ -185,6 +188,7 @@ function leadResource(
     workspaceId,
     resourceType: "Lead",
     resourceId: lead.id,
+    ...(lead.sourceId ? { sourceId: lead.sourceId } : {}),
     ownerMemberId: lead.ownerMemberId,
     queueId: lead.queueId,
     teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null,

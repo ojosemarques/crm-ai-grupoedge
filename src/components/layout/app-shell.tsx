@@ -214,6 +214,8 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const allowedItems = navigationGroups.flatMap((group) => group.items).filter((item) => !item.roles || (roleKey && item.roles.includes(roleKey)));
   const availableSections = sections.map((section) => ({ ...section, items: section.paths.flatMap((href) => allowedItems.filter((item) => item.href === href)) })).filter((section) => section.items.length > 0);
   const activeSection = availableSections.find((section) => section.items.some((item) => isActive(pathname, item.href))) ?? availableSections.find((section) => section.key === (pathname.startsWith("/contatos/") ? "contacts" : "analytics"));
+  const mobileCriticalItems = ["/meu-dia", "/pipeline", "/inbox", "/atividades", "/dashboard"]
+    .flatMap((href) => allowedItems.filter((item) => item.href === href));
   const closeMenus = (event: React.MouseEvent<HTMLElement>) => {
     setMenuOpen(false);
     event.currentTarget.closest("details")?.removeAttribute("open");
@@ -276,6 +278,14 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
           </div>
         </aside>
         <div className={styles.mobileBar}><button aria-controls="menu-principal" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)} type="button"><Icon name="dashboard" size={17} />{activeSection?.label ?? "Navegação"}<span>⌄</span></button></div>
+        <nav aria-label="Atalhos operacionais" className={styles.mobileDock}>
+          {mobileCriticalItems.map((item) => (
+            <Link aria-current={isActive(pathname, item.href) ? "page" : undefined} href={item.href} key={item.href} onClick={() => setMenuOpen(false)}>
+              <Icon name={item.icon} size={18} />
+              <span>{item.href === "/pipeline" ? "Funil" : item.href === "/dashboard" ? "Painel" : item.label}</span>
+            </Link>
+          ))}
+        </nav>
         <div className={cn("app-content", styles.content)} id="conteudo-principal" tabIndex={-1}>{children}</div>
       </div>
     </>

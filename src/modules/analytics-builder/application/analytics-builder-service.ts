@@ -94,13 +94,16 @@ export function createAnalyticsBuilderService(options: Options) {
     await authorize(context);
     const dashboards = await options.database.analyticsDashboard.findMany({ where: { workspaceId: context.workspaceId, archivedAt: null }, include: { widgets: { where: { deletedAt: null }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] } }, orderBy: [{ updatedAt: "desc" }, { id: "asc" }] });
     const rendered = []; const screenCache = new Map<string, Awaited<ReturnType<RevenuePort["getScreen"]>>>();
-    const manage = await options.authorization.authorize(context, PermissionKeys.OPERATIONS_MANAGE, resource(context));
+    const [manage, exportDecision] = await Promise.all([
+      options.authorization.authorize(context, PermissionKeys.OPERATIONS_MANAGE, resource(context)),
+      options.authorization.authorize(context, PermissionKeys.EXPORTS_EXECUTE, resource(context)),
+    ]);
     for (const dashboard of dashboards) {
       const widgets = [];
       for (const widget of dashboard.widgets) widgets.push(await widgetResult(context, widget, screenCache));
       rendered.push({ id: dashboard.id, name: dashboard.name, description: dashboard.description, revision: dashboard.revision, updatedAt: dashboard.updatedAt.toISOString(), widgets });
     }
-    return { generatedAt: options.now().toISOString(), dashboards: rendered, catalog: analyticsCatalog(), permissions: { canRead: true, canManage: manage.allowed, canExport: true, canDrilldown: true } };
+    return { generatedAt: options.now().toISOString(), dashboards: rendered, catalog: analyticsCatalog(), permissions: { canRead: true, canManage: manage.allowed, canExport: exportDecision.allowed, canDrilldown: true } };
   }
 
   function widgetData(context: AuthenticatedContext, dashboardId: string, value: z.infer<typeof createAnalyticsDashboardSchema>["widgets"][number]) {
@@ -176,7 +179,7 @@ export function createAnalyticsBuilderService(options: Options) {
     return { widget: { id: widget.id, title: widget.title, metricKey: widget.metricId, dimensionKey: widget.dimension, aggregation: widget.aggregation }, query: first.query, records, total: first.total, truncated: first.totalPages > 100, quality: first.totalPages > 100 ? { state: "PARTIAL", reason: "Resultado limitado aos primeiros 10.000 registros autorizados." } : { state: records.length > 0 ? "AVAILABLE" : "MISSING", reason: records.length > 0 ? "Dataset autorizado completo." : "Nenhum registro no recorte." } };
   }
 
-  async function csv(context: AuthenticatedContext, widgetId: string) { const data = await orderedDataset(context, widgetId); return { filename: `analytics-${data.widget.metricKey.replaceAll(".", "-")}.csv`, csv: recordsCsv(data.records as unknown as Record<string, unknown>[]), total: data.total, truncated: data.truncated }; }
+  async function csv(context: AuthenticatedContext, widgetId: string) { await options.authorization.assertAuthorized(context, PermissionKeys.EXPORTS_EXECUTE, resource(context, widgetId)); const data = await orderedDataset(context, widgetId); return { filename: `analytics-${data.widget.metricKey.replaceAll(".", "-")}.csv`, csv: recordsCsv(data.records as unknown as Record<string, unknown>[]), total: data.total, truncated: data.truncated }; }
   return Object.freeze({ screen, readDashboard, create, update, archive, orderedDataset, csv });
 }
 

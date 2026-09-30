@@ -190,7 +190,7 @@ export function AgentBuilderWorkspace({ initial }: Readonly<{ initial: AgentsScr
   }
 
   const latestEvaluation = evaluationPreview ?? selected?.versions.find((version) => version.id === selected.activeVersionId)?.evaluation ?? selected?.versions.at(0)?.evaluation;
-  return <div className="space-y-5">
+  return <div className={`${styles.workspace} space-y-5`}>
     <Surface tone={screen.providerGate.approved ? "accent" : "critical"}><div className="flex flex-wrap items-start justify-between gap-4"><SectionHeader eyebrow="Gate do provedor" title={screen.providerGate.approved ? "Provider aprovado" : "Execução externa bloqueada"} description="O construtor opera em modo determinístico local. Publicação governa versões e uso interno; não habilita provider nem egress externo." /><span className="status-badge" data-tone={screen.providerGate.approved ? "success" : "danger"}>{screen.providerGate.mode}</span></div></Surface>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6"><StatCard label="Casos" value={screen.metrics.cases} hint="Execuções governadas" /><StatCard label="Correções" value={screen.metrics.corrections} hint="Decisões humanas" /><StatCard label="Custo total" value={money(screen.metrics.totalCostCents)} hint="Contabilidade local" /><StatCard label="Custo médio" value={money(screen.metrics.averageCostCents)} hint="Por caso" /><StatCard label="Handoffs" value={screen.metrics.handoffs} hint="Posse transferida" /><StatCard label="Aprovações" value={screen.metrics.sensitiveApprovalsPending} hint="Ações sensíveis" /></div>
     {notice ? <p className="feedback-banner" data-tone={notice.tone} role={notice.tone === "danger" ? "alert" : "status"}>{notice.text}</p> : null}

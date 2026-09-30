@@ -15,12 +15,18 @@ export default async function ContactPage({ params, searchParams }: Readonly<{ p
   try { contact = await getWorkspaceExperienceService().getContact360(context, contactId, { page: typeof query.page === "string" ? query.page : undefined, pageSize: 20 }); }
   catch (error) { if (error instanceof AccessDeniedError) redirect("/acesso-negado"); if (error instanceof ApplicationError && error.code === "NOT_FOUND") notFound(); throw error; }
   const initials = contact.preferredName.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("");
+  const operationalLead = contact.leads.find((lead) => lead.status === "OPEN") ?? contact.leads[0] ?? null;
+  const schedulingLead = contact.leads.find((lead) => lead.status === "QUALIFIED") ?? null;
   return (
     <main className={styles.workspace}>
       <aside className={styles.profile}>
         <Link className={styles.back} href="/leads">← Voltar aos contatos</Link>
         <div className={styles.identity}><span className={styles.avatar} aria-hidden="true">{initials}</span><h1>{contact.preferredName}</h1><p>{contact.jobTitle ?? "Contato"}</p><span className="status-badge">{contact.status}</span></div>
-        <div className={styles.shortcuts}><a href="#contact-activity"><Icon name="meu-dia" />Atividades</a><a href="#contact-deals"><Icon name="vendas" />Negócios</a><a href="#contact-conversations"><Icon name="inbox" />Conversas</a></div>
+        <div className={styles.shortcuts}>
+          {operationalLead ? <Link aria-label={`Ligar para ${contact.preferredName} com histórico`} href={`/integracoes/telefonia?leadId=${operationalLead.id}`}><Icon name="telefone" />Ligar</Link> : <a href="#contact-conversations"><Icon name="inbox" />Conversas</a>}
+          {schedulingLead ? <Link aria-label={`Agendar reunião com ${contact.preferredName}`} href={`/agenda?leadId=${schedulingLead.id}`}><Icon name="agenda" />Agendar</Link> : <Link aria-label={`Abrir agenda para ${contact.preferredName}`} href="/agenda"><Icon name="agenda" />Agendar</Link>}
+          <a href="#contact-history"><Icon name="auditoria" />Histórico</a>
+        </div>
         {contact.primaryAction ? <div className={styles.nextAction}><Button asChild><Link href={contact.primaryAction.href}>{contact.primaryAction.cta}</Link></Button><p>{contact.primaryAction.reason}</p></div> : null}
         <h2 className={styles.sectionLabel}>Informações do contato</h2>
         <dl className={styles.facts}><div><dt>Nome legal</dt><dd>{contact.legalName ?? "Não informado"}</dd></div>{contact.points.map((point) => <div key={point.id}><dt>{point.type}{point.primary ? " principal" : ""}</dt><dd>{point.maskedValue}</dd><small>{point.doNotContact ? "Não contatar" : point.verification}</small></div>)}<div><dt>Qualidade dos dados</dt><dd>{contact.quality}</dd></div></dl>

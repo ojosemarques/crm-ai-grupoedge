@@ -47,7 +47,7 @@ beforeAll(async () => {
   const workspace = await database.workspace.create({ data: { slug: `stage4-${suffix}`, name: "Stage 4" } });
   workspaceId = workspace.id;
   const system = await database.actor.create({ data: { workspaceId, type: "SYSTEM", key: "system", displayName: "Sistema" } });
-  const permissionKeys = [PermissionKeys.WORKSPACE_MANAGE, PermissionKeys.OPPORTUNITIES_READ, PermissionKeys.OPPORTUNITIES_WRITE];
+  const permissionKeys = [PermissionKeys.WORKSPACE_MANAGE, PermissionKeys.OPPORTUNITIES_READ, PermissionKeys.OPPORTUNITIES_WRITE, PermissionKeys.BULK_ACTIONS_EXECUTE];
   for (const key of permissionKeys) await database.permission.upsert({ where: { key }, update: {}, create: { key, description: key } });
   const managerRole = await database.role.create({ data: { workspaceId, key: "administrator", name: "Gestor", createdByActorId: system.id, updatedByActorId: system.id } });
   const sellerRole = await database.role.create({ data: { workspaceId, key: "closer", name: "Vendedor", createdByActorId: system.id, updatedByActorId: system.id } });

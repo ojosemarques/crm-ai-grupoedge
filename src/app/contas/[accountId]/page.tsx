@@ -20,12 +20,18 @@ export default async function AccountPage({ params, searchParams }: Readonly<{ p
   try { [account, journey] = await Promise.all([getAccountService().get(context, accountId, { page: typeof query.page === "string" ? query.page : undefined }), getLifecycleService().getJourney(context, { entityType: "ACCOUNT", entityId: accountId })]); }
   catch (error) { if (error instanceof AccessDeniedError) redirect("/acesso-negado"); if (error instanceof Error && error.message.includes("não encontrada")) notFound(); throw error; }
   const next = account.customerSuccess.find((item) => item.state === "ACTIVE") ?? null;
+  const operationalLead = account.leads.find((lead) => lead.status === "OPEN") ?? account.leads[0] ?? null;
+  const schedulingLead = account.leads.find((lead) => lead.status === "QUALIFIED") ?? null;
   return (
     <main className={styles.workspace}>
       <aside className={styles.profile}>
         <Link className={styles.back} href="/contas">← Voltar às empresas</Link>
         <div className={styles.identity}><span className={styles.avatar} aria-hidden="true">{account.name.slice(0, 2).toUpperCase()}</span><h1>{account.name}</h1><p>{account.legalName ?? account.segment}</p><span className="status-badge" data-tone={account.quality === "CONFIRMED" ? "success" : "warning"}>{account.status}</span></div>
-        <div className={styles.shortcuts}><a href="#account-activity"><Icon name="meu-dia" />Atividades</a><a href="#account-people"><Icon name="leads" />Contatos</a><a href="#account-deals"><Icon name="vendas" />Negócios</a></div>
+        <div className={styles.shortcuts}>
+          {operationalLead ? <Link aria-label={`Ligar para contato de ${account.name} com histórico`} href={`/integracoes/telefonia?leadId=${operationalLead.id}`}><Icon name="telefone" />Ligar</Link> : <a href="#account-activity"><Icon name="meu-dia" />Atividades</a>}
+          {schedulingLead ? <Link aria-label={`Agendar reunião com ${account.name}`} href={`/agenda?leadId=${schedulingLead.id}`}><Icon name="agenda" />Agendar</Link> : <Link aria-label={`Abrir agenda para ${account.name}`} href="/agenda"><Icon name="agenda" />Agendar</Link>}
+          <a href="#account-history"><Icon name="auditoria" />Histórico</a>
+        </div>
         <div className={styles.nextAction}><Button asChild><Link href={next ? `/customer-success?accountId=${account.id}` : `/oportunidades?accountId=${account.id}`}>{next ? "Abrir carteira" : "Ver oportunidades"}</Link></Button></div>
         <h2 className={styles.sectionLabel}>Informações da empresa</h2>
         <dl className={styles.facts}><div><dt>Documento</dt><dd>{account.originalDocument ?? "Não informado"}</dd></div><div><dt>Domínio</dt><dd>{account.originalDomain ?? "Não informado"}</dd></div><div><dt>Segmento / porte</dt><dd>{account.segment} · {account.size}</dd></div><div><dt>Conta pai</dt><dd>{account.parent ? <Link href={`/contas/${account.parent.id}`}>{account.parent.name}</Link> : "Nenhuma"}</dd></div><div><dt>MRR ativo</dt><dd>{money(account.subscriptions.reduce((sum, item) => sum + BigInt(item.mrrCents), 0n).toString())}</dd></div><div><dt>Sinais de expansão / churn</dt><dd>{account.expansionSignals} / {account.churnEvents}</dd></div><div><dt>Qualidade dos dados</dt><dd>{account.quality} · revisão {account.revision}</dd></div></dl>

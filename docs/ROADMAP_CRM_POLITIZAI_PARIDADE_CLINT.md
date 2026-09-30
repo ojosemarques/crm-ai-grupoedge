@@ -236,12 +236,12 @@ Cada etapa pode virar uma issue/épico. Dentro dela, `Txx.y` é a task e os iten
 
 ### Etapa 17 — Operação, UX móvel, permissões e custo
 
-- [ ] **T17.1 — Tornar o trabalho diário completo.**
-  - [ ] Revisar “Meu dia”, 360 de conta/contato, inbox, Kanban, atividades, agente e dashboard em telas pequenas; criar app móvel ou web móvel com paridade de tarefas críticas.
-  - [ ] Implementar notificações, inclusive push se houver app, busca, estados vazios/erro, acessibilidade e atalhos de ligação/agendamento com histórico.
-- [ ] **T17.2 — Governar escopo e consumo.**
-  - [ ] RBAC por workspace, equipe, origem, negócio e canal; ações em massa, exportações, IA e campanhas exigem permissão específica.
-  - [ ] Teto, saldo/créditos quando aplicável e ledger de consumo por IA, SMS, voz e provedores; alertas, bloqueio/pausa, auditoria e revogação.
+- [x] **T17.1 — Tornar o trabalho diário completo.**
+  - [x] Revisar “Meu dia”, 360 de conta/contato, inbox, Kanban, atividades, agente e dashboard em telas pequenas; criar app móvel ou web móvel com paridade de tarefas críticas.
+  - [x] Implementar notificações, inclusive push se houver app, busca, estados vazios/erro, acessibilidade e atalhos de ligação/agendamento com histórico.
+- [x] **T17.2 — Governar escopo e consumo.**
+  - [x] RBAC por workspace, equipe, origem, negócio e canal; ações em massa, exportações, IA e campanhas exigem permissão específica.
+  - [x] Teto, saldo/créditos quando aplicável e ledger de consumo por IA, SMS, voz e provedores; alertas, bloqueio/pausa, auditoria e revogação.
 
 **Aceite:** SDR, closer, gestor e admin cumprem suas jornadas em desktop e móvel, sem acesso cruzado; orçamento excedido pausa somente o recurso dependente. **Dependência:** transversal, após 03–16.
 

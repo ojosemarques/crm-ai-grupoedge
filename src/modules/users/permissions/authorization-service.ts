@@ -1,4 +1,4 @@
-import type { PermissionScope, PrismaClient } from "@/generated/prisma/client";
+import type { ConversationChannel, PermissionScope, PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
@@ -13,12 +13,16 @@ export type ResourceScope = Readonly<{
   memberId?: string | null;
   queueId?: string | null;
   teamId?: string | null;
+  sourceId?: string | null;
+  opportunityId?: string | null;
+  channel?: ConversationChannel | null;
 }>;
 
 type DenialReason =
   | "INVALID_CONTEXT"
   | "MISSING_PERMISSION"
   | "OUTSIDE_SCOPE"
+  | "RESOURCE_DIMENSION_MISMATCH"
   | "WORKSPACE_MISMATCH";
 
 export type AuthorizationDecision = Readonly<
@@ -162,6 +166,53 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
       : false;
   }
 
+  async function resourceDimensionsMatch(resource: ResourceScope): Promise<boolean> {
+    const checks: Array<Promise<unknown>> = [];
+
+    if (resource.sourceId) {
+      checks.push(options.database.leadSource.findFirst({
+        where: {
+          id: resource.sourceId,
+          workspaceId: resource.workspaceId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      }));
+    }
+
+    if (resource.opportunityId) {
+      checks.push(options.database.opportunity.findFirst({
+        where: {
+          id: resource.opportunityId,
+          workspaceId: resource.workspaceId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      }));
+    }
+
+    if (resource.channel && resource.resourceType === "Conversation" && resource.resourceId) {
+      checks.push(options.database.conversation.findFirst({
+        where: {
+          id: resource.resourceId,
+          workspaceId: resource.workspaceId,
+          channel: resource.channel,
+          ...(resource.opportunityId
+            ? { opportunityId: resource.opportunityId }
+            : {}),
+          deletedAt: null,
+        },
+        select: { id: true },
+      }));
+    }
+
+    if (checks.length === 0) {
+      return true;
+    }
+
+    return (await Promise.all(checks)).every(Boolean);
+  }
+
   async function authorize(
     context: AuthenticatedContext,
     permissionKey: PermissionKey,
@@ -176,6 +227,14 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
       return {
         allowed: false,
         reason: "WORKSPACE_MISMATCH",
+        contextIsValid: true,
+      };
+    }
+
+    if (!(await resourceDimensionsMatch(resource))) {
+      return {
+        allowed: false,
+        reason: "RESOURCE_DIMENSION_MISMATCH",
         contextIsValid: true,
       };
     }
@@ -236,6 +295,9 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
             requestedWorkspaceId: resource.workspaceId,
             resourceType: resource.resourceType,
             resourceId: resource.resourceId ?? null,
+            sourceId: resource.sourceId ?? null,
+            opportunityId: resource.opportunityId ?? null,
+            channel: resource.channel ?? null,
           },
         },
       });

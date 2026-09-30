@@ -2467,6 +2467,8 @@ model Workspace {
   transactionalCheckoutEvents  TransactionalCheckoutEvent[]
   analyticsDashboards          AnalyticsDashboard[]
   analyticsMutationReceipts    AnalyticsMutationReceipt[]
+  consumptionBudgets           ConsumptionBudget[]
+  consumptionLedgerEntries     ConsumptionLedgerEntry[]
   integrationSyncRuns          IntegrationSyncRun[]
   integrationSyncCursors       IntegrationSyncCursor[]
   externalObjectMappings       ExternalObjectMapping[]
@@ -2737,6 +2739,9 @@ model Actor {
   analyticsWidgetsCreated           AnalyticsWidget[]                    @relation("AnalyticsWidgetCreatedBy")
   analyticsWidgetsUpdated           AnalyticsWidget[]                    @relation("AnalyticsWidgetUpdatedBy")
   analyticsMutationReceipts         AnalyticsMutationReceipt[]
+  consumptionBudgetsCreated         ConsumptionBudget[]                  @relation("ConsumptionBudgetCreatedBy")
+  consumptionBudgetsUpdated         ConsumptionBudget[]                  @relation("ConsumptionBudgetUpdatedBy")
+  consumptionLedgerEntries          ConsumptionLedgerEntry[]
   opportunitiesCreated             Opportunity[]                        @relation("OpportunityCreatedBy")
   opportunitiesUpdated             Opportunity[]                        @relation("OpportunityUpdatedBy")
   productsCreated                  Product[]                            @relation("ProductCreatedBy")
@@ -13116,4 +13121,83 @@ model AnalyticsMutationReceipt {
   @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId, entityId, createdAt])
   @@map("analytics_mutation_receipts")
+}
+
+enum ConsumptionResourceType {
+  AI
+  SMS
+  VOICE
+  PROVIDER
+}
+
+enum ConsumptionBudgetStatus {
+  ACTIVE
+  PAUSED
+  REVOKED
+}
+
+enum ConsumptionLedgerKind {
+  DEBIT
+  CREDIT
+  BLOCKED
+}
+
+model ConsumptionBudget {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  workspaceId        String                  @db.Uuid
+  resourceType       ConsumptionResourceType
+  resourceKey        String
+  status             ConsumptionBudgetStatus @default(ACTIVE)
+  currency           String                  @default("BRL")
+  limitCents         BigInt?
+  limitUnits         BigInt?
+  includedCreditCents BigInt                 @default(0)
+  warningBasisPoints Int                     @default(8000)
+  periodStart        DateTime                @db.Timestamptz(3)
+  periodEnd          DateTime                @db.Timestamptz(3)
+  pausedAt           DateTime?               @db.Timestamptz(3)
+  pausedReason       String?
+  revision           Int                     @default(1)
+  createdByActorId   String                  @db.Uuid
+  updatedByActorId   String                  @db.Uuid
+  createdAt          DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                @updatedAt @db.Timestamptz(3)
+
+  workspace Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdBy Actor                    @relation("ConsumptionBudgetCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy Actor                    @relation("ConsumptionBudgetUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  ledger    ConsumptionLedgerEntry[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, resourceType, resourceKey, periodStart])
+  @@index([workspaceId, status, periodEnd])
+  @@map("consumption_budgets")
+}
+
+model ConsumptionLedgerEntry {
+  id               String                  @id @default(uuid()) @db.Uuid
+  workspaceId      String                  @db.Uuid
+  budgetId         String                  @db.Uuid
+  resourceType     ConsumptionResourceType
+  resourceKey      String
+  kind             ConsumptionLedgerKind
+  amountCents      BigInt                  @default(0)
+  units            BigInt                  @default(0)
+  idempotencyKey   String
+  externalReference String?
+  reason           String?
+  metadata         Json                    @default("{}")
+  actorId          String                  @db.Uuid
+  occurredAt       DateTime                @db.Timestamptz(3)
+  createdAt        DateTime                @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  budget    ConsumptionBudget @relation(fields: [workspaceId, budgetId], references: [workspaceId, id], onDelete: Restrict)
+  actor     Actor             @relation(fields: [workspaceId, actorId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, budgetId, occurredAt])
+  @@index([workspaceId, resourceType, resourceKey, occurredAt])
+  @@map("consumption_ledger_entries")
 }

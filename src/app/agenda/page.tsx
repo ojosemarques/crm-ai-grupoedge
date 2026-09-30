@@ -33,7 +33,7 @@ export default async function AgendaPage({ searchParams }: Readonly<{ searchPara
         meta={`Dados exibidos em ${screen.timeZone}`}
         title="Agenda"
       />
-      <AgendaWorkspace initialScreen={screen} />
+      <AgendaWorkspace initialLeadId={first(params.leadId) ?? ""} initialScreen={screen} />
     </main>
   );
 }

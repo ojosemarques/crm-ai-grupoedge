@@ -1167,17 +1167,24 @@ export function createLeadListService(options: LeadListServiceOptions) {
   async function getScreen(context: AuthenticatedContext, payload: unknown) {
     const query = parseLeadListQuery(payload);
     const scope = await resolveScope(context, PermissionKeys.LEADS_READ);
-    const bulkDecision = await options.authorization.authorize(
-      context,
-      PermissionKeys.LEADS_ASSIGN,
-      { workspaceId: context.workspaceId, resourceType: "LeadBulk", memberId: context.memberId },
-    );
+    const [assignDecision, bulkDecision] = await Promise.all([
+      options.authorization.authorize(
+        context,
+        PermissionKeys.LEADS_ASSIGN,
+        { workspaceId: context.workspaceId, resourceType: "LeadBulk", memberId: context.memberId },
+      ),
+      options.authorization.authorize(
+        context,
+        PermissionKeys.BULK_ACTIONS_EXECUTE,
+        { workspaceId: context.workspaceId, resourceType: "LeadBulk", memberId: context.memberId },
+      ),
+    ]);
     const [list, filters, savedViews] = await Promise.all([
       listRows(context, scope, query),
       getFilterOptions(context, scope),
       getSavedViews(context),
     ]);
-    return { query: { ...query, page: list.page }, list, filters, savedViews, canBulkAssign: bulkDecision.allowed };
+    return { query: { ...query, page: list.page }, list, filters, savedViews, canBulkAssign: assignDecision.allowed && bulkDecision.allowed };
   }
 
   async function createSavedView(context: AuthenticatedContext, payload: unknown) {
@@ -1271,6 +1278,11 @@ export function createLeadListService(options: LeadListServiceOptions) {
     if (!parsed.success) invalidInput(parsed.error);
     const ids = [...new Set(parsed.data.leadIds)].sort();
     await resolveScope(context, PermissionKeys.LEADS_ASSIGN);
+    await options.authorization.assertAuthorized(context, PermissionKeys.BULK_ACTIONS_EXECUTE, {
+      workspaceId: context.workspaceId,
+      resourceType: "LeadBulk",
+      memberId: context.memberId,
+    });
     const leads = await options.database.lead.findMany({
       where: { id: { in: ids }, workspaceId: context.workspaceId, deletedAt: null },
       select: {

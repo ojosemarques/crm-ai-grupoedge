@@ -19,3 +19,15 @@ textarea.input {
   line-height: 1.5;
   resize: vertical;
 }
+
+@media (max-width: 640px) {
+  .workspace .input {
+    font-size: 16px;
+    min-height: 44px;
+  }
+
+  .workspace button,
+  .workspace a {
+    min-height: 40px;
+  }
+}

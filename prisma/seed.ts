@@ -11,10 +11,11 @@ import { seedForecastDemoData } from "@/modules/settings/application/forecast-de
 import { getDatabaseClient } from "@/shared/core/database/client";
 
 const database = getDatabaseClient();
+const demoClock = new Date("2026-09-13T16:00:00.000Z");
 
 try {
   const structure = await seedDemoDatabase(database);
-  const data = await seedCrm29DemoData(database);
+  const data = await seedCrm29DemoData(database, undefined, { now: demoClock });
   const accounts = await seedAccountDemoData(database);
   const lifecycle = await seedLifecycleDemoData(database);
   const communications = await seedOmnichannelDemoData(database);

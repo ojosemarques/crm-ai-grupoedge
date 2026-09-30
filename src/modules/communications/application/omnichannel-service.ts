@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { Prisma, type MessageStatus, type PrismaClient } from "@/generated/prisma/client";
+import { Prisma, type ConversationChannel, type MessageStatus, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import {
   channelCapabilities,
@@ -86,11 +86,13 @@ function parseInboxQuery(raw: unknown) {
   });
 }
 
-function conversationResource(row: Readonly<{ workspaceId: string; id: string; assigneeMemberId: string | null; queueId: string | null; queue?: { teamId: string | null } | null }>): ResourceScope {
+function conversationResource(row: Readonly<{ workspaceId: string; id: string; assigneeMemberId: string | null; queueId: string | null; channel: ConversationChannel; opportunityId: string | null; queue?: { teamId: string | null } | null }>): ResourceScope {
   return {
     workspaceId: row.workspaceId,
     resourceType: "Conversation",
     resourceId: row.id,
+    channel: row.channel,
+    opportunityId: row.opportunityId,
     ownerMemberId: row.assigneeMemberId,
     queueId: row.queueId,
     teamId: row.queue?.teamId ?? null,

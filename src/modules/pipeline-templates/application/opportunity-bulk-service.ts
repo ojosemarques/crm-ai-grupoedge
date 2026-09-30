@@ -30,9 +30,26 @@ async function loadOpportunities(database: PrismaClient | Prisma.TransactionClie
 }
 
 export function createOpportunityBulkService(options: Options) {
+  async function assertBulkPermission(context: AuthenticatedContext) {
+    const decision = await options.authorization.authorize(context, PermissionKeys.BULK_ACTIONS_EXECUTE, {
+      workspaceId: context.workspaceId,
+      resourceType: "OpportunityBulk",
+      memberId: context.memberId,
+    });
+    if (!decision.allowed) fail("ACCESS_DENIED", "Você não pode executar ações em massa.", 403);
+  }
+
   async function assertAccess(context: AuthenticatedContext, opportunity: OpportunityForBulk, capability: "canReassign" | "canTransition", database: PrismaClient | Prisma.TransactionClient = options.database) {
     const teamId = opportunity.lead.routingQueue?.teamId ?? opportunity.lead.queue?.teamId ?? null;
-    const decision = await options.authorization.authorize(context, PermissionKeys.OPPORTUNITIES_WRITE, { workspaceId: context.workspaceId, resourceType: "Opportunity", resourceId: opportunity.id, ownerMemberId: opportunity.ownerMemberId, teamId });
+    const decision = await options.authorization.authorize(context, PermissionKeys.OPPORTUNITIES_WRITE, {
+      workspaceId: context.workspaceId,
+      resourceType: "Opportunity",
+      resourceId: opportunity.id,
+      opportunityId: opportunity.id,
+      sourceId: opportunity.lead.sourceId,
+      ownerMemberId: opportunity.ownerMemberId,
+      teamId,
+    });
     if (!decision.allowed) fail("ACCESS_DENIED", "Você não pode alterar uma ou mais oportunidades.", 403);
     if (decision.scope === "WORKSPACE") return;
     const rules = await database.pipelineOriginAccessRule.findMany({ where: { workspaceId: context.workspaceId, sourceId: opportunity.lead.sourceId }, select: { teamId: true, canReassign: true, canTransition: true } });
@@ -60,6 +77,7 @@ export function createOpportunityBulkService(options: Options) {
   }
 
   async function preview(context: AuthenticatedContext, payload: unknown) {
+    await assertBulkPermission(context);
     const parsed = opportunityBulkPreviewSchema.safeParse(payload);
     if (!parsed.success) fail("INVALID_INPUT", parsed.error.issues.map((issue) => issue.message).join(" "), 400);
     const input = parsed.data;
@@ -78,6 +96,7 @@ export function createOpportunityBulkService(options: Options) {
   }
 
   async function execute(context: AuthenticatedContext, payload: unknown) {
+    await assertBulkPermission(context);
     const parsed = opportunityBulkExecuteSchema.safeParse(payload);
     if (!parsed.success) fail("INVALID_INPUT", parsed.error.issues.map((issue) => issue.message).join(" "), 400);
     return options.database.$transaction(async (transaction) => {

@@ -81,6 +81,8 @@ const roleGrants: Record<
     [PermissionKeys.LEADS_READ, "TEAM"],
     [PermissionKeys.LEADS_WRITE, "TEAM"],
     [PermissionKeys.LEADS_ASSIGN, "TEAM"],
+    [PermissionKeys.BULK_ACTIONS_EXECUTE, "TEAM"],
+    [PermissionKeys.EXPORTS_EXECUTE, "TEAM"],
     [PermissionKeys.MEETINGS_READ, "TEAM"],
     [PermissionKeys.MEETINGS_WRITE, "TEAM"],
     [PermissionKeys.OPPORTUNITIES_READ, "TEAM"],
@@ -559,6 +561,93 @@ describe("autenticação local, RBAC e isolamento", () => {
         resourceType: "Lead",
       }),
     ).resolves.toMatchObject({ allowed: false, reason: "MISSING_PERMISSION" });
+
+    await expect(
+      authorization.authorize(manager, PermissionKeys.BULK_ACTIONS_EXECUTE, {
+        workspaceId: workspaceA.id,
+        resourceType: "OpportunityBulk",
+        memberId: manager.memberId,
+      }),
+    ).resolves.toMatchObject({ allowed: true, scope: "TEAM" });
+    await expect(
+      authorization.authorize(sdr, PermissionKeys.BULK_ACTIONS_EXECUTE, {
+        workspaceId: workspaceA.id,
+        resourceType: "LeadBulk",
+        memberId: sdr.memberId,
+      }),
+    ).resolves.toMatchObject({ allowed: false, reason: "MISSING_PERMISSION" });
+    await expect(
+      authorization.authorize(closer, PermissionKeys.EXPORTS_EXECUTE, {
+        workspaceId: workspaceA.id,
+        resourceType: "CommercialExport",
+        memberId: closer.memberId,
+      }),
+    ).resolves.toMatchObject({ allowed: false, reason: "MISSING_PERMISSION" });
+  });
+
+  it("nega dimensões de origem, negócio e canal fora do recurso autorizado", async () => {
+    const context = contextFor(workspaceA, workspaceA.members.administrator);
+    const [sourceA, sourceB] = await Promise.all([
+      database.leadSource.create({
+        data: {
+          workspaceId: workspaceA.id,
+          key: `source-${randomUUID()}`,
+          name: "Origem workspace A",
+          type: "MANUAL",
+          createdByActorId: workspaceA.systemActorId,
+          updatedByActorId: workspaceA.systemActorId,
+        },
+      }),
+      database.leadSource.create({
+        data: {
+          workspaceId: workspaceB.id,
+          key: `source-${randomUUID()}`,
+          name: "Origem workspace B",
+          type: "MANUAL",
+          createdByActorId: workspaceB.systemActorId,
+          updatedByActorId: workspaceB.systemActorId,
+        },
+      }),
+    ]);
+    const conversation = await database.conversation.create({
+      data: {
+        workspaceId: workspaceA.id,
+        queueId: workspaceA.salesQueueId,
+        channel: "EMAIL",
+        createdByActorId: workspaceA.systemActorId,
+        updatedByActorId: workspaceA.systemActorId,
+      },
+    });
+
+    await expect(
+      authorization.authorize(context, PermissionKeys.LEADS_READ, {
+        workspaceId: workspaceA.id,
+        resourceType: "LeadSource",
+        sourceId: sourceA.id,
+      }),
+    ).resolves.toMatchObject({ allowed: true, scope: "WORKSPACE" });
+    await expect(
+      authorization.authorize(context, PermissionKeys.LEADS_READ, {
+        workspaceId: workspaceA.id,
+        resourceType: "LeadSource",
+        sourceId: sourceB.id,
+      }),
+    ).resolves.toMatchObject({ allowed: false, reason: "RESOURCE_DIMENSION_MISMATCH" });
+    await expect(
+      authorization.authorize(context, PermissionKeys.OPPORTUNITIES_READ, {
+        workspaceId: workspaceA.id,
+        resourceType: "Opportunity",
+        opportunityId: randomUUID(),
+      }),
+    ).resolves.toMatchObject({ allowed: false, reason: "RESOURCE_DIMENSION_MISMATCH" });
+    await expect(
+      authorization.authorize(context, PermissionKeys.INBOX_READ, {
+        workspaceId: workspaceA.id,
+        resourceType: "Conversation",
+        resourceId: conversation.id,
+        channel: "WHATSAPP",
+      }),
+    ).resolves.toMatchObject({ allowed: false, reason: "RESOURCE_DIMENSION_MISMATCH" });
   });
 
   it("autoriza administração somente no servidor e audita a alteração", async () => {

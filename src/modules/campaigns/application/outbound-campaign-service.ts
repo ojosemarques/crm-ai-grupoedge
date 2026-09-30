@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { type CampaignCommand, type CreateCampaignInput } from "@/modules/campaigns/domain/outbound-campaign-contracts";
+import { getConsumptionGovernanceService } from "@/modules/consumption/application/consumption-governance-service";
 import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
@@ -47,7 +48,13 @@ function minuteInZone(date: Date, timeZone: string): number {
   return Number(parts.find((part) => part.type === "hour")?.value ?? 0) * 60 + Number(parts.find((part) => part.type === "minute")?.value ?? 0);
 }
 
-type Options = Readonly<{ database: PrismaClient; now?: () => Date }>;
+type Options = Readonly<{
+  database: PrismaClient;
+  now?: () => Date;
+  consumption?: Readonly<{
+    recordIfConfigured: (context: Readonly<{ workspaceId: string; actorId: string }>, input: unknown) => Promise<Readonly<{ allowed: boolean; code: string }>>;
+  }>;
+}>;
 
 export function createOutboundCampaignService(options: Options) {
   const now = options.now ?? (() => new Date());
@@ -222,6 +229,24 @@ export function createOutboundCampaignService(options: Options) {
       await options.database.job.update({ where: { id: claimed.id }, data: { status: "SUCCEEDED", result: json({ outcome: "OVERLAP_BLOCKED", reason }), finishedAt: now(), lockedAt: null, lockedBy: null, lockExpiresAt: null, updatedByActorId: context.actorId } });
       return { status: "OVERLAP_BLOCKED", recipientId: recipient.id, reason, externalEgress: false };
     }
+    if (scenario === "ACCEPT" && options.consumption) {
+      const resourceType = campaign.channel === "VOICE" ? "VOICE" : campaign.channel === "SMS" || campaign.channel === "FLASH" ? "SMS" : "PROVIDER";
+      const consumption = await options.consumption.recordIfConfigured(
+        { workspaceId: context.workspaceId, actorId: context.actorId },
+        {
+          resourceType, resourceKey: `outbound:${campaign.channel.toLowerCase()}`,
+          amountCents: BigInt(campaign.unitCostCents), units: 1n,
+          idempotencyKey: `outbound:${campaign.id}:${recipient.id}`,
+          externalReference: recipient.id,
+          metadata: { campaignId: campaign.id, recipientId: recipient.id, channel: campaign.channel },
+          occurredAt: now(),
+        },
+      );
+      if (!consumption.allowed) {
+        await options.database.job.update({ where: { id: claimed.id }, data: { status: "PENDING", lockedAt: null, lockedBy: null, lockExpiresAt: null, errorCode: consumption.code, lastError: "Orçamento do canal pausado ou esgotado.", updatedByActorId: context.actorId } });
+        fail("O orçamento deste canal está pausado ou esgotado.", "CAMPAIGN_CONSUMPTION_BUDGET_PAUSED");
+      }
+    }
     const attemptNumber = recipient.attemptCount + 1;
     const providerReceiptId = scenario === "ACCEPT" ? `local:${campaign.id}:${recipient.id}` : null;
     const nextStatus = scenario === "ACCEPT" ? "ACCEPTED" : scenario === "TRANSIENT_FAILURE" && attemptNumber < MAX_ATTEMPTS ? "RETRY_PENDING" : "FAILED";
@@ -282,6 +307,6 @@ export function createOutboundCampaignService(options: Options) {
 
 let singleton: ReturnType<typeof createOutboundCampaignService> | undefined;
 export function getOutboundCampaignService() {
-  singleton ??= createOutboundCampaignService({ database: getDatabaseClient() });
+  singleton ??= createOutboundCampaignService({ database: getDatabaseClient(), consumption: getConsumptionGovernanceService() });
   return singleton;
 }

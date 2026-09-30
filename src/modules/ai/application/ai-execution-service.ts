@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getVersionedPrompt } from "@/ai/prompts";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { getConsumptionGovernanceService } from "@/modules/consumption/application/consumption-governance-service";
 import {
   aiAgentTypeSchema,
   aiAnalysisInputSchema,
@@ -73,6 +74,9 @@ type AIExecutionServiceOptions = Readonly<{
   fallbackProvider?: AIProvider;
   now?: () => Date;
   monotonicNow?: () => number;
+  consumption?: Readonly<{
+    recordIfConfigured: (context: Readonly<{ workspaceId: string; actorId: string }>, input: unknown) => Promise<Readonly<{ allowed: boolean; code: string }>>;
+  }>;
 }>;
 
 type ResolvedTarget = Readonly<{
@@ -305,6 +309,23 @@ export function createAIExecutionService(options: AIExecutionServiceOptions) {
       prompt: { key: prompt.key, version: prompt.version },
       inputFingerprint: safety.inputFingerprint,
     });
+    if (options.consumption) {
+      const consumption = await options.consumption.recordIfConfigured(
+        { workspaceId: context.workspaceId, actorId: context.actorId },
+        {
+          resourceType: "AI", resourceKey: "ai", amountCents: 0n, units: 1n,
+          idempotencyKey: `ai:${requestFingerprint}`,
+          externalReference: requestFingerprint,
+          metadata: { useCaseKey, providerKey: requestedProvider.key },
+          occurredAt: requestedAt,
+        },
+      );
+      if (!consumption.allowed) {
+        throw new ApplicationError("O orçamento de IA está pausado ou esgotado.", {
+          code: "AI_CONSUMPTION_BUDGET_PAUSED", statusCode: 409, expose: true,
+        });
+      }
+    }
     const trace = await options.database.aIExecutionTrace.create({
       data: {
         workspaceId: context.workspaceId,
@@ -536,6 +557,7 @@ export function getAIExecutionService(): ReturnType<typeof createAIExecutionServ
     database: getDatabaseClient(),
     authorization: getAuthorizationService(),
     provider: createAIProvider(),
+    consumption: getConsumptionGovernanceService(),
   });
   return aiExecutionService;
 }
