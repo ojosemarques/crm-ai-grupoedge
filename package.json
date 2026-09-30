@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "next dev --webpack",
     "build": "pnpm db:generate && next build --webpack",
-    "build:vercel": "prisma migrate deploy && pnpm build",
+    "build:vercel": "PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=1 prisma migrate deploy && pnpm build",
     "start": "next start",
     "worker": "tsx src/modules/automations/worker.ts",
     "worker:staging:homologate": "tsx scripts/run-staging-worker-homologation.ts",
