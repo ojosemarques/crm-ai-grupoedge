@@ -1,3 +1,5 @@
+SET search_path TO crm, public;
+
 ALTER TYPE "JobType" ADD VALUE IF NOT EXISTS 'OUTBOUND_CAMPAIGN';
 
 CREATE TABLE "outbound_campaigns" (
