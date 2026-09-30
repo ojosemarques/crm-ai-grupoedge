@@ -22,7 +22,26 @@ describe("período do Copilot", () => {
   it("não interpreta prazo da venda como período financeiro", () => {
     expect(resolveCopilotPeriod("Feche a venda 25 mil, 3 mil por 6 meses", now, tz)).toMatchObject({ preset: "MONTH", assumed: true });
   });
+  it.each([
+    "Crie uma tarefa para amanhã às 10h",
+    "Atualize o cliente e marque o retorno para semana que vem",
+    "Prepare a criação de uma tarefa para 01/10/2026",
+    "Baixe o recebimento de ontem",
+  ])("preserva datas operacionais sem bloquear a ação: %s", (message) => {
+    expect(resolveCopilotPeriod(message, now, tz)).toMatchObject({ preset: "MONTH", assumed: true });
+  });
   it("respeita virada do mês em UTC e ano anterior", () => {
     expect(resolveCopilotPeriod("mês passado", new Date("2026-01-01T01:00:00Z"), tz)).toMatchObject({ fromDate: "2025-11-01", toDate: "2025-11-30" });
+  });
+  it.each(["amanhã às10", "amanhã às 10h", "para amanhã às 10:30", "hoje às 10", "semana que vem"])("reconhece prazo como continuação de pedido operacional: %s", (message) => {
+    const retrievalQuery = `${message}\nCrie uma tarefa de retorno para Zeta Distante`;
+    expect(resolveCopilotPeriod(message, now, tz, retrievalQuery)).toMatchObject({ preset: "MONTH", assumed: true });
+  });
+  it("mantém períodos de novas consultas mesmo após um pedido operacional", () => {
+    const previous = "Crie uma tarefa para Zeta Distante";
+    expect(resolveCopilotPeriod("DRE do mês passado", now, tz, `DRE do mês passado\n${previous}`)).toMatchObject({ fromDate: "2026-08-01", toDate: "2026-08-31", assumed: false });
+    expect(resolveCopilotPeriod("hoje", now, tz, `hoje\n${previous}`)).toMatchObject({ preset: "TODAY", assumed: false });
+    expect(() => resolveCopilotPeriod("amanhã às 10", now, tz)).toThrow("duas datas");
+    expect(() => resolveCopilotPeriod("amanhã às 10", now, tz, `amanhã às 10\n${previous}\nQual o saldo?`)).toThrow("duas datas");
   });
 });

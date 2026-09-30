@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { AIProviderError } from "@/modules/ai/providers/ai-provider";
 import { createCopilotService } from "./copilot-service";
 import { copilotCommandSchema, copilotSaleSchema } from "../domain/copilot-contracts";
 import type { CopilotAction, CopilotActionOptions, CopilotActionPreview } from "../domain/copilot-action-contracts";
@@ -279,5 +280,52 @@ describe("ações tipadas do Copilot", () => {
     await service.command(context, { action: "CHAT", message: "OK" });
     expect(h.actions.execute).not.toHaveBeenCalled();
     expect(h.rows[0]?.status).toBe("DRAFT");
+  });
+});
+
+describe("contrato das ações enviado ao provedor externo", () => {
+  it.each([task, customer, expense, payment])("gera prévia de $kind com schema e guia completos, sem executar", async (action) => {
+    const h = harness();
+    h.generate.mockResolvedValueOnce({ answer: "Confira os dados antes de confirmar.", sources: [], operation: action, sale: null });
+    const message = `Preparar ${action.kind} com os dados informados`;
+    const result = await h.service.command(context, { action: "CHAT", message });
+    const sent = h.generate.mock.calls[0]![0] as { responseSchema: { properties: Record<string, unknown> }; actionInputGuide: Record<string, { outputField: string }>; actionOptions: CopilotActionOptions };
+    expect(Object.keys(sent.responseSchema.properties)).toEqual(["answer", "sources", "sale", "operation"]);
+    expect(Object.keys(sent.actionInputGuide)).toEqual(["CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT", "CLOSE_SALE"]);
+    expect(sent.actionInputGuide[action.kind]?.outputField).toBe("operation");
+    expect(sent.actionOptions.capabilities).toContain(action.kind);
+    expect(h.actions.options).toHaveBeenCalledWith(context, message);
+    expect(result.proposal).toMatchObject({ type: action.kind });
+    expect(h.actions.execute).not.toHaveBeenCalled();
+    expect(h.sales.execute).not.toHaveBeenCalled();
+  });
+
+  it("não transforma pedido ambíguo ou resposta de esclarecimento em alteração", async () => {
+    const h = harness();
+    h.generate.mockResolvedValueOnce({ answer: "Qual cliente e qual campo deseja atualizar?", sources: [], operation: null, sale: null });
+    const result = await h.service.command(context, { action: "CHAT", message: "Atualize o cliente" });
+    expect(result).toMatchObject({ answer: expect.stringContaining("Qual cliente"), proposal: null });
+    expect(h.rows).toHaveLength(0);
+    expect(h.actions.preview).not.toHaveBeenCalled();
+    expect(h.actions.execute).not.toHaveBeenCalled();
+  });
+
+  it("explica falha do provedor sem expor conteúdo externo nem executar ação", async () => {
+    const h = harness();
+    h.generate.mockRejectedValueOnce(new AIProviderError("PROVIDER_TIMEOUT", "external-sensitive-content"));
+    await expect(h.service.command(context, { action: "CHAT", message: "Como está o caixa?" })).rejects.toThrow("A OpenAI excedeu o tempo de resposta.");
+    expect(h.rows).toHaveLength(0);
+    expect(h.actions.execute).not.toHaveBeenCalled();
+  });
+
+  it("mantém a referência do usuário em continuações sem buscar nomes inventados pela IA", async () => {
+    const h = harness();
+    h.generate.mockResolvedValue({ answer: "Preciso confirmar os dados.", sources: [], sale: null, operation: null });
+    const history = [{ role: "user", content: 'Consultar cliente "Empresa Horizonte"' }, { role: "assistant", content: 'Use o cliente "Inventado"' }];
+    await h.service.command(context, { action: "CHAT", message: "E as tarefas?", history });
+    expect(h.actions.options).toHaveBeenLastCalledWith(context, 'E as tarefas?\nConsultar cliente "Empresa Horizonte"');
+    expect(h.loadContext).toHaveBeenLastCalledWith(context, "E as tarefas?", now, 'E as tarefas?\nConsultar cliente "Empresa Horizonte"');
+    await h.service.command(context, { action: "CHAT", message: 'Agora consultar "Outra Empresa"', history });
+    expect(h.actions.options).toHaveBeenLastCalledWith(context, 'Agora consultar "Outra Empresa"');
   });
 });

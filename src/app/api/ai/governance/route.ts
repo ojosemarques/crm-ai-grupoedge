@@ -25,13 +25,16 @@ export async function POST(request: NextRequest) {
     const context = await requireApiAuthentication(request);
     await enforceRateLimit("ai-governance", context.memberId, sensitiveEndpointPolicies.artificialIntelligence);
     const body: unknown = await readLimitedJson(request, 64 * 1024);
-    if (!body || typeof body !== "object" || !("action" in body) || !("data" in body)) {
+    if (!body || typeof body !== "object" || !("action" in body) || (body.action !== "INITIALIZE_COPILOT" && !("data" in body))) {
       throw new ApplicationError("Informe a ação de governança.", { code: "INVALID_INPUT", statusCode: 400, expose: true });
     }
     const service = getAIGovernanceService();
-    const result = body.action === "EVALUATE" && body.data && typeof body.data === "object" && "useCaseVersionId" in body.data && typeof body.data.useCaseVersionId === "string"
-      ? await service.runEvaluation(context, body.data.useCaseVersionId)
-      : await service.transition(context, body.data);
+    const data = "data" in body ? body.data : undefined;
+    const result = body.action === "INITIALIZE_COPILOT"
+      ? await service.initializeCopilot(context)
+      : body.action === "EVALUATE" && data && typeof data === "object" && "useCaseVersionId" in data && typeof data.useCaseVersionId === "string"
+        ? await service.runEvaluation(context, data.useCaseVersionId)
+        : await service.transition(context, data);
     return NextResponse.json({ result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return handleRouteError(error);

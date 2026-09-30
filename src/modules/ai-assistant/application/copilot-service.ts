@@ -1,6 +1,6 @@
 import { canonicalJson, sha256 } from "@/modules/integrations/domain/integration-policy";
 import type { AIAssistantProposal, Prisma, PrismaClient } from "@/generated/prisma/client";
-import { copilotCommandSchema, copilotOutputSchema, copilotSaleSchema, copilotSystemPrompt, type CopilotSale } from "@/modules/ai-assistant/domain/copilot-contracts";
+import { copilotCommandSchema, copilotOutputSchema, copilotSaleSchema, copilotSystemPrompt, copilotResponseSchema, copilotActionInputGuide, type CopilotSale } from "@/modules/ai-assistant/domain/copilot-contracts";
 import { copilotActionSchema, type CopilotAction } from "@/modules/ai-assistant/domain/copilot-action-contracts";
 import { getCopilotActionsService } from "@/modules/ai-assistant/application/copilot-actions-service";
 import { getAssistantService } from "@/modules/ai-assistant/application/assistant-service";
@@ -19,7 +19,7 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 type Options = {
   database: PrismaClient;
   authorization: Pick<ReturnType<typeof getAuthorizationService>, "assertAuthorized">;
-  loadContext: (context: AuthenticatedContext, message?: string, now?: Date) => Promise<CopilotContext>;
+  loadContext: (context: AuthenticatedContext, message?: string, now?: Date, retrievalQuery?: string) => Promise<CopilotContext>;
   generate: ((input: unknown) => Promise<unknown>) | null;
   sales: {
     authorize: (context: AuthenticatedContext, payload: CopilotSale) => Promise<unknown>;
@@ -47,10 +47,6 @@ function sanitize(value: unknown): unknown {
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitize(item)]));
   return value;
 }
-
-const actionInputGuide = {
-  RECORD_PAYMENT: "{kind:'RECORD_PAYMENT',invoiceId,expectedRevision,financialAccountId,amountCents,receivedAt:ISO,method:'PIX'|'BANK_TRANSFER'|'CARD'|'CASH'|'OTHER',reference,receiptConfirmed:true}; exige comprovante e confirmação real do usuário de que recebeu.",
-};
 
 export function createCopilotService(options: Options) {
   async function authorize(context: AuthenticatedContext) {
@@ -156,13 +152,26 @@ export function createCopilotService(options: Options) {
       }
       const policy = await options.database.aIUseCaseVersion.findFirst({ where: { workspaceId: context.workspaceId, key: "metric-synthesis", status: "APPROVED" }, orderBy: { version: "desc" }, select: { id: true } });
       if (!policy) fail("A síntese gerencial de IA precisa estar aprovada na governança deste workspace.", "AI_USE_CASE_NOT_APPROVED");
-      const [data, actionOptions] = await Promise.all([options.loadContext(context, input.message, options.now()), options.actions.options(context)]);
-      const modelInput = { now: options.now().toISOString(), message: redact(input.message), history: input.history.map((item) => ({ ...item, content: redact(item.content) })), context: data, actionOptions, actionInputGuide };
+      const retrievalQuery = /["“][^"”]{2,80}["”]/.test(input.message) ? input.message : [input.message, ...input.history.filter((item) => item.role === "user").slice(-2).map((item) => item.content.slice(0, 600))].join("\n");
+      const [data, actionOptions] = await Promise.all([options.loadContext(context, input.message, options.now(), retrievalQuery), options.actions.options(context, retrievalQuery)]);
+      const modelInput = { now: options.now().toISOString(), message: redact(input.message), history: input.history.map((item) => ({ ...item, content: redact(item.content) })), context: data, actionOptions, responseSchema: copilotResponseSchema, actionInputGuide: copilotActionInputGuide };
       if (JSON.stringify(json(modelInput)).length > 100_000) fail("O contexto excede o limite desta consulta. Use os filtros dos módulos para uma análise mais específica.", "COPILOT_CONTEXT_LIMIT", 400);
       let generated: unknown;
       try { generated = await options.generate(sanitize(modelInput)); }
       catch (error) {
-        if (error instanceof AIProviderError) fail("O provedor de IA não respondeu corretamente. Nenhuma ação foi executada.", error.code, 502);
+        if (error instanceof AIProviderError) {
+          const messages: Record<string, string> = {
+            PROVIDER_AUTHENTICATION: "A chave OpenAI não foi aceita. Revise OPENAI_API_KEY na Vercel.",
+            PROVIDER_ACCESS_DENIED: "A conta OpenAI não tem permissão para esta solicitação.",
+            PROVIDER_QUOTA_EXCEEDED: "A conta OpenAI está sem cota disponível. Verifique os créditos e o limite de uso da API.",
+            PROVIDER_RATE_LIMITED: "O limite temporário da OpenAI foi atingido. Aguarde antes de tentar novamente.",
+            PROVIDER_MODEL_UNAVAILABLE: "O modelo configurado não está disponível para esta chave OpenAI.",
+            PROVIDER_OUTPUT_TRUNCATED: "A resposta excedeu o limite de geração. Divida o pedido em etapas menores.",
+            PROVIDER_TIMEOUT: "A OpenAI excedeu o tempo de resposta. Tente uma consulta mais específica.",
+            PROVIDER_REFUSAL: "A OpenAI não conseguiu atender esta solicitação. Reformule o pedido.",
+          };
+          fail(`${messages[error.code] ?? "O provedor de IA não respondeu corretamente."} Nenhuma ação foi executada.`, error.code, 502);
+        }
         throw error;
       }
       const parsed = copilotOutputSchema.safeParse(generated);
@@ -239,10 +248,10 @@ export function createCopilotService(options: Options) {
 export function getCopilotService() {
   const key = process.env.OPENAI_API_KEY?.trim();
   const model = process.env.OPENAI_MODEL?.trim();
-  const provider = process.env.COPILOT_EXTERNAL_ENABLED === "true" && key && model ? new OpenAICompatibleProvider({ endpoint: "https://api.openai.com/v1/chat/completions", model, authorizationToken: key, timeoutMs: 25_000 }) : null;
+  const provider = process.env.COPILOT_EXTERNAL_ENABLED === "true" && key && model ? new OpenAICompatibleProvider({ endpoint: "https://api.openai.com/v1/chat/completions", model, authorizationToken: key, timeoutMs: 45_000 }) : null;
   return createCopilotService({
     database: getDatabaseClient(), authorization: getAuthorizationService(), now: () => new Date(), loadContext: loadCopilotContext, sales: getSaleCompletionService(), actions: getCopilotActionsService(),
-    generate: provider ? async (input) => (await provider.generateJson({ system: copilotSystemPrompt, input, maxOutputTokens: 4000 })).output : null,
+    generate: provider ? async (input) => (await provider.generateJson({ system: copilotSystemPrompt, input, maxOutputTokens: 12000 })).output : null,
     fallback: async (context, message) => {
       const workspace = await getDatabaseClient().workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
       const period = resolveCopilotPeriod(message, new Date(), workspace.timeZone);

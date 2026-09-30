@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
-import { governanceTransitionSchema, humanDecisionInputSchema } from "@/modules/ai/domain/ai-governance-contracts";
+import { defaultAIExecutionLimits, forbiddenAIInputFields, governanceTransitionSchema, humanDecisionInputSchema, initialAIUseCaseDefinitions } from "@/modules/ai/domain/ai-governance-contracts";
 import { AI_EVALUATION_DATASET_KEY, AI_EVALUATION_DATASET_VERSION } from "@/modules/ai/evals/dataset-v1";
 import { runLocalAIEvaluation } from "@/modules/ai/evals/local-evaluation-runner";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -32,6 +32,64 @@ function invalid(message: string, code = "INVALID_AI_GOVERNANCE_TRANSITION"): ne
 
 export function createAIGovernanceService(options: Options) {
   const now = options.now ?? (() => new Date());
+
+  async function initializeCopilot(context: AuthenticatedContext) {
+    await options.authorization.assertAuthorized(context, PermissionKeys.AI_GOVERNANCE_MANAGE, workspaceResource(context));
+    return options.database.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai-governance:${context.workspaceId}`}))`;
+      const existing = await tx.aIUseCaseVersion.findFirst({
+        where: { workspaceId: context.workspaceId, key: "metric-synthesis" },
+        orderBy: { version: "desc" },
+        select: { id: true, status: true },
+      });
+      if (existing) return { ...existing, created: false };
+
+      const model = process.env.OPENAI_MODEL?.trim();
+      if (!model) invalid("Configure OPENAI_MODEL no servidor antes de inicializar o Copilot.", "COPILOT_MODEL_NOT_CONFIGURED");
+      const definition = initialAIUseCaseDefinitions.find((item) => item.key === "metric-synthesis")!;
+      const reason = "Configuração inicial do Copilot criada; avaliação e aprovação administrativa pendentes.";
+      const version = await tx.aIUseCaseVersion.create({
+        data: {
+          workspaceId: context.workspaceId,
+          key: definition.key,
+          version: 1,
+          name: definition.name,
+          description: "Consulta registros autorizados e propõe ações operacionais com prévia e confirmação humana; não executa alterações automaticamente.",
+          ownerMemberId: context.memberId,
+          riskLevel: "MEDIUM",
+          agentType: definition.agentType,
+          logicalProviderKey: "openai-compatible",
+          logicalModel: model,
+          promptKey: "politizai.operational-copilot",
+          promptVersion: 1,
+          configurationVersion: 1,
+          inputSchemaVersion: 1,
+          outputSchemaVersion: 1,
+          allowedInputFields: [...definition.allowedInputFields, "now", "message", "history", "context", "actionOptions", "responseSchema", "actionInputGuide"],
+          forbiddenInputFields: [...forbiddenAIInputFields],
+          ...defaultAIExecutionLimits,
+          timeoutMs: 45_000,
+          maxInputTokens: 30_000,
+          maxOutputTokens: 12_000,
+          fallbackPolicy: "FAIL_CLOSED",
+          status: "DRAFT",
+          createdByActorId: context.actorId,
+        },
+        select: { id: true, status: true },
+      });
+      await tx.aIGovernanceEvent.create({ data: {
+        workspaceId: context.workspaceId, useCaseVersionId: version.id,
+        fromStatus: null, toStatus: "DRAFT", reason, createdByActorId: context.actorId,
+      } });
+      await tx.auditLog.create({ data: {
+        workspaceId: context.workspaceId, actorId: context.actorId,
+        action: "ai.governance.copilot_initialized", origin: "DOMAIN", entityType: "AIUseCaseVersion", entityId: version.id, reason,
+        changes: { after: { key: definition.key, version: 1, status: "DRAFT", ownerMemberId: context.memberId } },
+        metadata: { provider: "openai-compatible", model, timeoutMs: 45_000, maxOutputTokens: 12_000 },
+      } });
+      return { ...version, created: true };
+    });
+  }
 
   async function getScreen(context: AuthenticatedContext) {
     await options.authorization.assertAuthorized(context, PermissionKeys.AI_GOVERNANCE_READ, workspaceResource(context));
@@ -213,7 +271,7 @@ export function createAIGovernanceService(options: Options) {
     return { id: created.id, decision: created.decision, stale: created.stale, applied: false };
   }
 
-  return Object.freeze({ getScreen, runEvaluation, transition, recordHumanDecision });
+  return Object.freeze({ getScreen, initializeCopilot, runEvaluation, transition, recordHumanDecision });
 }
 
 let service: ReturnType<typeof createAIGovernanceService> | undefined;

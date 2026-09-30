@@ -20,10 +20,47 @@ export type OpenAICompatibleProviderOptions = Readonly<{
 const responseSchema = z.object({
   choices: z.array(
     z.object({
-      message: z.object({ content: z.string() }),
+      finish_reason: z.string().nullish(),
+      message: z.object({ content: z.string().nullish(), refusal: z.string().nullish() }),
     }),
   ).min(1),
 });
+
+const errorResponseSchema = z.object({
+  error: z.object({ code: z.string().nullish(), type: z.string().nullish() }),
+});
+
+const quotaErrorCodes = new Set([
+  "insufficient_quota",
+  "credit_balance_exhausted",
+  "organization_spend_limit_exceeded",
+  "project_spend_limit_exceeded",
+  "organization_usage_limit_exceeded",
+]);
+
+async function httpError(response: Response): Promise<AIProviderError> {
+  if (response.status === 401) {
+    return new AIProviderError("PROVIDER_AUTHENTICATION", "A credencial do provedor de IA foi recusada. Revise a integração.");
+  }
+  if (response.status === 403) {
+    return new AIProviderError("PROVIDER_ACCESS_DENIED", "O provedor de IA negou acesso. Revise as permissões da integração.");
+  }
+
+  // Only machine-readable codes influence classification; provider messages can contain credentials or user data.
+  const parsed = errorResponseSchema.safeParse(await response.json().catch(() => null));
+  const code = parsed.success ? parsed.data.error.code : null;
+  const type = parsed.success ? parsed.data.error.type : null;
+  if (response.status === 429) {
+    if ((code && quotaErrorCodes.has(code)) || type === "insufficient_quota") {
+      return new AIProviderError("PROVIDER_QUOTA_EXCEEDED", "O provedor de IA está sem créditos ou atingiu o limite de uso. Revise o faturamento da integração.");
+    }
+    return new AIProviderError("PROVIDER_RATE_LIMITED", "O provedor de IA atingiu o limite temporário de solicitações. Aguarde e tente novamente.");
+  }
+  if (code === "model_not_found") {
+    return new AIProviderError("PROVIDER_MODEL_UNAVAILABLE", "O modelo de IA configurado não está disponível para esta integração.");
+  }
+  return new AIProviderError("PROVIDER_HTTP_ERROR", `O provedor compatível respondeu HTTP ${response.status}.`);
+}
 
 function requiredOutputContract(agent: AIProviderRequest["agent"]) {
   return {
@@ -102,7 +139,9 @@ export class OpenAICompatibleProvider implements AIProvider {
         signal: controller.signal,
         body: JSON.stringify({
           model: this.#model,
-          ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+          // GPT-5.5 defaults to reasoning; sampling parameters are omitted for this model family.
+          ...(request.temperature !== undefined && !/^gpt-5\.5(?:-|$)/.test(this.#model)
+            ? { temperature: request.temperature } : {}),
           response_format: { type: "json_object" },
           ...(request.maxOutputTokens ? { max_completion_tokens: request.maxOutputTokens } : {}),
           messages: [
@@ -115,34 +154,40 @@ export class OpenAICompatibleProvider implements AIProvider {
         }),
       });
       if (!response.ok) {
-        throw new AIProviderError(
-          "PROVIDER_HTTP_ERROR",
-          `O provedor compatível respondeu HTTP ${response.status}.`,
-        );
+        throw await httpError(response);
       }
-      const envelope = responseSchema.safeParse(await response.json());
+      const envelope = responseSchema.safeParse(await response.json().catch(() => null));
       if (!envelope.success) {
         throw new AIProviderError("PROVIDER_INVALID_RESPONSE", "Envelope do provedor inválido.");
       }
-      const content = envelope.data.choices[0]?.message.content;
+      const choice = envelope.data.choices[0]!;
+      if (choice.finish_reason === "length") {
+        throw new AIProviderError("PROVIDER_OUTPUT_TRUNCATED", "A resposta da IA atingiu o limite de tamanho e ficou incompleta. Reduza o pedido e tente novamente.");
+      }
+      if (choice.finish_reason === "content_filter" || choice.message.refusal) {
+        throw new AIProviderError("PROVIDER_REFUSAL", "O provedor de IA não pôde responder a este pedido. Reformule a solicitação.");
+      }
+      if (choice.finish_reason && choice.finish_reason !== "stop") {
+        throw new AIProviderError("PROVIDER_INVALID_RESPONSE", "O provedor não concluiu uma resposta de texto.");
+      }
+      const content = choice.message.content;
       if (!content) {
         throw new AIProviderError("PROVIDER_INVALID_RESPONSE", "Resposta do provedor vazia.");
       }
       try {
         return { output: JSON.parse(content) as unknown, model: this.#model };
-      } catch (error) {
+      } catch {
         throw new AIProviderError(
           "PROVIDER_INVALID_RESPONSE",
           "O provedor não retornou JSON válido.",
-          error,
         );
       }
     } catch (error) {
-      if (error instanceof AIProviderError) throw error;
       if (controller.signal.aborted) {
-        throw new AIProviderError("PROVIDER_TIMEOUT", "O provedor excedeu o tempo limite.", error);
+        throw new AIProviderError("PROVIDER_TIMEOUT", "O provedor excedeu o tempo limite.");
       }
-      throw new AIProviderError("PROVIDER_UNAVAILABLE", "O provedor está indisponível.", error);
+      if (error instanceof AIProviderError) throw error;
+      throw new AIProviderError("PROVIDER_UNAVAILABLE", "O provedor está indisponível.");
     } finally {
       clearTimeout(timeout);
     }

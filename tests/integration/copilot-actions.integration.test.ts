@@ -4,6 +4,7 @@ import { PrismaClient } from "@/generated/prisma/client";
 import { createAccountService } from "@/modules/accounts/application/account-service";
 import { createCopilotActionsService } from "@/modules/ai-assistant/application/copilot-actions-service";
 import { createCopilotService } from "@/modules/ai-assistant/application/copilot-service";
+import { loadCopilotContext } from "@/modules/ai-assistant/application/copilot-context";
 import type { CopilotAction } from "@/modules/ai-assistant/domain/copilot-action-contracts";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createFinanceService } from "@/modules/finance/application/finance-service";
@@ -11,6 +12,7 @@ import { createLeadIntakeService } from "@/modules/leads/application/lead-intake
 import { createSaleCompletionService } from "@/modules/opportunities/application/sale-completion-service";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
+import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
 
 if (!/^politizai_test_/.test(process.env.PRISMA_TEST_SCHEMA ?? "")) throw new Error("Ephemeral schema required.");
@@ -133,5 +135,50 @@ describe("ações operacionais do Copilot", () => {
     expect(next.proposal.id).not.toBe(first.proposal.id);
     expect(await database.aIAssistantProposal.findUnique({ where: { id: first.proposal.id } })).toMatchObject({ status: "CANCELLED" });
     expect(await database.task.count({ where: { workspaceId, title: payload.title } })).toBe(0);
+  });
+
+  it("localiza cliente e lead antigos pelo nome além da primeira página sem expor outro escopo", async () => {
+    const original = await database.lead.findUniqueOrThrow({ where: { id: leadId } });
+    const leadIds = Array.from({ length: 105 }, () => randomUUID());
+    const accountIds = Array.from({ length: 105 }, () => randomUUID());
+    const targetAccountId = randomUUID();
+    try {
+      await database.lead.createMany({ data: leadIds.map((id, index) => ({ ...original, id, contactId: null, normalizedPhone: null, normalizedEmail: null, fullName: `Amostra recente ${index}`, nextActionTaskId: null, nextActionAt: null, nextActionDescription: null, createdAt: new Date(now().getTime() + 60_000), updatedAt: now() })) });
+      await database.account.createMany({ data: [...accountIds.map((id, index) => ({ id, workspaceId, name: `Amostra recente ${index}`, normalizedName: `amostra recente ${index}`, origin: "MANUAL" as const, createdByActorId: admin.actorId, updatedByActorId: admin.actorId })), { id: targetAccountId, workspaceId, name: "Zeta Distante", normalizedName: "zeta distante", origin: "MANUAL", createdByActorId: admin.actorId, updatedByActorId: admin.actorId }] });
+      await database.lead.update({ where: { id: leadId }, data: { fullName: "Zeta Distante", updatedAt: new Date("2020-01-01"), nextActionAt: new Date("2030-01-01") } });
+      const recent = await actions.options(admin);
+      expect(recent.customers.some((item) => item.id === targetAccountId)).toBe(false);
+      expect(recent.leads.some((item) => item.id === leadId)).toBe(false);
+      const found = await actions.options(admin, 'Crie uma tarefa para "Zeta Distante"');
+      expect(found.leads).toContainEqual({ id: leadId, name: "Zeta Distante" });
+      expect(found.customers.map((item) => item.id)).toContain(targetAccountId);
+      const denied = await actions.options(viewer, 'Atualize "Zeta Distante"');
+      expect(denied.leads).toEqual([]);
+      expect(denied.customers).toEqual([]);
+      const foreign = await actions.options({ ...admin, workspaceId: randomUUID() }, 'Atualize "Zeta Distante"');
+      expect(foreign.leads).toEqual([]);
+      expect(foreign.customers).toEqual([]);
+      const context = await loadCopilotContext(admin, 'Detalhes do cliente "Zeta Distante"', now());
+      const clients = context.sources.find((item) => item.key === "clientes")?.data as { clients: Array<{ id: string }> };
+      expect(clients.clients.map((item) => item.id)).toContain(targetAccountId);
+    } finally {
+      await database.lead.update({ where: { id: leadId }, data: { fullName: original.fullName, nextActionAt: original.nextActionAt, updatedAt: original.updatedAt } });
+      await database.lead.deleteMany({ where: { workspaceId, id: { in: leadIds } } });
+      await database.account.deleteMany({ where: { workspaceId, id: { in: [...accountIds, targetAccountId] } } });
+    }
+  });
+
+  it("inclui cobranças, receita, onboarding e agenda canônicos com cobertura e permissões explícitas", async () => {
+    const data = await loadCopilotContext(admin, "Resumo geral do sistema", now());
+    expect(data.sources.map((item) => item.key)).toEqual(expect.arrayContaining(["cobrancas", "receita", "onboarding", "agenda"]));
+    for (const key of ["cobrancas", "receita", "onboarding", "agenda"]) expect(data.sources.find((item) => item.key === key)?.data).toHaveProperty("coverage");
+    const grants = await database.rolePermission.findMany({ where: { workspaceId, roleId: viewer.roleId, permission: { key: { in: [PermissionKeys.ONBOARDING_READ, PermissionKeys.MEETINGS_READ] } } } });
+    try {
+      await database.rolePermission.deleteMany({ where: { workspaceId, id: { in: grants.map((item) => item.id) } } });
+      const denied = await loadCopilotContext(viewer, "Resumo geral do sistema", now());
+      expect(denied.unavailable).toEqual(expect.arrayContaining(["cobrancas", "receita", "onboarding", "agenda"]));
+      expect(denied.sources.some((item) => ["cobrancas", "receita", "onboarding", "agenda"].includes(item.key))).toBe(false);
+    } finally { await database.rolePermission.createMany({ data: grants }); }
+    expect(JSON.stringify(data, (_key, value) => typeof value === "bigint" ? value.toString() : value).length).toBeLessThan(70_000);
   });
 });

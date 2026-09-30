@@ -6,6 +6,9 @@ import { createOperationalHistoryService } from "@/modules/activities/applicatio
 import { copilotActionSchema, type CopilotAction, type CopilotActionOptions, type CopilotActionPreview } from "@/modules/ai-assistant/domain/copilot-action-contracts";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createFinanceService } from "@/modules/finance/application/finance-service";
+import { createLeadListService } from "@/modules/leads/application/lead-list-service";
+import { getLeadDistributionService } from "@/modules/leads/application/lead-distribution-service";
+import { copilotSearchTerms, searchCopilotPages } from "@/modules/ai-assistant/domain/copilot-search";
 import { canonicalJson } from "@/modules/integrations/domain/integration-policy";
 import { createPaymentService } from "@/modules/payments/application/payment-service";
 import { createAuthorizationService, type ResourceScope } from "@/modules/users/permissions/authorization-service";
@@ -161,35 +164,49 @@ export function createCopilotActionsService(options: Options) {
     }, { isolationLevel: "Serializable", timeout: 30_000 });
   }
 
-  async function formOptions(context: AuthenticatedContext): Promise<CopilotActionOptions> {
+  async function formOptions(context: AuthenticatedContext, query = ""): Promise<CopilotActionOptions> {
     const database = options.database;
     const authorization = createAuthorizationService({ database });
     const result: CopilotActionOptions = { capabilities: [], leads: [], customers: [], categories: [], financialAccounts: [], invoices: [], truncated: false };
     const allowed = async (key: PermissionKey, resource: ResourceScope) => (await authorization.authorize(context, key, resource)).allowed;
-    const leads = await database.lead.findMany({ where: { workspaceId: context.workspaceId, deletedAt: null }, orderBy: { updatedAt: "desc" }, take: 101, include: { routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } });
+    const terms = copilotSearchTerms(query);
+    const limit = query.trim() ? 25 : 100;
+    const leadList = createLeadListService({ database, authorization, distribution: getLeadDistributionService(), now: options.now });
+    const leadMatches = await searchCopilotPages(terms, async (q) => {
+      try {
+        const page = await leadList.getScreen(context, { q, pageSize: limit, sort: "receivedAt", direction: "desc" });
+        return { items: page.list.rows, total: page.list.total };
+      } catch (error) {
+        if (error instanceof ApplicationError && error.statusCode === 403) return { items: [], total: 0 };
+        throw error;
+      }
+    }, limit);
+    const leads = await database.lead.findMany({ where: { workspaceId: context.workspaceId, deletedAt: null, id: { in: leadMatches.items.map((item) => item.id) } }, orderBy: { updatedAt: "desc" }, include: { routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } });
     for (const lead of leads.slice(0, 100)) {
       const scope = { workspaceId: context.workspaceId, resourceType: "Lead", resourceId: lead.id, ownerMemberId: lead.ownerMemberId, queueId: lead.queueId, teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null };
       if (await allowed(PermissionKeys.LEADS_READ, scope) && await allowed(PermissionKeys.TASKS_READ, scope) && await allowed(PermissionKeys.TASKS_WRITE, scope)) result.leads.push({ id: lead.id, name: lead.fullName });
     }
-    result.truncated = leads.length > 100;
+    result.truncated = leadMatches.truncated;
     if (result.leads.length) result.capabilities.push("CREATE_TASK");
     const accountScope = { workspaceId: context.workspaceId, resourceType: "Account" };
     if (await allowed(PermissionKeys.ACCOUNTS_READ, accountScope) && await allowed(PermissionKeys.ACCOUNTS_WRITE, accountScope)) {
-      const accounts = await database.account.findMany({ where: { workspaceId: context.workspaceId, deletedAt: null }, take: 101, orderBy: { updatedAt: "desc" } });
+      const accountService = createAccountService({ database, authorization, now: options.now });
+      const matches = await searchCopilotPages(terms, (search) => accountService.list(context, { search, pageSize: limit }), limit);
+      const accounts = await database.account.findMany({ where: { workspaceId: context.workspaceId, deletedAt: null, id: { in: matches.items.map((item) => item.id) } }, orderBy: { updatedAt: "desc" } });
       result.customers = accounts.slice(0, 100).map((row) => ({ id: row.id, name: row.name, revision: row.revision, legalName: row.legalName, domain: row.originalDomain, segment: row.segment, size: row.size }));
-      result.truncated ||= accounts.length > 100;
+      result.truncated ||= matches.truncated;
       result.capabilities.push("UPDATE_CUSTOMER");
     }
     const financeScope = { workspaceId: context.workspaceId, resourceType: "Finance" };
     if (await allowed(PermissionKeys.FINANCE_READ, financeScope) && await allowed(PermissionKeys.FINANCE_MANAGE, financeScope)) {
       const [categories, accounts, invoices] = await Promise.all([
-        database.financialCategory.findMany({ where: { workspaceId: context.workspaceId, active: true, kind: "EXPENSE" }, take: 101, orderBy: { name: "asc" }, select: { id: true, name: true } }),
-        database.financialAccount.findMany({ where: { workspaceId: context.workspaceId, active: true }, take: 101, orderBy: { name: "asc" }, select: { id: true, name: true } }),
-        database.invoice.findMany({ where: { workspaceId: context.workspaceId, status: { in: ["OPEN", "PARTIALLY_PAID"] } }, take: 101, orderBy: { dueAt: "asc" } }),
+        database.financialCategory.findMany({ where: { workspaceId: context.workspaceId, active: true, kind: "EXPENSE" }, take: limit + 1, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+        database.financialAccount.findMany({ where: { workspaceId: context.workspaceId, active: true }, take: limit + 1, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+        database.invoice.findMany({ where: { workspaceId: context.workspaceId, status: { in: ["OPEN", "PARTIALLY_PAID"] }, ...(terms.length ? { OR: terms.flatMap((term) => [{ invoiceNumber: { contains: term, mode: "insensitive" as const } }, { accountNameSnapshot: { contains: term, mode: "insensitive" as const } }, { descriptionSnapshot: { contains: term, mode: "insensitive" as const } }]) } : {}) }, take: limit + 1, orderBy: { dueAt: "asc" } }),
       ]);
-      result.categories = categories.slice(0, 100); result.financialAccounts = accounts.slice(0, 100);
-      result.capabilities.push("CREATE_EXPENSE"); result.truncated ||= categories.length > 100 || accounts.length > 100 || invoices.length > 100;
-      for (const invoice of invoices.slice(0, 100)) {
+      result.categories = categories.slice(0, limit); result.financialAccounts = accounts.slice(0, limit);
+      result.capabilities.push("CREATE_EXPENSE"); result.truncated ||= categories.length > limit || accounts.length > limit || invoices.length > limit;
+      for (const invoice of invoices.slice(0, limit)) {
         const scope = { workspaceId: context.workspaceId, resourceType: "Payment", resourceId: invoice.id, ownerMemberId: invoice.ownerMemberId };
         if (await allowed(PermissionKeys.PAYMENTS_READ, scope) && await allowed(PermissionKeys.PAYMENTS_MANAGE, scope)) result.invoices.push({ id: invoice.id, label: `${invoice.invoiceNumber} · ${invoice.accountNameSnapshot}`, revision: invoice.revision, outstandingCents: (invoice.totalCents - invoice.paidCents).toString() });
       }

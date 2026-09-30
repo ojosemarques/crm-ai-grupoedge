@@ -36,8 +36,8 @@ export function AIGovernanceWorkspace({ initialScreen, roleKey }: Readonly<{ ini
   const [feedback, setFeedback] = useState<{ tone: "success" | "danger"; message: string } | null>(null);
   const canManage = roleKey === "administrator";
 
-  async function act(versionId: string, action: "EVALUATE" | "APPROVE" | "DISABLE") {
-    if (action !== "EVALUATE" && !window.confirm(
+  async function act(versionId: string, action: "EVALUATE" | "APPROVE" | "DISABLE" | "INITIALIZE_COPILOT") {
+    if ((action === "APPROVE" || action === "DISABLE") && !window.confirm(
       action === "APPROVE"
         ? "Aprovar esta versão para novas execuções de IA?"
         : "Desabilitar esta versão para novas execuções de IA?",
@@ -47,14 +47,15 @@ export function AIGovernanceWorkspace({ initialScreen, roleKey }: Readonly<{ ini
     try {
       const response = await fetch("/api/ai/governance", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, data: { useCaseVersionId: versionId, action, reason: action === "APPROVE" ? "Versão aprovada após avaliação local revisada." : "Alteração administrativa confirmada na governança local." } }),
+        body: JSON.stringify({ action, data: action === "INITIALIZE_COPILOT" ? {} : { useCaseVersionId: versionId, action, reason: action === "APPROVE" ? "Versão aprovada após avaliação local revisada." : "Alteração administrativa confirmada na governança local." } }),
       });
       const payload = await response.json() as { error?: { message?: string } };
       if (!response.ok) throw new Error(payload.error?.message ?? "Ação não concluída.");
       const refreshed = await fetch("/api/ai/governance", { cache: "no-store" });
       const refreshedPayload = await refreshed.json() as { result: Screen };
+      if (!refreshed.ok) throw new Error("A ação foi registrada, mas não foi possível atualizar a tela. Recarregue a governança.");
       setScreen(refreshedPayload.result);
-      setFeedback({ tone: "success", message: "Governança atualizada e auditada." });
+      setFeedback({ tone: "success", message: action === "INITIALIZE_COPILOT" ? "Configuração do Copilot criada. Execute a avaliação e revise a aprovação para habilitá-lo." : "Governança atualizada e auditada." });
     } catch (error) {
       setFeedback({ tone: "danger", message: error instanceof Error ? error.message : "Não foi possível concluir a ação." });
     } finally {
@@ -71,6 +72,8 @@ export function AIGovernanceWorkspace({ initialScreen, roleKey }: Readonly<{ ini
         </div>
         <p className="mt-3 text-sm text-muted-foreground">Para habilitar: nas variáveis de ambiente do servidor, defina <code>OPENAI_API_KEY</code>, <code>OPENAI_MODEL</code> e <code>COPILOT_EXTERNAL_ENABLED=true</code>, depois publique a configuração. Não cole a chave no chat. Avalie e aprove o caso “Síntese gerencial de métricas” abaixo para autorizar o Copilot neste workspace.</p>
         <p className="mt-2 text-sm text-muted-foreground">A habilitação autoriza enviar o contexto mínimo permitido ao usuário para a API OpenAI. Sem chave, financeiro, anúncios e pós-venda oferecem consultas diretas. O fechamento gera uma prévia; apenas o botão de confirmação executa a operação. As avaliações e os agentes clássicos abaixo continuam usando seu provedor local.</p>
+        <p className="mt-2 text-sm text-muted-foreground">As consultas externas podem gerar custos na conta OpenAI conforme o uso. O Copilot não aplica um limite financeiro por consulta.</p>
+        {canManage && !screen.versions.some((version) => version.key === "metric-synthesis") ? <div className="mt-4"><Button disabled={busyId !== null} onClick={() => void act("initialize-copilot", "INITIALIZE_COPILOT")} size="sm">Configurar Copilot</Button><p className="mt-2 text-sm text-muted-foreground">Cria um rascunho com o modelo configurado no servidor. A avaliação e a aprovação continuam obrigatórias.</p></div> : null}
       </section>
 
       {feedback ? <div aria-live="polite" className={feedback.tone === "success" ? "rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900" : "rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900"} role="status">{feedback.message}</div> : null}

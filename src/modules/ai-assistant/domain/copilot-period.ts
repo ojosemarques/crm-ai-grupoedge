@@ -3,15 +3,27 @@ import { addLocalDays, workspaceDateAt, workspaceWeekRange } from "@/shared/core
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const months = ["janeiro", "fevereiro", "marco", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
-export function resolveCopilotPeriod(message: string, now: Date, timeZone: string) {
+const writeRequest = /\b(feche|fechar|registre|registrar|marque|marcar|mova|adicionar|adicione|crie|criar|criacao|cadastre|cadastrar|atualize|atualizar|altere|alterar|baixe|baixar|prepare|preparar)\b/;
+const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+function operationalDateContinuation(message: string, retrievalQuery: string) {
+  if (!retrievalQuery.startsWith(`${message}\n`)) return false;
+  const previousRequest = retrievalQuery.slice(message.length + 1).trim().split(/\n+/).at(-1) ?? "";
+  if (!writeRequest.test(normalize(previousRequest))) return false;
+  // Only a date/time-only reply continues the preceding write request. A new
+  // query (including bare "hoje") keeps its own reporting period.
+  return /^(?:(?:para|pra|em|no dia|dia|pode ser)\s+)?(?:(?:amanha|depois de amanha|semana que vem)(?:\s+(?:as?\s*)?\d{1,2}(?:h\d{0,2}|:\d{2})?)?|(?:hoje|ontem)\s+as?\s*\d{1,2}(?:h\d{0,2}|:\d{2})?)[.!]?$/.test(normalize(message));
+}
+
+export function resolveCopilotPeriod(message: string, now: Date, timeZone: string, retrievalQuery = message) {
   const text = message.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const today = workspaceDateAt(now, timeZone);
   const currentYear = Number(today.slice(0, 4));
   const currentMonth = Number(today.slice(5, 7));
   const period = (preset: "TODAY" | "YESTERDAY" | "WEEK" | "MONTH" | "CUSTOM", from?: string, to?: string, assumed = false) => ({ ...resolveDashboardPeriod(preset, from, to, now, timeZone), timeZone, assumed });
-  // Commercial terms ("3 mil por 6 meses") describe the proposed contract,
+  // Dates in write requests describe the proposed task, receipt or contract,
   // not the time range for reading current company information.
-  if (/\b(feche|fechar|registre|registrar|marque|mova|adicionar|adicione)\b/.test(text)) return period("MONTH", undefined, undefined, true);
+  if (writeRequest.test(text) || operationalDateContinuation(message, retrievalQuery)) return period("MONTH", undefined, undefined, true);
   const month = (year: number, index: number) => {
     const start = new Date(Date.UTC(year, index, 1)).toISOString().slice(0, 10);
     const end = new Date(Date.UTC(year, index + 1, 0)).toISOString().slice(0, 10);
