@@ -268,6 +268,28 @@ export function createAutomationBuilderService(options: Options) {
           dueAt: new Date(options.now().getTime() + (typeof node.config.dueInMinutes === "number" ? node.config.dueInMinutes : 30) * 60_000), createdByActorId: context.actorId, updatedByActorId: context.actorId } });
         domainEffect = { kind: "TASK_CREATED", taskId: task.id, duplicated: Boolean(existingTask) };
       }
+      if (run.leadId && node.type === "ACTION_TAG") {
+        const tagId = uuid.parse(node.config.tagId);
+        const tag = await tx.tag.findFirst({ where: { id: tagId, workspaceId: context.workspaceId, deletedAt: null }, select: { id: true } });
+        if (!tag) fail("Tag da automação não encontrada.", "AUTOMATION_TAG_NOT_FOUND", 409);
+        const existingTag = await tx.leadTag.findFirst({ where: { workspaceId: context.workspaceId, leadId: run.leadId, tagId, removedAt: null }, select: { id: true } });
+        const assignment = existingTag ?? await tx.leadTag.create({ data: { workspaceId: context.workspaceId, leadId: run.leadId, tagId, createdByActorId: context.actorId } });
+        domainEffect = { kind: "TAG_APPLIED", leadTagId: assignment.id, duplicated: Boolean(existingTag) };
+      }
+      if (run.leadId && node.type === "ACTION_ASSIGN") {
+        const memberId = uuid.parse(node.config.memberId);
+        const member = await tx.workspaceMember.findFirst({ where: { id: memberId, workspaceId: context.workspaceId, status: "ACTIVE", deletedAt: null }, select: { id: true } });
+        if (!member) fail("Responsável da automação não está ativo.", "AUTOMATION_ASSIGNEE_NOT_FOUND", 409);
+        await tx.lead.updateMany({ where: { id: run.leadId, workspaceId: context.workspaceId, deletedAt: null }, data: { ownerMemberId: memberId, updatedByActorId: context.actorId } });
+        domainEffect = { kind: "LEAD_ASSIGNED", memberId };
+      }
+      if (node.type === "ACTION_NOTIFICATION") {
+        const title = typeof node.config.title === "string" ? node.config.title : "Resultado da automação";
+        const existingNotification = await tx.notification.findFirst({ where: { workspaceId: context.workspaceId, automationRunId: run.id, recipientMemberId: context.memberId, title, deletedAt: null }, select: { id: true } });
+        const notification = existingNotification ?? await tx.notification.create({ data: { workspaceId: context.workspaceId, recipientMemberId: context.memberId, leadId: run.leadId,
+          automationRunId: run.id, type: "AUTOMATION_RESULT", title, body: typeof node.config.body === "string" ? node.config.body : "Uma etapa do fluxo visual foi concluída.", createdByActorId: context.actorId } });
+        domainEffect = { kind: "NOTIFICATION_CREATED", notificationId: notification.id, duplicated: Boolean(existingNotification) };
+      }
       if (run.leadId && node.type === "HUMAN_HANDOFF") {
         const existingHandoff = await tx.customerHandoff.findFirst({ where: { workspaceId: context.workspaceId, automationRunId: run.id, leadId: run.leadId }, select: { id: true } });
         const queueId = typeof node.config.queueId === "string" && uuid.safeParse(node.config.queueId).success ? node.config.queueId : null;

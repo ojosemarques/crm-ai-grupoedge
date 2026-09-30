@@ -70,6 +70,10 @@ export function validateAutomationGraph(input: unknown): GraphValidation {
       if (typeof node.config.startMinute !== "number" || typeof node.config.endMinute !== "number") issues.push(`Janela de horário inválida no nó ${node.id}.`);
     }
     if (node.type === "ACTION_CREATE_TASK" && typeof node.config.title !== "string") issues.push(`Título da tarefa ausente no nó ${node.id}.`);
+    if (node.type === "ACTION_TAG" && typeof node.config.tagId !== "string") issues.push(`Tag ausente no nó ${node.id}.`);
+    if (node.type === "ACTION_ASSIGN" && typeof node.config.memberId !== "string") issues.push(`Responsável ausente no nó ${node.id}.`);
+    if (node.type === "ACTION_NOTIFICATION" && typeof node.config.title !== "string") issues.push(`Título da notificação ausente no nó ${node.id}.`);
+    if (node.type === "HUMAN_HANDOFF" && typeof node.config.reason !== "string") issues.push(`Motivo do handoff ausente no nó ${node.id}.`);
     if (/webhook|https?:\/\//i.test(JSON.stringify(node.config))) issues.push(`Webhook arbitrário proibido no nó ${node.id}.`);
   }
   const triggers = graph.nodes.filter((node) => triggerTypes.has(node.type));
