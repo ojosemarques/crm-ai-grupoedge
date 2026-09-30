@@ -6,10 +6,10 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 
 import { LogoutButton } from "@/components/auth/logout-button";
 import { GlobalSearch } from "@/components/layout/global-search";
+import { BrandLogo } from "@/components/ui/brand-logo";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { cn } from "@/shared/core/ui/class-names";
 import styles from "./app-shell.module.css";
-import { BrandLogo } from "@/components/ui/brand-logo";
 
 type SessionView = Readonly<{
   user: Readonly<{
@@ -147,8 +147,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
     }
   }, []);
 
-  function toggleTheme() {
-    const nextTheme = theme === "dark" ? "light" : "dark";
+  function selectTheme(nextTheme: "dark" | "light") {
     document.documentElement.dataset.theme = nextTheme;
     window.localStorage.setItem("politizai-crm-theme-v2", nextTheme);
     setTheme(nextTheme);
@@ -237,7 +236,13 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
               <div className={styles.profilePanel}>
                 <strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small>
                 <Link href="/perfil" onClick={closeMenus}>Perfil e preferências</Link>
-                <button onClick={toggleTheme} type="button"><Icon name={theme === "dark" ? "sol" : "lua"} size={16} />Tema {theme === "dark" ? "claro" : "escuro"}</button>
+                <div className={styles.profileTheme}>
+                  <span>Aparência</span>
+                  <div aria-label="Tema da interface" className={styles.themeOptions} role="group">
+                    <button aria-pressed={theme === "light"} onClick={() => selectTheme("light")} type="button"><Icon name="sol" size={16} />Modo claro</button>
+                    <button aria-pressed={theme === "dark"} onClick={() => selectTheme("dark")} type="button"><Icon name="lua" size={16} />Modo escuro</button>
+                  </div>
+                </div>
                 <LogoutButton />
               </div>
             </details>
@@ -245,7 +250,6 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
         </header>
         <button aria-label="Fechar navegação" className={cn(styles.backdrop, menuOpen && styles.visible)} onClick={() => setMenuOpen(false)} tabIndex={menuOpen ? 0 : -1} type="button" />
         <aside aria-hidden={isMobile && !menuOpen ? true : undefined} className={cn(styles.sidebar, menuOpen && styles.open)} id="menu-principal" inert={isMobile && !menuOpen} ref={menuRef}>
-          <div className={styles.themeControls}><button aria-label="Usar tema claro" aria-pressed={theme === "light"} onClick={() => { if (theme !== "light") toggleTheme(); }} title="Tema claro" type="button"><Icon name="sol" size={17} /></button><button aria-label="Usar tema escuro" aria-pressed={theme === "dark"} onClick={() => { if (theme !== "dark") toggleTheme(); }} title="Tema escuro" type="button"><Icon name="lua" size={17} /></button></div>
           <div className={styles.sidebarHeading}><Icon name={activeSection?.icon ?? "dashboard"} size={15} /><span>{activeSection?.label ?? "Workspace"}</span><button aria-label={collapsed ? "Expandir menu" : "Recolher menu"} className={styles.collapseButton} onClick={() => setCollapsed(!collapsed)} type="button">{collapsed ? "›" : "‹"}</button></div>
           <nav aria-label="Navegação da área" className={styles.contextNav}>
             {session === undefined ? <div aria-label="Carregando navegação" className={styles.skeleton} role="status">{Array.from({ length: 5 }, (_, index) => <span key={index} />)}</div> : activeSection?.items.map((item, index) => (
