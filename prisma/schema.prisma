@@ -1259,6 +1259,14 @@ enum TaskKind {
   FOLLOW_UP
 }
 
+enum CadenceStepAction {
+  WHATSAPP
+  CALL
+  EMAIL
+  RECYCLE
+  CLOSE
+}
+
 enum AccountPlanEpisodeType {
   DISCOVERY
   SOLUTION
@@ -3302,6 +3310,7 @@ model CadenceStep {
   settingsVersionId String   @db.Uuid
   attemptNumber     Int
   dayOffset         Int
+  action            CadenceStepAction @default(CALL)
   createdAt         DateTime @default(now()) @db.Timestamptz(3)
 
   workspace       Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)

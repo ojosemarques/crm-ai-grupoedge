@@ -91,9 +91,9 @@ describe("configurações comerciais seguras", () => {
   });
 
   it("versiona regras operacionais, preserva revisão anterior e audita", async () => {
-    const command = { action: "SAVE_OPERATIONAL_POLICY", expectedRevision: 1, pactoMinimumInvestigatedDimensions: 4, defaultMeetingDurationMinutes: 40, distributionStrategy: "ROUND_ROBIN", maxOpenLeadsPerSdr: 25, leadStagnationDays: 5, leadWithoutActivityDays: 2, cadenceDayOffsets: [0, 1, 4, 10], confirmed: true } as const;
+    const command = { action: "SAVE_OPERATIONAL_POLICY", expectedRevision: 1, pactoMinimumInvestigatedDimensions: 4, defaultMeetingDurationMinutes: 40, distributionStrategy: "ROUND_ROBIN", maxOpenLeadsPerSdr: 25, leadStagnationDays: 5, leadWithoutActivityDays: 2, cadenceSteps: [{ dayOffset: 1, action: "WHATSAPP" }, { dayOffset: 2, action: "CALL" }, { dayOffset: 3, action: "EMAIL" }, { dayOffset: 5, action: "WHATSAPP" }, { dayOffset: 7, action: "RECYCLE" }], confirmed: true } as const;
     const result = await service().apply(admin, command);
-    expect(result.workspace).toMatchObject({ revision: 2, pactoMinimumInvestigatedDimensions: 4, defaultMeetingDurationMinutes: 40, maxOpenLeadsPerSdr: 25, cadenceDayOffsets: [0, 1, 4, 10] });
+    expect(result.workspace).toMatchObject({ revision: 2, pactoMinimumInvestigatedDimensions: 4, defaultMeetingDurationMinutes: 40, maxOpenLeadsPerSdr: 25, cadenceDayOffsets: [1, 2, 3, 5, 7], cadenceSteps: command.cadenceSteps });
     await expect(database.commercialSettingsVersion.count({ where: { workspaceId } })).resolves.toBe(2);
     await expect(database.auditLog.count({ where: { workspaceId, action: "settings.operational.versioned" } })).resolves.toBe(1);
   });

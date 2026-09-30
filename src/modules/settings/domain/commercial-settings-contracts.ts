@@ -28,6 +28,10 @@ export type CommercialSettingsScreen = Readonly<{
     leadStagnationDays: number;
     leadWithoutActivityDays: number;
     cadenceDayOffsets: readonly number[];
+    cadenceSteps: readonly Readonly<{
+      dayOffset: number;
+      action: "WHATSAPP" | "CALL" | "EMAIL" | "RECYCLE" | "CLOSE";
+    }>[];
   }>;
   scoring: Readonly<{
     id: string;

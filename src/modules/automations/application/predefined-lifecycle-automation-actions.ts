@@ -31,6 +31,7 @@ const payloadSchema = z
     activityId: z.string().uuid().nullable().optional(),
     attemptNumber: z.number().int().positive().optional(),
     dayOffset: z.number().int().min(0).optional(),
+    cadenceAction: z.enum(["WHATSAPP", "CALL", "EMAIL", "RECYCLE", "CLOSE"]).optional(),
     scheduledFor: z.coerce.date().optional(),
     settingsRevision: z.number().int().positive().optional(),
     timeZone: z.string().min(1).optional(),
@@ -355,6 +356,14 @@ async function handleNoAnswer(
   }
 
   const timeZone = payload.timeZone ?? lead.workspace.timeZone;
+  const cadenceAction = payload.cadenceAction ?? "CALL";
+  const taskSpec = ({
+    WHATSAPP: { kind: "MESSAGE", title: "enviar WhatsApp", description: "Envie uma mensagem contextual e registre o resultado." },
+    CALL: { kind: "CALL", title: "fazer ligação", description: "Faça a ligação e registre o resultado do contato." },
+    EMAIL: { kind: "EMAIL", title: "enviar e-mail", description: "Envie o e-mail e registre o resultado." },
+    RECYCLE: { kind: "FOLLOW_UP", title: "revisar e reciclar lead", description: "Revise o histórico e confirme se o lead deve voltar para nutrição ou outra fila." },
+    CLOSE: { kind: "FOLLOW_UP", title: "revisar encerramento", description: "Revise o histórico e confirme o encerramento da cadência." },
+  } as const)[cadenceAction];
   const range = workspaceDayRange(
     new Intl.DateTimeFormat("en-CA", {
       timeZone,
@@ -368,6 +377,7 @@ async function handleNoAnswer(
     where: {
       workspaceId: execution.workspaceId,
       leadId: lead.id,
+      automationRunId: execution.automationRunId,
       status: { in: ["OPEN", "IN_PROGRESS"] },
       deletedAt: null,
       dueAt: { gte: range.start, lt: range.end },
@@ -384,9 +394,9 @@ async function handleNoAnswer(
         automationRunId: execution.automationRunId,
         assigneeMemberId: lead.ownerMemberId,
         queueId: lead.ownerMemberId ? null : lead.queueId,
-        title: `Cadência D${payload.dayOffset}: tentar contato`,
-        description: `Tentativa ${payload.attemptNumber} da cadência configurada na revisão ${payload.settingsRevision ?? "vigente"}.`,
-        kind: "CALL",
+        title: `Cadência D${payload.dayOffset}: ${taskSpec.title}`,
+        description: `${taskSpec.description} Etapa ${payload.attemptNumber} da revisão ${payload.settingsRevision ?? "vigente"}.`,
+        kind: taskSpec.kind,
         status: "OPEN",
         priority: lead.priority,
         dueAt: payload.scheduledFor,
@@ -399,20 +409,23 @@ async function handleNoAnswer(
     });
     taskCreated = true;
   }
-  const messageId = await simulatedMessage(
+  const messageId = cadenceAction === "WHATSAPP" ? await simulatedMessage(
     transaction,
     execution,
     lead,
-    `Tentativa D${payload.dayOffset} sugerida: retomar o contato com contexto e confirmar a próxima ação.`,
-  );
+    `WhatsApp D${payload.dayOffset} sugerido: retomar o contato com contexto e confirmar a próxima ação.`,
+  ) : null;
   await projectNextTask(transaction, execution, lead.id);
   const refreshed = await getLead(transaction, execution.workspaceId, lead.id);
   const activityId = await appendFact(transaction, execution, refreshed, {
     subject: `Automação: cadência D${payload.dayOffset}`,
-    description: "Tarefa persistida e mensagem exclusivamente simulada; nenhum canal externo foi acionado.",
+    description: cadenceAction === "WHATSAPP"
+      ? "Tarefa persistida e mensagem exclusivamente simulada; nenhum canal externo foi acionado."
+      : "Atividade da cadência criada para execução pelo responsável do lead.",
     values: {
       attemptNumber: payload.attemptNumber,
       dayOffset: payload.dayOffset,
+      cadenceAction,
       scheduledFor: payload.scheduledFor.toISOString(),
       taskId: task.id,
       taskCreated,
@@ -421,7 +434,7 @@ async function handleNoAnswer(
     },
     auditAction: "automation.cadence.step_completed",
   });
-  return { leadId: lead.id, taskId: task.id, taskCreated, messageId, activityId };
+  return { leadId: lead.id, taskId: task.id, taskCreated, cadenceAction, messageId, activityId };
 }
 
 async function handleQualified(

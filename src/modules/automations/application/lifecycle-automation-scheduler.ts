@@ -144,6 +144,7 @@ export async function scheduleNoAnswerCadenceInTransaction(
         activityId: input.activityId,
         attemptNumber: step.attemptNumber,
         dayOffset: step.dayOffset,
+        cadenceAction: step.action,
         scheduledFor: runAt.toISOString(),
         settingsRevision: settings.revision,
         timeZone: settings.workspace.timeZone,

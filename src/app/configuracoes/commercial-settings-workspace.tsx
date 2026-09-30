@@ -11,6 +11,14 @@ import { PipelineTemplateWorkspace } from "@/app/configuracoes/pipeline-template
 import type { CommercialSettingsScreen, SettingsPreview } from "@/modules/settings/domain/commercial-settings-contracts";
 
 type PendingChange = Readonly<{ command: Record<string, unknown>; preview: SettingsPreview }>;
+type CadenceStep = CommercialSettingsScreen["workspace"]["cadenceSteps"][number];
+const cadenceActions: ReadonlyArray<{ value: CadenceStep["action"]; label: string }> = [
+  { value: "WHATSAPP", label: "WhatsApp" },
+  { value: "CALL", label: "Ligação" },
+  { value: "EMAIL", label: "E-mail" },
+  { value: "RECYCLE", label: "Revisar e reciclar" },
+  { value: "CLOSE", label: "Revisar encerramento" },
+];
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
 const sectionClass = `surface-panel ${styles.panel}`;
 const settingSections: ReadonlyArray<{ key: string; label: string; detail: string; icon: IconName }> = [
@@ -39,6 +47,7 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
   const [pending, setPending] = useState<PendingChange | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [cadenceSteps, setCadenceSteps] = useState(() => initialScreen.workspace.cadenceSteps.map((step) => ({ ...step })));
 
   async function prepare(command: Record<string, unknown>) {
     setBusy(true); setNotice(null);
@@ -58,7 +67,9 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
       const response = await fetch("/api/settings/commercial", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...pending.command, confirmed: true }) });
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok || !body || typeof body !== "object" || !("result" in body)) throw new Error(apiError(body, "Não foi possível aplicar a alteração."));
-      setScreen(body.result as CommercialSettingsScreen); setPending(null); setNotice("Configuração salva e auditada com sucesso.");
+      const nextScreen = body.result as CommercialSettingsScreen;
+      setScreen(nextScreen); setCadenceSteps(nextScreen.workspace.cadenceSteps.map((step) => ({ ...step })));
+      setPending(null); setNotice("Configuração salva e auditada com sucesso.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Falha inesperada."); }
     finally { setBusy(false); }
   }
@@ -70,7 +81,7 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
       pactoMinimumInvestigatedDimensions: Number(data.get("pactoMinimum")), defaultMeetingDurationMinutes: Number(data.get("meetingDuration")),
       distributionStrategy: "ROUND_ROBIN", maxOpenLeadsPerSdr: max ? Number(max) : null,
       leadStagnationDays: Number(data.get("stagnation")), leadWithoutActivityDays: Number(data.get("withoutActivity")),
-      cadenceDayOffsets: String(data.get("cadence")).split(",").map((value) => Number(value.trim())), });
+      cadenceSteps: cadenceSteps.map((step) => ({ ...step })), });
   }
 
   function scoringSubmit(event: FormEvent<HTMLFormElement>) {
@@ -102,7 +113,19 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
           <label className="text-sm">Máximo de leads abertos por SDR<input className={inputClass} defaultValue={screen.workspace.maxOpenLeadsPerSdr ?? ""} min="1" name="maxOpenLeadsPerSdr" placeholder="Sem limite" type="number" /></label>
           <label className="text-sm">Lead parado após (dias)<input className={inputClass} defaultValue={screen.workspace.leadStagnationDays} min="1" name="stagnation" required type="number" /></label>
           <label className="text-sm">Sem atividade após (dias)<input className={inputClass} defaultValue={screen.workspace.leadWithoutActivityDays} min="1" name="withoutActivity" required type="number" /></label>
-          <label className="text-sm">Cadência em dias<input className={inputClass} defaultValue={screen.workspace.cadenceDayOffsets.join(", ")} name="cadence" required /></label>
+          <fieldset className={styles.cadenceEditor}>
+            <legend>Cadência comercial</legend>
+            <p>Defina o dia e a atividade que o vendedor receberá automaticamente.</p>
+            <div className={styles.cadenceSequence}>
+              {cadenceSteps.map((step, index) => <div className={styles.cadenceRow} key={index}>
+                <strong>Etapa {index + 1}</strong>
+                <label>Dia<input className={inputClass} max="90" min="0" required type="number" value={step.dayOffset} onChange={(event) => setCadenceSteps((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, dayOffset: Number(event.target.value) } : item))} /></label>
+                <label>Ação<select className={inputClass} value={step.action} onChange={(event) => setCadenceSteps((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, action: event.target.value as CadenceStep["action"] } : item))}>{cadenceActions.map((action) => <option key={action.value} value={action.value}>{action.label}</option>)}</select></label>
+                <Button disabled={busy || cadenceSteps.length === 1} size="sm" type="button" variant="secondary" onClick={() => setCadenceSteps((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remover</Button>
+              </div>)}
+            </div>
+            <Button disabled={busy || cadenceSteps.length >= 15} size="sm" type="button" variant="secondary" onClick={() => setCadenceSteps((current) => [...current, { dayOffset: Math.min(90, (current.at(-1)?.dayOffset ?? 0) + 1), action: "CALL" }])}>Adicionar etapa</Button>
+          </fieldset>
           <p className="text-sm text-muted-foreground sm:col-span-2">Distribuição: round-robin. A Fila Geral continua sendo o fallback explícito.</p><Button disabled={busy} type="submit">Revisar impacto</Button>
         </form>
       </section>

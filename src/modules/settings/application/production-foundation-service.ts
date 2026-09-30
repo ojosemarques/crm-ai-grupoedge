@@ -2,7 +2,13 @@ import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { leadStageCodes, leadStageLabels } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import { regularDestinationCodes } from "@/modules/pipelines/domain/lead-stage-transition-policy";
 
-const cadenceOffsets = [0, 1, 3, 7, 14, 21, 30] as const;
+const defaultCadence = [
+  { dayOffset: 1, action: "WHATSAPP" },
+  { dayOffset: 2, action: "CALL" },
+  { dayOffset: 3, action: "EMAIL" },
+  { dayOffset: 5, action: "WHATSAPP" },
+  { dayOffset: 7, action: "RECYCLE" },
+] as const;
 const salesStages = [
   ["MEETING_SCHEDULED", "Reunião agendada", "OPEN"],
   ["MEETING_HELD", "Reunião realizada", "OPEN"],
@@ -114,10 +120,10 @@ export async function ensureProductionFoundation(database: PrismaClient, workspa
         leadStagnationDays: workspace.leadStagnationDays,
         leadWithoutActivityDays: workspace.leadWithoutActivityDays,
         createdByActorId: actorId,
-        cadence: { create: cadenceOffsets.map((dayOffset, index) => ({ attemptNumber: index + 1, dayOffset })) },
+        cadence: { create: defaultCadence.map((step, index) => ({ attemptNumber: index + 1, ...step })) },
       } });
       result.settings += 1;
-      result.cadence += cadenceOffsets.length;
+      result.cadence += defaultCadence.length;
     }
 
     const scoring = await tx.scoringRuleVersion.findFirst({ where: { workspaceId, active: true } });

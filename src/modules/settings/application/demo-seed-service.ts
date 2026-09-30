@@ -1484,10 +1484,16 @@ async function ensureCommercialSettings(
       leadWithoutActivityDays: 3,
       createdByActorId: actorId,
       cadence: {
-        create: [0, 1, 3, 7, 14, 21, 30].map((dayOffset, index) => ({
-          id: stableSeedId(`cadence:1:${dayOffset}`),
+        create: [
+          { dayOffset: 1, action: "WHATSAPP" as const },
+          { dayOffset: 2, action: "CALL" as const },
+          { dayOffset: 3, action: "EMAIL" as const },
+          { dayOffset: 5, action: "WHATSAPP" as const },
+          { dayOffset: 7, action: "RECYCLE" as const },
+        ].map((step, index) => ({
+          id: stableSeedId(`cadence:1:${step.dayOffset}`),
           attemptNumber: index + 1,
-          dayOffset,
+          ...step,
         })),
       },
     },

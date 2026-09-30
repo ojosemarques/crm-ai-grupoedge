@@ -217,7 +217,7 @@ describe("CRM-23 — cadências, reuniões, estagnação e encerramento", () => 
     await expect(services().observability.getOverview(viewer, {})).rejects.toBeInstanceOf(AccessDeniedError);
   });
 
-  it("agenda D0/D1/D3/D7/D14/D21/D30, não duplica a cadência e respeita o fuso", async () => {
+  it("agenda a sequência visual por canal, não duplica a cadência e respeita o fuso", async () => {
     now = new Date("2048-01-05T12:00:00.000Z");
     const local = services();
     const leadId = await createLead("cadência");
@@ -235,12 +235,11 @@ describe("CRM-23 — cadências, reuniões, estagnação e encerramento", () => 
       orderBy: { job: { runAt: "asc" } },
       include: { job: true },
     });
-    expect(runs).toHaveLength(7);
+    expect(runs).toHaveLength(5);
     expect(runs.map((run) => run.job!.runAt.toISOString())).toEqual([
-      "2048-01-05T12:00:00.000Z", "2048-01-06T12:00:00.000Z", "2048-01-08T12:00:00.000Z",
-      "2048-01-12T12:00:00.000Z", "2048-01-19T12:00:00.000Z", "2048-01-26T12:00:00.000Z", "2048-02-04T12:00:00.000Z",
+      "2048-01-06T12:00:00.000Z", "2048-01-07T12:00:00.000Z", "2048-01-08T12:00:00.000Z",
+      "2048-01-10T12:00:00.000Z", "2048-01-12T12:00:00.000Z",
     ]);
-    await drain(local.worker, "cadence-d0");
     await local.history.recordActivity(manager, {
       leadId,
       type: "CALL_UNANSWERED",
@@ -248,11 +247,12 @@ describe("CRM-23 — cadências, reuniões, estagnação e encerramento", () => 
       subject: "Nova ligação não atendida",
       nextTask: { title: "Novo retorno controlado", kind: "CALL", priority: "HIGH", dueAt: new Date(now.getTime() + 2 * 86_400_000) },
     });
-    expect(await database.automationRun.count({ where: { workspaceId, leadId, rule: { key: LifecycleAutomationKeys.NO_ANSWER } } })).toBe(7);
+    expect(await database.automationRun.count({ where: { workspaceId, leadId, rule: { key: LifecycleAutomationKeys.NO_ANSWER } } })).toBe(5);
     now = new Date("2048-01-06T12:00:01.000Z");
     await drain(local.worker, "cadence-d1");
-    expect(await database.message.count({ where: { workspaceId, automationRun: { leadId, rule: { key: LifecycleAutomationKeys.NO_ANSWER } }, isSimulated: true } })).toBe(2);
-    expect(await database.activity.count({ where: { workspaceId, leadId, automationRunId: { not: null }, subject: { startsWith: "Automação: cadência" } } })).toBe(2);
+    expect(await database.message.count({ where: { workspaceId, automationRun: { leadId, rule: { key: LifecycleAutomationKeys.NO_ANSWER } }, isSimulated: true } })).toBe(1);
+    expect(await database.activity.count({ where: { workspaceId, leadId, automationRunId: { not: null }, subject: { startsWith: "Automação: cadência" } } })).toBe(1);
+    await expect(database.task.findFirstOrThrow({ where: { workspaceId, leadId, title: { contains: "enviar WhatsApp" } } })).resolves.toMatchObject({ kind: "MESSAGE" });
     expect(activity.type).toBe("CALL_UNANSWERED");
   });
 
@@ -279,10 +279,11 @@ describe("CRM-23 — cadências, reuniões, estagnação e encerramento", () => 
         updatedByActorId: manager.actorId,
       },
     });
+    now = new Date("2048-01-11T12:00:01.000Z");
     await drain(local.worker, "opt-out");
     const runs = await database.automationRun.findMany({ where: { workspaceId, leadId, rule: { key: LifecycleAutomationKeys.NO_ANSWER } } });
     expect(runs.filter((run) => run.status === "SUCCEEDED")).toHaveLength(1);
-    expect(runs.filter((run) => run.status === "CANCELLED")).toHaveLength(6);
+    expect(runs.filter((run) => run.status === "CANCELLED")).toHaveLength(4);
     expect(await database.message.count({ where: { workspaceId, automationRun: { leadId, rule: { key: LifecycleAutomationKeys.NO_ANSWER } } } })).toBe(0);
   });
 

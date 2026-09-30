@@ -15,4 +15,10 @@
 .panel p { font-size: 11px; }
 .panel form { gap: 20px; margin-top: 26px; }
 .panel form > button { justify-self: start; margin-top: 12px; }
+.cadenceEditor { border: 1px solid var(--border); border-radius: 12px; grid-column: 1 / -1; padding: 16px; }
+.cadenceEditor legend { font-size: 12px; font-weight: 600; padding: 0 6px; }
+.cadenceSequence { display: grid; gap: 10px; margin: 14px 0; }
+.cadenceRow { align-items: end; background: var(--surface-subtle); border-radius: 9px; display: grid; gap: 10px; grid-template-columns: 80px 110px minmax(180px, 1fr) auto; padding: 10px; }
+.cadenceRow strong { align-self: center; font-size: 11px; }
 @media (max-width: 1000px) { .workspace { grid-template-columns: 1fr; }.navigation { border-bottom: 1px solid var(--border); border-right: 0; display: flex; gap: 4px; overflow: auto; padding: 10px; }.navigation > p, .navigation button small { display: none; }.navigation button { flex: 0 0 auto; margin: 0; width: auto; }.content { padding: 14px; }.panel { padding: 18px; } }
+@media (max-width: 640px) { .cadenceRow { grid-template-columns: 1fr 1fr; }.cadenceRow strong { grid-column: 1 / -1; } }

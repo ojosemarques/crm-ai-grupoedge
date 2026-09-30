@@ -32,7 +32,7 @@ export const predefinedLifecycleAutomations = Object.freeze([
     key: LifecycleAutomationKeys.NO_ANSWER,
     name: "6. Não atendeu",
     description:
-      "Executa a cadência configurada D0, D1, D3, D7, D14, D21 e D30 com tarefas e mensagens exclusivamente simuladas.",
+      "Cria, nos dias configurados, tarefas de WhatsApp, ligação, e-mail, reciclagem ou revisão de encerramento para o responsável.",
     triggerType: "CALL_UNANSWERED",
     actionType: "APPLY_LIFECYCLE_AUTOMATION",
     conditions: { all: [{ path: "eventType", operator: "EQUALS", value: "NO_ANSWER_CADENCE" }] },
