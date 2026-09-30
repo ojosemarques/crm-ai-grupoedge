@@ -74,8 +74,9 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
       {
         workspaceId: context.workspaceId,
         resourceType: "LeadEntry",
-        queueId: queue.id,
-        teamId: queue.teamId,
+        ...(queue
+          ? { queueId: queue.id, teamId: queue.teamId }
+          : { memberId: context.memberId }),
       },
     );
     return queue;

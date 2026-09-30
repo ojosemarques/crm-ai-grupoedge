@@ -144,16 +144,7 @@ export type LeadIntakeResult =
   | LeadIntakeAcceptedResult;
 
 type AuthorizationPort = Readonly<{
-  assertAuthorized: (
-    context: AuthenticatedContext,
-    permissionKey: typeof PermissionKeys.LEADS_WRITE,
-    resource: Readonly<{
-      workspaceId: string;
-      resourceType: string;
-      queueId: string;
-      teamId: string | null;
-    }>,
-  ) => Promise<void>;
+  assertAuthorized: ReturnType<typeof getAuthorizationService>["assertAuthorized"];
 }>;
 
 type LeadIntakeServiceOptions = Readonly<{
@@ -293,6 +284,81 @@ async function validateAutomaticActor(
       expose: true,
     });
   }
+}
+
+async function ensureGeneralQueue(
+  transaction: Prisma.TransactionClient,
+  workspaceId: string,
+  actorId: string,
+): Promise<Readonly<{ id: string; teamId: string | null }>> {
+  await transaction.$executeRaw`
+    SELECT pg_advisory_xact_lock(
+      hashtextextended(${`general-queue:${workspaceId}`}, 0)
+    )
+  `;
+
+  const activeQueue = await transaction.queue.findFirst({
+    where: {
+      workspaceId,
+      deletedAt: null,
+      OR: [{ isGeneral: true }, { key: "general" }],
+    },
+    orderBy: [{ isGeneral: "desc" }, { createdAt: "asc" }],
+    select: { id: true, teamId: true, isGeneral: true },
+  });
+  if (activeQueue) {
+    if (activeQueue.isGeneral) return activeQueue;
+    return transaction.queue.update({
+      where: { id: activeQueue.id },
+      data: { isGeneral: true, updatedByActorId: actorId },
+      select: { id: true, teamId: true },
+    });
+  }
+
+  const archivedQueue = await transaction.queue.findFirst({
+    where: {
+      workspaceId,
+      OR: [{ isGeneral: true }, { key: "general" }],
+    },
+    orderBy: [{ isGeneral: "desc" }, { createdAt: "asc" }],
+    select: { id: true },
+  });
+  if (archivedQueue) {
+    return transaction.queue.update({
+      where: { id: archivedQueue.id },
+      data: { isGeneral: true, deletedAt: null, updatedByActorId: actorId },
+      select: { id: true, teamId: true },
+    });
+  }
+
+  const sdrTeam = await transaction.teamMember.findFirst({
+    where: {
+      workspaceId,
+      function: "SDR",
+      deletedAt: null,
+      team: { deletedAt: null },
+      member: {
+        status: "ACTIVE",
+        deletedAt: null,
+        user: { status: "ACTIVE", deletedAt: null },
+      },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { teamId: true },
+  });
+
+  return transaction.queue.create({
+    data: {
+      workspaceId,
+      teamId: sdrTeam?.teamId ?? null,
+      key: "general",
+      name: "Fila Geral",
+      isGeneral: true,
+      createdByActorId: actorId,
+      updatedByActorId: actorId,
+    },
+    select: { id: true, teamId: true },
+  });
 }
 
 async function findReferences(
@@ -742,14 +808,6 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       },
       select: { id: true, teamId: true },
     });
-    if (!generalQueue) {
-      return rejected(
-        "CONFIGURATION_UNAVAILABLE",
-        "workspace",
-        "A fila geral não está configurada.",
-      );
-    }
-
     if (isHumanContext(context)) {
       await options.authorization.assertAuthorized(
         context,
@@ -757,8 +815,9 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         {
           workspaceId: context.workspaceId,
           resourceType: "LeadIntake",
-          queueId: generalQueue.id,
-          teamId: generalQueue.teamId,
+          ...(generalQueue
+            ? { queueId: generalQueue.id, teamId: generalQueue.teamId }
+            : { memberId: context.memberId }),
         },
       );
     } else {
@@ -766,6 +825,11 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
     }
 
     return options.database.$transaction(async (transaction) => {
+      await ensureGeneralQueue(
+        transaction,
+        context.workspaceId,
+        context.actorId,
+      );
       await lockIntakeIdentity(transaction, context.workspaceId, parsed);
 
       const priorSubmission = await transaction.leadFormSubmission.findUnique({

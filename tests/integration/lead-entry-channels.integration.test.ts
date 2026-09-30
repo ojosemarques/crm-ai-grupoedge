@@ -188,6 +188,58 @@ describe("canais locais de entrada da CRM-07", () => {
     });
   });
 
+  it("cadastra manualmente quando a fila geral ainda não está configurada", async () => {
+    const generalQueues = await database.queue.findMany({
+      where: { workspaceId: managerContext.workspaceId, isGeneral: true },
+      select: { id: true, key: true, deletedAt: true },
+    });
+    for (const queue of generalQueues) {
+      await database.queue.update({
+        where: { id: queue.id },
+        data: { isGeneral: false, key: `disabled-${queue.id}` },
+      });
+    }
+
+    try {
+      const intake = createLeadIntakeService({ database, authorization, now: () => fixedNow });
+      const service = createLeadEntryService({ database, authorization, intake });
+      const created = await service.createManual(
+        manualPayload(uniquePhone("missing-general-queue")),
+        managerContext,
+      );
+
+      expect(created.outcome).toBe("CREATED");
+      if (created.outcome === "REJECTED") throw new Error("Entrada deveria ser aceita.");
+
+      const generalQueue = await database.queue.findFirstOrThrow({
+        where: {
+          workspaceId: managerContext.workspaceId,
+          isGeneral: true,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      const lead = await database.lead.findUniqueOrThrow({ where: { id: created.leadId } });
+      expect(lead.routingQueueId).toBe(generalQueue.id);
+      expect(generalQueues.map(({ id }) => id)).not.toContain(generalQueue.id);
+    } finally {
+      await database.queue.updateMany({
+        where: {
+          workspaceId: managerContext.workspaceId,
+          isGeneral: true,
+          id: { notIn: generalQueues.map(({ id }) => id) },
+        },
+        data: { isGeneral: false, deletedAt: fixedNow },
+      });
+      for (const queue of generalQueues) {
+        await database.queue.update({
+          where: { id: queue.id },
+          data: { isGeneral: true, key: queue.key, deletedAt: queue.deletedAt },
+        });
+      }
+    }
+  });
+
   it("gera preview e importa arquivo completo usando a fronteira única", async () => {
     const firstPhone = uniquePhone("csv-complete-1");
     const secondPhone = uniquePhone("csv-complete-2");
