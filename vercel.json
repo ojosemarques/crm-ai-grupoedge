@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "pnpm build:vercel",
+  "buildCommand": "pnpm build",
   "regions": ["yul1"],
   "crons": [
     {

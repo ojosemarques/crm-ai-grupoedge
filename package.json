@@ -10,7 +10,6 @@
   "scripts": {
     "dev": "next dev --webpack",
     "build": "pnpm db:generate && next build --webpack",
-    "build:vercel": "node scripts/run-vercel-migrations.mjs && pnpm build",
     "start": "next start",
     "worker": "tsx src/modules/automations/worker.ts",
     "worker:staging:homologate": "tsx scripts/run-staging-worker-homologation.ts",
