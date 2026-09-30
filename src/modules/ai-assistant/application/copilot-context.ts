@@ -1,3 +1,6 @@
+import { getAccountService } from "@/modules/accounts/application/account-service";
+import { getOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
+import { getLeadListService } from "@/modules/leads/application/lead-list-service";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { getFinanceService } from "@/modules/finance/application/finance-service";
 import { getOpportunityService } from "@/modules/opportunities/application/opportunity-service";
@@ -20,6 +23,27 @@ export async function loadCopilotContext(context: AuthenticatedContext, message 
   const normalized = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const question = normalized(message);
   const loaders = [
+    ...(/client|cadastro|conta.*empresa/.test(question) ? [{ key: "clientes", label: "Clientes", href: "/contas", load: async () => {
+      const data = await getAccountService().list(context, { pageSize: 50 });
+      const matching = data.items.filter((item) => item.name.length > 2 && question.includes(normalized(item.name)));
+      const detail = matching.length === 1 ? await getAccountService().get(context, matching[0]!.id) : null;
+      return { total: data.total, sampleLimit: 50, clients: data.items, detail: detail ? { id: detail.id, name: detail.name, legalName: detail.legalName, domain: detail.originalDomain, segment: detail.segment, size: detail.size, status: detail.status, ownership: detail.ownership, leads: detail.leads, onboarding: detail.onboarding, customerSuccess: detail.customerSuccess, requests: detail.requests } : null };
+    } }] : []),
+    ...(/tarefa|atividade|prazo|follow.?up/.test(question) ? [{ key: "tarefas", label: "Tarefas dos leads", href: "/leads", load: async () => {
+      const data = await getLeadListService().getScreen(context, { pageSize: 25, sort: "nextAction", direction: "asc" });
+      const rows = [...data.list.rows].sort((a, b) => Number(question.includes(normalized(b.fullName))) - Number(question.includes(normalized(a.fullName)))).slice(0, 5);
+      const snapshots = await Promise.all(rows.map(async (lead) => {
+        try {
+          const operations = await getOperationalHistoryService().getLeadOperations(context, { leadId: lead.id, pageSize: 1 });
+          return { leadId: lead.id, leadName: lead.fullName, tasks: operations.tasks.filter((task) => task.status === "OPEN" || task.status === "IN_PROGRESS").slice(0, 10).map(({ id, title, kind, status, priority, dueAt, overdue }) => ({ id, title, kind, status, priority, dueAt, overdue })) };
+        } catch (error) {
+          if (error instanceof ApplicationError && error.statusCode === 403) return null;
+          throw error;
+        }
+      }));
+      if (rows.length && snapshots.every((item) => item === null)) throw new ApplicationError("Tarefas não autorizadas.", { code: "FORBIDDEN", statusCode: 403 });
+      return { coverage: "Amostra dos primeiros 5 leads autorizados, priorizados por próxima ação; até 10 tarefas abertas por lead. Não representa todas as tarefas da empresa.", leadSampleLimit: 5, taskSampleLimit: 10, leads: snapshots.filter((item) => item !== null) };
+    } }] : []),
     { key: "financeiro", label: "Financeiro", href: "/financeiro", load: async () => {
       const data = await getFinanceService().screen(context, { from: period.from, to: period.to });
       return { period: data.period, coverage: "Receitas, despesas e DRE respeitam o período; MRR e contas em aberto representam o estado atual, não uma reconstrução histórica.", summary: data.summary, dre: data.dre, cashFlow: data.cashFlow, commissionRules: data.commissionRules, receivables: data.receivables.slice(0, 30), sampleLimit: 30, receivableCount: data.receivables.length };

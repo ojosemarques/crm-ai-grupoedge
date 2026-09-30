@@ -8,6 +8,22 @@ export const PAYMENT_MAX_WEBHOOK_BYTES = 128 * 1024;
 export const PAYMENT_WEBHOOK_TOLERANCE_SECONDS = 300;
 export const PAYMENT_JOB_MAX_ATTEMPTS = 3;
 export const PAYMENT_LOCAL_TEST_SECRET = "politizai-payment-local-test-only-not-a-secret";
+export const MANUAL_RECEIPT_PROVIDER_KEY = "MANUAL_RECEIPT";
+export const receiptMethods = ["PIX", "BANK_TRANSFER", "CARD", "CASH", "OTHER"] as const;
+export const previewReceiptSchema = z.object({
+  invoiceId: z.string().uuid(),
+  financialAccountId: z.string().uuid(),
+  expectedRevision: z.number().int().positive().optional(),
+  amountCents: z.coerce.bigint().positive().max(BigInt(Number.MAX_SAFE_INTEGER)),
+  receivedAt: z.coerce.date(),
+  method: z.enum(receiptMethods),
+  reference: z.string().trim().min(3).max(180),
+}).strict();
+export const recordReceiptSchema = previewReceiptSchema.extend({
+  expectedRevision: z.number().int().positive(),
+  confirmed: z.literal(true),
+  idempotencyKey: z.string().uuid(),
+});
 
 export const paymentSandboxScenarios = [
   "SUCCESS",

@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import type { OpportunityListItem } from "@/modules/opportunities/domain/opportunity-contracts";
 import { saleCompletionSchema, type SaleCompletionInput } from "@/modules/opportunities/domain/sale-completion-contracts";
 
 type Template = { id: string; name: string; version: number };
-type Preview = { payload: SaleCompletionInput; customerName: string; sellerName: string; contractTemplateName: string; schedule: Array<{ installment: number; amountCents: string; dueAt: string }>; pendingSteps: string[]; summary: string };
-type Completed = { contractId: string; invoiceIds: string[]; subscriptionId: string | null; handoffId: string | null; pendingSteps: string[] };
+type Preview = { payload: SaleCompletionInput; customer: { mode: "CREATE" | "LINK" | "EXISTING"; name: string; accountId: string | null }; customerName: string; sellerName: string; contractTemplateName: string; schedule: Array<{ installment: number; amountCents: string; dueAt: string }>; pendingSteps: string[]; summary: string };
+type Completed = { accountId: string; contractId: string; invoiceIds: string[]; subscriptionId: string | null; handoffId: string | null; pendingSteps: string[] };
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
 
 function reais(value: string) {
@@ -32,28 +32,53 @@ async function result<T>(response: Response): Promise<T> {
   return body.result;
 }
 
-export function SaleCompletionPanel({ opportunity, sellers, onBusyChange, onCommitted }: Readonly<{
+export function SaleCompletionPanel({ opportunity, sellers, initiallyExpanded = false, onBusyChange, onCommitted }: Readonly<{
   opportunity: OpportunityListItem;
   sellers: readonly { id: string; name: string }[];
+  initiallyExpanded?: boolean;
   onBusyChange: (busy: boolean) => void;
   onCommitted: () => void;
 }>) {
-  const [expanded, setExpanded] = useState(false);
+  const titleId = useId();
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [accounts, setAccounts] = useState<Array<{ id: string; name: string }>>([]);
+  const [customerMode, setCustomerMode] = useState("LINKED");
+  const [accountSearch, setAccountSearch] = useState("");
+  const [loading, setLoading] = useState(initiallyExpanded);
   const [busy, setBusy] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ data: Preview; idempotencyKey: string } | null>(null);
   const [completed, setCompleted] = useState<Completed | null>(null);
 
-  async function open() {
-    setExpanded(true); setLoading(true); setError(null);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    if (!expanded) return;
+    let active = true;
+    async function load() {
+      try {
+        const data = await result<{ templateVersions: Template[] }>(await fetch("/api/contracts", { cache: "no-store" }));
+        if (active) setTemplates(data.templateVersions);
+      } catch (cause) { if (active) setError(cause instanceof Error ? cause.message : "Falha ao carregar modelos contratuais."); }
+      finally { if (active) setLoading(false); }
+    }
+    void load();
+    return () => { active = false; };
+  }, [expanded, reload]);
+
+  function open() {
+    setExpanded(true); setLoading(true); setError(null); setReload((value) => value + 1);
+  }
+
+  async function searchAccounts() {
+    setBusy(true); onBusyChange(true); setError(null);
     try {
-      const data = await result<{ templateVersions: Template[] }>(await fetch("/api/contracts", { cache: "no-store" }));
-      setTemplates(data.templateVersions);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao carregar modelos contratuais."); }
-    finally { setLoading(false); }
+      const data = await result<{ items: Array<{ id: string; name: string }> }>(await fetch(`/api/accounts?status=ACTIVE&pageSize=100&search=${encodeURIComponent(accountSearch)}`, { cache: "no-store" }));
+      setAccounts(data.items);
+      if (!data.items.length) setError("Nenhum cliente encontrado. Revise a busca ou confirme um novo cadastro.");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao buscar clientes."); }
+    finally { setBusy(false); onBusyChange(false); }
   }
 
   async function prepare(event: FormEvent<HTMLFormElement>) {
@@ -67,6 +92,8 @@ export function SaleCompletionPanel({ opportunity, sellers, onBusyChange, onComm
         monthlyCents: cents(form.get("monthly")), upfrontCents: cents(form.get("upfront")),
         durationMonths: Number(form.get("months")), startsAt: new Date(`${String(form.get("startsAt"))}T00:00:00.000Z`).toISOString(),
         templateVersionId: form.get("templateVersionId"),
+        ...(!opportunity.accountId && customerMode === "CREATE" ? { customer: { mode: "CREATE", name: form.get("customerName") } } : {}),
+        ...(!opportunity.accountId && customerMode === "LINK" ? { customer: { mode: "LINK", accountId: form.get("accountId") } } : {}),
         ...(accepted ? { acceptance: { acceptedByName: form.get("acceptedByName"), acceptedByRole: form.get("acceptedByRole"), evidenceText: form.get("evidenceText") } } : {}),
         ...(accepted && form.get("onboardingOwnerMemberId") ? { onboardingOwnerMemberId: form.get("onboardingOwnerMemberId") } : {}),
       });
@@ -93,17 +120,25 @@ export function SaleCompletionPanel({ opportunity, sellers, onBusyChange, onComm
     <h3 className="font-semibold" role="status">Venda registrada</h3>
     <p className="text-sm">Contrato gerado{completed.invoiceIds.length ? ` e ${completed.invoiceIds.length} recebível(is) emitido(s)` : " em rascunho"}. Nenhum recebimento foi confirmado automaticamente.</p>
     <ul className="list-disc space-y-1 pl-5 text-sm">{completed.pendingSteps.map((step) => <li key={step}>{step}</li>)}</ul>
-    <nav aria-label="Resultados da venda" className="flex flex-wrap gap-4 text-sm underline"><Link href="/contratos">Ver contratos</Link><Link href="/financeiro?section=pagar-receber">Ver financeiro</Link>{completed.handoffId ? <Link href="/onboarding">Ver onboarding</Link> : null}</nav>
+    <nav aria-label="Resultados da venda" className="flex flex-wrap gap-4 text-sm underline"><Link href={`/contas/${completed.accountId}`}>Ver cliente</Link><Link href="/contratos">Ver contratos</Link><Link href="/financeiro?section=pagar-receber">Ver financeiro</Link>{completed.handoffId ? <Link href="/onboarding">Ver onboarding</Link> : null}</nav>
   </section>;
   if (!opportunity.canWrite || opportunity.status !== "OPEN") return null;
 
-  return <section className="space-y-4 rounded-md border p-4" aria-labelledby="sale-completion-title">
-    <header className="flex flex-wrap items-center justify-between gap-3"><div><h3 id="sale-completion-title" className="font-semibold">Fechar venda integrada</h3><p className="mt-1 text-sm text-muted-foreground">Contrato, comissão e pós-venda conectados às condições confirmadas.</p></div>{!expanded ? <Button onClick={() => void open()} type="button" variant="secondary" aria-expanded={false}>Preparar fechamento</Button> : null}</header>
+  return <section className="space-y-4 rounded-md border p-4" aria-labelledby={titleId}>
+    <header className="flex flex-wrap items-center justify-between gap-3"><div><h3 id={titleId} className="font-semibold">Fechar venda integrada</h3><p className="mt-1 text-sm text-muted-foreground">Contrato, comissão e pós-venda conectados às condições confirmadas.</p></div>{!expanded ? <Button onClick={open} type="button" variant="secondary" aria-expanded={false}>Preparar fechamento</Button> : null}</header>
     {error ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
     {expanded ? <>
       {loading ? <p role="status" className="text-sm">Carregando modelos contratuais…</p> : !templates.length ? <div className="space-y-2 text-sm"><p>Nenhum modelo contratual disponível para este acesso.</p><Link className="underline" href="/contratos">Ver contratos e modelos</Link><Button onClick={() => void open()} type="button" size="sm" variant="secondary">Recarregar modelos</Button></div> : null}
       <form onSubmit={prepare}>
         <fieldset disabled={busy || loading || preview !== null || !templates.length} className="grid gap-3 sm:grid-cols-2">
+          {opportunity.accountId ? <p className="text-sm sm:col-span-2">Cliente vinculado: <strong>{opportunity.accountName}</strong>. A venda e os recebíveis aparecerão neste cadastro.</p> : <>
+            <label className="text-sm sm:col-span-2">Cadastro do cliente<select className={inputClass} value={customerMode} onChange={(event) => setCustomerMode(event.target.value)}><option value="LINKED">Usar o cliente já vinculado ao lead</option><option value="LINK">Selecionar cliente existente</option><option value="CREATE">Cadastrar novo cliente</option></select></label>
+            {customerMode === "CREATE" ? <label className="text-sm sm:col-span-2">Nome confirmado do cliente<input className={inputClass} name="customerName" minLength={2} maxLength={200} required placeholder="Informe o nome real da pessoa ou organização contratante" /><span className="mt-1 block text-xs text-muted-foreground">O cadastro será criado somente após revisar e confirmar o fechamento.</span></label> : null}
+            {customerMode === "LINK" ? <>
+              <label className="text-sm">Buscar cliente<input className={inputClass} value={accountSearch} onChange={(event) => setAccountSearch(event.target.value)} placeholder="Nome do cliente" /></label><div className="self-end"><Button type="button" variant="secondary" onClick={() => void searchAccounts()}>Buscar clientes</Button></div>
+              <label className="text-sm sm:col-span-2">Cliente existente<select className={inputClass} name="accountId" required defaultValue=""><option value="">Selecione após buscar</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+            </> : null}
+          </>}
           <label className="text-sm">Vendedor<select className={inputClass} name="sellerMemberId" defaultValue={opportunity.ownerMemberId} required>{sellers.some((seller) => seller.id === opportunity.ownerMemberId) ? null : <option value={opportunity.ownerMemberId}>{opportunity.ownerName}</option>}{sellers.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
           <label className="text-sm">Modelo de contrato<select className={inputClass} name="templateVersionId" required defaultValue=""><option value="">Selecione</option>{templates.map((template) => <option key={template.id} value={template.id}>{template.name} · v{template.version}</option>)}</select></label>
           <label className="text-sm">Total do contrato (R$)<input className={inputClass} name="total" inputMode="decimal" defaultValue={reais(opportunity.offers[0]?.totalCents ?? opportunity.tcvCents)} required /></label>
@@ -125,6 +160,7 @@ export function SaleCompletionPanel({ opportunity, sellers, onBusyChange, onComm
       {preview ? <div className="space-y-3 rounded-md border bg-muted/20 p-4">
         <h4 className="font-semibold">Revise antes de confirmar</h4>
         <p className="text-sm">{preview.data.customerName} · vendedor {preview.data.sellerName} · {preview.data.contractTemplateName}</p>
+        <p className="text-sm">{preview.data.customer.mode === "CREATE" ? "Será criado um cadastro para este cliente." : preview.data.customer.mode === "LINK" ? "A venda será vinculada ao cadastro existente do cliente." : "O cadastro atual do cliente será utilizado."}</p>
         <p className="text-sm">{preview.data.summary}</p>
         <p className="text-sm font-medium">Total {currency(preview.data.payload.totalCents)} · entrada {currency(preview.data.payload.upfrontCents)} · {preview.data.payload.durationMonths} mensalidade(s) de {currency(preview.data.payload.monthlyCents)}</p>
         <div className="max-h-60 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th className="py-2">Parcela</th><th>Vencimento</th><th>Valor</th></tr></thead><tbody>{preview.data.schedule.map((item) => <tr key={item.installment} className="border-t"><td className="py-2">{item.installment}</td><td>{new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(item.dueAt))}</td><td>{currency(item.amountCents)}</td></tr>)}</tbody></table></div>

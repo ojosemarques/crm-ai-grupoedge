@@ -1,5 +1,17 @@
 # Pagamentos em sandbox local — CRM-50
 
+## Recebimentos operacionais
+
+A tela de pagamentos também registra recebimentos reais declarados pelo operador,
+sem capturar ou transferir dinheiro. Esse fluxo usa `MANUAL_RECEIPT`, com conta
+financeira, data, valor, forma, referência de comprovante, prévia e confirmação.
+Ele atualiza a cobrança e o caixa uma única vez e fica disponível no Copilot.
+Consulte [a operação integrada](EDGE_OS_OPERATIONS.md#financeiro-e-pós-venda).
+
+O restante deste documento descreve exclusivamente o simulador local. Pagamentos
+`LOCAL_PAYMENT_SANDBOX` são excluídos dos totais reais. Iniciar ou repetir uma
+simulação pela aplicação é bloqueado em produção.
+
 ## Escopo e limites
 
 O módulo demonstra o ciclo financeiro operacional sem processar dinheiro real.

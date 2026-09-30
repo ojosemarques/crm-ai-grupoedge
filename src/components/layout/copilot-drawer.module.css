@@ -28,3 +28,23 @@
 .proposalActions button:disabled { opacity: .5; }
 @media (max-width: 600px) { .drawer { border-radius: 16px 0 0 16px; bottom: calc(68px + env(safe-area-inset-bottom)); top: 112px; width: calc(100vw - 8px); } }
 @media (prefers-reduced-motion: reduce) { .drawer { transition: none; }.typing span { animation: none; } }
+.drawer { grid-template-rows: auto auto minmax(0, 1fr) auto; width: 430px; }
+.tabs { border-bottom: 1px solid var(--border); display: flex; gap: 4px; padding: 8px 12px; }
+.tabs button { border-radius: 8px; color: var(--muted-foreground); flex: 1; font-size: 12px; padding: 8px; }
+.tabs button[aria-current="page"] { background: var(--surface-selected); color: var(--primary); font-weight: 600; }
+.panelDescription { color: var(--muted-foreground); font-size: 11px; line-height: 1.5; margin-bottom: 14px; }
+.actionSelector, .actionForm label { color: var(--foreground); display: grid; font-size: 11px; gap: 5px; }
+.actionSelector select, .actionForm input, .actionForm select, .actionForm textarea { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; min-width: 0; padding: 9px; width: 100%; }
+.actionForm fieldset, .customerFields { border: 0; display: grid; gap: 12px; min-width: 0; }
+.actionForm { margin-top: 18px; }.actionForm legend { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.actionForm p { color: var(--muted-foreground); font-size: 10px; line-height: 1.5; }
+.fieldRow { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }.fieldRow > * { min-width: 0; }
+.actionForm .checkbox { align-items: start; grid-template-columns: auto 1fr; line-height: 1.5; }.checkbox input { margin-top: 3px; width: 16px; }
+.primaryButton { background: var(--primary); border-radius: 9px; color: var(--primary-foreground); font-size: 12px; padding: 11px; }
+.moduleLink { color: var(--primary); display: block; font-size: 11px; margin-top: 20px; }
+.historyItem { border: 1px solid var(--border); border-radius: 12px; display: grid; font-size: 11px; gap: 8px; margin-top: 12px; padding: 12px; }
+.historyItem > span { color: var(--primary); }.historyItem > small { color: var(--muted-foreground); font-size: 10px; }
+.historyItem > button, .refreshButton { color: var(--primary); font-size: 11px; text-align: left; }
+.footer { border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 10px; padding: 13px; text-align: center; }
+.before { color: var(--muted-foreground); font-weight: 400; }.proposal dd { overflow-wrap: anywhere; }
+@media (max-width: 600px) { .drawer { width: calc(100vw - 8px); } }

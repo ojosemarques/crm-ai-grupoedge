@@ -24,3 +24,18 @@ describe("consulta local sem OpenAI", () => {
     expect(result.sources).toEqual([]);
   });
 });
+
+it("consulta cadastro e vínculos do cliente sem depender de OpenAI", () => {
+  const result = localCopilotAnswer("Detalhes do cliente Acme", { sources: [{ key: "clientes", label: "Clientes", href: "/contas", data: { total: 1, sampleLimit: 50, clients: [{ name: "Acme", status: "ACTIVE", peopleCount: 2, openOpportunities: 1 }], detail: { name: "Acme", legalName: "Acme Ltda", domain: "acme.example", leads: [{}], onboarding: [{}], requests: [] } } }], unavailable: [] });
+  expect(result.answer).toContain("Acme Ltda");
+  expect(result.answer).toContain("1 onboardings");
+  expect(result.answer).toContain("Abra Ações");
+  expect(result.links).toEqual([{ label: "Clientes", href: "/contas", entityType: "MODULE" }]);
+});
+
+it("mostra tarefas e atrasos com limite explícito da amostra", () => {
+  const result = localCopilotAnswer("Quais tarefas estão atrasadas?", { sources: [{ key: "tarefas", label: "Tarefas", href: "/leads", data: { coverage: "Amostra dos primeiros 5 leads autorizados.", leads: [{ leadName: "Maria", tasks: [{ title: "Ligar", dueAt: "2026-09-29T12:00:00Z", overdue: true }] }] } }], unavailable: [] });
+  expect(result.answer).toContain("Amostra dos primeiros 5");
+  expect(result.answer).toContain("Maria: Ligar");
+  expect(result.answer).toContain("(atrasada)");
+});

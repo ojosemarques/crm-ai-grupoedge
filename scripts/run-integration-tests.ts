@@ -59,12 +59,16 @@ if (requestedTests.length > 0) {
   await runIsolatedSuite("integration", [
     "--exclude", "tests/integration/farmer.integration.test.ts",
     "--exclude", "tests/integration/sale-completion.integration.test.ts",
+    "--exclude", "tests/integration/acquisition-receipts.integration.test.ts",
+    "--exclude", "tests/integration/copilot-actions.integration.test.ts",
     "--exclude", "tests/integration/forecast.integration.test.ts",
     "--exclude", "tests/integration/revenue-metrics.integration.test.ts",
     "--exclude", "tests/integration/stage14-acquisition.integration.test.ts",
     "--exclude", "tests/integration/stage14-public-api.integration.test.ts",
   ]);
   await runIsolatedSuite("integration_sale_completion", ["tests/integration/sale-completion.integration.test.ts"]);
+  await runIsolatedSuite("integration_acquisition_receipts", ["tests/integration/acquisition-receipts.integration.test.ts"]);
+  await runIsolatedSuite("integration_copilot_actions", ["tests/integration/copilot-actions.integration.test.ts"]);
   await runIsolatedSuite("integration_farmer", ["tests/integration/farmer.integration.test.ts"]);
   await runIsolatedSuite("integration_forecast", ["tests/integration/forecast.integration.test.ts"]);
   await runIsolatedSuite("integration_revenue_metrics", ["tests/integration/revenue-metrics.integration.test.ts"]);

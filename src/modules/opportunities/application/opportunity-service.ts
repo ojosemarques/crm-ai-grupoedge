@@ -404,7 +404,7 @@ function originVisibilityWhere(scope: PermissionScope, visibility: Awaited<Retur
   return { OR: [{ lead: { sourceId: { notIn: visibility.governedSourceIds } } }, { lead: { sourceId: { in: visibility.allowedSourceIds } } }] };
 }
 
-async function assertOriginCapability(
+export async function assertOriginCapability(
   database: PrismaClient | Prisma.TransactionClient,
   context: AuthenticatedContext,
   decision: AuthorizationDecision,
@@ -1144,7 +1144,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
     });
   }
 
-  async function transition(context: AuthenticatedContext, payload: unknown) {
+  async function transition(context: AuthenticatedContext, payload: unknown, policy: { requireIntegratedSale?: boolean } = {}) {
     const parsed = transitionSchema.safeParse(payload);
     if (!parsed.success) invalidInput(parsed.error);
     const authRow = await options.database.opportunity.findFirst({
@@ -1193,6 +1193,9 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
       await assertPipelineRequiredFields(transaction, opportunity.id, target.id);
       const currentCode = opportunity.currentStage.opportunityStageCode;
       const targetCode = target.opportunityStageCode;
+      if (targetCode === "WON" && policy.requireIntegratedSale) {
+        conflict("INTEGRATED_SALE_REQUIRED", "Para marcar como ganho, revise e confirme o fechamento integrado com os dados do cliente e as condições comerciais.");
+      }
       await assertRequiredStageActivitiesComplete(transaction, context.workspaceId, opportunity.id);
       const gateSnapshot = await assertConsultativeSalesGates(transaction, opportunity.id, targetCode);
       const allowedTransition = await transaction.pipelineStageTransition.findFirst({

@@ -4,6 +4,8 @@ import { FinanceWorkspace, type FinanceScreenView, type FinanceSection } from "@
 import { requirePageAuthentication } from "@/modules/auth/http/authentication-guards";
 import { getFinanceService } from "@/modules/finance/application/finance-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
+import { getDatabaseClient } from "@/shared/core/database/client";
+import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 
 export const dynamic = "force-dynamic";
 
@@ -18,11 +20,13 @@ export default async function FinancePage({ searchParams }: Readonly<{ searchPar
   const context = await requirePageAuthentication();
   const query = await searchParams;
   const now = new Date();
+  const workspace = await getDatabaseClient().workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
+  const [currentYear, currentMonth] = workspaceDateAt(now, workspace.timeZone).split("-").map(Number);
   const section = sections.has(query.section as FinanceSection) ? query.section as FinanceSection : "dashboard";
-  const month = integer(query.month, now.getMonth() + 1, 1, 12);
-  const year = integer(query.year, now.getFullYear(), 2000, 2200);
-  const from = new Date(Date.UTC(year, month - 1, 1));
-  const to = new Date(Date.UTC(year, month, 1));
+  const month = integer(query.month, currentMonth!, 1, 12);
+  const year = integer(query.year, currentYear!, 2000, 2200);
+  const from = workspaceDayRange(new Date(Date.UTC(year, month - 1, 1)).toISOString().slice(0, 10), workspace.timeZone).start;
+  const to = workspaceDayRange(new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10), workspace.timeZone).start;
   let screen: unknown;
   try {
     screen = await getFinanceService().screen(context, { from, to });

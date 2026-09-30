@@ -5,6 +5,7 @@ export async function assertPipelineRequiredFields(
   transaction: Prisma.TransactionClient,
   opportunityId: string,
   targetStageId: string,
+  planned: { accountWillBeLinked?: boolean } = {},
 ): Promise<void> {
   const opportunity = await transaction.opportunity.findFirst({
     where: { id: opportunityId },
@@ -22,6 +23,9 @@ export async function assertPipelineRequiredFields(
   const record = opportunity as unknown as Record<string, unknown>;
   const missing: string[] = [];
   for (const field of applicable) {
+    // Sale preview may validate a reviewed account before the atomic create/link.
+    // The actual transition rechecks the persisted account without this option.
+    if (field.fieldKey === "accountId" && planned.accountWillBeLinked) continue;
     if (field.fieldKey.startsWith("custom:")) {
       const key = field.fieldKey.slice(7);
       const value = await transaction.customFieldValue.findFirst({ where: { workspaceId: opportunity.workspaceId, entityType: "OPPORTUNITY", entityId: opportunity.id, definition: { key, active: true } }, select: { id: true } });

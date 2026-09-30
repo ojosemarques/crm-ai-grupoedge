@@ -16,6 +16,11 @@ import funnelStyles from "./strategy-funnel.module.css";
 type Screen = Awaited<ReturnType<ReturnType<typeof getMediaPerformanceService>["getScreen"]>>;
 type ChartMetric = "spendCents" | "impressions" | "clicks" | "reportedLeads";
 const money = (cents: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
+function receiptMoney(cents: string) {
+  const value = BigInt(cents);
+  const absolute = value < 0n ? -value : value;
+  return `${value < 0n ? "−" : ""}R$ ${new Intl.NumberFormat("pt-BR").format(absolute / 100n)},${(absolute % 100n).toString().padStart(2, "0")}`;
+}
 const metricValue = (amount: number | null, unit: Screen["metrics"][number]["unit"]) => amount === null ? "Sem base" : unit === "BRL_CENTS" ? money(amount) : unit === "BPS" ? `${(amount / 100).toFixed(2)}%` : amount.toLocaleString("pt-BR");
 const sample = "date,channelKey,channelName,accountKey,accountName,campaignKey,campaignName,adGroupKey,adGroupName,adKey,adName,creativeKey,creativeName,currency,timeZone,spendCents,impressions,reach,clicks,linkClicks,landingPageViews,reportedLeads,reportedPurchases,reportedRevenueCents";
 const chartOptions: readonly { key: ChartMetric; label: string }[] = [{ key: "spendCents", label: "Investimento" }, { key: "impressions", label: "Impressões" }, { key: "clicks", label: "Cliques" }, { key: "reportedLeads", label: "Leads" }];
@@ -120,12 +125,14 @@ export function MediaPerformanceWorkspace({ initial }: Readonly<{ initial: Scree
         <div className={funnelStyles.branch}><span>↳ No-show registrado</span><strong>{strategy.noShow}</strong><small>{cohortRate(strategy.noShow, strategy.scheduled)} dos leads que agendaram</small></div>
         <p className={styles.footnote}>A mesma pessoa pode ter no-show e depois realizar reunião. Compradores são leads com venda ganha, mesmo quando não houve reunião registrada. As setas mostram a jornada esperada, sem inferir etapas ausentes.</p>
       </section> : null}
-      <DataTableShell className="mt-4"><table><thead><tr><th>Origem</th><th>Chegaram</th><th>Agendaram</th><th>No-show</th><th>Reunião realizada</th><th>Tier 1</th><th>Tier 2</th><th>Tier 3</th><th>Sem tier</th><th>Representantes</th><th>Compradores</th><th>Vendas</th><th>Receita ganha</th></tr></thead><tbody>
-        {initial.acquisitionFunnel.byDimension[funnelDimension].map((row) => <tr key={row.key}><td>{row.label}</td><td>{row.leads}</td><td>{row.scheduled}</td><td>{row.noShow}</td><td>{row.completed}</td><td>{row.tier1}</td><td>{row.tier2}</td><td>{row.tier3}</td><td>{row.unclassified}</td><td>{row.representatives}</td><td>{row.buyers}</td><td>{row.sales}</td><td>{money(row.revenueCents)}</td></tr>)}
-        {!initial.acquisitionFunnel.cohortSize ? <tr><td colSpan={13}>Nenhum lead recebido no período.</td></tr> : null}
+      <DataTableShell className="mt-4"><table><thead><tr><th>Origem</th><th>Chegaram</th><th>Agendaram</th><th>No-show</th><th>Reunião realizada</th><th>Tier 1</th><th>Tier 2</th><th>Tier 3</th><th>Sem tier</th><th>Representantes</th><th>Compradores</th><th>Vendas</th><th>Vendas contratadas</th><th>Recebido bruto</th><th>Estornos no período</th><th>Recebido líquido</th></tr></thead><tbody>
+        {initial.acquisitionFunnel.byDimension[funnelDimension].map((row) => <tr key={row.key}><td>{row.label}</td><td>{row.leads}</td><td>{row.scheduled}</td><td>{row.noShow}</td><td>{row.completed}</td><td>{row.tier1}</td><td>{row.tier2}</td><td>{row.tier3}</td><td>{row.unclassified}</td><td>{row.representatives}</td><td>{row.buyers}</td><td>{row.sales}</td><td>{money(row.revenueCents)}</td><td>{receiptMoney(row.receivedCents)}</td><td>{receiptMoney(row.reversedCents)}</td><td>{receiptMoney(row.netReceivedCents)}</td></tr>)}
+        {!initial.acquisitionFunnel.cohortSize ? <tr><td colSpan={16}>Nenhum lead recebido no período.</td></tr> : null}
       </tbody></table></DataTableShell>
-      {initial.acquisitionFunnel.truncated ? <p role="status">Resultado parcial: limite de 10.000 leads ou 50.000 eventos de atribuição atingido. Reduza o período para analisar a coorte completa.</p> : null}
+      {initial.acquisitionFunnel.truncated ? <p role="status">Resultado parcial: limite de 10.000 leads, 50.000 eventos de atribuição ou 50.000 pagamentos atingido. Reduza o período para analisar a coorte completa.</p> : null}
+      {initial.acquisitionFunnel.excludedReceiptCount ? <p role="status">{initial.acquisitionFunnel.excludedReceiptCount} pagamento(s) excluído(s) por moeda incompatível ou reversão sem data. Revise os registros em Pagamentos.</p> : null}
       <p className={styles.footnote}>{initial.acquisitionFunnel.method}</p><p className={styles.footnote}>{initial.acquisitionFunnel.classification}</p>
+      <p className={styles.footnote}>{initial.acquisitionFunnel.receiptMethod}</p>
     </Surface>
 
     <Surface className={styles.panel}><SectionHeader title="Eficiência das campanhas" description="Resultados atuais e comparação com o período anterior." /><DataTableShell className="mt-4"><table><thead><tr><th>Métrica</th><th>Atual</th><th>Anterior</th><th>Base de cálculo</th></tr></thead><tbody>{initial.metrics.map((metric) => <tr key={metric.key}><td>{metric.label}</td><td><strong>{metricValue(metric.value, metric.unit)}</strong></td><td>{metricValue(metric.previousValue, metric.unit)}</td><td>{metric.denominator === 0 ? "Sem base" : `${metric.numerator} / ${metric.denominator}`}</td></tr>)}</tbody></table></DataTableShell></Surface>

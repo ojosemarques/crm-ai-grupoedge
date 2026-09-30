@@ -1,11 +1,12 @@
+import { addLocalDays, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
+
 export type CashMovement = Readonly<{ at: Date; direction: "INCOME" | "EXPENSE"; amountCents: bigint }>;
 
-/** UTC matches the competence and date-only values persisted by the finance forms. */
-export function dailyCashFlow(from: Date, to: Date, openingBalanceCents: bigint, movements: readonly CashMovement[]) {
+export function dailyCashFlow(from: Date, to: Date, openingBalanceCents: bigint, movements: readonly CashMovement[], timeZone = "UTC") {
   const grouped = new Map<string, { income: bigint; expense: bigint }>();
   for (const movement of movements) {
     if (movement.at < from || movement.at >= to) continue;
-    const key = movement.at.toISOString().slice(0, 10);
+    const key = workspaceDateAt(movement.at, timeZone);
     const row = grouped.get(key) ?? { income: 0n, expense: 0n };
     if (movement.direction === "INCOME") row.income += movement.amountCents;
     else row.expense += movement.amountCents;
@@ -13,8 +14,7 @@ export function dailyCashFlow(from: Date, to: Date, openingBalanceCents: bigint,
   }
   let balance = openingBalanceCents;
   const rows = [];
-  for (let at = new Date(from); at < to; at = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate() + 1))) {
-    const bucket = at.toISOString().slice(0, 10);
+  for (let bucket = workspaceDateAt(from, timeZone); workspaceDayRange(bucket, timeZone).start < to; bucket = addLocalDays(bucket, 1)) {
     const row = grouped.get(bucket) ?? { income: 0n, expense: 0n };
     balance += row.income - row.expense;
     rows.push({ bucket, label: `${bucket.slice(8)}/${bucket.slice(5, 7)}`, incomeCents: row.income.toString(), expenseCents: row.expense.toString(), resultCents: (row.income - row.expense).toString(), balanceCents: balance.toString() });

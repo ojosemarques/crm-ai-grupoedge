@@ -5,6 +5,10 @@ import {
   createInvoiceSchema,
   invoiceActionSchema,
   invoiceTotalCents,
+  invoiceStatusAfterPayment,
+  MANUAL_RECEIPT_PROVIDER_KEY,
+  previewReceiptSchema,
+  recordReceiptSchema,
   outstandingCents,
   PAYMENT_CONTRACT_VERSION,
   PAYMENT_JOB_MAX_ATTEMPTS,
@@ -30,12 +34,11 @@ function json(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
-function resource(context: Pick<AuthenticatedContext, "workspaceId" | "memberId">, id?: string, ownerMemberId?: string | null): ResourceScope {
+function resource(context: Pick<AuthenticatedContext, "workspaceId">, id?: string, ownerMemberId?: string | null): ResourceScope {
   return {
     workspaceId: context.workspaceId,
     resourceType: "Payment",
     resourceId: id ?? context.workspaceId,
-    memberId: context.memberId,
     ...(ownerMemberId === undefined ? {} : { ownerMemberId }),
   };
 }
@@ -114,6 +117,66 @@ export async function appendPaymentEventInTransaction(
 export function createPaymentService(options: Options) {
   const authorization = createAuthorizationService({ database: options.database });
 
+  async function receiptResources(context: AuthenticatedContext, input: ReturnType<typeof previewReceiptSchema.parse>, database: Tx | PrismaClient) {
+    const invoice = await database.invoice.findFirst({ where: { id: input.invoiceId, workspaceId: context.workspaceId } });
+    if (!invoice) fail("Cobrança não encontrada.", "PAYMENT_INVOICE_NOT_FOUND", 404);
+    await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_MANAGE, resource(context, invoice.id, invoice.ownerMemberId));
+    await authorization.assertAuthorized(context, PermissionKeys.FINANCE_MANAGE, { workspaceId: context.workspaceId, resourceType: "Finance", resourceId: context.workspaceId });
+    const account = await database.financialAccount.findFirst({ where: { id: input.financialAccountId, workspaceId: context.workspaceId, active: true } });
+    if (!account) fail("Conta financeira ativa não encontrada.", "FINANCE_ACCOUNT_NOT_FOUND", 404);
+    return { invoice, account };
+  }
+
+  function validateReceipt(input: ReturnType<typeof previewReceiptSchema.parse>, invoice: Awaited<ReturnType<typeof receiptResources>>["invoice"]) {
+    if (!["OPEN", "PARTIALLY_PAID"].includes(invoice.status)) fail("A cobrança não está aberta para recebimento.", "PAYMENT_INVALID_INVOICE_TRANSITION");
+    if (input.expectedRevision !== undefined && invoice.revision !== input.expectedRevision) fail("A cobrança mudou. Revise uma nova prévia antes de confirmar.", "PAYMENT_VERSION_CONFLICT");
+    if (input.amountCents > outstandingCents(invoice.totalCents, invoice.paidCents)) fail("O recebimento excede o saldo da cobrança.", "PAYMENT_RECEIPT_OVERPAYMENT");
+    if (input.receivedAt > options.now()) fail("A data do recebimento não pode estar no futuro.", "PAYMENT_RECEIPT_FUTURE_DATE", 400);
+  }
+
+  async function previewReceipt(context: AuthenticatedContext, raw: unknown) {
+    const input = previewReceiptSchema.parse(raw);
+    const { invoice, account } = await receiptResources(context, input, options.database);
+    validateReceipt(input, invoice);
+    return {
+      input: { ...input, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), expectedRevision: invoice.revision },
+      preview: { invoiceNumber: invoice.invoiceNumber, customerName: invoice.accountNameSnapshot, financialAccountName: account.name, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), method: input.method, reference: input.reference, outstandingBeforeCents: (invoice.totalCents - invoice.paidCents).toString(), outstandingAfterCents: (invoice.totalCents - invoice.paidCents - input.amountCents).toString(), statusAfter: invoiceStatusAfterPayment(invoice.totalCents, invoice.paidCents + input.amountCents), effect: "Registra dinheiro já recebido, baixa a cobrança e atualiza caixa e indicadores. Não altera o MRR contratado nem movimenta dinheiro no banco." },
+    };
+  }
+
+  async function recordReceipt(context: AuthenticatedContext, raw: unknown) {
+    const input = recordReceiptSchema.parse(raw);
+    const eventKey = `manual-receipt:${input.idempotencyKey}`;
+    const requestHash = sha256(canonicalJson({ invoiceId: input.invoiceId, financialAccountId: input.financialAccountId, expectedRevision: input.expectedRevision, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), method: input.method, reference: input.reference }));
+    const externalPaymentId = sha256(canonicalJson({ financialAccountId: input.financialAccountId, reference: input.reference.toLocaleLowerCase("pt-BR") }));
+    return options.database.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`manual-receipt:${context.workspaceId}:${input.idempotencyKey}`}, 0))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`manual-receipt-reference:${context.workspaceId}:${externalPaymentId}`}, 0))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`invoice:${context.workspaceId}:${input.invoiceId}`}, 0))`;
+      const { invoice, account } = await receiptResources(context, input, tx);
+      const replay = await tx.paymentEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey: eventKey } } });
+      if (replay?.paymentId) {
+        const metadata = replay.safeMetadata as Record<string, unknown> | null;
+        if (metadata?.requestHash !== requestHash) fail("A confirmação já foi usada com outros dados.", "PAYMENT_RECEIPT_IDEMPOTENCY_CONFLICT");
+        const payment = await tx.payment.findFirstOrThrow({ where: { workspaceId: context.workspaceId, id: replay.paymentId, invoiceId: invoice.id } });
+        return { invoice, payment, idempotent: true };
+      }
+      validateReceipt(input, invoice);
+      const duplicate = await tx.payment.findUnique({ where: { workspaceId_providerKey_externalPaymentId: { workspaceId: context.workspaceId, providerKey: MANUAL_RECEIPT_PROVIDER_KEY, externalPaymentId } } });
+      if (duplicate) fail("Esta referência já foi registrada nesta conta financeira.", "PAYMENT_RECEIPT_DUPLICATE_REFERENCE");
+      const payment = await tx.payment.create({ data: { workspaceId: context.workspaceId, invoiceId: invoice.id, amountCents: input.amountCents, currency: invoice.currency, providerKey: MANUAL_RECEIPT_PROVIDER_KEY, externalPaymentId, idempotencyKey: eventKey, correlationId: `invoice:${invoice.id}`, occurredAt: input.receivedAt, confirmedByActorId: context.actorId } });
+      const paidCents = invoice.paidCents + input.amountCents;
+      const status = invoiceStatusAfterPayment(invoice.totalCents, paidCents);
+      const changed = await tx.invoice.updateMany({ where: { id: invoice.id, workspaceId: context.workspaceId, revision: input.expectedRevision }, data: { paidCents, status, paidAt: status === "PAID" ? input.receivedAt : null, revision: { increment: 1 }, updatedByActorId: context.actorId } });
+      if (changed.count !== 1) fail("A cobrança mudou. Revise uma nova prévia.", "PAYMENT_VERSION_CONFLICT");
+      const metadata = { providerKey: MANUAL_RECEIPT_PROVIDER_KEY, financialAccountId: account.id, financialAccountName: account.name, customerAccountId: invoice.accountId, customerName: invoice.accountNameSnapshot, method: input.method, reference: input.reference, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), requestHash, receiptConfirmed: true };
+      await appendPaymentEventInTransaction(tx, { workspaceId: context.workspaceId, invoiceId: invoice.id, paymentId: payment.id, type: "PAYMENT_CONFIRMED", actorId: context.actorId, reason: `Recebimento confirmado pelo operador via ${input.method}. Referência: ${input.reference}`, idempotencyKey: eventKey, correlationId: payment.correlationId, occurredAt: input.receivedAt, safeMetadata: metadata });
+      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "payment.receipt.recorded", entityType: "Payment", entityId: payment.id, origin: "DOMAIN", changes: { ...metadata, invoiceId: invoice.id, previousPaidCents: invoice.paidCents.toString(), paidCents: paidCents.toString(), previousStatus: invoice.status, status } } });
+      const updated = await tx.invoice.findFirstOrThrow({ where: { id: invoice.id, workspaceId: context.workspaceId } });
+      return { invoice: updated, payment, idempotent: false };
+    }, { isolationLevel: "ReadCommitted" });
+  }
+
   async function nextInvoiceNumber(tx: Tx, workspaceId: string) {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`invoice-number:${workspaceId}`}, 0))`;
     const rows = await tx.$queryRaw<Array<{ allocated: bigint }>>`
@@ -167,7 +230,7 @@ export function createPaymentService(options: Options) {
     });
     const invoiceIds = rows.map(({ id }) => id);
     const [confirmedPayments, declines, reconciliationCandidates, permissions] = await Promise.all([
-      options.database.payment.aggregate({ where: { workspaceId: context.workspaceId, invoiceId: { in: invoiceIds }, status: "CONFIRMED" }, _sum: { amountCents: true }, _count: { _all: true } }),
+      options.database.payment.aggregate({ where: { workspaceId: context.workspaceId, invoiceId: { in: invoiceIds }, status: "CONFIRMED", providerKey: { not: PAYMENT_PROVIDER_KEY } }, _sum: { amountCents: true }, _count: { _all: true } }),
       options.database.paymentAttempt.count({ where: { workspaceId: context.workspaceId, invoiceId: { in: invoiceIds }, status: "DECLINED" } }),
       options.database.paymentReconciliationIssue.findMany({ where: { workspaceId: context.workspaceId, status: "OPEN" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
       Promise.all([
@@ -186,7 +249,7 @@ export function createPaymentService(options: Options) {
     return {
       generatedAt: now.toISOString(),
       currency: "BRL" as const,
-      mode: "LOCAL_SANDBOX" as const,
+      mode: "MANUAL_RECEIPTS" as const,
       externalEgress: false as const,
       metrics: {
         openCount: rows.filter(({ status }) => status === "OPEN" || status === "PARTIALLY_PAID").length,
@@ -232,7 +295,9 @@ export function createPaymentService(options: Options) {
         authorization.authorize(context, PermissionKeys.PAYMENTS_RECONCILE, resource(context, invoice.id, invoice.ownerMemberId)),
       ]),
     ]);
-    return { invoice, lines, attempts, payments, events, issues, permissions: { manage: permissions[0].allowed, reprocess: permissions[1].allowed, reconcile: permissions[2].allowed }, mode: "LOCAL_SANDBOX" as const, externalEgress: false as const };
+    const canRecordReceipt = permissions[0].allowed && (await authorization.authorize(context, PermissionKeys.FINANCE_MANAGE, { workspaceId: context.workspaceId, resourceType: "Finance", resourceId: context.workspaceId })).allowed;
+    const financialAccounts = canRecordReceipt ? await options.database.financialAccount.findMany({ where: { workspaceId: context.workspaceId, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [];
+    return { invoice, lines, attempts, payments, events, issues, financialAccounts, permissions: { manage: permissions[0].allowed, recordReceipt: canRecordReceipt, reprocess: permissions[1].allowed, reconcile: permissions[2].allowed }, mode: "MANUAL_RECEIPTS" as const, sandboxEnabled: process.env.NODE_ENV !== "production", externalEgress: false as const };
   }
 
   async function createInvoice(context: AuthenticatedContext, raw: unknown) {
@@ -244,9 +309,17 @@ export function createPaymentService(options: Options) {
       await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_MANAGE, resource(context, undefined, subscription.ownerMemberId));
       if (!["ACTIVE", "CANCELLATION_SCHEDULED"].includes(subscription.status)) fail("Somente assinatura ativa pode originar cobrança.", "PAYMENT_SUBSCRIPTION_NOT_BILLABLE");
       const replay = await tx.paymentEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey: input.idempotencyKey } } });
-      if (replay?.invoiceId) return tx.invoice.findFirstOrThrow({ where: { id: replay.invoiceId, workspaceId: context.workspaceId } });
+      if (replay?.invoiceId) {
+        const replayInvoice = await tx.invoice.findFirstOrThrow({ where: { id: replay.invoiceId, workspaceId: context.workspaceId } });
+        await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_MANAGE, resource(context, replayInvoice.id, replayInvoice.ownerMemberId));
+        if (replay.type !== "INVOICE_CREATED" || replayInvoice.subscriptionId !== input.subscriptionId) fail("A chave já pertence a outra operação de cobrança.", "PAYMENT_INVOICE_IDEMPOTENCY_CONFLICT");
+        return replayInvoice;
+      }
       const existing = await tx.invoice.findFirst({ where: { workspaceId: context.workspaceId, subscriptionId: subscription.id, billingPeriodStart: input.billingPeriodStart, billingPeriodEnd: input.billingPeriodEnd } });
-      if (existing) return existing;
+      if (existing) {
+        await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_MANAGE, resource(context, existing.id, existing.ownerMemberId));
+        return existing;
+      }
       const subtotal = BigInt(subscription.quantity) * subscription.recurringPriceCents + input.upfrontCents;
       const total = invoiceTotalCents(subtotal, 0n);
       if (total > BigInt(Number.MAX_SAFE_INTEGER)) fail("O valor da cobrança excede o limite seguro do sandbox local.", "PAYMENT_AMOUNT_TOO_LARGE");
@@ -281,6 +354,7 @@ export function createPaymentService(options: Options) {
 
   async function act(context: AuthenticatedContext, invoiceId: string, raw: unknown) {
     const input = invoiceActionSchema.parse(raw);
+    if (process.env.NODE_ENV === "production" && (input.action === "CHARGE" || input.action === "REPLAY")) fail("Simulações de pagamento não estão disponíveis em produção.", "PAYMENT_SANDBOX_DISABLED_IN_PRODUCTION", 403);
     if (input.action === "REPLAY") return replayAttempt(context, invoiceId, input.attemptId, input.reason);
     return options.database.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`invoice:${context.workspaceId}:${invoiceId}`}, 0))`;
@@ -381,6 +455,8 @@ export function createPaymentService(options: Options) {
       if (input.action === "LINK_AND_REPROCESS") {
         const invoice = await tx.invoice.findFirst({ where: { id: input.invoiceId, workspaceId: context.workspaceId } });
         if (!invoice) fail("Cobrança de destino não encontrada.", "PAYMENT_INVOICE_NOT_FOUND", 404);
+        await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_READ, resource(context, invoice.id, invoice.ownerMemberId));
+        await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_RECONCILE, resource(context, invoice.id, invoice.ownerMemberId));
         invoiceId = invoice.id;
         if (!issue.receiptId) fail("A divergência não possui receipt reprocessável.", "PAYMENT_RECEIPT_NOT_FOUND");
         const receipt = await tx.paymentWebhookReceipt.findFirstOrThrow({ where: { id: issue.receiptId, workspaceId: context.workspaceId } });
@@ -395,7 +471,7 @@ export function createPaymentService(options: Options) {
     });
   }
 
-  return Object.freeze({ screen, detail, createInvoice, act, ingestSignedLocalWebhook, resolveIssue });
+  return Object.freeze({ screen, detail, createInvoice, previewReceipt, recordReceipt, act, ingestSignedLocalWebhook, resolveIssue });
 }
 
 let service: ReturnType<typeof createPaymentService> | undefined;

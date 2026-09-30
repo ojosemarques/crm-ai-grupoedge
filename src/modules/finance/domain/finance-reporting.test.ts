@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { buildDre, dailyCashFlow } from "./finance-reporting";
 
 describe("finance reporting", () => {
+  it("agrupa caixa no dia civil do workspace sem criar um dia extra no fim do mês", () => {
+    const rows = dailyCashFlow(new Date("2026-09-01T03:00:00Z"), new Date("2026-10-01T03:00:00Z"), 0n, [
+      { at: new Date("2026-09-02T02:59:00Z"), direction: "INCOME", amountCents: 100n },
+      { at: new Date("2026-10-01T02:59:00Z"), direction: "INCOME", amountCents: 200n },
+      { at: new Date("2026-10-01T03:00:00Z"), direction: "INCOME", amountCents: 900n },
+    ], "America/Sao_Paulo");
+    expect(rows).toHaveLength(30);
+    expect(rows[0]).toMatchObject({ bucket: "2026-09-01", incomeCents: "100" });
+    expect(rows.at(-1)).toMatchObject({ bucket: "2026-09-30", incomeCents: "200", balanceCents: "300" });
+  });
   it("preserva saldo anterior e dias sem movimento, sem incluir o próximo período", () => {
     const rows = dailyCashFlow(new Date("2026-09-01"), new Date("2026-09-04"), 10_000n, [
       { at: new Date("2026-08-31"), direction: "INCOME", amountCents: 99_000n },

@@ -6,6 +6,7 @@ import styles from "./lead-detail.module.css";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { SalesGatesPanel } from "@/components/opportunities/sales-gates-panel";
+import { SaleCompletionPanel } from "@/components/opportunities/sale-completion-panel";
 import type {
   LeadOpportunityScreen,
   OpportunityListItem,
@@ -54,11 +55,15 @@ function OpportunityActions({
   screen,
   pending,
   run,
+  onBusyChange,
+  onCommitted,
 }: Readonly<{
   opportunity: OpportunityListItem;
   screen: LeadOpportunityScreen;
   pending: boolean;
   run: (body: Record<string, unknown>, success: string) => Promise<void>;
+  onBusyChange: (busy: boolean) => void;
+  onCommitted: () => void;
 }>) {
   async function transition(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -141,9 +146,11 @@ function OpportunityActions({
         </form>
       ) : null}
 
+      <SaleCompletionPanel opportunity={opportunity} sellers={screen.closerOptions} onBusyChange={onBusyChange} onCommitted={onCommitted} />
       <form className="grid gap-3 rounded-md border p-4" onSubmit={transition}>
         <h4 className="font-semibold">Alterar etapa</h4>
-        <label className="text-sm">Destino<select className={inputClass} name="targetStageId" required><option value="">Selecione</option>{opportunity.transitions.filter((item) => item.code !== "PROPOSAL").map((item) => <option disabled={!item.allowed} key={item.stageId} value={item.stageId}>{item.name}{item.blockReason ? ` — ${item.blockReason}` : ""}</option>)}</select></label>
+        <label className="text-sm">Destino<select className={inputClass} name="targetStageId" required><option value="">Selecione</option>{opportunity.transitions.filter((item) => item.code !== "PROPOSAL" && item.code !== "WON").map((item) => <option disabled={!item.allowed} key={item.stageId} value={item.stageId}>{item.name}{item.blockReason ? ` — ${item.blockReason}` : ""}</option>)}</select></label>
+        <p className="text-sm text-muted-foreground">Para marcar como ganho, use o fechamento integrado acima.</p>
         <label className="text-sm">Motivo<textarea className={inputClass} name="reason" required /></label>
         <label className="text-sm">Motivo de perda<select className={inputClass} name="lossReasonId"><option value="">Não se aplica</option>{screen.lossReasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select></label>
         <label className="text-sm">Nova próxima ação opcional<input className={inputClass} name="nextActionTitle" /></label>
@@ -268,7 +275,7 @@ export function LeadOpportunitiesWorkspace({
             <dl className={styles.dealStats}><div><dt className="text-muted-foreground">Produto/interesse</dt><dd>{opportunity.productName ?? opportunity.interestDescription ?? "Ausente"}</dd></div><div><dt className="text-muted-foreground">Valor estimado</dt><dd>{formatMoney(opportunity.amountCents)}</dd></div><div><dt className="text-muted-foreground">MRR / TCV</dt><dd>{formatMoney(opportunity.mrrCents)} / {formatMoney(opportunity.tcvCents)}</dd></div><div><dt className="text-muted-foreground">Probabilidade</dt><dd>{opportunity.probabilityPercent}% manual</dd></div><div><dt className="text-muted-foreground">Próxima ação</dt><dd>{opportunity.nextActionDescription ?? "Encerrada"} · {formatDate(opportunity.nextActionAt, screen.timeZone)}</dd></div><div><dt className="text-muted-foreground">Fechamento previsto</dt><dd>{formatDate(opportunity.expectedCloseAt, screen.timeZone)}</dd></div><div><dt className="text-muted-foreground">Motivo de perda</dt><dd>{opportunity.lossReasonName ?? "Não se aplica"}</dd></div></dl>
             <SalesGatesPanel opportunityId={opportunity.id} onCommitted={onCommitted} />
             {opportunity.offers.length > 0 ? <div className="mt-4"><h4 className="text-sm font-semibold">Propostas</h4><ul className="mt-2 space-y-2">{opportunity.offers.map((offer) => <li className="rounded border p-3 text-sm" key={offer.id}><strong>{offer.name}</strong> · {formatMoney(offer.totalCents)}{offer.acceptedAt ? " · aceita no ganho" : ""}{offer.lines.length ? <ul className="mt-2 list-disc pl-5 text-xs text-muted-foreground">{offer.lines.map((line) => <li key={`${offer.id}:${line.revenueCategory}:${line.productName}`}>{line.revenueCategory} · {line.productName} v{line.productVersion} · {formatMoney(line.totalCents)}</li>)}</ul> : <span> · {offer.productName}</span>}</li>)}</ul></div> : null}
-            <OpportunityActions opportunity={opportunity} pending={pending} run={(body, success) => runOpportunity(opportunity.id, body, success)} screen={screen} />
+            <OpportunityActions opportunity={opportunity} pending={pending} run={(body, success) => runOpportunity(opportunity.id, body, success)} screen={screen} onBusyChange={setPending} onCommitted={() => { void refresh().catch((error: unknown) => setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha ao atualizar oportunidades." })); onCommitted(); }} />
           </article>
         ))}</div>
       )}

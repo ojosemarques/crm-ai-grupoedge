@@ -28,7 +28,7 @@ export async function POST(request: NextRequest, routeContext: OpportunityRouteC
     }
     const command = { ...body, opportunityId };
     const result = body.action === "TRANSITION"
-      ? await getOpportunityService().transition(context, command)
+      ? await getOpportunityService().transition(context, command, { requireIntegratedSale: true })
       : body.action === "PROPOSAL"
         ? await getOpportunityService().registerProposal(context, command)
         : body.action === "REOPEN"

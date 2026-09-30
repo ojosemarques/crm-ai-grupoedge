@@ -11,6 +11,10 @@ const terms = z.object({
   durationMonths: z.number().int().min(1).max(60),
   startsAt: z.string().datetime({ offset: true }),
   templateVersionId: z.string().uuid(),
+  customer: z.discriminatedUnion("mode", [
+    z.object({ mode: z.literal("CREATE"), name: z.string().trim().min(2).max(200) }).strict(),
+    z.object({ mode: z.literal("LINK"), accountId: z.string().uuid() }).strict(),
+  ]).optional(),
   acceptance: z.object({
     acceptedByName: z.string().trim().min(2).max(200),
     acceptedByRole: z.string().trim().min(2).max(200),

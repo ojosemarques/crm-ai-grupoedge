@@ -22,4 +22,10 @@ describe("fechamento integrado", () => {
     expect(saleSchedule(single)).toHaveLength(1);
     expect(saleCompletionSchema.safeParse({ ...input, onboardingOwnerMemberId: input.sellerMemberId }).success).toBe(false);
   });
+  it("exige nome real ou ID explícito para cadastro e vínculo de cliente", () => {
+    expect(saleCompletionSchema.safeParse({ ...input, customer: { mode: "CREATE", name: " " } }).success).toBe(false);
+    expect(saleCompletionSchema.safeParse({ ...input, customer: { mode: "LINK", name: "Cliente" } }).success).toBe(false);
+    expect(saleCompletionSchema.parse({ ...input, customer: { mode: "CREATE", name: "  Cliente confirmado  " } }).customer).toEqual({ mode: "CREATE", name: "Cliente confirmado" });
+    expect(saleCompletionSchema.safeParse({ ...input, customer: { mode: "LINK", accountId: input.opportunityId, workspaceId: input.opportunityId } }).success).toBe(false);
+  });
 });

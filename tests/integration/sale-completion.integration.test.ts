@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createSaleCompletionService } from "@/modules/opportunities/application/sale-completion-service";
+import { createOpportunityService } from "@/modules/opportunities/application/opportunity-service";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
@@ -47,6 +48,62 @@ async function fixture() {
 }
 
 describe("venda integrada atômica", () => {
+  it("cria o cliente revisado e vincula lead, venda, contrato e recebíveis sem duplicar no replay", async () => {
+    const input = await fixture();
+    const original = await database.opportunity.findUniqueOrThrow({ where: { id: input.opportunityId } });
+    await database.opportunity.update({ where: { id: original.id }, data: { accountId: null } });
+    await database.lead.update({ where: { id: original.leadId }, data: { accountId: null } });
+    await expect(service.preview(admin, input)).rejects.toMatchObject({ code: "SALE_CUSTOMER_REQUIRED" });
+    const name = `Cliente confirmado ${randomUUID()}`;
+    const payload = { ...input, customer: { mode: "CREATE", name }, acceptance: { acceptedByName: "Cliente integrado", acceptedByRole: "Diretor", evidenceText: "Aceite real documentado no teste." } };
+    expect(await service.preview(admin, payload)).toMatchObject({ customer: { mode: "CREATE", name, accountId: null } });
+    expect(await database.account.count({ where: { workspaceId, name } })).toBe(0);
+    const command = { ...payload, confirmed: true, idempotencyKey: randomUUID() };
+    const result = await service.execute(admin, command);
+    expect(result).toMatchObject({ accountId: expect.any(String), customerCreated: true });
+    const account = await database.account.findFirstOrThrow({ where: { workspaceId, name } });
+    expect((await database.lead.findUniqueOrThrow({ where: { id: original.leadId } })).accountId).toBe(account.id);
+    expect((await database.opportunity.findUniqueOrThrow({ where: { id: original.id } })).accountId).toBe(account.id);
+    const contract = await database.commercialContract.findFirstOrThrow({ where: { opportunityId: original.id } });
+    expect(contract.accountId).toBe(account.id);
+    expect(await database.invoice.count({ where: { accountId: account.id, contractId: contract.id } })).toBe(6);
+    expect(await service.execute(admin, command)).toMatchObject({ accountId: account.id, replayed: true });
+    await expect(service.authorize(admin, payload)).resolves.toBeUndefined();
+    await expect(service.authorize(viewer, payload)).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    expect(await database.account.count({ where: { workspaceId, name } })).toBe(1);
+  });
+
+  it("reutiliza conta do lead, exige confirmação para novo vínculo e rejeita duplicidade por nome", async () => {
+    const input = await fixture();
+    const original = await database.opportunity.findUniqueOrThrow({ where: { id: input.opportunityId } });
+    await database.opportunity.update({ where: { id: original.id }, data: { accountId: null } });
+    const preview = await service.preview(admin, input);
+    expect(preview).toMatchObject({ customer: { mode: "LINK", accountId: original.accountId }, payload: { customer: { mode: "LINK", accountId: original.accountId } } });
+    const result = await service.execute(admin, { ...preview.payload, confirmed: true, idempotencyKey: randomUUID() });
+    expect(result).toMatchObject({ accountId: original.accountId, customerCreated: false, invoiceIds: [], subscriptionId: null });
+
+    const next = await fixture();
+    const nextOpportunity = await database.opportunity.findUniqueOrThrow({ where: { id: next.opportunityId } });
+    await database.opportunity.update({ where: { id: nextOpportunity.id }, data: { accountId: null } });
+    await database.lead.update({ where: { id: nextOpportunity.leadId }, data: { accountId: null } });
+    const name = `Cliente existente ${randomUUID()}`;
+    await database.account.update({ where: { id: original.accountId! }, data: { name, normalizedName: name.toLowerCase() } });
+    await expect(service.preview(admin, { ...next, customer: { mode: "CREATE", name } })).rejects.toMatchObject({ code: "SALE_CUSTOMER_EXISTS" });
+    await expect(service.preview(admin, { ...next, customer: { mode: "LINK", accountId: randomUUID() } })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await service.preview(admin, { ...next, customer: { mode: "LINK", accountId: original.accountId } })).toMatchObject({ customerName: name });
+    await database.lead.update({ where: { id: nextOpportunity.leadId }, data: { contactId: null } });
+    await expect(service.preview(admin, { ...next, customer: { mode: "LINK", accountId: original.accountId } })).rejects.toThrow("contato ativo");
+  });
+
+  it("a política da API impede ganho genérico sem efeitos parciais", async () => {
+    const input = await fixture();
+    const opportunity = await database.opportunity.findUniqueOrThrow({ where: { id: input.opportunityId } });
+    const won = await database.pipelineStage.findFirstOrThrow({ where: { workspaceId, pipelineId: opportunity.pipelineId, opportunityStageCode: "WON", deletedAt: null } });
+    const opportunities = createOpportunityService({ database, authorization: createAuthorizationService({ database }), now: () => now });
+    await expect(opportunities.transition(admin, { action: "TRANSITION", opportunityId: opportunity.id, expectedRevision: opportunity.revision, targetStageId: won.id, reason: "Tentativa de fechamento sem revisão integrada.", origin: "OPPORTUNITY_BOARD", confirmed: true }, { requireIntegratedSale: true })).rejects.toMatchObject({ code: "INTEGRATED_SALE_REQUIRED" });
+    expect((await database.opportunity.findUniqueOrThrow({ where: { id: opportunity.id } })).status).toBe("OPEN");
+    expect(await database.commission.count({ where: { opportunityId: opportunity.id } })).toBe(0);
+  });
   it("prévia não escreve; confirmação gera contrato, recebíveis, MRR e comissão uma vez", async () => {
     const input = await fixture();
     const seller = await context("closer1@demo.politizai.local");
@@ -84,13 +141,41 @@ describe("venda integrada atômica", () => {
     await expect(service.preview({ ...admin, workspaceId: randomUUID() }, input)).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(service.preview(admin, { ...input, startsAt: "2025-01-01T12:00:00Z", acceptance: { acceptedByName: "Cliente", acceptedByRole: "Diretor", evidenceText: "Aceite histórico documentado." } })).rejects.toThrow("vigência já terminou");
   });
+  it("revalida o acesso por origem também ao consultar o histórico de uma proposta", async () => {
+    const input = await fixture();
+    const closer = await context("closer1@demo.politizai.local");
+    const opportunity = await database.opportunity.update({ where: { id: input.opportunityId }, data: { ownerMemberId: closer.memberId }, include: { lead: true } });
+    const memberships = await database.teamMember.findMany({ where: { workspaceId, workspaceMemberId: closer.memberId, deletedAt: null } });
+    expect(memberships.length).toBeGreaterThan(0);
+    const previous = await database.pipelineOriginAccessRule.findMany({ where: { workspaceId, sourceId: opportunity.lead.sourceId } });
+    const changed: string[] = [];
+    try {
+      for (const membership of memberships) {
+        const rule = await database.pipelineOriginAccessRule.upsert({ where: { workspaceId_sourceId_teamId: { workspaceId, sourceId: opportunity.lead.sourceId, teamId: membership.teamId } }, create: { workspaceId, sourceId: opportunity.lead.sourceId, teamId: membership.teamId, canTransition: false, createdByActorId: admin.actorId, updatedByActorId: admin.actorId }, update: { canTransition: false } });
+        changed.push(rule.id);
+      }
+      await expect(service.authorize(closer, { ...input, sellerMemberId: closer.memberId })).rejects.toMatchObject({ code: "ORIGIN_TEAM_DENIED" });
+    } finally {
+      for (const id of changed) {
+        const original = previous.find((rule) => rule.id === id);
+        if (original) await database.pipelineOriginAccessRule.update({ where: { id }, data: { canTransition: original.canTransition } });
+        else await database.pipelineOriginAccessRule.delete({ where: { id } });
+      }
+    }
+  });
   it("falha de emissão reverte venda, contrato e comissão", async () => {
     const input = await fixture();
+    const opportunity = await database.opportunity.findUniqueOrThrow({ where: { id: input.opportunityId } });
+    await database.opportunity.update({ where: { id: opportunity.id }, data: { accountId: null } });
+    await database.lead.update({ where: { id: opportunity.leadId }, data: { accountId: null } });
+    const customerName = `Cliente rollback ${randomUUID()}`;
     const version = await database.contractTemplateVersion.findUniqueOrThrow({ where: { id: input.templateVersionId } });
     const emptyVersion = await database.contractTemplateVersion.create({ data: { workspaceId, templateId: version.templateId, version: 999, titleTemplate: "Contrato teste", introduction: "Contrato sem cláusulas para testar rollback", contentHash: "0".repeat(64), allowedVariables: [], createdByActorId: admin.actorId } });
-    await expect(service.execute(admin, { ...input, templateVersionId: emptyVersion.id, acceptance: { acceptedByName: "Cliente", acceptedByRole: "Diretor", evidenceText: "Aceite de teste rollback." }, confirmed: true, idempotencyKey: randomUUID() })).rejects.toThrow("cláusulas");
+    await expect(service.execute(admin, { ...input, customer: { mode: "CREATE", name: customerName }, templateVersionId: emptyVersion.id, acceptance: { acceptedByName: "Cliente", acceptedByRole: "Diretor", evidenceText: "Aceite de teste rollback." }, confirmed: true, idempotencyKey: randomUUID() })).rejects.toThrow("cláusulas");
     expect((await database.opportunity.findUniqueOrThrow({ where: { id: input.opportunityId } })).status).toBe("OPEN");
     expect(await database.commercialContract.count({ where: { opportunityId: input.opportunityId } })).toBe(0);
     expect(await database.commission.count({ where: { opportunityId: input.opportunityId } })).toBe(0);
+    expect(await database.account.count({ where: { workspaceId, name: customerName } })).toBe(0);
+    expect((await database.lead.findUniqueOrThrow({ where: { id: opportunity.leadId } })).accountId).toBeNull();
   });
 });

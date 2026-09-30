@@ -35,6 +35,7 @@ function uniquePhone(label: string) {
 
 test("fluxo crítico percorre entrada, SLA, IA local, PACTO, reunião, venda, dashboard e auditoria", async ({ page }) => {
   test.setTimeout(90_000);
+  page.setDefaultTimeout(15_000);
   await login(page);
   const leadName = `Lead oportunidade E2E ${randomUUID().slice(0, 8)}`;
   await page.goto("/leads/entrada");
@@ -178,12 +179,13 @@ test("fluxo crítico percorre entrada, SLA, IA local, PACTO, reunião, venda, da
   await expect(page.getByText("Resumo em três linhas")).toBeVisible();
 
   await page.goto(`/leads/${leadId}/historico#oportunidade`);
-  await page.getByRole("tab", { name: "Oportunidade" }).click();
-  const panel = page.getByRole("tabpanel", { name: "Oportunidade" });
+  await page.getByRole("tab", { name: "Negócios" }).click();
+  const panel = page.getByRole("tabpanel", { name: "Negócios" });
+  await panel.locator("summary").filter({ hasText: "Novo negócio" }).click();
   const createForm = panel;
-  await createForm.getByLabel("Reunião vinculada").selectOption(scheduled.result.meetingId);
-  await createForm.getByLabel("Closer responsável").selectOption(closerId);
-  await createForm.getByLabel("Nome").fill("Contrato anual E2E");
+  await createForm.getByRole("combobox", { name: "Reunião vinculada", exact: true }).selectOption(scheduled.result.meetingId);
+  await createForm.getByRole("combobox", { name: "Closer responsável", exact: true }).selectOption(closerId);
+  await createForm.getByLabel("Nome", { exact: true }).fill("Contrato anual E2E");
   await createForm.locator('select[name="productId"]').selectOption({ index: 1 });
   await createForm.getByLabel("Valor estimado (R$)").fill("6.500,00");
   await createForm.getByLabel("MRR (R$)").fill("500,00");
@@ -249,7 +251,7 @@ test("fluxo crítico percorre entrada, SLA, IA local, PACTO, reunião, venda, da
   await expect(page.getByRole("dialog", { name: "Trabalhar Contrato anual E2E" })).toBeVisible();
   await page.getByRole("button", { name: "Fechar painel" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await card.locator("..").getByRole("button", { name: "Alterar etapa" }).click();
+  await card.getByRole("button", { name: "Trabalhar oportunidade Contrato anual E2E", exact: true }).click();
   const dialog = page.getByRole("dialog");
   const proposalForm = dialog;
   await proposalForm.locator('select[name="productId"]').selectOption({ index: 1 });
@@ -294,15 +296,49 @@ test("fluxo crítico percorre entrada, SLA, IA local, PACTO, reunião, venda, da
       lossReasonId: null,
     },
   });
-  expect(response.ok()).toBe(true);
+  expect(response.status()).toBe(409);
+  expect(await response.json()).toMatchObject({ error: { code: "INTEGRATED_SALE_REQUIRED" } });
+
+  await page.goto("/oportunidades");
+  const wonStage = await database.pipelineStage.findUniqueOrThrow({ where: { id: target.stageId } });
+  await page.getByRole("button", { name: "Arrastar Contrato anual E2E", exact: true }).dragTo(page.getByRole("region", { name: `Etapa ${wonStage.name}`, exact: true }));
+  const closing = page.getByRole("dialog").getByRole("region", { name: "Fechar venda integrada" });
+  await expect(closing.getByRole("combobox", { name: "Modelo de contrato", exact: true })).toBeEnabled();
+  await closing.getByRole("combobox", { name: "Cadastro do cliente", exact: true }).selectOption("CREATE");
+  const customerName = `Cliente integrado E2E ${randomUUID()}`;
+  await closing.getByLabel("Nome confirmado do cliente").fill(customerName);
+  await closing.getByRole("combobox", { name: "Modelo de contrato", exact: true }).selectOption({ index: 1 });
+  await closing.getByLabel("Total do contrato (R$)").fill("6000,00");
+  await closing.getByLabel("Entrada (R$)").fill("0,00");
+  await closing.getByLabel("Mensalidade (R$)").fill("500,00");
+  await closing.getByLabel("Quantidade de meses").fill("12");
+  await closing.getByLabel("Início de vigência").fill(new Date().toISOString().slice(0, 10));
+  await closing.getByLabel("Já existe aceite real do cliente, com evidência para registrar.").check();
+  await closing.getByLabel("Quem aceitou", { exact: true }).fill("Cliente sintético E2E");
+  await closing.getByLabel("Cargo ou papel de quem aceitou").fill("Diretor");
+  await closing.getByLabel("Evidência do aceite").fill("Aceite sintético documentado exclusivamente no schema de teste E2E.");
+  await closing.getByRole("button", { name: "Revisar fechamento", exact: true }).click();
+  await expect(closing.getByRole("heading", { name: "Revise antes de confirmar" })).toBeVisible();
+  expect((await database.opportunity.findUniqueOrThrow({ where: { id: opportunity.id } })).status).toBe("OPEN");
+  expect(await database.account.count({ where: { name: customerName } })).toBe(0);
+  await closing.getByLabel("Revisei os dados e confirmo este fechamento.").check();
+  await closing.getByRole("button", { name: "Confirmar fechamento integrado" }).click();
+  await expect(page.getByRole("region", { name: "Resultado do fechamento integrado" })).toContainText("Venda registrada");
+  const customer = await database.account.findFirstOrThrow({ where: { name: customerName } });
+  const contract = await database.commercialContract.findFirstOrThrow({ where: { opportunityId: opportunity.id } });
+  expect(contract).toMatchObject({ accountId: customer.id, status: "ACCEPTED" });
+  const invoices = await database.invoice.findMany({ where: { contractId: contract.id } });
+  expect(invoices).toHaveLength(12);
+  expect(invoices.every((invoice) => invoice.accountId === customer.id && invoice.status === "OPEN" && invoice.paidCents === 0n)).toBe(true);
+  expect((await database.subscription.findFirstOrThrow({ where: { contractId: contract.id } })).currentMrrCents).toBe(50000n);
   response = await request.get(`/api/leads/${leadId}/opportunities`);
   opportunityScreen = await response.json() as typeof opportunityScreen;
   opportunity = opportunityScreen.result.opportunities[0]!;
   expect(opportunity).toMatchObject({ status: "WON", stageCode: "WON", nextActionAt: null });
 
   await page.goto("/dashboard?preset=MONTH");
-  await expect(page.getByRole("heading", { name: "Dashboard comercial" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Indicadores acionáveis" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Bom trabalho,/ })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Indicadores principais" })).toBeVisible();
 
   await page.goto("/auditoria?auditAction=opportunity.won");
   await expect(page.getByRole("heading", { name: "Auditoria e saúde do processo" })).toBeVisible();

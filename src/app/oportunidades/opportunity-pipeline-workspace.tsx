@@ -171,6 +171,12 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
       setNotice({ kind: "error", message: "Esta etapa não está disponível para a oportunidade selecionada." });
       return;
     }
+    if (option.code === "WON") {
+      setRequestedStageId(stage.id);
+      setSelectedId(opportunity.id);
+      setNotice({ kind: "success", message: "Revise o cliente, as condições e o aceite para confirmar o fechamento integrado." });
+      return;
+    }
     if (!option.allowed || option.requiresConfirmation || option.requiresLossReason || option.code === "PROPOSAL") {
       setRequestedStageId(stage.id);
       setSelectedId(opportunity.id);
@@ -345,10 +351,11 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
               <Button disabled={pending} type="submit">Registrar proposta</Button>
             </form>
           ) : null}
-          <SaleCompletionPanel key={selected.id} opportunity={selected} sellers={screen.closerOptions} onBusyChange={setPending} onCommitted={() => router.refresh()} />
+          <SaleCompletionPanel key={`${selected.id}:${requestedStageId}`} opportunity={selected} sellers={screen.closerOptions} initiallyExpanded={selected.transitions.some((item) => item.stageId === requestedStageId && item.code === "WON")} onBusyChange={setPending} onCommitted={() => router.refresh()} />
           <form className="grid gap-3 rounded-md border p-4" onSubmit={transition}>
             <h3 className="font-semibold">Alterar etapa</h3>
-            <label className="text-sm">Destino<select className={inputClass} defaultValue={requestedStageId} name="targetStageId" required><option value="">Selecione</option>{selected.transitions.filter((item) => item.code !== "PROPOSAL").map((item) => <option disabled={!canCompleteWithTransitionForm(item)} key={item.stageId} value={item.stageId}>{item.name}{item.blockReason ? ` — ${item.blockReason}` : ""}</option>)}</select></label>
+            <label className="text-sm">Destino<select className={inputClass} defaultValue={requestedStageId} name="targetStageId" required><option value="">Selecione</option>{selected.transitions.filter((item) => item.code !== "PROPOSAL" && item.code !== "WON").map((item) => <option disabled={!canCompleteWithTransitionForm(item)} key={item.stageId} value={item.stageId}>{item.name}{item.blockReason ? ` — ${item.blockReason}` : ""}</option>)}</select></label>
+            <p className="text-sm text-muted-foreground">Para marcar como ganho, use o fechamento integrado acima.</p>
             <label className="text-sm">Motivo<textarea className={inputClass} name="reason" required /></label>
             <label className="text-sm">Motivo de perda<select className={inputClass} name="lossReasonId"><option value="">Não se aplica</option>{screen.lossReasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select></label>
             <label className="text-sm">Nova próxima ação opcional<input className={inputClass} name="nextActionTitle" /></label>
