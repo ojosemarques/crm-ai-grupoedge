@@ -6,7 +6,7 @@
   font-weight: 400; font-feature-settings: "tnum";
 }
 .dashboard :is(h1,h2,h3,strong) { font-weight: 500; }
-.dashboard :is(a,button,summary):focus-visible { outline: 2px solid #ff6b2c; outline-offset: 4px; }
+.dashboard :is(a,button,summary):focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
 .dashboardHeader { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .dashboardHeader h1 { font-size: clamp(25px, 2.7vw, 36px); letter-spacing: -.055em; line-height: 1.2; }
 .eyebrow { color: var(--text-muted); font-size: 11px; margin-bottom: 5px; }
@@ -95,7 +95,7 @@
 .attentionPanel { align-self: stretch; }.attentionTotal { background: var(--surface-subtle); color: var(--text-muted); border-radius: 50%; padding: 8px; font-size: 12px; min-width: 34px; text-align: center; }.attentionList { list-style: none; display: grid; gap: 10px; }
 .attentionLink { border: 1px solid var(--border); border-radius: 16px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 12px; text-decoration: none; }.attentionLink:hover { background: var(--surface-subtle); }.attentionMark { display: grid; place-items: center; width: 31px; height: 31px; border-radius: 50%; background: var(--surface-subtle); color: var(--text-muted); }.attentionLink[data-severity="CRITICAL"] .attentionMark { background: #fff1ef; color: #e79079; }.attentionLink[data-severity="WARNING"] .attentionMark { background: #fff5e4; color: #d4ae6e; }.attentionText { display: grid; gap: 4px; min-width: 0; }.attentionText strong { font-size: 11px; }.attentionText span { font-size: 9px; color: var(--text-muted); line-height: 1.4; }.attentionValue { font-size: 19px; }
 .pulseStrip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border-radius: 20px; overflow: hidden; background: #eef0e9; border: 1px solid var(--border); }
-.pulseStrip a { display: grid; gap: 3px; padding: 13px 17px; background: var(--surface); text-decoration: none; }.pulseStrip a:hover { background: #fff9f2; }.pulseStrip span { color: var(--text-muted); font-size: 10px; }.pulseStrip strong { font-size: 22px; letter-spacing: -.6px; }.pulseStrip small { font-size: 9px; color: var(--text-muted); }
+.pulseStrip a { display: grid; gap: 3px; padding: 13px 17px; background: var(--surface); text-decoration: none; }.pulseStrip a:hover { background: var(--surface-priority); }.pulseStrip span { color: var(--text-muted); font-size: 10px; }.pulseStrip strong { font-size: 22px; letter-spacing: -.6px; }.pulseStrip small { font-size: 9px; color: var(--text-muted); }
 .slaPanel { background: var(--surface); }.slaTrend { color: var(--text-muted); font-size: 10px; padding: 6px 10px; background: var(--surface-subtle); border-radius: 20px; }.slaTrend[data-interpretation="NEGATIVE"] { color: #c56d5a; background: #fff5f0; }
 .slaStats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }.slaStats a { display: grid; gap: 5px; padding: 15px; border: 1px solid var(--border); border-radius: 15px; text-decoration: none; }.slaStats span { color: var(--text-muted); font-size: 11px; }.slaStats strong { font-size: 24px; letter-spacing: -.7px; }.slaStats small { color: var(--text-muted); font-size: 9px; }.slaComparison { margin-top: 12px; color: var(--text-muted); font-size: 10px; }
 .sectionHeader { margin-bottom: 15px; }.sectionHeader h2 { font-size: 20px; letter-spacing: -.4px; }.sectionHeader p { color: var(--text-muted); font-size: 11px; margin-top: 4px; }.sectionTag { color: var(--text-muted); font-size: 10px; display: block; margin-bottom: 3px; }
@@ -110,7 +110,7 @@
 :global(:root[data-theme="dark"]) .dashboard {
   --foreground: #edf0e8; --text: #edf0e8; --muted-foreground: #adb5a3; --text-muted: #adb5a3;
   --surface: #20231f; --surface-subtle: #282d25; --border: #353d2f; --border-strong: #4c5941;
-  --primary: #edf0e8; --link: #ffb488; --chart-accent: #ff995e;
+  --primary: #edf0e8; --link: #a6c9ff; --chart-accent: #ff995e;
   background: #171b15;
 }
 :global(:root[data-theme="dark"]) .dashboard :is(.primaryAction,.periodActive,.filterApply,.filterCount) { background: #edf0e8; color: #20231f; border-color: #edf0e8; }
@@ -122,5 +122,5 @@
 :global(:root[data-theme="dark"]) .dashboard .attentionLink[data-severity="WARNING"] .attentionMark { background: #3e3422; color: #e4c58e; }
 :global(:root[data-theme="dark"]) .dashboard .comparisonCard[data-interpretation="POSITIVE"] .comparisonDelta { color: #89d2a6; }
 :global(:root[data-theme="dark"]) .dashboard .comparisonCard[data-interpretation="NEGATIVE"] .comparisonDelta { color: #f2a5ad; }
-:global(:root[data-theme="dark"]) .dashboard :is(.emptyState,.pulseStrip a:hover) { background: #372e21; border-color: #59472d; }
+:global(:root[data-theme="dark"]) .dashboard .emptyState { background: #372e21; border-color: #59472d; }
 :global(:root[data-theme="dark"]) .dashboard .slaTrend[data-interpretation="NEGATIVE"] { background: #402b25; color: #f2b59f; }

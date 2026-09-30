@@ -82,7 +82,7 @@
 .regionBars h3 { font-size: 12px; font-weight: 500; }
 .regionBars > p { color: var(--text-muted); font-size: 10px; margin-top: -9px; }
 .regionBars button { display: grid; gap: 8px; text-align: left; cursor: pointer; padding: 8px; border-radius: 10px; border: 1px solid transparent; }
-.regionBars button[aria-pressed="true"] { background: #fff4eb; border-color: #ffdeca; }
+.regionBars button[aria-pressed="true"] { background: var(--surface-priority); border-color: var(--brand-sky); }
 .regionBars button > span { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
 .regionBars strong { font-weight: 500; }
 .regionBars progress, .funnel progress, .conversion progress { display: block; appearance: none; width: 100%; border: 0; height: 8px; border-radius: 10px; overflow: hidden; background: #eceee8; }

@@ -1,12 +1,12 @@
-.workspace { --ink: #20231f; --muted: #6c7267; --card: #fff; --subtle: #f6f7f4; --line: #eeefeb; --orange: #ff6b2c; color: var(--ink); display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; min-width: 0; padding-block: 8px 20px; }
+.workspace { --ink: #20231f; --muted: #6c7267; --card: #fff; --subtle: #f6f7f4; --line: #eeefeb; color: var(--ink); display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; min-width: 0; padding-block: 8px 20px; }
 .workspace :is(h1, h2, h3, strong, th) { font-weight: 500; }
 .workspace a { text-decoration: none; }
-.workspace :is(a, button, input, select, summary):focus-visible { outline: 2px solid #b94714; outline-offset: 4px; }
+.workspace :is(a, button, input, select, summary):focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
 .workspace > *, .hero > div, .toolbar { min-width: 0; }
 .hero { display: flex; align-items: end; justify-content: space-between; gap: 24px; padding: 5px 2px 3px; }
 .eyebrow { color: var(--muted); font-size: 11px; display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
 .hero h1 { font-size: clamp(23px, 2.2vw, 32px); letter-spacing: -1.15px; line-height: 1.2; margin: 0; }
-.hero h1 > span { color: var(--orange); }
+.hero h1 > span { color: var(--brand-blue); }
 .hero p { font-size: 12px; color: var(--muted); margin: 9px 0 0; line-height: 1.6; }
 .heroMeta { text-align: right; display: grid; gap: 10px; justify-items: end; flex-shrink: 0; }
 .heroMeta small { color: var(--muted); font-size: 10px; }
@@ -34,13 +34,13 @@
 .overviewGrid { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.6fr); gap: 20px; }
 .overviewTiles { background: var(--card); border-radius: 24px; padding: 11px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; min-width: 0; }
 .overviewTiles .metricCard { border-radius: 17px; background: #f6f7f4; box-shadow: none; padding: 18px; }
-.overviewTiles .metricCard:first-child { background: #fff0e7; }
+.overviewTiles .metricCard:first-child { background: var(--surface-priority); }
 .metricGrid { display: grid; gap: 18px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .metricCard { background: var(--card); border: 1px solid var(--card); border-radius: 24px; display: flex; flex-direction: column; padding: 20px; min-width: 0; gap: 12px; box-shadow: 0 3px 15px #303b2102; }
 .metricTop { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); min-height: 26px; }
 .metricTop h2 { font-size: 14px; }
 .roundAction, .metricSymbol, .panelIcon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 27px; height: 27px; border: 1px solid #e3e6de; border-radius: 50%; color: var(--muted); background: #ffffff90; }
-.roundAction:hover { color: #bd4916; border-color: #f7be9a; }
+.roundAction:hover { color: var(--brand-blue); border-color: var(--brand-sky); }
 .metricSymbol { border: 0; font-size: 16px; }
 .metricValue { font-size: clamp(22px, 2.05vw, 30px); letter-spacing: -.9px; line-height: 1.12; overflow-wrap: anywhere; margin-top: 5px; font-variant-numeric: tabular-nums; }
 .metricComparison { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 9px; }
@@ -71,7 +71,7 @@
 .metricCard[data-featured] .metricTop { font-size: 13px; }
 .metricCard[data-featured] .metricValue { font-size: clamp(30px, 3.5vw, 45px); margin-top: 11px; letter-spacing: -1.8px; }
 .metricCard[data-featured] .metricDescription { font-size: 11px; }
-.metricCard[data-featured] .metricSymbol { color: #ff6b2c; background: #fff1e9; width: 38px; height: 38px; }
+.metricCard[data-featured] .metricSymbol { color: var(--brand-blue); background: var(--surface-priority); width: 38px; height: 38px; }
 .featureChart { margin: 16px -7px 2px; }
 .featureChart .chartLegend { font-size: 9px; }
 .featureChart .seriesSvg { min-height: 125px; }
@@ -183,7 +183,8 @@
 .seriesSvg text, .bridgeChart text { fill: var(--muted); }
 :global(:root[data-theme='dark']) .workspace { --ink: #e9ece4; --muted: #afb6a5; --line: #34392f; --card: #242820; --subtle: #2c3127; }
 :global(:root[data-theme='dark']) .workspace :is(.overviewTiles .metricCard,.chartReadout,.chartEmpty,.qualityAction,.snapshot > div,.bridgeGrid > div,.drilldownSummary,.catalog details[open] summary,.tableWrap th) { background: var(--subtle); }
-:global(:root[data-theme='dark']) .workspace :is(.overviewTiles .metricCard:first-child,.bridgeGrid > div[data-tone='final']) { background: #412e20; }
+:global(:root[data-theme='dark']) .workspace .overviewTiles .metricCard:first-child { background: var(--surface-priority); }
+:global(:root[data-theme='dark']) .workspace .bridgeGrid > div[data-tone='final'] { background: #412e20; }
 :global(:root[data-theme='dark']) .workspace :is(.primaryButton,.tabs a[aria-current='page']) { background: #e9ece4; color: #20231f; }
 :global(:root[data-theme='dark']) .workspace :is(.roundAction,.metricSymbol,.panelIcon) { background: #30372a; border-color: #424a38; }
 :global(:root[data-theme='dark']) .workspace :is(.metricDetails,.filterForm input,.filterForm select,.secondaryButton,.tableWrap td) { border-color: var(--line); }
