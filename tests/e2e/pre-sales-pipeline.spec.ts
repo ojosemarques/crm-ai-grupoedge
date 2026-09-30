@@ -39,7 +39,7 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await createManualLead(page, leadName);
 
   await page.goto(`/pipeline?q=${encodeURIComponent(leadName)}`);
-  await expect(page.getByRole("heading", { name: "Pipeline de pré-vendas" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pré-vendas", exact: true })).toBeVisible();
   const card = page.locator("article").filter({ hasText: leadName });
   await expect(card).toBeVisible();
   const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
@@ -59,7 +59,7 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
 
   await page.getByRole("button", { name: "Lista" }).click();
   await expect(page.getByRole("row").filter({ hasText: leadName })).toContainText("Tentando contato");
-  await page.getByRole("button", { name: "Alterar etapa" }).click();
+  await page.getByRole("button", { name: "Abrir lead" }).click();
   const qualifiedStageId = await page
     .getByLabel("Etapa de destino")
     .locator("option")
@@ -71,15 +71,19 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await expect(page.getByRole("status")).toContainText(`${leadName} foi movido para Qualificado.`);
   await expect(page.getByRole("row").filter({ hasText: leadName })).toContainText("Qualificado");
 
-  await page.getByRole("link", { name: leadName, exact: true }).click();
-  await expect(page.getByRole("heading", { name: leadName })).toBeVisible();
-  await expect(page.getByRole("definition").filter({ hasText: /^Qualificado$/ })).toBeVisible();
+  await page.getByRole("button", { name: leadName, exact: true }).click();
+  await expect(page).toHaveURL(/\/pipeline(?:\?|$)/);
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(page.getByRole("dialog", { name: leadName })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Resumo do lead" })).toBeVisible();
+  await page.getByRole("button", { name: "Fechar painel" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 test("mantém o pipeline somente leitura para o visualizador", async ({ page }) => {
   await login(page, DEMO_USERS.at(-1)!.email);
   await page.goto("/pipeline");
-  await expect(page.getByRole("heading", { name: "Pipeline de pré-vendas" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pré-vendas", exact: true })).toBeVisible();
   const firstTransitionButton = page.getByRole("button", { name: "Alterar etapa" }).first();
   if (await firstTransitionButton.count()) await expect(firstTransitionButton).toBeDisabled();
 });

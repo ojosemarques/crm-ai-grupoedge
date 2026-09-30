@@ -10,6 +10,7 @@ import { Icon } from "@/components/ui/icon";
 import styles from "./pipeline-workspace.module.css";
 import { DataTableShell } from "@/components/ui/surface";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
+import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
 import type {
   LeadPipelineCard,
   LeadPipelineState,
@@ -170,6 +171,7 @@ export function PreSalesPipelineWorkspace({
   const [view, setView] = useState(initialView);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedLeadState, setSelectedLeadState] = useState<LeadPipelineState | null>(null);
+  const [selectedLeadOperations, setSelectedLeadOperations] = useState<LeadCardOperations | null>(null);
   const [requestedStageId, setRequestedStageId] = useState<string>("");
   const [draggedLeadId, setDraggedLeadId] = useState<string | null>(null);
   const [dropStageId, setDropStageId] = useState<string | null>(null);
@@ -210,6 +212,7 @@ export function PreSalesPipelineWorkspace({
       setNotice({ kind: "success", message: `${lead.fullName} foi movido para ${option.name}.` });
       setSelectedLeadId(null);
       setSelectedLeadState(null);
+      setSelectedLeadOperations(null);
       setRequestedStageId("");
       router.refresh();
     } catch (error) {
@@ -257,10 +260,35 @@ export function PreSalesPipelineWorkspace({
   }
 
   async function openTransition(lead: LeadPipelineCard) {
-    const state = await loadLeadState(lead);
-    if (!state) return;
-    setSelectedLeadState(state);
     setSelectedLeadId(lead.id);
+    setSelectedLeadState(null);
+    setSelectedLeadOperations(null);
+    setRequestedStageId("");
+    setPending(true);
+    setNotice(null);
+    try {
+      const [stateResponse, operationsResponse] = await Promise.all([
+        fetch(`/api/leads/${lead.id}/stage`, { cache: "no-store" }),
+        fetch(`/api/leads/${lead.id}/operations?pageSize=8`, { cache: "no-store" }),
+      ]);
+      const [state, operations] = await Promise.all([
+        responseResult<LeadPipelineState>(stateResponse),
+        responseResult<LeadCardOperations>(operationsResponse),
+      ]);
+      setSelectedLeadState(state);
+      setSelectedLeadOperations(operations);
+    } catch (error) {
+      setSelectedLeadId(null);
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  function closeLeadDrawer() {
+    setSelectedLeadId(null);
+    setSelectedLeadState(null);
+    setSelectedLeadOperations(null);
     setRequestedStageId("");
   }
 
@@ -283,8 +311,7 @@ export function PreSalesPipelineWorkspace({
       return;
     }
     if (!option.allowed || option.requiresConfirmation || option.requiresDisqualificationReason) {
-      setSelectedLeadState(state);
-      setSelectedLeadId(lead.id);
+      await openTransition(lead);
       setRequestedStageId(stage.id);
       setNotice({
         kind: option.blockReason ? "error" : "success",
@@ -343,19 +370,19 @@ export function PreSalesPipelineWorkspace({
               <header className={styles.laneHeader}><div><h2>{stage.name}</h2><span>{stage.leads.filter((lead) => lead.nextActionAt).length} atividades agendadas</span></div><span aria-label={`${stage.count} leads nesta etapa`} className={styles.count}>{stage.count}</span></header>
               <div className={styles.cards}>
                 {stage.leads.map((lead) => (
-                  <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={screen.canWrite && !pending} key={lead.id} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)}>
+                  <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={screen.canWrite && !pending} key={lead.id} onClick={() => { if (!pending) void openTransition(lead); }} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)}>
                     <div className={styles.cardBody}>
-                      <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${lead.fullName}`} className={styles.dragHandle} disabled={!screen.canWrite || pending} draggable={screen.canWrite && !pending} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div></div>
-                      <div className={styles.cardTitle}><Link draggable={false} href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link><span title="Pontuação de qualificação">{lead.score === null ? "—" : `${lead.score}/100`}</span></div>
+                      <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${lead.fullName}`} className={styles.dragHandle} disabled={!screen.canWrite || pending} draggable={screen.canWrite && !pending} onClick={(event) => event.stopPropagation()} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div></div>
+                      <div className={styles.cardTitle}><button aria-label={`Abrir detalhes de ${lead.fullName}`} disabled={pending} draggable={false} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} type="button">{lead.fullName}</button><span title="Pontuação de qualificação">{lead.score === null ? "—" : `${lead.score}/100`}</span></div>
                       {lead.jobTitle ? <p className={styles.subtitle}>{lead.jobTitle}</p> : null}
                     </div>
                     <footer className={styles.cardFooter}>
                       <span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatar} title={lead.responsibleName}>{lead.responsibleName.slice(0, 1).toUpperCase()}</span>
-                      <Link aria-label={`Adicionar atividade para ${lead.fullName}`} draggable={false} href={`/leads/${lead.id}/historico#registrar-atividade`} title="Adicionar atividade"><Icon name="meu-dia" size={13} /></Link>
-                      <Link aria-label={`Criar lembrete para ${lead.fullName}`} draggable={false} href={`/leads/${lead.id}/historico#criar-tarefa`} title="Criar lembrete"><Icon name="agenda" size={13} /></Link>
-                      <Link aria-label={`Agendar reunião com ${lead.fullName}`} draggable={false} href={`/leads/${lead.id}/historico#reunioes`} title="Agendar reunião"><Icon name="mais" size={13} /></Link>
+                      <button aria-label={`Abrir atividades de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} title="Atividades" type="button"><Icon name="meu-dia" size={13} /></button>
+                      <button aria-label={`Abrir lembretes de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} title="Lembretes" type="button"><Icon name="agenda" size={13} /></button>
+                      <button aria-label={`Abrir reuniões de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} title="Reuniões" type="button"><Icon name="mais" size={13} /></button>
                       <span className={styles.activity} title={`${lead.nextActionDescription ?? "Sem próxima atividade"} · ${formatDate(lead.nextActionAt, screen.timeZone)}`}><Icon name="relogio" size={12} />{lead.nextActionAt ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: screen.timeZone }).format(new Date(lead.nextActionAt)) : "Sem prazo"}</span>
-                      <button aria-label={`Alterar etapa de ${lead.fullName}`} className={styles.moveButton} disabled={!screen.canWrite || pending} onClick={() => void openTransition(lead)} title="Alterar etapa" type="button"><Icon name="seta-direita" size={13} /></button>
+                      <button aria-label={`Alterar etapa de ${lead.fullName}`} className={styles.moveButton} disabled={!screen.canWrite || pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} title="Alterar etapa" type="button"><Icon name="seta-direita" size={13} /></button>
                     </footer>
                   </article>
                 ))}
@@ -377,18 +404,38 @@ export function PreSalesPipelineWorkspace({
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="sticky top-0 z-10 border-b bg-muted"><tr><th className="p-3">Lead</th><th className="p-3">Etapa</th><th className="p-3">Prioridade</th><th className="p-3">Responsável</th><th className="p-3">Próxima ação</th><th className="p-3">Ação</th></tr></thead>
               <tbody>{visibleStages.flatMap((stage) => stage.leads).map((lead) => (
-                <tr className="border-b last:border-0" key={lead.id}><td className="p-3"><Link className="font-medium underline" href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link></td><td className="p-3"><span className="stage-badge">{lead.currentStageName}</span></td><td className="p-3">{lead.score === null ? "Ausente" : <span className="priority-badge" data-priority={lead.priorityCode}>{lead.priorityCode} · {lead.score}</span>}</td><td className="p-3">{lead.responsibleName}</td><td className="p-3">{lead.nextActionDescription ?? "Ausente"}</td><td className="p-3"><Button disabled={!screen.canWrite || pending} onClick={() => void openTransition(lead)} size="sm" type="button" variant="secondary">Alterar etapa</Button></td></tr>
+                <tr className="border-b last:border-0" key={lead.id}><td className="p-3"><button className="font-medium underline" disabled={pending} onClick={() => void openTransition(lead)} type="button">{lead.fullName}</button></td><td className="p-3"><span className="stage-badge">{lead.currentStageName}</span></td><td className="p-3">{lead.score === null ? "Ausente" : <span className="priority-badge" data-priority={lead.priorityCode}>{lead.priorityCode} · {lead.score}</span>}</td><td className="p-3">{lead.responsibleName}</td><td className="p-3">{lead.nextActionDescription ?? "Ausente"}</td><td className="p-3"><Button disabled={pending} onClick={() => void openTransition(lead)} size="sm" type="button" variant="secondary">Abrir lead</Button></td></tr>
               ))}</tbody>
             </table>
           </DataTableShell>
         </section>
       )}
 
-      {selectedLead && selectedLeadState ? (
-        <AccessibleDialog busy={pending} labelledBy="transition-title" onDismiss={() => { setSelectedLeadId(null); setSelectedLeadState(null); setRequestedStageId(""); }} className="max-w-xl">
-          <form onSubmit={submitTransition}>
-            <h2 className="text-xl font-bold" id="transition-title">Alterar etapa de {selectedLead.fullName}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Etapa atual: {selectedLead.currentStageName}</p>
+      {selectedLead ? (
+        <AccessibleDialog backdropClassName={styles.drawerBackdrop ?? ""} busy={pending} labelledBy="transition-title" onDismiss={closeLeadDrawer} className={styles.opportunityDrawer ?? ""}>
+          <div className={styles.drawerHeader}>
+            <div><h2 className="text-xl font-bold" id="transition-title">{selectedLead.fullName}</h2><p className="mt-1 text-sm text-muted-foreground">Etapa atual: {selectedLead.currentStageName}</p></div>
+            <button aria-label="Fechar painel" className={styles.drawerClose} disabled={pending} onClick={closeLeadDrawer} title="Fechar" type="button">×</button>
+          </div>
+          {!selectedLeadState || !selectedLeadOperations ? <p aria-live="polite" className="py-10 text-center text-sm text-muted-foreground">Carregando informações do lead…</p> : <>
+          <section className="grid gap-3 rounded-md border p-4 sm:grid-cols-2" aria-label="Resumo do lead">
+            <div><p className="text-xs text-muted-foreground">Telefone</p><p className="text-sm font-medium">{selectedLeadOperations.lead.normalizedPhone ?? "Não informado"}</p></div>
+            <div><p className="text-xs text-muted-foreground">E-mail</p><p className="break-all text-sm font-medium">{selectedLeadOperations.lead.normalizedEmail ?? "Não informado"}</p></div>
+            <div><p className="text-xs text-muted-foreground">Responsável</p><p className="text-sm font-medium">{selectedLeadOperations.lead.operationalOwner}</p></div>
+            <div><p className="text-xs text-muted-foreground">Origem</p><p className="text-sm font-medium">{selectedLeadOperations.lead.sourceName}</p></div>
+            <div className="sm:col-span-2"><p className="text-xs text-muted-foreground">Dor ou interesse</p><p className="text-sm">{selectedLeadOperations.lead.interestSummary ?? "Não informado"}</p></div>
+            <div className="sm:col-span-2"><p className="text-xs text-muted-foreground">Próxima ação</p><p className="text-sm font-medium">{selectedLeadOperations.lead.nextAction ? `${selectedLeadOperations.lead.nextAction.title} · ${formatDate(selectedLeadOperations.lead.nextAction.dueAt, screen.timeZone)}` : "Nenhuma próxima ação agendada"}</p></div>
+          </section>
+          <section className="rounded-md border p-4" aria-label="Atividades recentes">
+            <h3 className="font-semibold">Atividades recentes</h3>
+            {selectedLeadOperations.timeline.length ? <ul className="mt-3 grid gap-2">{selectedLeadOperations.timeline.slice(0, 5).map((entry) => <li className="rounded-md bg-muted/30 p-3 text-sm" key={entry.id}><div className="flex justify-between gap-3"><strong>{entry.subject}</strong><span className="text-xs text-muted-foreground">{formatDate(entry.occurredAt, screen.timeZone)}</span></div>{entry.description ? <p className="mt-1 text-muted-foreground">{entry.description}</p> : null}</li>)}</ul> : <p className="mt-2 text-sm text-muted-foreground">Nenhuma atividade registrada.</p>}
+          </section>
+          <section className="rounded-md border p-4" aria-label="Lembretes do lead">
+            <h3 className="font-semibold">Lembretes e tarefas</h3>
+            {selectedLeadOperations.tasks.length ? <ul className="mt-3 grid gap-2">{selectedLeadOperations.tasks.slice(0, 5).map((task) => <li className="flex items-start justify-between gap-3 rounded-md bg-muted/30 p-3 text-sm" key={task.id}><span>{task.title}</span><span className="text-xs text-muted-foreground">{formatDate(task.dueAt, screen.timeZone)}</span></li>)}</ul> : <p className="mt-2 text-sm text-muted-foreground">Nenhum lembrete pendente.</p>}
+          </section>
+          {screen.canWrite ? <form className="rounded-md border p-4" onSubmit={submitTransition}>
+            <h3 className="font-semibold">Mover para outra etapa</h3>
             {screen.canCorrect ? <label className="mt-4 flex items-center gap-2 text-sm"><input name="managerCorrection" type="checkbox" /> Registrar como correção gerencial</label> : null}
             <label className="mt-4 block text-sm">Etapa de destino
               <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" defaultValue={requestedStageId} name="targetStageId" required>
@@ -402,8 +449,9 @@ export function PreSalesPipelineWorkspace({
             <label className="mt-4 block text-sm">Motivo de desqualificação (opcional)
               <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" name="disqualificationReasonId"><option value="">Não se aplica</option>{selectedLeadState.disqualificationReasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select>
             </label>
-            <div className="mt-6 flex justify-end gap-2"><Button disabled={pending} onClick={() => { setSelectedLeadId(null); setSelectedLeadState(null); setRequestedStageId(""); }} type="button" variant="secondary">Cancelar</Button><Button disabled={pending} type="submit">{pending ? "Salvando…" : "Confirmar transição"}</Button></div>
-          </form>
+            <div className="mt-6 flex justify-end gap-2"><Button disabled={pending} onClick={closeLeadDrawer} type="button" variant="secondary">Cancelar</Button><Button disabled={pending} type="submit">{pending ? "Salvando…" : "Confirmar transição"}</Button></div>
+          </form> : null}
+          </>}
         </AccessibleDialog>
       ) : null}
       {quickCreateOpen ? <QuickLeadDialog
