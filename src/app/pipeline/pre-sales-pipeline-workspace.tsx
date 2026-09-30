@@ -10,6 +10,7 @@ import { Icon } from "@/components/ui/icon";
 import styles from "./pipeline-workspace.module.css";
 import { DataTableShell } from "@/components/ui/surface";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
+import { useTouchPipelineControls } from "@/components/pipelines/use-touch-pipeline-controls";
 import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
 import type {
   LeadPipelineCard,
@@ -178,6 +179,7 @@ export function PreSalesPipelineWorkspace({
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
+  const touchControls = useTouchPipelineControls();
   const cards = useMemo(() => allCards(screen.stages), [screen.stages]);
   const selectedLead = cards.find((lead) => lead.id === selectedLeadId) ?? null;
   const visibleStages = screen.filters.stageCode === "ALL"
@@ -370,9 +372,9 @@ export function PreSalesPipelineWorkspace({
               <header className={styles.laneHeader}><div><h2>{stage.name}</h2><span>{stage.leads.filter((lead) => lead.nextActionAt).length} atividades agendadas</span></div><span aria-label={`${stage.count} leads nesta etapa`} className={styles.count}>{stage.count}</span></header>
               <div className={styles.cards}>
                 {stage.leads.map((lead) => (
-                  <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={screen.canWrite && !pending} key={lead.id} onClick={() => { if (!pending) void openTransition(lead); }} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)}>
+                  <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={!touchControls && screen.canWrite && !pending} key={lead.id} onClick={() => { if (!pending) void openTransition(lead); }} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)}>
                     <div className={styles.cardBody}>
-                      <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${lead.fullName}`} className={styles.dragHandle} disabled={!screen.canWrite || pending} draggable={screen.canWrite && !pending} onClick={(event) => event.stopPropagation()} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div></div>
+                      <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${lead.fullName}`} className={styles.dragHandle} disabled={!screen.canWrite || pending || touchControls} draggable={!touchControls && screen.canWrite && !pending} onClick={(event) => event.stopPropagation()} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div></div>
                       <div className={styles.cardTitle}><button aria-label={`Abrir detalhes de ${lead.fullName}`} disabled={pending} draggable={false} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} type="button">{lead.fullName}</button><span title="Pontuação de qualificação">{lead.score === null ? "—" : `${lead.score}/100`}</span></div>
                       {lead.jobTitle ? <p className={styles.subtitle}>{lead.jobTitle}</p> : null}
                     </div>
@@ -383,6 +385,7 @@ export function PreSalesPipelineWorkspace({
                       <button aria-label={`Abrir reuniões de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} title="Reuniões" type="button"><Icon name="mais" size={13} /></button>
                       <span className={styles.activity} title={`${lead.nextActionDescription ?? "Sem próxima atividade"} · ${formatDate(lead.nextActionAt, screen.timeZone)}`}><Icon name="relogio" size={12} />{lead.nextActionAt ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: screen.timeZone }).format(new Date(lead.nextActionAt)) : "Sem prazo"}</span>
                       <button aria-label={`Alterar etapa de ${lead.fullName}`} className={styles.moveButton} disabled={!screen.canWrite || pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} title="Alterar etapa" type="button"><Icon name="seta-direita" size={13} /></button>
+                      <button aria-label={`Mover ${lead.fullName} para outra etapa`} className={styles.mobileMoveButton} disabled={!screen.canWrite || pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} type="button">Mover para <Icon name="seta-direita" size={13} /></button>
                     </footer>
                   </article>
                 ))}

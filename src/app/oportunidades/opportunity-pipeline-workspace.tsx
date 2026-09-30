@@ -13,6 +13,7 @@ import { DataTableShell } from "@/components/ui/surface";
 import { SalesGatesPanel } from "@/components/opportunities/sales-gates-panel";
 import { AccountPlanPanel } from "@/components/opportunities/account-plan-panel";
 import { SaleCompletionPanel } from "@/components/opportunities/sale-completion-panel";
+import { useTouchPipelineControls } from "@/components/pipelines/use-touch-pipeline-controls";
 import type {
   OpportunityListItem,
   OpportunityPipelineScreen,
@@ -65,7 +66,7 @@ function canCompleteWithTransitionForm(option: OpportunityTransitionOption) {
   return option.allowed || option.blockReason === "Crie uma próxima ação antes da transição.";
 }
 
-function OpportunityRow({ opportunity, timeZone, onSelect, onDragStart, onDragEnd, pending, dragging }: Readonly<{
+function OpportunityRow({ opportunity, timeZone, onSelect, onDragStart, onDragEnd, pending, dragging, touchControls }: Readonly<{
   opportunity: OpportunityListItem;
   timeZone: string;
   onSelect: () => void;
@@ -73,11 +74,12 @@ function OpportunityRow({ opportunity, timeZone, onSelect, onDragStart, onDragEn
   onDragEnd: () => void;
   pending: boolean;
   dragging: boolean;
+  touchControls: boolean;
 }>) {
   return (
-    <article className={styles.card} data-dragging={dragging || undefined} draggable={opportunity.canWrite && opportunity.status === "OPEN" && !pending} onClick={() => { if (!pending) onSelect(); }} onDragEnd={onDragEnd} onDragStart={onDragStart}>
+    <article className={styles.card} data-dragging={dragging || undefined} draggable={!touchControls && opportunity.canWrite && opportunity.status === "OPEN" && !pending} onClick={() => { if (!pending) onSelect(); }} onDragEnd={onDragEnd} onDragStart={onDragStart}>
       <div className={styles.cardBody}>
-        <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={opportunity.status === "WON" ? "green" : opportunity.status === "LOST" ? "red" : "purple"}>{opportunity.status === "WON" ? "Ganho" : opportunity.status === "LOST" ? "Perdido" : opportunity.status === "CANCELLED" ? "Cancelado" : "Em aberto"}</span>{opportunity.productName ? <span className={styles.tag} data-tone="blue" title={opportunity.productName}>{opportunity.productName}</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${opportunity.name}`} className={styles.dragHandle} disabled={!opportunity.canWrite || opportunity.status !== "OPEN" || pending} draggable={opportunity.canWrite && opportunity.status === "OPEN" && !pending} onClick={(event) => event.stopPropagation()} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${opportunity.ownerName}`} className={styles.avatarSquare} title={opportunity.ownerName}>{opportunity.ownerName.slice(0, 2).toUpperCase()}</span></div></div>
+        <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={opportunity.status === "WON" ? "green" : opportunity.status === "LOST" ? "red" : "purple"}>{opportunity.status === "WON" ? "Ganho" : opportunity.status === "LOST" ? "Perdido" : opportunity.status === "CANCELLED" ? "Cancelado" : "Em aberto"}</span>{opportunity.productName ? <span className={styles.tag} data-tone="blue" title={opportunity.productName}>{opportunity.productName}</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${opportunity.name}`} className={styles.dragHandle} disabled={!opportunity.canWrite || opportunity.status !== "OPEN" || pending || touchControls} draggable={!touchControls && opportunity.canWrite && opportunity.status === "OPEN" && !pending} onClick={(event) => event.stopPropagation()} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${opportunity.ownerName}`} className={styles.avatarSquare} title={opportunity.ownerName}>{opportunity.ownerName.slice(0, 2).toUpperCase()}</span></div></div>
         <div className={styles.cardTitle}><button aria-label={`Abrir detalhes de ${opportunity.leadName}`} disabled={pending} draggable={false} onClick={(event) => { event.stopPropagation(); onSelect(); }} title={opportunity.name} type="button">{opportunity.name}</button><span>{money(opportunity.amountCents)}</span></div>
         <p className={styles.subtitle}>{opportunity.leadName}{opportunity.accountName ? ` · ${opportunity.accountName}` : ""}</p>
       </div>
@@ -87,6 +89,7 @@ function OpportunityRow({ opportunity, timeZone, onSelect, onDragStart, onDragEn
         <button aria-label={`Abrir contato de ${opportunity.leadName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); onSelect(); }} title="Contato" type="button"><Icon name="leads" size={13} /></button>
         <span className={styles.activity} title={`${opportunity.nextActionDescription ?? "Sem próxima atividade"} · ${date(opportunity.nextActionAt, timeZone)} · MRR ${money(opportunity.mrrCents)} / TCV ${money(opportunity.tcvCents)}`}><Icon name="relogio" size={12} />{opportunity.nextActionAt ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone }).format(new Date(opportunity.nextActionAt)) : "Sem prazo"}</span>
         {opportunity.canWrite && opportunity.status === "OPEN" ? <button aria-label={`Trabalhar oportunidade ${opportunity.name}`} className={styles.moveButton} disabled={pending} onClick={(event) => { event.stopPropagation(); onSelect(); }} title="Alterar etapa / proposta" type="button"><Icon name="seta-direita" size={13} /></button> : null}
+        {opportunity.canWrite && opportunity.status === "OPEN" ? <button aria-label={`Mover ${opportunity.name} para outra etapa`} className={styles.mobileMoveButton} disabled={pending} onClick={(event) => { event.stopPropagation(); onSelect(); }} type="button">Mover para <Icon name="seta-direita" size={13} /></button> : null}
       </footer>
     </article>
   );
@@ -104,6 +107,7 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [bulkPreview, setBulkPreview] = useState<BulkPreview | null>(null);
   const [bulkAction, setBulkAction] = useState<"REASSIGN" | "TRANSITION">("REASSIGN");
+  const touchControls = useTouchPipelineControls();
   const opportunities = useMemo(() => screen.stages.flatMap((stage) => stage.opportunities), [screen.stages]);
   const selected = opportunities.find((item) => item.id === selectedId) ?? null;
   const selectedOpportunities = opportunities.filter((item) => selectedIds.has(item.id));
@@ -306,7 +310,7 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
           {screen.stages.map((stage) => (
             <section aria-label={`Etapa ${stage.name}`} className={styles.lane} data-drop-active={dropStageId === stage.id || undefined} key={stage.id} onDragEnter={() => setDropStageId(stage.id)} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropStageId(null); }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => void dropOpportunity(event, stage)}>
               <header className={styles.laneHeader}><div><h2>{stage.name}</h2><span>{money(stage.opportunities.reduce((total, item) => total + BigInt(item.amountCents), BigInt(0)).toString())}</span></div><span aria-label={`${stage.count} oportunidades nesta etapa`} className={styles.count}>{stage.count}</span></header>
-              <div className={styles.cards}>{stage.opportunities.map((opportunity) => <OpportunityRow dragging={draggedOpportunityId === opportunity.id} key={opportunity.id} opportunity={opportunity} timeZone={screen.timeZone} pending={pending} onDragEnd={() => { setDraggedOpportunityId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, opportunity)} onSelect={() => { setRequestedStageId(""); setSelectedId(opportunity.id); }} />)}{stage.count === 0 ? <div className={styles.emptyLane}><Icon name="vendas" size={20} /><p>Nenhuma oportunidade</p><span>Os negócios aparecerão aqui ao entrar nesta fase.</span></div> : null}</div>
+              <div className={styles.cards}>{stage.opportunities.map((opportunity) => <OpportunityRow dragging={draggedOpportunityId === opportunity.id} key={opportunity.id} opportunity={opportunity} timeZone={screen.timeZone} pending={pending} touchControls={touchControls} onDragEnd={() => { setDraggedOpportunityId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, opportunity)} onSelect={() => { setRequestedStageId(""); setSelectedId(opportunity.id); }} />)}{stage.count === 0 ? <div className={styles.emptyLane}><Icon name="vendas" size={20} /><p>Nenhuma oportunidade</p><span>Os negócios aparecerão aqui ao entrar nesta fase.</span></div> : null}</div>
             </section>
           ))}
         </section>

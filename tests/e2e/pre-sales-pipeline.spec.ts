@@ -87,3 +87,29 @@ test("mantém o pipeline somente leitura para o visualizador", async ({ page }) 
   const firstTransitionButton = page.getByRole("button", { name: "Alterar etapa" }).first();
   if (await firstTransitionButton.count()) await expect(firstTransitionButton).toBeDisabled();
 });
+
+test("move leads no celular sem depender de arrastar", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, DEMO_USERS[1].email);
+  await page.goto("/pipeline");
+
+  const moveButton = page.getByRole("button", { name: /^Mover .+ para outra etapa$/ }).first();
+  await expect(moveButton).toBeVisible();
+  const touchTarget = await moveButton.boundingBox();
+  expect(touchTarget?.height).toBeGreaterThanOrEqual(40);
+  expect(touchTarget?.width).toBeGreaterThan(100);
+
+  const card = moveButton.locator("xpath=ancestor::article");
+  await expect(card).toHaveAttribute("draggable", "false");
+  await expect(card.getByRole("button", { name: /^Arrastar / })).toBeHidden();
+
+  await moveButton.click();
+  await expect(page).toHaveURL(/\/pipeline(?:\?|$)/);
+  await expect(page.getByRole("dialog")).toBeVisible();
+  const stageSelect = page.getByLabel("Etapa de destino");
+  await expect(stageSelect).toBeVisible();
+  await expect.poll(() => stageSelect.locator("option").count()).toBeGreaterThan(1);
+
+  await page.getByRole("button", { name: "Fechar painel" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});

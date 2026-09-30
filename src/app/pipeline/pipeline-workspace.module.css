@@ -50,13 +50,14 @@
 .cardTitle > span { flex: 0 0 auto; font-size: 9px; font-weight: 650; }
 .subtitle { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; color: var(--text-muted); }
 .cardFooter { display: flex; align-items: center; gap: 7px; min-height: 33px; padding: 5px 9px; border-top: 1px solid var(--border); color: var(--text-muted); }
-.cardFooter > button:not(.moveButton) { display: inline-flex; border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; }
-.cardFooter > button:not(.moveButton):hover { color: var(--primary); }
+.cardFooter > button:not(.moveButton):not(.mobileMoveButton) { display: inline-flex; border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; }
+.cardFooter > button:not(.moveButton):not(.mobileMoveButton):hover { color: var(--primary); }
 .avatar { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #e5d7ca; color: #725848; font-size: 8px; font-weight: 700; }
 .activity { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; font-size: 8px; white-space: nowrap; }
 .moveButton { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: 0; border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; }
 .moveButton:hover { background: var(--primary-soft); color: var(--primary); }
 .moveButton:disabled { opacity: .35; cursor: not-allowed; }
+.mobileMoveButton { display: none; }
 .drawerBackdrop { align-items: stretch; justify-content: flex-end; padding: 12px; background: color-mix(in oklab, var(--foreground) 24%, transparent); backdrop-filter: blur(1px); }
 .opportunityDrawer { display: grid; align-content: start; gap: 20px; width: min(720px, calc(100vw - 48px)); max-height: calc(100vh - 24px); margin: 0; border-radius: 18px; padding: 22px; }
 .drawerHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; position: sticky; top: -22px; z-index: 3; margin: -22px -22px 0; padding: 22px; border-bottom: 1px solid var(--border); background: var(--surface); }
@@ -80,5 +81,34 @@
   .drawerBackdrop { padding: 0; }
   .opportunityDrawer { width: 100%; max-height: 100vh; border-radius: 0; padding: 18px; }
   .drawerHeader { top: -18px; margin: -18px -18px 0; padding: 18px; }
+}
+@media (max-width: 1024px), (hover: none), (pointer: coarse) {
+  .board, .card { touch-action: pan-x pan-y; }
+  .card[draggable="true"] { cursor: pointer; }
+  .dragHandle, .moveButton { display: none; }
+  .cardFooter { flex-wrap: wrap; }
+  .activity { margin-left: auto; }
+  .cardFooter > .mobileMoveButton {
+    display: inline-flex;
+    flex: 1 0 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    margin-top: 3px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 0 12px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 650;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .cardFooter > .mobileMoveButton:hover { border-color: var(--border-strong); color: var(--primary); }
+  .cardFooter > .mobileMoveButton:disabled { opacity: .45; cursor: not-allowed; }
 }
 @media (prefers-reduced-motion: reduce) { .card { transition: none; } }
