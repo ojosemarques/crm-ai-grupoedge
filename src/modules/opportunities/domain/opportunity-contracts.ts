@@ -14,6 +14,8 @@ export type OpportunityListItem = Readonly<{
   id: string;
   leadId: string;
   leadName: string;
+  sourceId: string;
+  sourceName: string;
   accountId: string | null;
   accountName: string | null;
   ownerMemberId: string;
@@ -60,6 +62,7 @@ export type OpportunityStageColumn = Readonly<{
   code: OpportunityStageCode;
   name: string;
   position: number;
+  type: "OPEN" | "WON" | "LOST";
   count: number;
   opportunities: readonly OpportunityListItem[];
 }>;
@@ -72,6 +75,7 @@ export type OpportunityPipelineScreen = Readonly<{
   filters: Readonly<{
     closerId: string;
     productId: string;
+    sourceId: string;
     stageCode: OpportunityStageCode | "ALL";
     from: string;
     to: string;
@@ -80,6 +84,7 @@ export type OpportunityPipelineScreen = Readonly<{
   canFilterCloser: boolean;
   closerOptions: readonly OpportunityReference[];
   productOptions: readonly OpportunityReference[];
+  sourceOptions: readonly OpportunityReference[];
   lossReasons: readonly OpportunityReference[];
   stages: readonly OpportunityStageColumn[];
 }>;

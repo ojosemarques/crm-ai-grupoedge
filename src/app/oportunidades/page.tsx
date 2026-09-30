@@ -19,6 +19,7 @@ export default async function OpportunitiesPage({ searchParams }: Readonly<{ sea
     screen = await getOpportunityService().getPipelineScreen(context, {
       closerId: first(params.closerId),
       productId: first(params.productId),
+      sourceId: first(params.sourceId),
       stageCode: first(params.stageCode),
       from: first(params.from),
       to: first(params.to),

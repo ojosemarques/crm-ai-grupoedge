@@ -7,6 +7,7 @@ import { Icon, type IconName } from "@/components/ui/icon";
 import styles from "./settings-workspace.module.css";
 
 import { Button } from "@/components/ui/button";
+import { PipelineTemplateWorkspace } from "@/app/configuracoes/pipeline-template-workspace";
 import type { CommercialSettingsScreen, SettingsPreview } from "@/modules/settings/domain/commercial-settings-contracts";
 
 type PendingChange = Readonly<{ command: Record<string, unknown>; preview: SettingsPreview }>;
@@ -17,6 +18,7 @@ const settingSections: ReadonlyArray<{ key: string; label: string; detail: strin
   { key: "scoring", label: "Scoring e SLA", detail: "Prioridade e atendimento", icon: "tendencia" },
   { key: "catalog", label: "Catálogo comercial", detail: "Produtos, ofertas e motivos", icon: "vendas" },
   { key: "pipeline", label: "Pipelines e etapas", detail: "Jornada dos seus negócios", icon: "pipeline" },
+  { key: "models", label: "Origens e modelos", detail: "Reuso, migração e rollback", icon: "configuracoes" },
 ];
 
 function centsToReais(value: string) { return (Number(value) / 100).toFixed(2).replace(".", ","); }
@@ -118,6 +120,7 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
 
     <div hidden={section !== "catalog"}><CatalogEditor busy={busy} prepare={prepare} screen={screen} /></div>
     <div hidden={section !== "pipeline"}><PipelineEditor busy={busy} prepare={prepare} screen={screen} /></div>
+    <div hidden={section !== "models"}><PipelineTemplateWorkspace active={section === "models"} /></div>
   </div></div>;
 }
 

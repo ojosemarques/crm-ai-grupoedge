@@ -15,6 +15,8 @@ import type {
   OpportunityPipelineScreen,
 } from "@/modules/opportunities/domain/opportunity-contracts";
 
+type BulkPreview = Readonly<{ operationId: string; selectedCount: number; eligibleCount: number; blocked: readonly Readonly<{ id: string; reason: string }>[] }>;
+
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
 
 function money(cents: string) {
@@ -48,6 +50,12 @@ async function readResult(response: Response) {
   if (!response.ok) throw new Error(body.error?.message ?? "Não foi possível alterar a oportunidade.");
 }
 
+async function resultBody(response: Response) {
+  const body = await response.json().catch(() => ({})) as { error?: { message?: string }; result?: unknown };
+  if (!response.ok) throw new Error(body.error?.message ?? "Não foi possível preparar a ação em massa.");
+  return body.result;
+}
+
 function OpportunityRow({ opportunity, timeZone, onSelect, pending }: Readonly<{ opportunity: OpportunityListItem; timeZone: string; onSelect: () => void; pending: boolean }>) {
   return (
     <article className={styles.card}>
@@ -69,12 +77,52 @@ function OpportunityRow({ opportunity, timeZone, onSelect, pending }: Readonly<{
 
 export function OpportunityPipelineWorkspace({ screen }: Readonly<{ screen: OpportunityPipelineScreen }>) {
   const router = useRouter();
-  const [view, setView] = useState<"board" | "list">("board");
+  const [view, setView] = useState<"board" | "list" | "summary">("board");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [bulkPreview, setBulkPreview] = useState<BulkPreview | null>(null);
+  const [bulkAction, setBulkAction] = useState<"REASSIGN" | "TRANSITION">("REASSIGN");
   const opportunities = useMemo(() => screen.stages.flatMap((stage) => stage.opportunities), [screen.stages]);
   const selected = opportunities.find((item) => item.id === selectedId) ?? null;
+  const selectedOpportunities = opportunities.filter((item) => selectedIds.has(item.id));
+  const summaries = useMemo(() => {
+    const groups = new Map<string, { owner: string; count: number; amount: bigint; open: number; won: number; lost: number }>();
+    for (const item of opportunities) {
+      const current = groups.get(item.ownerName) ?? { owner: item.ownerName, count: 0, amount: 0n, open: 0, won: 0, lost: 0 };
+      current.count += 1; current.amount += BigInt(item.amountCents);
+      if (item.status === "OPEN") current.open += 1; else if (item.status === "WON") current.won += 1; else if (item.status === "LOST") current.lost += 1;
+      groups.set(item.ownerName, current);
+    }
+    return [...groups.values()].sort((left, right) => right.count - left.count);
+  }, [opportunities]);
+
+  function toggleSelected(opportunityId: string) {
+    setSelectedIds((current) => { const next = new Set(current); if (next.has(opportunityId)) next.delete(opportunityId); else next.add(opportunityId); return next; });
+  }
+
+  async function previewBulk(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const form = new FormData(event.currentTarget);
+    setPending(true); setNotice(null);
+    try {
+      const raw = await resultBody(await fetch("/api/opportunities/bulk", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        opportunityIds: selectedOpportunities.map((item) => item.id), action: form.get("action"), targetId: form.get("targetId"), reason: form.get("reason"),
+        expectedRevisions: selectedOpportunities.map((item) => ({ id: item.id, revision: item.revision })),
+      }) }));
+      const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+      const blocked = Array.isArray(value.blocked) ? value.blocked.filter((item): item is { id: string; reason: string } => Boolean(item && typeof item === "object" && "id" in item && "reason" in item)) : [];
+      setBulkPreview({ operationId: String(value.operationId ?? value.id ?? ""), selectedCount: Number(value.selectedCount ?? selectedOpportunities.length), eligibleCount: Number(value.eligibleCount ?? value.expectedCount ?? selectedOpportunities.length), blocked });
+    } catch (error) { setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." }); }
+    finally { setPending(false); }
+  }
+
+  async function executeBulk() {
+    if (!bulkPreview) return; setPending(true); setNotice(null);
+    try { await resultBody(await fetch("/api/opportunities/bulk", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operationId: bulkPreview.operationId }) })); setBulkPreview(null); setSelectedIds(new Set()); setNotice({ kind: "success", message: "Ação em massa aplicada aos registros autorizados." }); router.refresh(); }
+    catch (error) { setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." }); }
+    finally { setPending(false); }
+  }
 
   async function transition(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -154,13 +202,14 @@ export function OpportunityPipelineWorkspace({ screen }: Readonly<{ screen: Oppo
         {screen.canFilterCloser ? <label className={styles.filter}>Dono do negócio<select aria-label="Dono do negócio" defaultValue={screen.filters.closerId} name="closerId"><option value="">Todos</option>{screen.closerOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
         <label className={styles.filter}>Produto<select aria-label="Produto" defaultValue={screen.filters.productId} name="productId"><option value="">Todos</option>{screen.productOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <label className={styles.filter}>Etapa<select aria-label="Etapa" defaultValue={screen.filters.stageCode} name="stageCode"><option value="ALL">Todas</option>{screen.stages.map((stage) => <option key={stage.id} value={stage.code}>{stage.name}</option>)}</select></label>
+        {screen.sourceOptions.length ? <label className={styles.filter}>Origem<select aria-label="Origem" defaultValue={screen.filters.sourceId} name="sourceId"><option value="">Todas</option>{screen.sourceOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
         <label className={styles.filter}>De<input defaultValue={screen.filters.from} name="from" type="date" /></label>
         <label className={styles.filter}>Até<input defaultValue={screen.filters.to} name="to" type="date" /></label>
         <Button size="sm" type="submit" variant="secondary"><Icon name="filtro" size={14} />Aplicar</Button><Link className={styles.clear} href="/oportunidades">Limpar filtros</Link>
       </form>
       <div className={styles.boardToolbar}>
         <p><strong>{screen.stages.reduce((total, stage) => total + stage.count, 0)}</strong> oportunidades de negócios <span className={styles.pipelineName}>{money(opportunities.reduce((total, item) => total + BigInt(item.amountCents), BigInt(0)).toString())} no pipeline</span></p>
-        <div className={styles.tools}><div className={styles.viewSwitch} aria-label="Alternar visualização"><button aria-pressed={view === "board"} onClick={() => setView("board")} type="button"><Icon name="dashboard" size={14} />Quadro</button><button aria-pressed={view === "list"} onClick={() => setView("list")} type="button"><Icon name="auditoria" size={14} />Lista</button></div><button aria-label="Atualizar oportunidades" className={styles.iconButton} onClick={() => router.refresh()} type="button"><Icon name="meu-dia" size={16} /></button></div>
+        <div className={styles.tools}><div className={styles.viewSwitch} aria-label="Alternar visualização"><button aria-pressed={view === "board"} onClick={() => setView("board")} type="button"><Icon name="dashboard" size={14} />Quadro</button><button aria-pressed={view === "list"} onClick={() => setView("list")} type="button"><Icon name="auditoria" size={14} />Lista</button><button aria-pressed={view === "summary"} onClick={() => setView("summary")} type="button"><Icon name="tendencia" size={14} />Consolidado</button></div><button aria-label="Atualizar oportunidades" className={styles.iconButton} onClick={() => router.refresh()} type="button"><Icon name="meu-dia" size={16} /></button></div>
       </div>
       {notice ? <p className="feedback-banner rounded-md border p-3 text-sm" data-tone={notice.kind === "error" ? "danger" : "success"} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
       {view === "board" ? (
@@ -172,9 +221,11 @@ export function OpportunityPipelineWorkspace({ screen }: Readonly<{ screen: Oppo
             </section>
           ))}
         </section>
-      ) : opportunities.length === 0 ? <EmptyState description="Crie uma oportunidade na ficha de um lead com reunião elegível." title="Nenhuma oportunidade neste recorte" /> : (
-        <DataTableShell><table className="w-full min-w-[1000px] text-left text-sm"><thead className="sticky top-0 z-10 border-b bg-muted"><tr><th className="p-3">Oportunidade</th><th className="p-3">Lead</th><th className="p-3">Closer</th><th className="p-3">Produto</th><th className="p-3">Etapa</th><th className="p-3">Valor</th><th className="p-3">Próxima ação</th><th className="p-3">Ação</th></tr></thead><tbody>{opportunities.map((opportunity) => <tr className="border-b last:border-0" key={opportunity.id}><td className="p-3 font-medium">{opportunity.name}</td><td className="p-3">{opportunity.leadName}</td><td className="p-3">{opportunity.ownerName}</td><td className="p-3">{opportunity.productName ?? opportunity.interestDescription ?? "Ausente"}</td><td className="p-3"><span className="stage-badge">{opportunity.stageName}</span></td><td className="p-3">{money(opportunity.amountCents)}</td><td className="p-3">{opportunity.nextActionDescription ?? "Encerrada"}</td><td className="p-3">{opportunity.canWrite && opportunity.status === "OPEN" ? <Button onClick={() => setSelectedId(opportunity.id)} size="sm" type="button" variant="secondary">Trabalhar oportunidade</Button> : "Somente leitura"}</td></tr>)}</tbody></table></DataTableShell>
+      ) : view === "summary" ? <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{summaries.map((summary) => <article className="surface-panel p-5" key={summary.owner}><h2 className="font-semibold">{summary.owner}</h2><p className="mt-1 text-2xl font-semibold">{money(summary.amount.toString())}</p><dl className="mt-4 grid grid-cols-4 gap-2 text-center text-xs"><div><dt className="text-muted-foreground">Total</dt><dd className="mt-1 font-semibold">{summary.count}</dd></div><div><dt className="text-muted-foreground">Abertas</dt><dd className="mt-1 font-semibold">{summary.open}</dd></div><div><dt className="text-muted-foreground">Ganhas</dt><dd className="mt-1 font-semibold">{summary.won}</dd></div><div><dt className="text-muted-foreground">Perdidas</dt><dd className="mt-1 font-semibold">{summary.lost}</dd></div></dl></article>)}</section> : opportunities.length === 0 ? <EmptyState description="Crie uma oportunidade na ficha de um lead com reunião elegível." title="Nenhuma oportunidade neste recorte" /> : (
+        <section className="grid gap-3">{selectedIds.size ? <form className="grid gap-3 rounded-md border bg-muted/30 p-4 md:grid-cols-4" onSubmit={previewBulk}><p className="self-center text-sm font-medium">{selectedIds.size} selecionadas</p><label className="text-sm">Ação<select className={inputClass} name="action" required value={bulkAction} onChange={(event) => setBulkAction(event.target.value as "REASSIGN" | "TRANSITION")}><option value="REASSIGN">Reatribuir dono</option><option value="TRANSITION">Mover etapa</option></select></label><label className="text-sm">Destino<select className={inputClass} name="targetId" required><option value="">Selecione</option>{bulkAction === "REASSIGN" ? screen.closerOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>) : screen.stages.filter((item) => item.code !== "WON" && item.code !== "LOST").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label className="text-sm">Motivo<input className={inputClass} minLength={3} name="reason" required /></label><Button disabled={pending} type="submit" variant="secondary">Revisar ação em massa</Button></form> : null}<DataTableShell><table className="w-full min-w-[1100px] text-left text-sm"><thead className="sticky top-0 z-10 border-b bg-muted"><tr><th className="p-3"><span className="sr-only">Selecionar</span></th><th className="p-3">Oportunidade</th><th className="p-3">Lead</th><th className="p-3">Closer</th><th className="p-3">Origem</th><th className="p-3">Produto</th><th className="p-3">Etapa</th><th className="p-3">Valor</th><th className="p-3">Próxima ação</th><th className="p-3">Ação</th></tr></thead><tbody>{opportunities.map((opportunity) => <tr className="border-b last:border-0" key={opportunity.id}><td className="p-3"><input aria-label={`Selecionar ${opportunity.name}`} checked={selectedIds.has(opportunity.id)} disabled={!opportunity.canWrite || opportunity.status !== "OPEN"} onChange={() => toggleSelected(opportunity.id)} type="checkbox" /></td><td className="p-3 font-medium">{opportunity.name}</td><td className="p-3">{opportunity.leadName}</td><td className="p-3">{opportunity.ownerName}</td><td className="p-3">{opportunity.sourceName ?? "Não informada"}</td><td className="p-3">{opportunity.productName ?? opportunity.interestDescription ?? "Ausente"}</td><td className="p-3"><span className="stage-badge">{opportunity.stageName}</span></td><td className="p-3">{money(opportunity.amountCents)}</td><td className="p-3">{opportunity.nextActionDescription ?? "Encerrada"}</td><td className="p-3">{opportunity.canWrite && opportunity.status === "OPEN" ? <Button onClick={() => setSelectedId(opportunity.id)} size="sm" type="button" variant="secondary">Trabalhar oportunidade</Button> : "Somente leitura"}</td></tr>)}</tbody></table></DataTableShell></section>
       )}
+
+      {bulkPreview ? <AccessibleDialog busy={pending} labelledBy="bulk-preview-title" onDismiss={() => setBulkPreview(null)}><h2 className="text-xl font-semibold" id="bulk-preview-title">Revisar ação em massa</h2><p className="mt-2 text-sm text-muted-foreground">{bulkPreview.eligibleCount} oportunidades foram revalidadas na prévia. A execução é atômica: se permissão, revisão ou destino mudar, nenhuma oportunidade será alterada.</p>{bulkPreview.blocked.length ? <ul className="mt-4 list-disc space-y-1 pl-5 text-sm">{bulkPreview.blocked.map((item) => <li key={item.id}>{item.reason}</li>)}</ul> : null}<div className="mt-6 flex justify-end gap-2"><Button disabled={pending} onClick={() => setBulkPreview(null)} variant="secondary">Cancelar</Button><Button disabled={pending || bulkPreview.eligibleCount !== bulkPreview.selectedCount || !bulkPreview.operationId} onClick={() => void executeBulk()}>Executar todas</Button></div></AccessibleDialog> : null}
 
       {selected ? (
         <AccessibleDialog

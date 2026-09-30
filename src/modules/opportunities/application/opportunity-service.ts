@@ -6,6 +6,7 @@ import type {
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { isCatalogItemSellable } from "@/modules/catalog/domain/catalog-sellability-policy";
 import { projectOpportunityOwnership } from "@/modules/lifecycle/application/lifecycle-projection-writer";
+import { assertPipelineRequiredFields } from "@/modules/pipeline-templates/application/opportunity-required-fields";
 import { getAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
 import {
   publishOpportunityClosedInTransaction,
@@ -78,6 +79,7 @@ const nextActionSchema = z.object({
 const pipelineQuerySchema = z.object({
   closerId: z.union([z.literal(""), z.string().uuid()]).default(""),
   productId: z.union([z.literal(""), z.string().uuid()]).default(""),
+  sourceId: z.union([z.literal(""), z.string().uuid()]).default(""),
   stageCode: z.enum([...opportunityStageCodes, "ALL"]).default("ALL"),
   from: z.union([z.literal(""), dateSchema]).default(""),
   to: z.union([z.literal(""), dateSchema]).default(""),
@@ -156,13 +158,14 @@ function notFound(message: string): never {
 
 function opportunityResource(
   workspaceId: string,
-  opportunity: Readonly<{ id: string; ownerMemberId: string }>,
+  opportunity: Readonly<{ id: string; ownerMemberId: string; lead?: { routingQueue?: { teamId: string | null } | null; queue?: { teamId: string | null } | null } }>,
 ): ResourceScope {
   return {
     workspaceId,
     resourceType: "Opportunity",
     resourceId: opportunity.id,
     ownerMemberId: opportunity.ownerMemberId,
+    teamId: opportunity.lead?.routingQueue?.teamId ?? opportunity.lead?.queue?.teamId ?? null,
   };
 }
 
@@ -368,6 +371,42 @@ function scopeWhere(scope: PermissionScope, context: AuthenticatedContext, owner
   return { ownerMemberId: { in: [...ownerIds] } };
 }
 
+async function originVisibility(
+  database: PrismaClient,
+  context: AuthenticatedContext,
+  scope: PermissionScope,
+) {
+  if (scope === "WORKSPACE") return { governedSourceIds: [] as string[], allowedSourceIds: [] as string[] };
+  const memberships = await database.teamMember.findMany({ where: { workspaceId: context.workspaceId, workspaceMemberId: context.memberId, deletedAt: null }, select: { teamId: true } });
+  const rules = await database.pipelineOriginAccessRule.findMany({ where: { workspaceId: context.workspaceId }, select: { sourceId: true, teamId: true, canRead: true } });
+  const teams = new Set(memberships.map((item) => item.teamId));
+  return {
+    governedSourceIds: [...new Set(rules.map((rule) => rule.sourceId))],
+    allowedSourceIds: [...new Set(rules.filter((rule) => rule.canRead && teams.has(rule.teamId)).map((rule) => rule.sourceId))],
+  };
+}
+
+function originVisibilityWhere(scope: PermissionScope, visibility: Awaited<ReturnType<typeof originVisibility>>): Prisma.OpportunityWhereInput {
+  if (scope === "WORKSPACE" || visibility.governedSourceIds.length === 0) return {};
+  return { OR: [{ lead: { sourceId: { notIn: visibility.governedSourceIds } } }, { lead: { sourceId: { in: visibility.allowedSourceIds } } }] };
+}
+
+async function assertOriginCapability(
+  database: PrismaClient | Prisma.TransactionClient,
+  context: AuthenticatedContext,
+  decision: AuthorizationDecision,
+  sourceId: string,
+  capability: "canTransition" | "canReassign",
+) {
+  if (!decision.allowed) throw new ApplicationError("Acesso negado.", { code: "ACCESS_DENIED", statusCode: 403, expose: true });
+  if (decision.scope === "WORKSPACE") return;
+  const rules = await database.pipelineOriginAccessRule.findMany({ where: { workspaceId: context.workspaceId, sourceId }, select: { teamId: true, canTransition: true, canReassign: true } });
+  if (!rules.length) return;
+  const memberships = await database.teamMember.findMany({ where: { workspaceId: context.workspaceId, workspaceMemberId: context.memberId, deletedAt: null }, select: { teamId: true } });
+  const teams = new Set(memberships.map((item) => item.teamId));
+  if (!rules.some((rule) => teams.has(rule.teamId) && rule[capability])) throw new ApplicationError("A origem não permite esta ação para sua equipe.", { code: "ORIGIN_TEAM_DENIED", statusCode: 403, expose: true });
+}
+
 async function referenceOptions(
   database: PrismaClient,
   context: AuthenticatedContext,
@@ -413,7 +452,7 @@ async function referenceOptions(
 
 type OpportunityRow = Prisma.OpportunityGetPayload<{
   include: {
-    lead: { select: { fullName: true } };
+  lead: { select: { fullName: true; sourceId: true; source: { select: { name: true } }; routingQueue: { select: { teamId: true } }; queue: { select: { teamId: true } } } };
     account: { select: { name: true } };
     owner: { select: { user: { select: { displayName: true } } } };
     product: { select: { name: true } };
@@ -473,6 +512,8 @@ function serializeOpportunity(
     id: row.id,
     leadId: row.leadId,
     leadName: row.lead.fullName,
+    sourceId: row.lead.sourceId,
+    sourceName: row.lead.source.name,
     accountId: row.accountId,
     accountName: row.account?.name ?? null,
     ownerMemberId: row.ownerMemberId,
@@ -516,7 +557,7 @@ function serializeOpportunity(
 }
 
 const opportunityInclude = {
-  lead: { select: { fullName: true } },
+  lead: { select: { fullName: true, sourceId: true, source: { select: { name: true } }, routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } },
   account: { select: { name: true } },
   owner: { select: { user: { select: { displayName: true } } } },
   product: { select: { name: true } },
@@ -654,7 +695,12 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
         options.authorization.authorize(context, PermissionKeys.OPPORTUNITIES_WRITE, resource),
         options.authorization.authorize(context, PermissionKeys.LEADS_ASSIGN, resource),
       ]);
-      return { canWrite: write.allowed, canReopen: write.allowed && reopen.allowed };
+      let originAllowed = write.allowed;
+      if (write.allowed) {
+        try { await assertOriginCapability(options.database, context, write, row.lead.sourceId, "canTransition"); }
+        catch { originAllowed = false; }
+      }
+      return { canWrite: originAllowed, canReopen: originAllowed && reopen.allowed };
     }));
   }
 
@@ -674,6 +720,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
       resourceType: "OpportunityPipeline",
       ownerMemberId: context.memberId,
     });
+    const visibility = await originVisibility(options.database, context, readScope.scope);
     const refs = await referenceOptions(options.database, context, readScope.scope, readScope.ownerIds);
     if (parsed.data.closerId && !refs.closerOptions.some((item) => item.id === parsed.data.closerId)) {
       await options.authorization.assertAuthorized(context, PermissionKeys.OPPORTUNITIES_READ, {
@@ -685,6 +732,16 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
     if (parsed.data.productId && !refs.productOptions.some((item) => item.id === parsed.data.productId)) {
       notFound("Produto não encontrado.");
     }
+    const sourceOptions = await options.database.leadSource.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        deletedAt: null,
+        ...(readScope.scope === "WORKSPACE" || visibility.governedSourceIds.length === 0 ? {} : { OR: [{ id: { notIn: visibility.governedSourceIds } }, { id: { in: visibility.allowedSourceIds } }] }),
+      },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    });
+    if (parsed.data.sourceId && !sourceOptions.some((item) => item.id === parsed.data.sourceId)) notFound("Origem não encontrada ou não autorizada.");
     let dateFilter: Prisma.DateTimeFilter | undefined;
     if (parsed.data.from || parsed.data.to) {
       const start = parsed.data.from ? workspaceDayRange(parsed.data.from, timeZone).start : undefined;
@@ -696,8 +753,10 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
       workspaceId: context.workspaceId,
       deletedAt: null,
       ...scopeWhere(readScope.scope, context, readScope.ownerIds),
+      ...originVisibilityWhere(readScope.scope, visibility),
       ...(parsed.data.closerId ? { ownerMemberId: parsed.data.closerId } : {}),
       ...(parsed.data.productId ? { productId: parsed.data.productId } : {}),
+      ...(parsed.data.sourceId ? { lead: { sourceId: parsed.data.sourceId } } : {}),
       ...(parsed.data.stageCode !== "ALL" ? { currentStage: { opportunityStageCode: parsed.data.stageCode } } : {}),
       ...(dateFilter ? { createdAt: dateFilter } : {}),
     };
@@ -725,6 +784,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
       canFilterCloser: readScope.scope !== "OWN",
       closerOptions: refs.closerOptions,
       productOptions: refs.productOptions,
+      sourceOptions,
       lossReasons: refs.lossReasons,
       stages: pipeline.stages.flatMap((stage) =>
         isOpportunityStageCode(stage.opportunityStageCode)
@@ -733,6 +793,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
               code: stage.opportunityStageCode,
               name: stage.name,
               position: stage.position,
+              type: stage.type,
               count: rowsByStage.get(stage.opportunityStageCode)?.length ?? 0,
               opportunities: rowsByStage.get(stage.opportunityStageCode) ?? [],
             }]
@@ -1066,14 +1127,12 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
     if (!parsed.success) invalidInput(parsed.error);
     const authRow = await options.database.opportunity.findFirst({
       where: { id: parsed.data.opportunityId, workspaceId: context.workspaceId, deletedAt: null },
-      select: { id: true, ownerMemberId: true },
+      select: { id: true, ownerMemberId: true, lead: { select: { sourceId: true, routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } } },
     });
     if (!authRow) notFound("Oportunidade não encontrada.");
-    await options.authorization.assertAuthorized(
-      context,
-      PermissionKeys.OPPORTUNITIES_WRITE,
-      opportunityResource(context.workspaceId, authRow),
-    );
+    const originDecision = await options.authorization.authorize(context, PermissionKeys.OPPORTUNITIES_WRITE, opportunityResource(context.workspaceId, authRow));
+    if (!originDecision.allowed) await options.authorization.assertAuthorized(context, PermissionKeys.OPPORTUNITIES_WRITE, opportunityResource(context.workspaceId, authRow));
+    await assertOriginCapability(options.database, context, originDecision, authRow.lead.sourceId, "canTransition");
     const timeZone = await getWorkspaceTimeZone(options.database, context.workspaceId);
     const now = options.now();
     return options.database.$transaction(async (transaction) => {
@@ -1081,6 +1140,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
       const opportunity = await transaction.opportunity.findFirst({
         where: { id: authRow.id, workspaceId: context.workspaceId, deletedAt: null },
         include: {
+          lead: { select: { sourceId: true } },
           currentStage: true,
           stageHistory: { where: { exitedAt: null }, take: 1, orderBy: { enteredAt: "desc" } },
           offers: { where: { deletedAt: null }, orderBy: { createdAt: "desc" }, take: 1 },
@@ -1088,6 +1148,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
         },
       });
       if (!opportunity) notFound("Oportunidade não encontrada.");
+      await assertOriginCapability(transaction, context, originDecision, opportunity.lead.sourceId, "canTransition");
       if (opportunity.revision !== parsed.data.expectedRevision) {
         conflict("OPPORTUNITY_VERSION_CONFLICT", "A oportunidade mudou. Recarregue antes de continuar.");
       }
@@ -1107,6 +1168,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
         },
       });
       if (!target || !isOpportunityStageCode(target.opportunityStageCode)) notFound("Etapa de destino não encontrada.");
+      await assertPipelineRequiredFields(transaction, opportunity.id, target.id);
       const currentCode = opportunity.currentStage.opportunityStageCode;
       const targetCode = target.opportunityStageCode;
       const allowedTransition = await transaction.pipelineStageTransition.findFirst({

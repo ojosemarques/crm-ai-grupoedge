@@ -90,14 +90,14 @@ Cada etapa pode virar uma issue/épico. Dentro dela, `Txx.y` é a task e os iten
 
 ### Etapa 04 — Origens, modelos e pipelines configuráveis
 
-- [ ] **T04.1 — Criar configuração reutilizável.**
-  - [ ] Implementar origem, agrupador, modelo de etapas/atividades e campos obrigatórios por oferta/etapa, distinguindo edição compartilhada de cópia local.
-  - [ ] Criar prévia de migração de modelo com mapeamento de etapas, cards afetados, rollback e histórico imutável.
-- [ ] **T04.2 — Completar operação do funil.**
-  - [ ] Reusar Kanban, filtros, valor, dono, ganho/perda e motivo; adicionar visões consolidadas e ações em massa seguras onde faltarem.
-  - [ ] Testar permissões por origem/equipe, distribuição, reatribuição e atualização simultânea no servidor.
+- [x] **T04.1 — Criar configuração reutilizável.**
+  - [x] Implementar origem, agrupador, modelo de etapas/atividades e campos obrigatórios por oferta/etapa, distinguindo edição compartilhada de cópia local.
+  - [x] Criar prévia de migração de modelo com mapeamento de etapas, cards afetados, rollback e histórico imutável.
+- [x] **T04.2 — Completar operação do funil.**
+  - [x] Reusar Kanban, filtros, valor, dono, ganho/perda e motivo; adicionar visões consolidadas e ações em massa seguras onde faltarem.
+  - [x] Testar permissões por origem/equipe, distribuição, reatribuição e atualização simultânea no servidor.
 
-**Aceite:** gestor reutiliza e altera um modelo sem mover card incorretamente; vendedor só vê e move o que sua permissão permite. **Dependência:** 02–03.
+**Aceite:** gestor reutiliza e altera um modelo sem mover card incorretamente; vendedor só vê e move o que sua permissão permite. [Matriz de evidências e aceite](./PIPELINE_TEMPLATES_CONFIGURATION.md). **Dependência:** 02–03.
 
 ### Etapa 05 — Atividades e gates de venda consultiva
 

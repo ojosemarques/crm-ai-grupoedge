@@ -768,6 +768,29 @@ enum StageTransitionOrigin {
   AUTOMATION
 }
 
+enum PipelineTemplateEditMode {
+  SHARED
+  LOCAL_COPY
+}
+
+enum PipelineTemplateMigrationStatus {
+  PREVIEWED
+  APPLIED
+  ROLLED_BACK
+  EXPIRED
+}
+
+enum OpportunityBulkAction {
+  REASSIGN
+  TRANSITION
+}
+
+enum OpportunityBulkStatus {
+  PREVIEWED
+  EXECUTED
+  EXPIRED
+}
+
 enum QualificationStatus {
   NOT_STARTED
   IN_PROGRESS
@@ -2398,6 +2421,17 @@ model Workspace {
   savedViews                   SavedView[]
   jobs                         Job[]
   pipelineStageTransitions     PipelineStageTransition[]
+  pipelineOriginGroups         PipelineOriginGroup[]
+  pipelineOriginGroupSources   PipelineOriginGroupSource[]
+  pipelineOriginAccessRules    PipelineOriginAccessRule[]
+  pipelineTemplates            PipelineTemplate[]
+  pipelineTemplateVersions     PipelineTemplateVersion[]
+  pipelineTemplateStages       PipelineTemplateStage[]
+  pipelineTemplateActivities   PipelineTemplateActivityDefinition[]
+  pipelineRequiredFields       PipelineRequiredField[]
+  pipelineTemplateApplications PipelineTemplateApplication[]
+  pipelineTemplateMigrations   PipelineTemplateMigration[]
+  opportunityBulkOperations    OpportunityBulkOperation[]
   geographicLocations          GeographicLocation[]
   geographicObservations       GeographicObservation[]
   geographicProfiles           GeographicProfile[]
@@ -4226,18 +4260,282 @@ model Pipeline {
   updatedAt        DateTime           @updatedAt @db.Timestamptz(3)
   deletedAt        DateTime?          @db.Timestamptz(3)
 
-  workspace     Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  createdBy     Actor                     @relation("PipelineCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
-  updatedBy     Actor                     @relation("PipelineUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
-  stages        PipelineStage[]
-  leads         Lead[]
-  histories     StageHistory[]
-  opportunities Opportunity[]
-  transitions   PipelineStageTransition[]
+  workspace           Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdBy           Actor                        @relation("PipelineCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy           Actor                        @relation("PipelineUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  stages              PipelineStage[]
+  leads               Lead[]
+  histories           StageHistory[]
+  opportunities       Opportunity[]
+  transitions         PipelineStageTransition[]
+  templateApplication PipelineTemplateApplication?
+  templateMigrations  PipelineTemplateMigration[]
 
   @@unique([workspaceId, id])
   @@index([workspaceId, entityType, isDefault, deletedAt])
   @@map("pipelines")
+}
+
+model PipelineOriginGroup {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @db.Uuid
+  name             String
+  teamId           String?  @db.Uuid
+  active           Boolean  @default(true)
+  createdByActorId String   @db.Uuid
+  updatedByActorId String   @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+
+  workspace Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  sources   PipelineOriginGroupSource[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, name])
+  @@index([workspaceId, teamId, active])
+  @@map("pipeline_origin_groups")
+}
+
+model PipelineOriginGroupSource {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @db.Uuid
+  groupId     String   @db.Uuid
+  sourceId    String   @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  group     PipelineOriginGroup @relation(fields: [workspaceId, groupId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, groupId, sourceId])
+  @@unique([workspaceId, sourceId])
+  @@map("pipeline_origin_group_sources")
+}
+
+model PipelineOriginAccessRule {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @db.Uuid
+  sourceId         String   @db.Uuid
+  teamId           String   @db.Uuid
+  canRead          Boolean  @default(true)
+  canDistribute    Boolean  @default(false)
+  canReassign      Boolean  @default(false)
+  canTransition    Boolean  @default(true)
+  createdByActorId String   @db.Uuid
+  updatedByActorId String   @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, sourceId, teamId])
+  @@index([workspaceId, teamId, canRead])
+  @@map("pipeline_origin_access_rules")
+}
+
+model PipelineTemplate {
+  id               String             @id @default(uuid()) @db.Uuid
+  workspaceId      String             @db.Uuid
+  key              String
+  name             String
+  entityType       PipelineEntityType
+  createdByActorId String             @db.Uuid
+  createdAt        DateTime           @default(now()) @db.Timestamptz(3)
+  archivedAt       DateTime?          @db.Timestamptz(3)
+
+  workspace Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  versions  PipelineTemplateVersion[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, key])
+  @@index([workspaceId, entityType, archivedAt])
+  @@map("pipeline_templates")
+}
+
+model PipelineTemplateVersion {
+  id                String   @id @default(uuid()) @db.Uuid
+  workspaceId       String   @db.Uuid
+  templateId        String   @db.Uuid
+  previousVersionId String?  @db.Uuid
+  version           Int
+  name              String
+  changeReason      String
+  createdByActorId  String   @db.Uuid
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+
+  workspace      Workspace                            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  template       PipelineTemplate                     @relation(fields: [workspaceId, templateId], references: [workspaceId, id], onDelete: Restrict)
+  stages         PipelineTemplateStage[]
+  activities     PipelineTemplateActivityDefinition[]
+  requiredFields PipelineRequiredField[]
+  applications   PipelineTemplateApplication[]
+  migrationsFrom PipelineTemplateMigration[]          @relation("PipelineMigrationFromVersion")
+  migrationsTo   PipelineTemplateMigration[]          @relation("PipelineMigrationToVersion")
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, templateId, version])
+  @@index([workspaceId, previousVersionId])
+  @@map("pipeline_template_versions")
+}
+
+model PipelineTemplateStage {
+  id                   String                        @id @default(uuid()) @db.Uuid
+  workspaceId          String                        @db.Uuid
+  templateVersionId    String                        @db.Uuid
+  stableKey            String
+  name                 String
+  position             Int
+  type                 StageType                     @default(OPEN)
+  leadStageCode        LeadPipelineStageCode?
+  opportunityStageCode OpportunityPipelineStageCode?
+
+  workspace       Workspace                            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  templateVersion PipelineTemplateVersion              @relation(fields: [workspaceId, templateVersionId], references: [workspaceId, id], onDelete: Restrict)
+  activities      PipelineTemplateActivityDefinition[]
+  requiredFields  PipelineRequiredField[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, templateVersionId, stableKey])
+  @@unique([workspaceId, templateVersionId, position])
+  @@map("pipeline_template_stages")
+}
+
+model PipelineTemplateActivityDefinition {
+  id                String  @id @default(uuid()) @db.Uuid
+  workspaceId       String  @db.Uuid
+  templateVersionId String  @db.Uuid
+  stageId           String  @db.Uuid
+  activityType      String
+  title             String
+  script            String?
+  dueOffsetDays     Int
+  position          Int
+  required          Boolean @default(false)
+
+  workspace       Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  templateVersion PipelineTemplateVersion @relation(fields: [workspaceId, templateVersionId], references: [workspaceId, id], onDelete: Restrict)
+  stage           PipelineTemplateStage   @relation(fields: [workspaceId, stageId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, stageId, position])
+  @@index([workspaceId, templateVersionId])
+  @@map("pipeline_template_activity_definitions")
+}
+
+model PipelineRequiredField {
+  id                String   @id @default(uuid()) @db.Uuid
+  workspaceId       String   @db.Uuid
+  templateVersionId String   @db.Uuid
+  stageId           String   @db.Uuid
+  offerTemplateId   String?  @db.Uuid
+  fieldKey          String
+  label             String
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+
+  workspace       Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  templateVersion PipelineTemplateVersion @relation(fields: [workspaceId, templateVersionId], references: [workspaceId, id], onDelete: Restrict)
+  stage           PipelineTemplateStage   @relation(fields: [workspaceId, stageId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, stageId, offerTemplateId, fieldKey])
+  @@index([workspaceId, templateVersionId])
+  @@map("pipeline_required_fields")
+}
+
+model PipelineTemplateApplication {
+  id                String                   @id @default(uuid()) @db.Uuid
+  workspaceId       String                   @db.Uuid
+  pipelineId        String                   @unique @db.Uuid
+  templateVersionId String                   @db.Uuid
+  editMode          PipelineTemplateEditMode
+  revision          Int                      @default(1)
+  appliedByActorId  String                   @db.Uuid
+  appliedAt         DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime                 @updatedAt @db.Timestamptz(3)
+
+  workspace       Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  pipeline        Pipeline                    @relation(fields: [workspaceId, pipelineId], references: [workspaceId, id], onDelete: Restrict)
+  templateVersion PipelineTemplateVersion     @relation(fields: [workspaceId, templateVersionId], references: [workspaceId, id], onDelete: Restrict)
+  migrations      PipelineTemplateMigration[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, pipelineId])
+  @@index([workspaceId, templateVersionId, editMode])
+  @@map("pipeline_template_applications")
+}
+
+model PipelineTemplateMigration {
+  id                    String                          @id @default(uuid()) @db.Uuid
+  workspaceId           String                          @db.Uuid
+  pipelineId            String                          @db.Uuid
+  applicationId         String                          @db.Uuid
+  fromTemplateVersionId String                          @db.Uuid
+  toTemplateVersionId   String                          @db.Uuid
+  status                PipelineTemplateMigrationStatus @default(PREVIEWED)
+  stageMapping          Json
+  affectedCards         Json
+  rollbackSnapshot      Json
+  fingerprint           String
+  expectedPipelineAt    DateTime                        @db.Timestamptz(3)
+  expiresAt             DateTime                        @db.Timestamptz(3)
+  appliedAt             DateTime?                       @db.Timestamptz(3)
+  rolledBackAt          DateTime?                       @db.Timestamptz(3)
+  createdByActorId      String                          @db.Uuid
+  createdAt             DateTime                        @default(now()) @db.Timestamptz(3)
+
+  workspace   Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  pipeline    Pipeline                    @relation(fields: [workspaceId, pipelineId], references: [workspaceId, id], onDelete: Restrict)
+  application PipelineTemplateApplication @relation(fields: [workspaceId, applicationId], references: [workspaceId, id], onDelete: Restrict)
+  fromVersion PipelineTemplateVersion     @relation("PipelineMigrationFromVersion", fields: [workspaceId, fromTemplateVersionId], references: [workspaceId, id], onDelete: Restrict)
+  toVersion   PipelineTemplateVersion     @relation("PipelineMigrationToVersion", fields: [workspaceId, toTemplateVersionId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, fingerprint])
+  @@index([workspaceId, pipelineId, status, createdAt])
+  @@map("pipeline_template_migrations")
+}
+
+model OpportunityBulkOperation {
+  id               String                @id @default(uuid()) @db.Uuid
+  workspaceId      String                @db.Uuid
+  action           OpportunityBulkAction
+  targetId         String                @db.Uuid
+  reason           String
+  fingerprint      String
+  status           OpportunityBulkStatus @default(PREVIEWED)
+  expectedCount    Int
+  expiresAt        DateTime              @db.Timestamptz(3)
+  executedAt       DateTime?             @db.Timestamptz(3)
+  createdByActorId String                @db.Uuid
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace                      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  items     OpportunityBulkOperationItem[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, fingerprint])
+  @@index([workspaceId, status, createdAt])
+  @@map("opportunity_bulk_operations")
+}
+
+model OpportunityBulkOperationItem {
+  id                String   @id @default(uuid()) @db.Uuid
+  workspaceId       String   @db.Uuid
+  operationId       String   @db.Uuid
+  opportunityId     String   @db.Uuid
+  expectedRevision  Int
+  previousOwnerId   String   @db.Uuid
+  previousStageId   String   @db.Uuid
+  resultingRevision Int?
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+
+  operation OpportunityBulkOperation @relation(fields: [workspaceId, operationId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, operationId, opportunityId])
+  @@index([workspaceId, opportunityId])
+  @@map("opportunity_bulk_operation_items")
 }
 
 model PipelineStage {
