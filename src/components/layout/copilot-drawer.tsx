@@ -27,7 +27,16 @@ type HistoryItem = Readonly<{ id: string; type: string; status: string; preview:
 type Screen = { mode: "LOCAL" | "OPENAI"; pending: Proposal[]; history: HistoryItem[]; options: CopilotActionOptions };
 type Message = Readonly<{ id: string; role: "USER" | "COPILOT"; text: string; result?: QueryResult }>;
 
-const suggestions = ["Quais leads precisam de ação hoje?", "Quais oportunidades estão paradas?", "Como estão o caixa, as despesas e o MRR?", "Quais campanhas geraram mais vendas?"];
+const suggestions = [
+  "Faça meu resumo do dia e indique a próxima ação.",
+  "Quais leads precisam de atenção ou estão sem contato recente?",
+  "Quais negócios estão parados e por quê?",
+  "Qual é a previsão de fechamento?",
+  "Explique a queda nas vendas comparando com o período anterior.",
+  "Resuma caixa, despesas, recebíveis e MRR.",
+  "Prepare os briefings das próximas reuniões.",
+  "Qual atividade devo executar agora?",
+];
 const labels: Record<CopilotAction["kind"] | "CLOSE_SALE" | "ACTION_PLAN", string> = { CREATE_TASK: "Criar tarefa", UPDATE_CUSTOMER: "Atualizar cliente", CREATE_EXPENSE: "Registrar despesa", RECORD_PAYMENT: "Registrar recebimento", CLOSE_SALE: "Fechar venda", ACTION_PLAN: "Plano de ações" };
 const statusLabels: Record<string, string> = { DRAFT: "Aguardando confirmação", EXECUTING: "Confirmação em andamento", EXECUTION_FAILED: "Recuperação disponível", PUBLISHED: "Executada", CANCELLED: "Cancelada", EXPIRED: "Expirada" };
 const currency = (cents: string) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(cents) / 100);

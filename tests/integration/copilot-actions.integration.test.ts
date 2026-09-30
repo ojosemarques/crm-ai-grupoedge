@@ -198,4 +198,49 @@ describe("ações operacionais do Copilot", () => {
     } finally { await database.rolePermission.createMany({ data: grants }); }
     expect(JSON.stringify(data, (_key, value) => typeof value === "bigint" ? value.toString() : value).length).toBeLessThan(70_000);
   });
+
+  it("monta o resumo operacional do dia com prioridades e agenda autorizadas", async () => {
+    const data = await loadCopilotContext(admin, "Faça meu resumo do dia e indique a próxima ação", now());
+    const operation = data.sources.find((item) => item.key === "operacao_diaria")?.data as {
+      dailyProduction: Record<string, unknown>;
+      priorities: unknown[];
+      coverage: string;
+    };
+    const agenda = data.sources.find((item) => item.key === "agenda")?.data as {
+      meetings: unknown[];
+      coverage: string;
+    };
+
+    expect(operation.dailyProduction).toBeTruthy();
+    expect(operation.priorities).toBeInstanceOf(Array);
+    expect(operation.coverage).toContain("escopo");
+    expect(agenda.meetings).toBeInstanceOf(Array);
+    expect(agenda.coverage).toContain("Dia atual");
+  });
+
+  it("expõe comparação comercial, forecast persistido e briefings sem inventar dados", async () => {
+    const sales = await loadCopilotContext(admin, "Explique a queda nas vendas e mostre a previsão de fechamento", now());
+    const indicators = sales.sources.find((item) => item.key === "indicadores_vendas")?.data as {
+      comparisons: unknown[];
+      comparisonPeriod: unknown;
+      coverage: string;
+    };
+    const forecast = sales.sources.find((item) => item.key === "forecast")?.data as {
+      current: unknown;
+      candidates: unknown[];
+      definitions: unknown;
+    };
+
+    expect(indicators.comparisons).toBeInstanceOf(Array);
+    expect(indicators.comparisonPeriod).toBeTruthy();
+    expect(indicators.coverage).toContain("não provam causa");
+    expect(forecast).toHaveProperty("current");
+    expect(forecast.candidates).toBeInstanceOf(Array);
+    expect(forecast.definitions).toBeTruthy();
+
+    const meetings = await loadCopilotContext(admin, "Prepare o briefing das próximas reuniões", now());
+    const agenda = meetings.sources.find((item) => item.key === "agenda")?.data as { briefings: unknown[]; coverage: string };
+    expect(agenda.briefings).toBeInstanceOf(Array);
+    expect(agenda.coverage).toContain("3 primeiras reuniões autorizadas");
+  });
 });

@@ -39,3 +39,21 @@ it("mostra tarefas e atrasos com limite explícito da amostra", () => {
   expect(result.answer).toContain("Maria: Ligar");
   expect(result.answer).toContain("(atrasada)");
 });
+
+it("resume o dia e recomenda a próxima ação usando a fila operacional", () => {
+  const result = localCopilotAnswer("Faça meu resumo do dia e indique a próxima ação", { sources: [{ key: "operacao_diaria", label: "Meu dia", href: "/meu-dia", data: { dailyProduction: { callsPending: 4, messagesPending: 6, overdueFollowUps: 2, meetingsScheduled: 1, staleLeads: 3, dailyGoal: { completed: 5, target: 10, progressPercent: 50 } }, priorities: [{ title: "Atrasados", total: 2, items: [{ leadName: "Ana", recommendation: { label: "Ligar agora", reason: "retorno vencido" } }] }] } }], unavailable: [] });
+  expect(result.answer).toContain("4 ligações pendentes");
+  expect(result.answer).toContain("Meta: 5/10 (50%)");
+  expect(result.answer).toContain("Ana: Ligar agora");
+  expect(result.proposal).toBeNull();
+});
+
+it("mantém previsão ausente e comparação como correlação, sem inventar resultado", () => {
+  const result = localCopilotAnswer("Explique a queda nas vendas e a previsão de fechamento", { sources: [
+    { key: "indicadores_vendas", label: "Indicadores", href: "/dashboard", data: { comparisons: [{ label: "Vendas", current: { value: 3 }, previous: { value: 6 }, direction: "DOWN", interpretationLabel: "Piorou" }] } },
+    { key: "forecast", label: "Forecast", href: "/forecast", data: { current: null } },
+  ], unavailable: [] });
+  expect(result.answer).toContain("atual 3, anterior 6");
+  expect(result.answer).toContain("não comprovam a causa");
+  expect(result.answer).toContain("nenhum snapshot autorizado");
+});
