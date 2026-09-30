@@ -8227,6 +8227,69 @@ model AgentConversationTurn {
   @@map("agent_conversation_turns")
 }
 
+model AIAssistantProposal {
+  id                       String    @id @default(uuid()) @db.Uuid
+  workspaceId              String    @db.Uuid
+  type                     String
+  status                   String    @default("DRAFT")
+  request                  String    @db.Text
+  payload                  Json
+  diff                     Json
+  impact                   Json
+  preview                  Json
+  revision                 Int       @default(1)
+  requestFingerprint       String    @db.Char(64)
+  publishedTargetType      String?
+  publishedTargetId        String?   @db.Uuid
+  publishedTargetVersionId String?   @db.Uuid
+  publishedVersionId       String?   @db.Uuid
+  cancellationReason       String?
+  approvedReason           String?
+  requestedByActorId       String    @db.Uuid
+  approvedByActorId        String?   @db.Uuid
+  cancelledByActorId       String?   @db.Uuid
+  undoneByActorId          String?   @db.Uuid
+  createdAt                DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt                DateTime  @updatedAt @db.Timestamptz(3)
+  approvedAt               DateTime? @db.Timestamptz(3)
+  cancelledAt              DateTime? @db.Timestamptz(3)
+  undoneAt                 DateTime? @db.Timestamptz(3)
+
+  versions AIAssistantConfigurationVersion[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status, updatedAt])
+  @@index([workspaceId, requestedByActorId, createdAt])
+  @@map("ai_assistant_proposals")
+}
+
+model AIAssistantConfigurationVersion {
+  id                  String   @id @default(uuid()) @db.Uuid
+  workspaceId         String   @db.Uuid
+  proposalId          String   @db.Uuid
+  version             Int
+  configurationType   String
+  status              String
+  snapshot            Json
+  snapshotHash        String   @db.Char(64)
+  targetType          String
+  targetId            String?  @db.Uuid
+  targetVersionId     String?  @db.Uuid
+  rollbackOfVersionId String?  @db.Uuid
+  publishedByActorId  String   @db.Uuid
+  publishedAt         DateTime @db.Timestamptz(3)
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+
+  proposal   AIAssistantProposal               @relation(fields: [workspaceId, proposalId], references: [workspaceId, id], onDelete: Restrict)
+  rollbackOf AIAssistantConfigurationVersion?  @relation("AIAssistantConfigurationRollback", fields: [workspaceId, rollbackOfVersionId], references: [workspaceId, id], onDelete: Restrict)
+  rollbacks  AIAssistantConfigurationVersion[] @relation("AIAssistantConfigurationRollback")
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, proposalId, version])
+  @@index([workspaceId, configurationType, publishedAt])
+  @@map("ai_assistant_configuration_versions")
+}
+
 model DataQualityRuleVersion {
   id                String                @id @default(uuid()) @db.Uuid
   workspaceId       String                @db.Uuid

@@ -67,6 +67,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
       { href: "/leads/entrada", icon: "entrada", label: "Entrada de leads", roles: operationalRoles },
       { href: "/portabilidade", icon: "entrada", label: "Portabilidade comercial", roles: managerRoles },
       { href: "/copilot", icon: "copilot", label: "Copilot gerencial", roles: managerRoles },
+      { href: "/assistente", icon: "copilot", label: "Assistente", roles: managerRoles },
       { href: "/governanca-ia", icon: "copilot", label: "Governança de IA", roles: managerRoles },
       { href: "/agentes", icon: "copilot", label: "Agentes de IA", roles: managerRoles },
       { href: "/notificacoes", icon: "notificacoes", label: "Notificações" },
@@ -95,7 +96,7 @@ const sections = [
   { key: "contacts", label: "Contatos", icon: "leads", paths: ["/leads", "/contas", "/leads/entrada", "/portabilidade"] },
   { key: "activities", label: "Atividades", icon: "agenda", paths: ["/meu-dia", "/agenda", "/atividades", "/notificacoes"] },
   { key: "inbox", label: "Atendimento", icon: "inbox", paths: ["/inbox", "/customer-service"] },
-  { key: "automation", label: "Automações", icon: "automacoes", paths: ["/automacoes", "/campanhas", "/integracoes", "/copilot", "/governanca-ia", "/agentes"] },
+  { key: "automation", label: "Automações", icon: "automacoes", paths: ["/automacoes", "/campanhas", "/integracoes", "/copilot", "/assistente", "/governanca-ia", "/agentes"] },
   { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/metricas-receita", "/metas", "/forecast", "/aquisicao", "/inteligencia-geografica", "/receita", "/pagamentos"] },
   { key: "settings", label: "Configurações", icon: "configuracoes", paths: ["/configuracoes", "/administracao", "/auditoria", "/qualidade-dados", "/operacoes", "/privacidade"] },
 ] as const;
@@ -107,6 +108,7 @@ const labels: Record<string, string> = {
   "/atividades": "Fila de atividades",
   "/campanhas": "Campanhas de envio",
   "/agentes": "Agentes de IA",
+  "/assistente": "Assistente",
   "/automacoes": "Fluxos de automação", "/dashboard": "Visão geral", "/metricas-receita": "Receita e retenção",
 };
 

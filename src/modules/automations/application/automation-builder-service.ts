@@ -27,7 +27,7 @@ type AuthorizationPort = Readonly<{
 type Options = Readonly<{ database: PrismaClient; authorization: AuthorizationPort; now: () => Date }>;
 
 export const automationBuilderCommandSchema = z.object({
-  action: z.enum(["CREATE_DRAFT", "SAVE_DRAFT", "VALIDATE", "SIMULATE", "PUBLISH", "ROLLBACK", "START_RUN", "ADVANCE_RUN", "REPLAY_NODE"]),
+  action: z.enum(["CREATE_DRAFT", "SAVE_DRAFT", "VALIDATE", "SIMULATE", "PUBLISH", "PAUSE", "ROLLBACK", "START_RUN", "ADVANCE_RUN", "REPLAY_NODE"]),
   payload: z.record(z.string(), z.unknown()).default({}),
 }).strict();
 
@@ -276,6 +276,19 @@ export function createAutomationBuilderService(options: Options) {
     return publish(context, { ruleId, graph: version.graphDefinition }, versionId);
   }
 
+  async function pause(context: AuthenticatedContext, payload: Record<string, unknown>) {
+    const ruleId = uuid.parse(payload.ruleId);
+    const reason = z.string().trim().min(3).max(500).parse(payload.reason);
+    await options.authorization.assertAuthorized(context, PermissionKeys.AUTOMATIONS_MANAGE, resource(context.workspaceId, ruleId));
+    return options.database.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`automation-pause:${context.workspaceId}:${ruleId}`}, 0))`;
+      const updated = await tx.automationRule.updateMany({ where: { id: ruleId, workspaceId: context.workspaceId, status: "ACTIVE", deletedAt: null }, data: { status: "PAUSED", updatedByActorId: context.actorId } });
+      if (updated.count !== 1) fail("A automação não está ativa ou não foi encontrada.", "AUTOMATION_NOT_ACTIVE", 409);
+      await audit(tx, context, "automation_builder.paused", ruleId, { reason, publishedVersionPreserved: true });
+      return { ruleId, status: "PAUSED" as const, publishedVersionPreserved: true };
+    });
+  }
+
   async function startRun(context: AuthenticatedContext, payload: Record<string, unknown>) {
     const ruleId = uuid.parse(payload.ruleId);
     await options.authorization.assertAuthorized(context, PermissionKeys.AUTOMATIONS_EXECUTE, resource(context.workspaceId, ruleId));
@@ -422,6 +435,7 @@ export function createAutomationBuilderService(options: Options) {
     if (parsed.action === "VALIDATE") { await options.authorization.assertAuthorized(context, PermissionKeys.AUTOMATIONS_READ, resource(context.workspaceId)); return validateAutomationGraph(parseGraph(payload.graph)); }
     if (parsed.action === "SIMULATE") { await options.authorization.assertAuthorized(context, PermissionKeys.AUTOMATIONS_EXECUTE, resource(context.workspaceId)); return simulate(parseGraph(payload.graph), record(payload.payload ?? payload.input)); }
     if (parsed.action === "PUBLISH") return publish(context, payload);
+    if (parsed.action === "PAUSE") return pause(context, payload);
     if (parsed.action === "ROLLBACK") return rollback(context, payload);
     if (parsed.action === "START_RUN") return startRun(context, payload);
     if (parsed.action === "ADVANCE_RUN") return advanceRun(context, payload);
