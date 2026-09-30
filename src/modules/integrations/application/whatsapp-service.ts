@@ -25,6 +25,7 @@ import {
   type NormalizedWhatsAppEvent,
 } from "@/modules/integrations/domain/whatsapp-contracts";
 import { cancelPendingOutboundForContactInTransaction } from "@/modules/privacy/application/privacy-service";
+import { cancelIncompatibleAccountPlanActionsForLeadInTransaction } from "@/modules/opportunities/application/account-plan-service";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -185,6 +186,7 @@ export function createWhatsAppService(options: Options) {
         await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: lead.id, messageId: message.id, type: "MESSAGE_RECEIVED", direction: "INBOUND", result: "RECEIVED", subject: "Mensagem recebida no WhatsApp local", description: "Fato canônico simulado, sem egress externo.", occurredAt, createdByActorId: foundation.actor.id, updatedByActorId: foundation.actor.id } });
         await tx.lead.updateMany({ where: { id: lead.id, workspaceId: context.workspaceId, OR: [{ lastInboundResponseAt: null }, { lastInboundResponseAt: { lt: occurredAt } }] }, data: { awaitingHumanResponse: true, lastInboundResponseAt: occurredAt, updatedByActorId: foundation.actor.id } });
         await tx.lead.updateMany({ where: { id: lead.id, workspaceId: context.workspaceId, lastActivityAt: { lt: occurredAt } }, data: { lastActivityAt: occurredAt, updatedByActorId: foundation.actor.id } });
+        await cancelIncompatibleAccountPlanActionsForLeadInTransaction(tx, { workspaceId: context.workspaceId, leadId: lead.id, actorId: foundation.actor.id, at: now, event: input.scenario === "OPT_OUT" ? "OPT_OUT" : "RESPONSE" });
         if (input.scenario === "OPT_OUT") {
           await tx.contactPoint.update({ where: { id: exact!.id }, data: { doNotContact: true, updatedByActorId: foundation.actor.id } });
           await tx.lead.updateMany({ where: { workspaceId: context.workspaceId, contactId: exact!.contactId }, data: { contactPreference: "DO_NOT_CONTACT", contactPreferenceUpdatedAt: occurredAt, updatedByActorId: foundation.actor.id } });

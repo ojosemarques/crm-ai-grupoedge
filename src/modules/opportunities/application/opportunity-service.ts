@@ -8,6 +8,7 @@ import { isCatalogItemSellable } from "@/modules/catalog/domain/catalog-sellabil
 import { projectOpportunityOwnership } from "@/modules/lifecycle/application/lifecycle-projection-writer";
 import { assertPipelineRequiredFields } from "@/modules/pipeline-templates/application/opportunity-required-fields";
 import { assertConsultativeSalesGates, assertRequiredStageActivitiesComplete, instantiateStageActivities, recordGateEvaluation, supersedeOpenStageActivities } from "@/modules/opportunities/application/sales-gate-service";
+import { cancelIncompatibleAccountPlanActionsInTransaction } from "@/modules/opportunities/application/account-plan-service";
 import { getAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
 import {
   publishOpportunityClosedInTransaction,
@@ -1245,6 +1246,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
           },
         });
       }
+      if (closing) await cancelIncompatibleAccountPlanActionsInTransaction(transaction, { workspaceId: context.workspaceId, opportunityId: opportunity.id, actorId: context.actorId, at: now, event: targetCode });
       const nextTask = closing ? null : await activeOpportunityTask(transaction, context.workspaceId, opportunity.id);
       if (opportunityStageRequiresNextAction(targetCode) && !nextTask) {
         conflict("NEXT_ACTION_REQUIRED", "Crie uma próxima ação antes de mover para uma etapa aberta.");

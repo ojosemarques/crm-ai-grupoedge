@@ -1224,6 +1224,39 @@ enum TaskKind {
   FOLLOW_UP
 }
 
+enum AccountPlanEpisodeType {
+  DISCOVERY
+  SOLUTION
+  PILOT
+  CUSTOMER_WAIT
+  CONTRACTING
+  INSTITUTIONAL_NURTURE
+}
+
+enum AccountPlanTrackType {
+  STAKEHOLDER
+  POLITIZAI_DELIVERY
+  IMPEDIMENT
+  DECISION
+}
+
+enum AccountPlanCommitmentStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum AccountPlanWaitStatus {
+  PLANNED
+  RESUMED
+  CANCELLED
+}
+
+enum AccountPlanStakeholderStatus {
+  ACTIVE
+  REPLACED
+}
+
 enum LeadAssignmentType {
   AUTOMATIC_ROUND_ROBIN
   GENERAL_QUEUE_FALLBACK
@@ -2331,6 +2364,7 @@ model Workspace {
   priorityBands                LeadPriorityBand[]
   commercialSettings           CommercialSettingsVersion[]
   cadenceSteps                 CadenceStep[]
+  opportunityAccountPlans      OpportunityAccountPlan[]
   lossReasons                  LossReason[]
   disqualificationReasons      DisqualificationReason[]
   leads                        Lead[]
@@ -2873,31 +2907,35 @@ model WorkspaceMember {
   updatedBy             Actor     @relation("WorkspaceMemberUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
   leadReceivingPausedBy Actor?    @relation("WorkspaceMemberPausedBy", fields: [workspaceId, leadReceivingPausedByActorId], references: [workspaceId, id], onDelete: Restrict)
 
-  teamMemberships             TeamMember[]
-  authSessions                AuthSession[]
-  leadsOwned                  Lead[]
-  opportunitiesOwned          Opportunity[]
-  opportunityOutcomesOwned    OpportunityOutcomeSnapshot[]
-  opportunityDeferrals        OpportunityDeferral[]
-  meetingsOwned               Meeting[]
-  meetingHistoryOwned         MeetingHistory[]
-  tasksAssigned               Task[]
-  conversationsAssigned       Conversation[]
-  phoneCallsAssigned          PhoneCall[]
-  notifications               Notification[]
-  aiUseCaseVersionsOwned      AIUseCaseVersion[]
-  n8nMachinesOwned            N8nMachineIdentity[]
-  n8nRecipesOwned             N8nRecipe[]
-  handoffsFrom                CustomerHandoff[]               @relation("HandoffFromMember")
-  handoffsTo                  CustomerHandoff[]               @relation("HandoffToMember")
-  savedViews                  SavedView[]
-  leadAssignmentsFrom         LeadAssignment[]                @relation("LeadAssignmentFromMember")
-  leadAssignmentsTo           LeadAssignment[]                @relation("LeadAssignmentToMember")
-  leadSlaCyclesAssigned       LeadSlaCycle[]                  @relation("LeadSlaCycleAssignedMember")
-  ownershipAssignments        OwnershipAssignment[]           @relation("OwnershipAssignmentMember")
-  ownershipTransferTargets    OwnershipTransfer[]             @relation("OwnershipTransferTargetMember")
-  conversationAssignmentsFrom ConversationAssignmentHistory[] @relation("ConversationAssignmentPreviousOwner")
-  conversationAssignmentsTo   ConversationAssignmentHistory[] @relation("ConversationAssignmentNewOwner")
+  teamMemberships              TeamMember[]
+  authSessions                 AuthSession[]
+  leadsOwned                   Lead[]
+  opportunitiesOwned           Opportunity[]
+  opportunityOutcomesOwned     OpportunityOutcomeSnapshot[]
+  opportunityDeferrals         OpportunityDeferral[]
+  accountPlanEpisodesOwned     OpportunityPlanEpisode[]        @relation("AccountPlanEpisodeOwner")
+  accountPlanTracksOwned       OpportunityPlanTrack[]          @relation("AccountPlanTrackOwner")
+  accountPlanTrackHistoryOwned OpportunityPlanTrackRevision[]  @relation("AccountPlanTrackRevisionOwner")
+  accountPlanWaitsOwned        OpportunityPlannedWait[]        @relation("AccountPlanWaitOwner")
+  meetingsOwned                Meeting[]
+  meetingHistoryOwned          MeetingHistory[]
+  tasksAssigned                Task[]
+  conversationsAssigned        Conversation[]
+  phoneCallsAssigned           PhoneCall[]
+  notifications                Notification[]
+  aiUseCaseVersionsOwned       AIUseCaseVersion[]
+  n8nMachinesOwned             N8nMachineIdentity[]
+  n8nRecipesOwned              N8nRecipe[]
+  handoffsFrom                 CustomerHandoff[]               @relation("HandoffFromMember")
+  handoffsTo                   CustomerHandoff[]               @relation("HandoffToMember")
+  savedViews                   SavedView[]
+  leadAssignmentsFrom          LeadAssignment[]                @relation("LeadAssignmentFromMember")
+  leadAssignmentsTo            LeadAssignment[]                @relation("LeadAssignmentToMember")
+  leadSlaCyclesAssigned        LeadSlaCycle[]                  @relation("LeadSlaCycleAssignedMember")
+  ownershipAssignments         OwnershipAssignment[]           @relation("OwnershipAssignmentMember")
+  ownershipTransferTargets     OwnershipTransfer[]             @relation("OwnershipTransferTargetMember")
+  conversationAssignmentsFrom  ConversationAssignmentHistory[] @relation("ConversationAssignmentPreviousOwner")
+  conversationAssignmentsTo    ConversationAssignmentHistory[] @relation("ConversationAssignmentNewOwner")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, userId])
@@ -4744,6 +4782,7 @@ model Opportunity {
   stageActivities        OpportunityStageActivityInstance[]
   gateEvaluations        OpportunityGateEvaluation[]
   deferrals              OpportunityDeferral[]
+  accountPlan            OpportunityAccountPlan?
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, pipelineId, id])
@@ -5889,6 +5928,9 @@ model Task {
   nextActionForOpportunity Opportunity?                      @relation("OpportunityNextAction")
   stageActivityInstance    OpportunityStageActivityInstance?
   opportunityDeferral      OpportunityDeferral?
+  accountPlanEpisode       OpportunityPlanEpisode?
+  accountPlanTrack         OpportunityPlanTrack?
+  accountPlanWait          OpportunityPlannedWait?
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, leadId, id])
@@ -5902,6 +5944,183 @@ model Task {
   @@index([workspaceId, priority, dueAt])
   @@index([workspaceId, automationRunId])
   @@map("tasks")
+}
+
+model OpportunityAccountPlan {
+  id            String   @id @default(uuid()) @db.Uuid
+  workspaceId   String   @db.Uuid
+  opportunityId String   @unique @db.Uuid
+  revision      Int      @default(1)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+
+  workspace    Workspace                       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  opportunity  Opportunity                     @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: Restrict)
+  episodes     OpportunityPlanEpisode[]
+  tracks       OpportunityPlanTrack[]
+  trackHistory OpportunityPlanTrackRevision[]
+  waits        OpportunityPlannedWait[]
+  stakeholders OpportunityPlanStakeholder[]
+  commands     OpportunityAccountPlanCommand[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, opportunityId])
+  @@unique([workspaceId, opportunityId, id])
+  @@index([workspaceId, updatedAt])
+  @@map("opportunity_account_plans")
+}
+
+model OpportunityPlanEpisode {
+  id               String                      @id @default(uuid()) @db.Uuid
+  workspaceId      String                      @db.Uuid
+  opportunityId    String                      @db.Uuid
+  accountPlanId    String                      @db.Uuid
+  type             AccountPlanEpisodeType
+  title            String
+  objective        String
+  artifactUrl      String?
+  ownerMemberId    String?                     @db.Uuid
+  taskId           String?                     @unique @db.Uuid
+  status           AccountPlanCommitmentStatus @default(ACTIVE)
+  dueAt            DateTime?                   @db.Timestamptz(3)
+  startedAt        DateTime                    @db.Timestamptz(3)
+  completedAt      DateTime?                   @db.Timestamptz(3)
+  cancelledAt      DateTime?                   @db.Timestamptz(3)
+  cancellationCode String?
+  createdAt        DateTime                    @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime                    @updatedAt @db.Timestamptz(3)
+
+  accountPlan OpportunityAccountPlan @relation(fields: [workspaceId, opportunityId, accountPlanId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
+  task        Task?                  @relation(fields: [workspaceId, opportunityId, taskId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
+  owner       WorkspaceMember?       @relation("AccountPlanEpisodeOwner", fields: [workspaceId, ownerMemberId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, opportunityId, taskId])
+  @@index([workspaceId, accountPlanId, status, dueAt])
+  @@index([workspaceId, ownerMemberId, status, dueAt])
+  @@map("opportunity_plan_episodes")
+}
+
+model OpportunityPlanTrack {
+  id               String                      @id @default(uuid()) @db.Uuid
+  workspaceId      String                      @db.Uuid
+  opportunityId    String                      @db.Uuid
+  accountPlanId    String                      @db.Uuid
+  type             AccountPlanTrackType
+  milestone        String
+  artifactTitle    String?
+  artifactUrl      String?
+  ownerMemberId    String?                     @db.Uuid
+  taskId           String?                     @unique @db.Uuid
+  status           AccountPlanCommitmentStatus @default(ACTIVE)
+  dueAt            DateTime                    @db.Timestamptz(3)
+  revision         Int                         @default(1)
+  completedAt      DateTime?                   @db.Timestamptz(3)
+  cancelledAt      DateTime?                   @db.Timestamptz(3)
+  cancellationCode String?
+  createdAt        DateTime                    @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime                    @updatedAt @db.Timestamptz(3)
+
+  accountPlan OpportunityAccountPlan         @relation(fields: [workspaceId, opportunityId, accountPlanId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
+  task        Task?                          @relation(fields: [workspaceId, opportunityId, taskId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
+  owner       WorkspaceMember?               @relation("AccountPlanTrackOwner", fields: [workspaceId, ownerMemberId], references: [workspaceId, id], onDelete: Restrict)
+  history     OpportunityPlanTrackRevision[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, opportunityId, taskId])
+  @@unique([workspaceId, accountPlanId, type])
+  @@index([workspaceId, ownerMemberId, status, dueAt])
+  @@map("opportunity_plan_tracks")
+}
+
+model OpportunityPlanTrackRevision {
+  id            String   @id @default(uuid()) @db.Uuid
+  workspaceId   String   @db.Uuid
+  opportunityId String   @db.Uuid
+  accountPlanId String   @db.Uuid
+  trackId       String   @db.Uuid
+  revision      Int
+  milestone     String
+  artifactTitle String?
+  artifactUrl   String?
+  ownerMemberId String?  @db.Uuid
+  dueAt         DateTime @db.Timestamptz(3)
+  recordedAt    DateTime @db.Timestamptz(3)
+
+  accountPlan OpportunityAccountPlan @relation(fields: [workspaceId, opportunityId, accountPlanId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
+  track       OpportunityPlanTrack   @relation(fields: [workspaceId, trackId], references: [workspaceId, id], onDelete: Restrict)
+  owner       WorkspaceMember?       @relation("AccountPlanTrackRevisionOwner", fields: [workspaceId, ownerMemberId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, trackId, revision])
+  @@index([workspaceId, accountPlanId, recordedAt])
+  @@map("opportunity_plan_track_revisions")
+}
+
+model OpportunityPlannedWait {
+  id               String                @id @default(uuid()) @db.Uuid
+  workspaceId      String                @db.Uuid
+  opportunityId    String                @db.Uuid
+  accountPlanId    String                @db.Uuid
+  reason           String
+  reviewAt         DateTime              @db.Timestamptz(3)
+  ownerMemberId    String                @db.Uuid
+  taskId           String                @unique @db.Uuid
+  status           AccountPlanWaitStatus @default(PLANNED)
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  endedAt          DateTime?             @db.Timestamptz(3)
+  cancellationCode String?
+
+  accountPlan OpportunityAccountPlan @relation(fields: [workspaceId, opportunityId, accountPlanId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
+  task        Task                   @relation(fields: [workspaceId, opportunityId, taskId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
+  owner       WorkspaceMember        @relation("AccountPlanWaitOwner", fields: [workspaceId, ownerMemberId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, opportunityId, taskId])
+  @@index([workspaceId, accountPlanId, status, reviewAt])
+  @@index([workspaceId, ownerMemberId, status, reviewAt])
+  @@map("opportunity_planned_waits")
+}
+
+model OpportunityPlanStakeholder {
+  id                    String                       @id @default(uuid()) @db.Uuid
+  workspaceId           String                       @db.Uuid
+  opportunityId         String                       @db.Uuid
+  accountPlanId         String                       @db.Uuid
+  name                  String
+  role                  String
+  isDecisionMaker       Boolean                      @default(false)
+  status                AccountPlanStakeholderStatus @default(ACTIVE)
+  replacesStakeholderId String?                      @db.Uuid
+  startedAt             DateTime                     @db.Timestamptz(3)
+  endedAt               DateTime?                    @db.Timestamptz(3)
+  createdAt             DateTime                     @default(now()) @db.Timestamptz(3)
+
+  accountPlan OpportunityAccountPlan       @relation(fields: [workspaceId, opportunityId, accountPlanId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
+  replaces    OpportunityPlanStakeholder?  @relation("StakeholderReplacement", fields: [workspaceId, replacesStakeholderId], references: [workspaceId, id], onDelete: Restrict)
+  replacedBy  OpportunityPlanStakeholder[] @relation("StakeholderReplacement")
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, accountPlanId, status, startedAt])
+  @@map("opportunity_plan_stakeholders")
+}
+
+model OpportunityAccountPlanCommand {
+  id             String   @id @default(uuid()) @db.Uuid
+  workspaceId    String   @db.Uuid
+  opportunityId  String   @db.Uuid
+  accountPlanId  String   @db.Uuid
+  idempotencyKey String
+  action         String
+  result         Json
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  accountPlan OpportunityAccountPlan @relation(fields: [workspaceId, opportunityId, accountPlanId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, accountPlanId, createdAt])
+  @@map("opportunity_account_plan_commands")
 }
 
 model Note {

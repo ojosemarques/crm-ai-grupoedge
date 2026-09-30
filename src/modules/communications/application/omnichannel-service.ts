@@ -20,6 +20,7 @@ import {
 import { evaluateWhatsAppOutboundPolicy, WHATSAPP_LOCAL_PROVIDER_KEY } from "@/modules/integrations/domain/whatsapp-contracts";
 import { createStableMessageId, EMAIL_PROVIDER_KEY, normalizeMessageId, normalizeReferenceChain } from "@/modules/integrations/domain/email-contracts";
 import { cancelPendingOutboundForContactInTransaction, evaluatePrivacyInTransaction } from "@/modules/privacy/application/privacy-service";
+import { cancelIncompatibleAccountPlanActionsForLeadInTransaction } from "@/modules/opportunities/application/account-plan-service";
 import type { ResourceScope } from "@/modules/users/permissions/authorization-service";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -420,6 +421,7 @@ export function createOmnichannelService(options: Options) {
       if (lead) {
         await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: lead.id, messageId: message.id, type: "MESSAGE_RECEIVED", direction: "INBOUND", result: "RECEIVED", subject: "Mensagem recebida no inbox", description: "Fato canônico de comunicação; conteúdo disponível na conversa.", occurredAt: new Date(input.occurredAt), createdByActorId: foundation.actor.id, updatedByActorId: foundation.actor.id } });
         await tx.lead.update({ where: { id: lead.id }, data: { awaitingHumanResponse: true, lastInboundResponseAt: new Date(input.occurredAt), lastActivityAt: new Date(input.occurredAt), updatedByActorId: foundation.actor.id } });
+        await cancelIncompatibleAccountPlanActionsForLeadInTransaction(tx, { workspaceId: context.workspaceId, leadId: lead.id, actorId: foundation.actor.id, at: now, event: input.scenario === "OPT_OUT" ? "OPT_OUT" : "RESPONSE" });
         if (input.scenario === "OPT_OUT") {
           await tx.contactPoint.update({ where: { id: exact!.id }, data: { doNotContact: true, updatedByActorId: foundation.actor.id } });
           await tx.lead.updateMany({ where: { workspaceId: context.workspaceId, contactId: exact!.contactId }, data: { contactPreference: "DO_NOT_CONTACT", contactPreferenceUpdatedAt: new Date(input.occurredAt), updatedByActorId: foundation.actor.id } });

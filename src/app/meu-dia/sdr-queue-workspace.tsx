@@ -14,6 +14,7 @@ import {
 import styles from "@/app/meu-dia/meu-dia.module.css";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { AccountPlanCommitments } from "@/components/opportunities/account-plan-commitments";
 import {
   getSlaBand,
   sdrQueueBuckets,
@@ -675,6 +676,8 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
       </nav>
 
       <FocusLead item={focusLead} nowMs={nowMs} screen={screen} />
+
+      <AccountPlanCommitments timeZone={screen.timeZone} />
 
       <div className={styles.contentGrid}>
         <section aria-label="Navegador de filas" className={styles.queuePanel}>

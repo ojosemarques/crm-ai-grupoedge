@@ -11,6 +11,7 @@ import { Icon } from "@/components/ui/icon";
 import styles from "../pipeline/pipeline-workspace.module.css";
 import { DataTableShell } from "@/components/ui/surface";
 import { SalesGatesPanel } from "@/components/opportunities/sales-gates-panel";
+import { AccountPlanPanel } from "@/components/opportunities/account-plan-panel";
 import type {
   OpportunityListItem,
   OpportunityPipelineScreen,
@@ -231,7 +232,7 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
       {selected ? (
         <AccessibleDialog
           busy={pending}
-          className="max-w-2xl space-y-5"
+          className="max-w-5xl space-y-5"
           labelledBy="opportunity-transition-title"
           onDismiss={() => setSelectedId(null)}
         >
@@ -240,6 +241,11 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
             <p className="mt-1 text-sm text-muted-foreground">Lead: {selected.leadName} · etapa atual: {selected.stageName}</p>
           </div>
           <SalesGatesPanel opportunityId={selected.id} onCommitted={() => router.refresh()} />
+          <AccountPlanPanel canWrite={selected.canWrite} memberOptions={screen.closerOptions} opportunityId={selected.id} timeZone={screen.timeZone} />
+          <section className="rounded-md border p-4">
+            <h3 className="font-semibold">Histórico de propostas</h3>
+            {selected.offers.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Nenhuma proposta registrada.</p> : <div className="mt-3 grid gap-2">{selected.offers.map((offer) => <article className="rounded-md border bg-muted/20 p-3 text-sm" key={offer.id}><div className="flex flex-wrap justify-between gap-2"><div><h4 className="font-medium">{offer.name}</h4><p className="text-xs text-muted-foreground">{offer.productName} · {offer.lines.map((line) => `${line.quantity}× ${line.productName}`).join(", ")}</p></div><strong>{money(offer.totalCents)}</strong></div><p className="mt-2 text-xs">Validade: {offer.validUntil ? date(offer.validUntil, screen.timeZone) : "não informada"}{offer.acceptedAt ? ` · aceita em ${date(offer.acceptedAt, screen.timeZone)}` : ""}</p></article>)}</div>}
+          </section>
           {selected.stageCode === "OPPORTUNITY_CONFIRMED" || selected.stageCode === "PROPOSAL" ? (
             <form className="grid gap-3 rounded-md border p-4" onSubmit={registerProposal}>
               <h3 className="font-semibold">Registrar proposta</h3>

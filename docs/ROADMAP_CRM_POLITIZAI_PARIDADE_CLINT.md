@@ -112,14 +112,14 @@ Cada etapa pode virar uma issue/épico. Dentro dela, `Txx.y` é a task e os iten
 
 ### Etapa 06 — Cadência longa e plano de conta
 
-- [ ] **T06.1 — Separar tentativa de contato do programa consultivo.**
-  - [ ] Manter cadência D0–D30 de “não atendeu” e criar episódios de descoberta, solução, piloto, espera do cliente, contratação e nutrição institucional.
-  - [ ] Modelar trilhas paralelas por stakeholder, entrega da Politizai, impedimento e decisão, cada qual com marco, artefato, dono e prazo.
-- [ ] **T06.2 — Controlar pausas e retorno.**
-  - [ ] Criar espera planejada com motivo/data de revisão e distinguir de estagnação; resposta, ganho, perda e opt-out cancelam ações incompatíveis.
-  - [ ] Exibir plano de conta na oportunidade e fila “Meu dia”, com compromissos vencidos e sem dono.
+- [x] **T06.1 — Separar tentativa de contato do programa consultivo.**
+  - [x] Manter cadência D0–D30 de “não atendeu” e criar episódios de descoberta, solução, piloto, espera do cliente, contratação e nutrição institucional.
+  - [x] Modelar trilhas paralelas por stakeholder, entrega da Politizai, impedimento e decisão, cada qual com marco, artefato, dono e prazo.
+- [x] **T06.2 — Controlar pausas e retorno.**
+  - [x] Criar espera planejada com motivo/data de revisão e distinguir de estagnação; resposta, ganho, perda e opt-out cancelam ações incompatíveis.
+  - [x] Exibir plano de conta na oportunidade e fila “Meu dia”, com compromissos vencidos e sem dono.
 
-**Aceite:** simular uma venda de meses com troca de chefe de gabinete, proposta revisada e espera pactuada sem mensagens duplicadas nem pipeline artificialmente inflado. **Dependência:** 05.
+**Aceite:** simular uma venda de meses com troca de chefe de gabinete, proposta revisada e espera pactuada sem mensagens duplicadas nem pipeline artificialmente inflado. [Contrato, matriz e cenário executado](./ACCOUNT_PLAN_LONG_CADENCE.md). **Dependência:** 05.
 
 ### Etapa 07 — Inbox e atendimento unificado
 

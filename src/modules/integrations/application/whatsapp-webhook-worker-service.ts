@@ -9,6 +9,7 @@ import {
 } from "@/modules/integrations/domain/whatsapp-contracts";
 import { calculateRetryDelaySeconds, safeError } from "@/modules/integrations/domain/integration-policy";
 import { cancelPendingOutboundForContactInTransaction } from "@/modules/privacy/application/privacy-service";
+import { cancelIncompatibleAccountPlanActionsForLeadInTransaction } from "@/modules/opportunities/application/account-plan-service";
 import { getDatabaseClient } from "@/shared/core/database/client";
 
 type Tx = Prisma.TransactionClient;
@@ -130,6 +131,7 @@ export function createWhatsAppWebhookWorkerService(options: Options) {
       await tx.activity.create({ data: { workspaceId: item.workspaceId, leadId: lead.id, messageId: message.id, type: "MESSAGE_RECEIVED", direction: "INBOUND", result: "RECEIVED", subject: "Mensagem recebida no WhatsApp", description: "Fato canônico recebido pela fronteira autenticada do provider.", occurredAt: event.occurredAt, createdByActorId: base.actor.id, updatedByActorId: base.actor.id } });
       await tx.lead.updateMany({ where: { id: lead.id, workspaceId: item.workspaceId, OR: [{ lastInboundResponseAt: null }, { lastInboundResponseAt: { lt: event.occurredAt } }] }, data: { awaitingHumanResponse: true, lastInboundResponseAt: event.occurredAt, updatedByActorId: base.actor.id } });
       await tx.lead.updateMany({ where: { id: lead.id, workspaceId: item.workspaceId, lastActivityAt: { lt: event.occurredAt } }, data: { lastActivityAt: event.occurredAt, updatedByActorId: base.actor.id } });
+      await cancelIncompatibleAccountPlanActionsForLeadInTransaction(tx, { workspaceId: item.workspaceId, leadId: lead.id, actorId: base.actor.id, at: options.now(), event: event.optOut ? "OPT_OUT" : "RESPONSE" });
       if (event.optOut) {
         await tx.contactPoint.update({ where: { id: exact!.id }, data: { doNotContact: true, updatedByActorId: base.actor.id } });
         await tx.lead.updateMany({ where: { workspaceId: item.workspaceId, contactId: exact!.contactId }, data: { contactPreference: "DO_NOT_CONTACT", contactPreferenceUpdatedAt: event.occurredAt, updatedByActorId: base.actor.id } });
