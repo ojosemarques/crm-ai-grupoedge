@@ -9,7 +9,7 @@ import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace
 
 export const dynamic = "force-dynamic";
 
-const sections = new Set<FinanceSection>(["dashboard", "lancamentos", "entradas", "despesas", "fluxo-caixa", "dre", "contas", "pagar-receber", "comissoes", "categorias"]);
+const sections = new Set<FinanceSection>(["dashboard", "lancamentos", "entradas", "despesas", "fluxo-caixa", "dre", "contas", "pagar-receber", "conciliacao", "recorrencias", "centros-custo", "comprovantes", "comissoes", "categorias"]);
 
 function integer(value: string | undefined, fallback: number, min: number, max: number) {
   const parsed = Number(value);

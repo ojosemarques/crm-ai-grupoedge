@@ -37,6 +37,7 @@ export const createFinancialEntrySchema = z.object({
   categoryId: id,
   financialAccountId: id,
   customerAccountId: id.nullable().default(null),
+  costCenterId: id.nullable().default(null),
   direction: z.enum(["INCOME", "EXPENSE"]),
   status: z.enum(["PLANNED", "SETTLED"]).default("PLANNED"),
   description: text(3, 240),
@@ -46,12 +47,16 @@ export const createFinancialEntrySchema = z.object({
   dueAt: z.coerce.date(),
   settledAt: z.coerce.date().nullable().default(null),
   idempotencyKey,
+  requiresApproval: z.boolean().default(false),
 }).strict().superRefine((value, context) => {
   if (value.status === "SETTLED" && !value.settledAt) {
     context.addIssue({ code: "custom", path: ["settledAt"], message: "Informe a data de realização." });
   }
   if (value.status === "PLANNED" && value.settledAt) {
     context.addIssue({ code: "custom", path: ["settledAt"], message: "Lançamento previsto não possui data de realização." });
+  }
+  if (value.status === "SETTLED" && value.requiresApproval) {
+    context.addIssue({ code: "custom", path: ["requiresApproval"], message: "A despesa deve ser aprovada antes da liquidação." });
   }
 });
 
@@ -76,7 +81,27 @@ export const createCommissionRuleSchema = z.object({
   action: z.literal("CREATE_COMMISSION_RULE"),
   sellerMemberId: id,
   percentageBps: z.number().int().min(0).max(10_000),
+  basis: z.enum(["TCV", "SALE_AMOUNT", "MRR"]).default("TCV"),
   effectiveFrom: z.coerce.date(),
+}).strict();
+
+export const createCostCenterSchema = z.object({ action: z.literal("CREATE_COST_CENTER"), key: text(2, 80).regex(/^[a-z][a-z0-9_]*$/), name: text(2, 120) }).strict();
+export const createRecurrenceSchema = z.object({
+  action: z.literal("CREATE_RECURRENCE"), categoryId: id, financialAccountId: id, costCenterId: id.nullable().default(null),
+  direction: z.enum(["INCOME", "EXPENSE"]), description: text(3, 240), counterparty: text(2, 160).nullable().default(null), amountCents: cents,
+  firstDueAt: z.coerce.date(), installmentCount: z.number().int().min(2).max(120), requiresApproval: z.boolean().default(false),
+}).strict();
+export const importBankStatementSchema = z.object({
+  action: z.literal("IMPORT_BANK_STATEMENT"), financialAccountId: id, fileName: text(3, 180), csv: z.string().min(10).max(1_000_000),
+}).strict();
+export const reviewBankLineSchema = z.object({ action: z.literal("REVIEW_BANK_LINE"), lineId: id, decision: z.enum(["MATCH", "IGNORE"]), entryId: id.optional() }).strict().superRefine((value, context) => {
+  if (value.decision === "MATCH" && !value.entryId) context.addIssue({ code: "custom", path: ["entryId"], message: "Selecione o lançamento para conciliar." });
+});
+export const reviewExpenseSchema = z.object({ action: z.literal("REVIEW_EXPENSE"), entryId: id, decision: z.enum(["APPROVE", "REJECT"]), reason: text(3, 500), expectedRevision: z.number().int().positive() }).strict();
+export const financialAttachmentMetadataSchema = z.object({
+  entryId: id,
+  fileName: text(1, 180).refine((value) => !/[\\/\u0000-\u001f]/.test(value), "Nome de arquivo inválido."),
+  mimeType: z.enum(["application/pdf", "image/jpeg", "image/png", "image/webp"]),
 }).strict();
 
 export const updateCommissionSchema = z.object({
@@ -104,6 +129,11 @@ export const financeCommandSchema = z.discriminatedUnion("action", [
   createCommissionRuleSchema,
   updateCommissionSchema,
   reconcileCommissionsSchema,
+  createCostCenterSchema,
+  createRecurrenceSchema,
+  importBankStatementSchema,
+  reviewBankLineSchema,
+  reviewExpenseSchema,
 ]);
 
 export function commissionAmountCents(basisCents: bigint, percentageBps: number) {

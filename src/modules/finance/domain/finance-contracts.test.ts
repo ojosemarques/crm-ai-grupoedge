@@ -31,6 +31,7 @@ describe("finance domain", () => {
       idempotencyKey: "finance:test:entry:1",
     } as const;
     expect(() => createFinancialEntrySchema.parse({ ...base, status: "SETTLED" })).toThrow("Informe a data");
+    expect(() => createFinancialEntrySchema.parse({ ...base, status: "SETTLED", settledAt: "2026-09-10", requiresApproval: true })).toThrow("aprovada antes");
     expect(createFinancialEntrySchema.parse({ ...base, status: "PLANNED" }).amountCents).toBe(1_000n);
   });
 

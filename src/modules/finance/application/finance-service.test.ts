@@ -23,6 +23,11 @@ describe("finance service", () => {
       commissionRule: { findMany: vi.fn().mockResolvedValue([]) },
       commission: { findMany: vi.fn().mockResolvedValue([]) },
       workspaceMember: { findMany: vi.fn().mockResolvedValue([]) },
+      financialCostCenter: { findMany: vi.fn().mockResolvedValue([]) },
+      financialRecurrence: { findMany: vi.fn().mockResolvedValue([]) },
+      bankStatementImport: { findMany: vi.fn().mockResolvedValue([]) },
+      bankStatementLine: { findMany: vi.fn().mockResolvedValue([]) },
+      financialAttachment: { findMany: vi.fn().mockResolvedValue([]) },
     };
     const service = createFinanceService({ database: database as never, authorization: { assertAuthorized: vi.fn(), authorize: vi.fn().mockResolvedValue({ allowed: true }) } as never, now: () => new Date("2026-09-30") });
     const result = await service.screen(context);

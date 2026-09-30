@@ -13334,6 +13334,29 @@ enum CommissionStatus {
   PAID
 }
 
+enum FinancialApprovalStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum BankStatementLineStatus {
+  UNMATCHED
+  MATCHED
+  IGNORED
+}
+
+enum FinancialRecurrenceFrequency {
+  MONTHLY
+}
+
+enum CommissionBasis {
+  TCV
+  SALE_AMOUNT
+  MRR
+}
+
 model FinancialCategory {
   id               String                @id @default(uuid()) @db.Uuid
   workspaceId      String                @db.Uuid
@@ -13378,6 +13401,9 @@ model FinancialEntry {
   categoryId         String                  @db.Uuid
   financialAccountId String                  @db.Uuid
   customerAccountId  String?                 @db.Uuid
+  costCenterId       String?                 @db.Uuid
+  recurrenceId       String?                 @db.Uuid
+  installmentNumber Int?
   direction          FinancialEntryDirection
   status             FinancialEntryStatus    @default(PLANNED)
   description        String
@@ -13389,6 +13415,10 @@ model FinancialEntry {
   settledAt          DateTime?               @db.Timestamptz(3)
   cancelledAt        DateTime?               @db.Timestamptz(3)
   cancellationReason String?
+  approvalStatus     FinancialApprovalStatus @default(NOT_REQUIRED)
+  approvalReason     String?
+  approvedAt         DateTime?               @db.Timestamptz(3)
+  approvedByActorId  String?                 @db.Uuid
   idempotencyKey     String
   revision           Int                     @default(1)
   createdByActorId   String                  @db.Uuid
@@ -13405,11 +13435,107 @@ model FinancialEntry {
   @@map("financial_entries")
 }
 
+model FinancialCostCenter {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @db.Uuid
+  key              String
+  name             String
+  active           Boolean  @default(true)
+  createdByActorId String   @db.Uuid
+  updatedByActorId String   @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, key])
+  @@index([workspaceId, active, name])
+  @@map("financial_cost_centers")
+}
+
+model FinancialRecurrence {
+  id                 String                       @id @default(uuid()) @db.Uuid
+  workspaceId        String                       @db.Uuid
+  categoryId         String                       @db.Uuid
+  financialAccountId String                       @db.Uuid
+  costCenterId       String?                      @db.Uuid
+  direction          FinancialEntryDirection
+  description        String
+  counterparty       String?
+  amountCents        BigInt
+  frequency          FinancialRecurrenceFrequency @default(MONTHLY)
+  installmentCount   Int
+  firstDueAt         DateTime                     @db.Timestamptz(3)
+  active             Boolean                      @default(true)
+  createdByActorId   String                       @db.Uuid
+  updatedByActorId   String                       @db.Uuid
+  createdAt          DateTime                     @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                     @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, active, firstDueAt])
+  @@map("financial_recurrences")
+}
+
+model BankStatementImport {
+  id                 String   @id @default(uuid()) @db.Uuid
+  workspaceId        String   @db.Uuid
+  financialAccountId String   @db.Uuid
+  fileName           String
+  contentHash        String
+  importedRows       Int
+  matchedRows        Int      @default(0)
+  createdByActorId   String   @db.Uuid
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, contentHash])
+  @@index([workspaceId, createdAt])
+  @@map("bank_statement_imports")
+}
+
+model BankStatementLine {
+  id               String                  @id @default(uuid()) @db.Uuid
+  workspaceId      String                  @db.Uuid
+  importId         String                  @db.Uuid
+  financialEntryId String?                 @db.Uuid
+  occurredAt       DateTime                @db.Timestamptz(3)
+  description      String
+  amountCents      BigInt
+  status           BankStatementLineStatus @default(UNMATCHED)
+  rawData          Json
+  matchedAt        DateTime?               @db.Timestamptz(3)
+  matchedByActorId String?                 @db.Uuid
+  createdAt        DateTime                @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status, occurredAt])
+  @@index([workspaceId, importId])
+  @@map("bank_statement_lines")
+}
+
+model FinancialAttachment {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @db.Uuid
+  financialEntryId String   @db.Uuid
+  fileName         String
+  mimeType         String
+  sizeBytes        Int
+  contentHash      String
+  content          Bytes    @db.ByteA
+  createdByActorId String   @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, financialEntryId, createdAt])
+  @@map("financial_attachments")
+}
+
 model CommissionRule {
   id               String    @id @default(uuid()) @db.Uuid
   workspaceId      String    @db.Uuid
   sellerMemberId   String    @db.Uuid
   percentageBps    Int
+  basis            CommissionBasis @default(TCV)
   active           Boolean   @default(true)
   effectiveFrom    DateTime  @db.Timestamptz(3)
   effectiveTo      DateTime? @db.Timestamptz(3)

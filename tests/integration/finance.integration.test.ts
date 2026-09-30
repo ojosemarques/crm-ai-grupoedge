@@ -86,4 +86,35 @@ describe("financeiro integrado", () => {
     const screen = await service.screen(admin);
     expect(screen.accounts.find((row) => row.id === account.id)?.balanceCents).toBe("5000");
   });
+
+  it("opera recorrência, aprovação, comprovante e conciliação automática de extrato", async () => {
+    const account = await service.command(admin, { action: "CREATE_ACCOUNT", name: "Banco conciliação", type: "BANK", openingBalanceCents: "0" }) as { id: string };
+    const category = await service.command(admin, { action: "CREATE_CATEGORY", key: "despesa_recorrente", name: "Despesa recorrente", kind: "EXPENSE", dreGroup: "despesas_operacionais" }) as { id: string };
+    const costCenter = await service.command(admin, { action: "CREATE_COST_CENTER", key: "operacoes", name: "Operações" }) as { id: string };
+    const recurrence = await service.command(admin, { action: "CREATE_RECURRENCE", categoryId: category.id, financialAccountId: account.id, costCenterId: costCenter.id, direction: "EXPENSE", description: "Licença recorrente", counterparty: "Fornecedor SaaS", amountCents: "12345", firstDueAt: "2026-09-30", installmentCount: 2, requiresApproval: true }) as { id: string };
+    const installments = await database.financialEntry.findMany({ where: { workspaceId, recurrenceId: recurrence.id }, orderBy: { installmentNumber: "asc" } });
+    expect(installments).toHaveLength(2);
+    expect(installments[0]).toMatchObject({ costCenterId: costCenter.id, installmentNumber: 1, approvalStatus: "PENDING", status: "PLANNED" });
+    await service.command(admin, { action: "REVIEW_EXPENSE", entryId: installments[0]!.id, decision: "APPROVE", reason: "Contrato e valor conferidos.", expectedRevision: 1 });
+    await service.command(admin, { action: "IMPORT_BANK_STATEMENT", financialAccountId: account.id, fileName: "extrato-setembro.csv", csv: "data;descricao;valor\n30/09/2026;Licenca SaaS;-123,45" });
+    expect(await database.bankStatementLine.findFirstOrThrow({ where: { workspaceId, description: "Licenca SaaS" } })).toMatchObject({ status: "MATCHED", financialEntryId: installments[0]!.id });
+    expect(await database.financialEntry.findUniqueOrThrow({ where: { id: installments[0]!.id } })).toMatchObject({ status: "SETTLED", approvalStatus: "APPROVED" });
+    await service.addAttachment(admin, { entryId: installments[0]!.id, fileName: "comprovante.pdf", mimeType: "application/pdf" }, Buffer.from("comprovante financeiro"));
+    const storedAttachment = await database.financialAttachment.findFirstOrThrow({ where: { workspaceId } });
+    expect(Buffer.from(storedAttachment.content).toString("utf8")).toBe("comprovante financeiro");
+    expect((await service.getAttachment(admin, storedAttachment.id)).fileName).toBe("comprovante.pdf");
+    await expect(service.getAttachment(sdr, storedAttachment.id)).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    await expect(service.addAttachment(admin, { entryId: installments[0]!.id, fileName: "malware.html", mimeType: "text/html" }, Buffer.from("<script>"))).rejects.toMatchObject({ name: "ZodError" });
+    expect(await database.financialAttachment.count({ where: { workspaceId, financialEntryId: installments[0]!.id } })).toBe(1);
+    await service.command(admin, { action: "IMPORT_BANK_STATEMENT", financialAccountId: account.id, fileName: "extrato-outubro.csv", csv: "data;descricao;valor\n30/10/2026;Licenca SaaS;-123,45" });
+    const pendingLine = await database.bankStatementLine.findFirstOrThrow({ where: { workspaceId, description: "Licenca SaaS", status: "UNMATCHED" }, orderBy: { occurredAt: "desc" } });
+    await expect(service.command(admin, { action: "REVIEW_BANK_LINE", lineId: pendingLine.id, decision: "MATCH", entryId: installments[1]!.id })).rejects.toMatchObject({ code: "FINANCE_EXPENSE_APPROVAL_REQUIRED" });
+    const rule = await service.command(admin, { action: "CREATE_COMMISSION_RULE", sellerMemberId: sdr.memberId, percentageBps: 750, basis: "MRR", effectiveFrom: "2026-10-01" }) as { rule: { basis: string } };
+    expect(rule.rule.basis).toBe("MRR");
+    const screen = await service.screen(admin);
+    expect(screen.costCenters).toEqual(expect.arrayContaining([expect.objectContaining({ id: costCenter.id })]));
+    expect(screen.recurrences).toEqual(expect.arrayContaining([expect.objectContaining({ id: recurrence.id })]));
+    expect(screen.statementLines).toEqual(expect.arrayContaining([expect.objectContaining({ status: "MATCHED" })]));
+    expect(screen.attachments).toEqual(expect.arrayContaining([expect.objectContaining({ fileName: "comprovante.pdf" })]));
+  });
 });
