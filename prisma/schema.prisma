@@ -2149,6 +2149,7 @@ enum OutboxStatus {
   PENDING
   PROCESSING
   DELIVERED_LOCAL
+  DELIVERED_EXTERNAL
   RETRY_PENDING
   DEAD_LETTER
   CANCELLED
@@ -2206,6 +2207,7 @@ enum N8nMachineStatus {
 enum N8nMachineScope {
   EVENTS_READ
   RECORDS_READ
+  RECORDS_WRITE
   ACTIVITY_DRAFT_CREATE
   NEXT_ACTION_DRAFT_CREATE
   AUTOMATION_RESULT_WRITE
@@ -10052,6 +10054,7 @@ model OutboxEvent {
   errorCode          String?
   errorMessage       String?
   deliveredLocallyAt DateTime?              @db.Timestamptz(3)
+  deliveredExternallyAt DateTime?           @db.Timestamptz(3)
   createdByActorId   String                 @db.Uuid
   createdAt          DateTime               @default(now()) @db.Timestamptz(3)
   messageId          String?                @db.Uuid

@@ -16,7 +16,7 @@ export class EphemeralSecretResolver implements SecretResolver {
 
 export class EnvironmentSecretResolver implements SecretResolver {
   async resolve(referenceKey: string): Promise<string | null> {
-    if (!/^(?:LOCAL_MOCK|META_ADS|GOOGLE_ADS|WHATSAPP)_[A-Z0-9_]{3,120}$/.test(referenceKey)) return null;
+    if (!/^(?:LOCAL_MOCK|META_ADS|GOOGLE_ADS|WHATSAPP|TYPEFORM|ACQUISITION)_[A-Z0-9_]{3,120}$/.test(referenceKey)) return null;
     return process.env[referenceKey]?.trim() || null;
   }
 }

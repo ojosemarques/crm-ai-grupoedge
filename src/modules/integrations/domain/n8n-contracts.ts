@@ -10,6 +10,7 @@ export const N8N_MAX_PAGE_SIZE = 50;
 export const n8nMachineScopeSchema = z.enum([
   "EVENTS_READ",
   "RECORDS_READ",
+  "RECORDS_WRITE",
   "ACTIVITY_DRAFT_CREATE",
   "NEXT_ACTION_DRAFT_CREATE",
   "AUTOMATION_RESULT_WRITE",
@@ -33,6 +34,22 @@ export const n8nEventTypes = [
   "customer_service.critical_request",
   "ai.suggestion_accepted",
   "ai.suggestion_rejected",
+  "acquisition.lead.received",
+  "crm.contacts.created",
+  "crm.contacts.updated",
+  "crm.contacts.deleted",
+  "crm.accounts.created",
+  "crm.accounts.updated",
+  "crm.accounts.deleted",
+  "crm.deals.created",
+  "crm.deals.updated",
+  "crm.deals.deleted",
+  "crm.sources.created",
+  "crm.sources.updated",
+  "crm.sources.deleted",
+  "crm.fields.created",
+  "crm.fields.updated",
+  "crm.fields.deleted",
 ] as const;
 
 export const n8nEventTypeSchema = z.enum(n8nEventTypes);

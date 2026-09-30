@@ -127,8 +127,8 @@ export function createOperationsService(options: Options) {
     ]);
     const jobTotal = jobs.reduce((sum, row) => sum + row._count._all, 0);
     const jobGood = jobs.find((row) => row.status === "SUCCEEDED")?._count._all ?? 0;
-    const outboxTerminal = outbox.filter((row) => ["DELIVERED_LOCAL", "DEAD_LETTER", "CANCELLED"].includes(row.status)).reduce((sum, row) => sum + row._count._all, 0);
-    const outboxGood = outbox.find((row) => row.status === "DELIVERED_LOCAL")?._count._all ?? 0;
+    const outboxTerminal = outbox.filter((row) => ["DELIVERED_LOCAL", "DELIVERED_EXTERNAL", "DEAD_LETTER", "CANCELLED"].includes(row.status)).reduce((sum, row) => sum + row._count._all, 0);
+    const outboxGood = outbox.filter((row) => ["DELIVERED_LOCAL", "DELIVERED_EXTERNAL"].includes(row.status)).reduce((sum, row) => sum + row._count._all, 0);
     const privacyTerminal = privacy.filter((item) => item.completedAt);
     const privacyGood = privacyTerminal.filter((item) => item.dueAt && item.completedAt && item.completedAt <= item.dueAt).length;
     const runtimeByStatus = Object.fromEntries(runtimeJobs.map((row) => [row.status, row._count._all]));

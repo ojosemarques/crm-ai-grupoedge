@@ -18,8 +18,10 @@ export function createIntegrationOutboxWorkerService(options: Options) {
       const now = options.now();
       const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         SELECT "id" FROM "outbox_events"
-        WHERE (("status" IN ('PENDING','RETRY_PENDING') AND "availableAt" <= ${now} AND ("nextRetryAt" IS NULL OR "nextRetryAt" <= ${now}))
-          OR ("status" = 'PROCESSING' AND "lockExpiresAt" < ${now}))
+        WHERE "connectionId" IS NOT NULL
+          AND "eventType" <> 'marketing.meta_conversion.v1'
+          AND ((("status" IN ('PENDING','RETRY_PENDING') AND "availableAt" <= ${now} AND ("nextRetryAt" IS NULL OR "nextRetryAt" <= ${now}))
+          OR ("status" = 'PROCESSING' AND "lockExpiresAt" < ${now})))
         ORDER BY "availableAt" ASC, "createdAt" ASC FOR UPDATE SKIP LOCKED LIMIT 1
       `);
       const selected = rows[0];

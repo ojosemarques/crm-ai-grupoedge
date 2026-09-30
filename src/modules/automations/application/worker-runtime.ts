@@ -10,6 +10,7 @@ import { createTelephonyWorkerService } from "@/modules/integrations/application
 import { localTelephonySimulator } from "@/modules/integrations/application/telephony-transport";
 import { createCalendarWorkerService } from "@/modules/integrations/application/calendar-worker-service";
 import { localCalendarSandbox } from "@/modules/integrations/application/calendar-transport";
+import { getConversionFeedbackService } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { getPaymentWorkerService } from "@/modules/payments/application/payment-worker-service";
 import type { ApplicationConfig } from "@/shared/core/config/application-config";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -37,6 +38,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
   const telephonyWorker = createTelephonyWorkerService({ ...common, adapter: localTelephonySimulator });
   const emailWorker = createEmailMessageWorkerService({ ...common, transport: localEmailSinkTransport });
   const whatsappWorker = createWhatsAppWebhookWorkerService(common);
+  const metaConversionWorker = getConversionFeedbackService();
 
   return Object.freeze({
     database,
@@ -49,6 +51,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
         { key: "email", processNext: emailWorker.processNext },
         { key: "whatsapp", processNext: whatsappWorker.processNext },
         { key: "automations", processNext: automationWorker.processNext },
+        { key: "meta-conversions", processNext: metaConversionWorker.processNext },
       ],
     }),
   });
