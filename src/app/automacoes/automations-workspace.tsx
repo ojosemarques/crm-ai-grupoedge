@@ -3,9 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { AutomationBuilder } from "@/app/automacoes/automation-builder";
 import { NotificationCenter } from "@/app/automacoes/notification-center";
-import { AccessibleDialog } from "@/components/ui/accessible-dialog";
-import { Icon } from "@/components/ui/icon";
 import styles from "./automations-workspace.module.css";
 
 import { Button } from "@/components/ui/button";
@@ -14,11 +13,6 @@ import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import { DataTableShell, SectionHeader, Surface } from "@/components/ui/surface";
 import type { AutomationOverview } from "@/modules/automations/application/automation-observability-service";
 import type { NotificationScreen } from "@/modules/automations/application/notification-service";
-
-function apiError(body: unknown) {
-  if (body && typeof body === "object" && "error" in body && body.error && typeof body.error === "object" && "message" in body.error) return String(body.error.message);
-  return "Não foi possível alterar a regra.";
-}
 
 function statusLabel(value: string) {
   return ({ DRAFT: "Rascunho", ARCHIVED: "Arquivada", ACTIVE: "Ativa", PAUSED: "Pausada", PENDING: "Pendente", RUNNING: "Executando", SUCCEEDED: "Sucesso", FAILED: "Falha", CANCELLED: "Cancelada" } as Record<string, string>)[value] ?? value;
@@ -36,58 +30,12 @@ export function AutomationsWorkspace({
   notifications,
   initialTab = "flows",
 }: Readonly<{ initialOverview: AutomationOverview; notifications: NotificationScreen; initialTab?: "flows" | "history" }>) {
-  const [overview, setOverview] = useState(initialOverview);
-  const [selectedId, setSelectedId] = useState(initialOverview.rules[0]?.id ?? "");
+  const [overview] = useState(initialOverview);
   const [tab, setTab] = useState<string>(initialTab);
-  const [confirmation, setConfirmation] = useState<{ id: string; status: string; name: string } | null>(null);
-  const selectedRule = overview.rules.find((rule) => rule.id === selectedId);
-  const [busyRuleId, setBusyRuleId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  async function toggleRule(ruleId: string, current: string) {
-    const status = current === "ACTIVE" ? "PAUSED" : "ACTIVE";
-
-    setBusyRuleId(ruleId);
-    setNotice(null);
-    try {
-      const response = await fetch(`/api/automations/rules/${ruleId}/status`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, reason: "Alteração confirmada na central de automações." }),
-      });
-      const body: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(apiError(body));
-      setOverview((currentOverview) => ({
-        ...currentOverview,
-        rules: currentOverview.rules.map((rule) => rule.id === ruleId ? { ...rule, status } : rule),
-      }));
-      setNotice(`Regra ${status === "ACTIVE" ? "ativada" : "pausada"} e auditada.`);
-      setConfirmation(null);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Falha inesperada.");
-    } finally {
-      setBusyRuleId(null);
-    }
-  }
 
   return <div className={styles.workspace}>
     <nav aria-label="Áreas de automação" className={styles.tabs}>{[["flows", "Fluxos"], ["history", "Histórico de execuções"], ["notifications", "Notificações"]].map(([key, label]) => <button aria-current={tab === key ? "page" : undefined} key={key} onClick={() => setTab(key!)} type="button">{label}</button>)}</nav>
-    {confirmation ? <AccessibleDialog labelledBy="automation-confirm-title" busy={busyRuleId !== null} onDismiss={() => setConfirmation(null)}><h2 id="automation-confirm-title">{confirmation.status === "ACTIVE" ? "Pausar" : "Ativar"} automação</h2><p className="mt-3 text-sm">{confirmation.name}</p><p className="mt-2 text-xs text-muted-foreground">A alteração será aplicada aos próximos eventos e registrada no histórico.</p><div className="mt-5 flex gap-2"><Button disabled={busyRuleId !== null} onClick={() => void toggleRule(confirmation.id, confirmation.status)}>{busyRuleId ? "Salvando…" : "Confirmar"}</Button><Button disabled={busyRuleId !== null} onClick={() => setConfirmation(null)} variant="secondary">Cancelar</Button></div>{notice ? <p className="mt-3 text-sm" role="status">{notice}</p> : null}</AccessibleDialog> : null}
-    {notice ? <p className="rounded-md border bg-muted px-4 py-3 text-sm" role="status">{notice}</p> : null}
-    <section className={styles.flowLayout} hidden={tab !== "flows"}>
-      <aside className={styles.ruleList}><header><Icon name="automacoes" size={16} /><h2>Minhas automações</h2><span>{overview.rules.length}</span></header>
-        {overview.rules.map((rule) => <button aria-current={selectedId === rule.id ? "true" : undefined} key={rule.id} onClick={() => setSelectedId(rule.id)} type="button"><span className={styles.ruleIcon}><Icon name="automacoes" size={15} /></span><span><strong>{rule.name}</strong><small>{statusLabel(rule.status)} · versão {rule.version}</small></span><i data-active={rule.status === "ACTIVE"} /></button>)}
-      </aside>
-      {selectedRule ? <div className={styles.editor}>
-        <header className={styles.editorHeader}><div><h2>{selectedRule.name}</h2><p>{selectedRule.description}</p></div><StatusBadge tone={statusTone(selectedRule.status)}>{statusLabel(selectedRule.status)}</StatusBadge>{overview.capabilities.canManage && (selectedRule.status === "ACTIVE" || selectedRule.status === "PAUSED") ? <Button disabled={busyRuleId === selectedRule.id} onClick={() => setConfirmation({ id: selectedRule.id, name: selectedRule.name, status: selectedRule.status })} size="sm" variant="secondary">{selectedRule.status === "ACTIVE" ? "Pausar fluxo" : "Ativar fluxo"}</Button> : null}</header>
-        <div className={styles.canvas}>
-          <article className={styles.node}><header><Icon name="pipeline" size={16} />Iniciar quando…</header><div><small>Gatilho</small><strong>{selectedRule.triggerType.replaceAll("_", " ").toLowerCase()}</strong><span>Evento recebido pelo CRM</span></div><footer>Próximo passo <i /></footer></article>
-          <span aria-hidden="true" className={styles.connector}><Icon name="seta-direita" size={19} /></span>
-          <article className={`${styles.node} ${styles.actionNode}`}><header><Icon name="automacoes" size={16} />Executar ação</header><div><small>Ação configurada</small><strong>{selectedRule.actionType.replaceAll("_", " ").toLowerCase()}</strong><span>{selectedRule.description}</span></div><footer>Concluir execução <i /></footer></article>
-        </div>
-        <details className={styles.configuration}><summary>Detalhes da configuração · versão {selectedRule.version}</summary><dl><div><dt>Condições</dt><dd><pre>{JSON.stringify(selectedRule.conditions, null, 2)}</pre></dd></div><div><dt>Parâmetros da ação</dt><dd><pre>{JSON.stringify(selectedRule.actionConfig, null, 2)}</pre></dd></div></dl></details>
-      </div> : <EmptyState title="Nenhuma automação" description="As automações configuradas aparecerão aqui." />}
-    </section>
+    <section hidden={tab !== "flows"}><AutomationBuilder /></section>
 
     <Surface className="p-5" hidden={tab !== "history"}>
       <SectionHeader action={<StatusBadge tone={overview.staleLocks > 0 ? "warning" : "success"}>Locks vencidos: {overview.staleLocks}</StatusBadge>} description="Falhas, tentativas e resultados permanecem inspecionáveis." eyebrow="Observabilidade" title="Histórico de execuções" />

@@ -2472,7 +2472,9 @@ model Workspace {
   tags                         Tag[]
   leadTags                     LeadTag[]
   automationRules              AutomationRule[]
+  automationRuleVersions       AutomationRuleVersion[]
   automationRuns               AutomationRun[]
+  automationNodeRuns           AutomationNodeRun[]
   automationAttempts           AutomationAttempt[]
   automationEffects            AutomationEffect[]
   notifications                Notification[]
@@ -2755,6 +2757,7 @@ model Actor {
   leadTagsRemoved                  LeadTag[]                            @relation("LeadTagRemovedBy")
   automationRulesCreated           AutomationRule[]                     @relation("AutomationRuleCreatedBy")
   automationRulesUpdated           AutomationRule[]                     @relation("AutomationRuleUpdatedBy")
+  automationRuleVersionsPublished  AutomationRuleVersion[]              @relation("AutomationRuleVersionPublishedBy")
   automationRuns                   AutomationRun[]                      @relation("AutomationRunActor")
   notificationsCreated             Notification[]                       @relation("NotificationCreatedBy")
   insightsCreated                  AIInsight[]                          @relation("AIInsightCreatedBy")
@@ -7649,6 +7652,9 @@ model AutomationRule {
   conditions       Json
   actionConfig     Json
   version          Int                   @default(1)
+  draftDefinition Json?
+  draftRevision   Int                   @default(1)
+  publishedVersionId String?            @db.Uuid
   createdByActorId String                @db.Uuid
   updatedByActorId String                @db.Uuid
   createdAt        DateTime              @default(now()) @db.Timestamptz(3)
@@ -7659,6 +7665,8 @@ model AutomationRule {
   createdBy Actor           @relation("AutomationRuleCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
   updatedBy Actor           @relation("AutomationRuleUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
   runs      AutomationRun[]
+  versions  AutomationRuleVersion[] @relation("AutomationRuleVersions")
+  publishedVersion AutomationRuleVersion? @relation("AutomationRulePublishedVersion", fields: [workspaceId, publishedVersionId], references: [workspaceId, id], onDelete: Restrict)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, key])
@@ -7667,10 +7675,38 @@ model AutomationRule {
   @@map("automation_rules")
 }
 
+model AutomationRuleVersion {
+  id                 String   @id @default(uuid()) @db.Uuid
+  workspaceId        String   @db.Uuid
+  automationRuleId   String   @db.Uuid
+  version            Int
+  graphDefinition    Json
+  graphHash          String
+  validationSnapshot Json
+  rollbackOfVersionId String? @db.Uuid
+  publishedByActorId String   @db.Uuid
+  publishedAt        DateTime @db.Timestamptz(3)
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  rule        AutomationRule @relation("AutomationRuleVersions", fields: [workspaceId, automationRuleId], references: [workspaceId, id], onDelete: Restrict)
+  publishedForRules AutomationRule[] @relation("AutomationRulePublishedVersion")
+  rollbackOf  AutomationRuleVersion? @relation("AutomationRuleVersionRollback", fields: [workspaceId, rollbackOfVersionId], references: [workspaceId, id], onDelete: Restrict)
+  rollbacks   AutomationRuleVersion[] @relation("AutomationRuleVersionRollback")
+  publishedBy Actor @relation("AutomationRuleVersionPublishedBy", fields: [workspaceId, publishedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  runs        AutomationRun[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, automationRuleId, version])
+  @@index([workspaceId, automationRuleId, publishedAt])
+  @@map("automation_rule_versions")
+}
+
 model AutomationRun {
   id                   String                @id @default(uuid()) @db.Uuid
   workspaceId          String                @db.Uuid
   automationRuleId     String                @db.Uuid
+  automationRuleVersionId String?            @db.Uuid
   leadId               String?               @db.Uuid
   meetingId            String?               @db.Uuid
   opportunityId        String?               @db.Uuid
@@ -7682,6 +7718,9 @@ model AutomationRun {
   actionType           AutomationActionType
   conditionsSnapshot   Json
   actionConfigSnapshot Json
+  graphSnapshot        Json?
+  currentNodeId        String?
+  executionPolicy     String                @default("LEGACY_SINGLE_ACTION")
   triggeredAt          DateTime              @default(now()) @db.Timestamptz(3)
   startedAt            DateTime?             @db.Timestamptz(3)
   finishedAt           DateTime?             @db.Timestamptz(3)
@@ -7694,6 +7733,7 @@ model AutomationRun {
 
   workspace     Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   rule          AutomationRule      @relation(fields: [workspaceId, automationRuleId], references: [workspaceId, id], onDelete: Restrict)
+  ruleVersionSnapshot AutomationRuleVersion? @relation(fields: [workspaceId, automationRuleVersionId], references: [workspaceId, id], onDelete: Restrict)
   lead          Lead?               @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
   meeting       Meeting?            @relation(fields: [workspaceId, meetingId], references: [workspaceId, id], onDelete: Restrict)
   opportunity   Opportunity?        @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: Restrict)
@@ -7707,6 +7747,7 @@ model AutomationRun {
   notifications Notification[]
   handoffs      CustomerHandoff[]
   auditLogs     AuditLog[]
+  nodeRuns      AutomationNodeRun[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey])
@@ -7716,6 +7757,33 @@ model AutomationRun {
   @@index([workspaceId, opportunityId, status, triggeredAt])
   @@index([workspaceId, status, createdAt])
   @@map("automation_runs")
+}
+
+model AutomationNodeRun {
+  id              String    @id @default(uuid()) @db.Uuid
+  workspaceId     String    @db.Uuid
+  automationRunId String    @db.Uuid
+  nodeId          String
+  nodeType        String
+  visit           Int       @default(1)
+  status          RunStatus @default(RUNNING)
+  idempotencyKey  String
+  inputSnapshot   Json
+  outputSnapshot  Json?
+  errorCode       String?
+  errorMessage    String?
+  startedAt       DateTime  @db.Timestamptz(3)
+  finishedAt      DateTime? @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  run       AutomationRun @relation(fields: [workspaceId, automationRunId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@unique([workspaceId, automationRunId, nodeId, visit])
+  @@index([workspaceId, automationRunId, status, startedAt])
+  @@map("automation_node_runs")
 }
 
 model AutomationAttempt {

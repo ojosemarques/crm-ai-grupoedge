@@ -30,6 +30,7 @@ type ClaimedJob = Readonly<{
   ruleVersion: number;
   cancelRequestedAt: Date | null;
   ruleActive: boolean;
+  executionPolicy: string;
 }>;
 
 class AutomationCancelledError extends Error {
@@ -175,6 +176,7 @@ export function createAutomationWorkerService(options: AutomationWorkerOptions) 
         ruleVersion: job.automationRun.ruleVersion,
         cancelRequestedAt: job.cancelRequestedAt,
         ruleActive: job.automationRun.rule.status === "ACTIVE",
+        executionPolicy: job.automationRun.executionPolicy,
       });
     });
   }
@@ -263,11 +265,11 @@ export function createAutomationWorkerService(options: AutomationWorkerOptions) 
         where: { id: claim.jobId, workspaceId: claim.workspaceId },
         select: {
           cancelRequestedAt: true,
-          automationRun: { select: { rule: { select: { status: true } } } },
+          automationRun: { select: { executionPolicy: true, rule: { select: { status: true } } } },
         },
       });
       if (current?.cancelRequestedAt) throw new AutomationCancelledError("CANCEL_REQUESTED");
-      if (current?.automationRun?.rule.status !== "ACTIVE") {
+      if (current?.automationRun?.rule.status !== "ACTIVE" && current?.automationRun?.executionPolicy !== "CONTINUE_SNAPSHOT") {
         throw new AutomationCancelledError("RULE_INACTIVE");
       }
 
@@ -449,7 +451,9 @@ export function createAutomationWorkerService(options: AutomationWorkerOptions) 
     const claim = await claimNext(workerId);
     if (!claim) return { status: "IDLE" };
     if (claim.cancelRequestedAt) return finishCancelled(claim, "CANCEL_REQUESTED");
-    if (!claim.ruleActive) return finishCancelled(claim, "RULE_INACTIVE");
+    if (!claim.ruleActive && claim.executionPolicy !== "CONTINUE_SNAPSHOT") {
+      return finishCancelled(claim, "RULE_INACTIVE");
+    }
     try {
       return await finishSucceeded(claim, await executeAction(claim));
     } catch (error) {
