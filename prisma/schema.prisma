@@ -2080,6 +2080,21 @@ enum OnboardingBackfillItemStatus {
   REVIEW_REQUIRED
 }
 
+enum DeliveryPlanType {
+  LICENSE
+  IMPLEMENTATION
+  MANAGED_SERVICE
+  LAB_PROJECT
+}
+
+enum DeliveryPlanStatus {
+  DRAFT
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
 enum SavedViewEntityType {
   LEAD
   TASK
@@ -2541,6 +2556,9 @@ model Workspace {
   importJobs                   ImportJob[]
   webhookEvents                WebhookEvent[]
   customerHandoffs             CustomerHandoff[]
+  handoffTransferVersions      HandoffTransferVersion[]
+  deliveryPlans                DeliveryPlan[]
+  deliveryChecklistItems       DeliveryChecklistItem[]
   savedViews                   SavedView[]
   jobs                         Job[]
   pipelineStageTransitions     PipelineStageTransition[]
@@ -9043,6 +9061,8 @@ model CustomerHandoff {
   toMember      WorkspaceMember? @relation("HandoffToMember", fields: [workspaceId, toMemberId], references: [workspaceId, id], onDelete: Restrict)
   toQueue       Queue?           @relation(fields: [workspaceId, toQueueId], references: [workspaceId, id], onDelete: Restrict)
   createdBy     Actor            @relation("CustomerHandoffCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  transferVersions HandoffTransferVersion[]
+  deliveryPlans    DeliveryPlan[]
 
   @@unique([workspaceId, id])
   @@index([workspaceId, fromMemberId, status, requestedAt])
@@ -9053,6 +9073,82 @@ model CustomerHandoff {
   @@index([workspaceId, accountId, status, requestedAt])
   @@index([workspaceId, contractId, status])
   @@map("customer_handoffs")
+}
+
+model HandoffTransferVersion {
+  id                 String   @id @default(uuid()) @db.Uuid
+  workspaceId        String   @db.Uuid
+  handoffId          String   @db.Uuid
+  version            Int
+  contractVersionId  String?  @db.Uuid
+  diagnosis          Json
+  promise            Json
+  scope              Json
+  approvals          Json
+  users              Json
+  risks              Json
+  contractTotalCents BigInt
+  createdByActorId   String   @db.Uuid
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  handoff   CustomerHandoff @relation(fields: [workspaceId, handoffId], references: [workspaceId, id], onDelete: Restrict)
+  plans     DeliveryPlan[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, handoffId, version])
+  @@index([workspaceId, contractVersionId])
+  @@map("handoff_transfer_versions")
+}
+
+model DeliveryPlan {
+  id                    String             @id @default(uuid()) @db.Uuid
+  workspaceId           String             @db.Uuid
+  handoffId             String             @db.Uuid
+  transferVersionId     String             @db.Uuid
+  type                  DeliveryPlanType
+  status                DeliveryPlanStatus @default(DRAFT)
+  title                 String
+  currency              Currency           @default(BRL)
+  contractedValueCents  BigInt
+  sourceContractLineIds Json
+  acceptedByActorId     String?            @db.Uuid
+  acceptedAt            DateTime?          @db.Timestamptz(3)
+  acceptanceReason      String?
+  createdByActorId      String             @db.Uuid
+  createdAt             DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime           @updatedAt @db.Timestamptz(3)
+
+  workspace       Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  handoff         CustomerHandoff         @relation(fields: [workspaceId, handoffId], references: [workspaceId, id], onDelete: Restrict)
+  transferVersion HandoffTransferVersion  @relation(fields: [workspaceId, transferVersionId], references: [workspaceId, id], onDelete: Restrict)
+  checklist       DeliveryChecklistItem[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, handoffId, type])
+  @@index([workspaceId, status, type, createdAt])
+  @@map("delivery_plans")
+}
+
+model DeliveryChecklistItem {
+  id                    String   @id @default(uuid()) @db.Uuid
+  workspaceId           String   @db.Uuid
+  deliveryPlanId        String   @db.Uuid
+  key                   String
+  name                  String
+  position              Int
+  required              Boolean  @default(true)
+  expectedDurationHours Int
+  createdAt             DateTime @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  plan      DeliveryPlan @relation(fields: [workspaceId, deliveryPlanId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, deliveryPlanId, key])
+  @@unique([workspaceId, deliveryPlanId, position])
+  @@index([workspaceId, deliveryPlanId, required])
+  @@map("delivery_checklist_items")
 }
 
 model OnboardingTemplate {

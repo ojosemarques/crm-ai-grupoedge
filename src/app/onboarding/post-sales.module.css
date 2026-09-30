@@ -41,6 +41,10 @@ a.metric:hover { border-color: var(--border-strong); background: var(--primary-s
 .progress::-webkit-progress-value { background: var(--accent); border-radius: 4px; }
 .progress::-moz-progress-bar { background: var(--accent); border-radius: 4px; }
 .progressLabel { display: flex; justify-content: space-between; margin-top: 6px; font-size: 9px; color: var(--text-muted); }
+.transferFacts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin-top: 10px; }
+.transferFacts > div { padding: 9px; border-radius: 6px; background: var(--surface-muted); }
+.transferFacts dt { color: var(--text-muted); font-size: 9px; }
+.transferFacts dd { margin-top: 3px; font-size: 10px; }
 .filters { padding: 0; }
 .filters form { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .filters label { display: flex; align-items: center; gap: 7px; flex: initial; min-width: 0; color: var(--text-muted); font-size: 11px; }
@@ -75,5 +79,5 @@ a.metric:hover { border-color: var(--border-strong); background: var(--primary-s
 .confirmMessage { font-size: 13px; line-height: 1.8; }
 .dialogActions { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border); margin-top: 22px; padding-top: 16px; }
 @media(max-width:1100px) { .metrics { grid-template-columns: repeat(3,minmax(0,1fr)); } .columns { grid-template-columns: minmax(0,1fr) 240px; } .facts { grid-template-columns: 1fr; gap: 8px; } }
-@media(max-width:760px) { .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } .metric { padding: 14px; } .metric > p:nth-child(2) { font-size: 23px; } .cardGrid, .columns { grid-template-columns: minmax(0,1fr); } .filters label { flex: 1 1 45%; justify-content: space-between; } .filters select { max-width: 120px; } .detail { position: static; } }
+@media(max-width:760px) { .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } .metric { padding: 14px; } .metric > p:nth-child(2) { font-size: 23px; } .cardGrid, .columns, .transferFacts { grid-template-columns: minmax(0,1fr); } .filters label { flex: 1 1 45%; justify-content: space-between; } .filters select { max-width: 120px; } .detail { position: static; } }
 @media(prefers-reduced-motion:reduce) { .metric { transition: none; } }

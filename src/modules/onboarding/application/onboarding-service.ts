@@ -8,6 +8,10 @@ import {
   handoffActionSchema,
   onboardingActionSchema,
 } from "@/modules/onboarding/domain/onboarding-contracts";
+import {
+  deliveryPlanChecklists,
+  groupContractLinesIntoDeliveryPlans,
+} from "@/modules/onboarding/domain/delivery-plan-contracts";
 import { createAuthorizationService, type ResourceScope } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -41,6 +45,13 @@ function resource(
 
 const json = (value: unknown) =>
   JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+
+const deliveryPlanTitles = {
+  LICENSE: "Plano de entrega — licença",
+  IMPLEMENTATION: "Plano de entrega — implantação",
+  MANAGED_SERVICE: "Plano de entrega — serviço operado",
+  LAB_PROJECT: "Plano de entrega — projeto Lab",
+} as const;
 
 async function withSerializableRetry<T>(
   database: PrismaClient,
@@ -161,7 +172,8 @@ export function createOnboardingService(options: ServiceOptions) {
     }
 
     const caseIds = visibleCases.map((item) => item.id);
-    const [milestones, events] = await Promise.all([
+    const visibleHandoffIds = visibleHandoffs.map((item) => item.id);
+    const [milestones, events, deliveryPlans, transferVersions] = await Promise.all([
       caseIds.length
         ? options.database.onboardingMilestone.findMany({
             where: { workspaceId: context.workspaceId, onboardingCaseId: { in: caseIds } },
@@ -179,6 +191,19 @@ export function createOnboardingService(options: ServiceOptions) {
         orderBy: { occurredAt: "desc" },
         take: 100,
       }),
+      visibleHandoffIds.length
+        ? options.database.deliveryPlan.findMany({
+            where: { workspaceId: context.workspaceId, handoffId: { in: visibleHandoffIds } },
+            include: { checklist: { orderBy: { position: "asc" } } },
+            orderBy: [{ createdAt: "asc" }, { type: "asc" }],
+          })
+        : [],
+      visibleHandoffIds.length
+        ? options.database.handoffTransferVersion.findMany({
+            where: { workspaceId: context.workspaceId, handoffId: { in: visibleHandoffIds } },
+            orderBy: [{ handoffId: "asc" }, { version: "desc" }],
+          })
+        : [],
     ]);
 
     const contractByOpportunity = new Map(
@@ -230,6 +255,14 @@ export function createOnboardingService(options: ServiceOptions) {
         readyToActivate,
       },
       handoffs: visibleHandoffs,
+      deliveryPlans: deliveryPlans.map((plan) => ({
+        ...plan,
+        contractedValueCents: plan.contractedValueCents.toString(),
+      })),
+      transferVersions: transferVersions.map((version) => ({
+        ...version,
+        contractTotalCents: version.contractTotalCents.toString(),
+      })),
       cases: visibleCases.map((item) => ({
         ...item,
         milestones: milestones.filter((milestone) => milestone.onboardingCaseId === item.id),
@@ -269,7 +302,14 @@ export function createOnboardingService(options: ServiceOptions) {
       }
       const opportunity = await transaction.opportunity.findFirst({
         where: { workspaceId: context.workspaceId, id: input.opportunityId, deletedAt: null },
-        include: { account: true, offers: true },
+        include: {
+          account: true,
+          product: true,
+          offers: {
+            where: { deletedAt: null },
+            include: { product: true, lines: { orderBy: { position: "asc" } } },
+          },
+        },
       });
       if (!opportunity) fail("Oportunidade não encontrada.", "ONBOARDING_OPPORTUNITY_NOT_FOUND", 404);
       await authorization.assertAuthorized(
@@ -293,6 +333,20 @@ export function createOnboardingService(options: ServiceOptions) {
         orderBy: { acceptedAt: "desc" },
       });
       if (!contract) fail("Contrato aceito é obrigatório pela versão vigente.", "ONBOARDING_CONTRACT_REQUIRED");
+      const contractVersion = contract.currentVersionId
+        ? await transaction.contractVersion.findFirst({
+            where: { workspaceId: context.workspaceId, id: contract.currentVersionId, contractId: contract.id },
+          })
+        : await transaction.contractVersion.findFirst({
+            where: { workspaceId: context.workspaceId, contractId: contract.id },
+            orderBy: { versionNumber: "desc" },
+          });
+      const contractLines = contractVersion
+        ? await transaction.contractLineSnapshot.findMany({
+            where: { workspaceId: context.workspaceId, contractVersionId: contractVersion.id },
+            orderBy: { position: "asc" },
+          })
+        : [];
       const template = await transaction.onboardingTemplateVersion.findFirst({
         where: { workspaceId: context.workspaceId, status: "PUBLISHED" },
         orderBy: { version: "desc" },
@@ -329,6 +383,115 @@ export function createOnboardingService(options: ServiceOptions) {
           updatedByActorId: context.actorId,
         },
       });
+      const transferVersion = await transaction.handoffTransferVersion.create({
+        data: {
+          workspaceId: context.workspaceId,
+          handoffId: handoff.id,
+          version: 1,
+          contractVersionId: contractVersion?.id ?? null,
+          diagnosis: json({
+            interest: opportunity.interestDescription,
+            commercialContext: opportunity.commercialNotes,
+            source: "opportunity",
+          }),
+          promise: json({
+            opportunityName: opportunity.name,
+            acceptedOfferNames: opportunity.offers.map((offer) => offer.name),
+            mrrCents: opportunity.mrrCents.toString(),
+            tcvCents: opportunity.tcvCents.toString(),
+          }),
+          scope: json({
+            contractNumber: contract.contractNumber,
+            contractVersion: contractVersion?.versionNumber ?? null,
+            lines: contractLines.map((line) => ({
+              id: line.id,
+              productSku: line.productSkuSnapshot,
+              productName: line.productNameSnapshot,
+              quantity: line.quantity,
+              totalCents: line.totalCents.toString(),
+              currency: line.currency,
+            })),
+          }),
+          approvals: json({
+            contractStatus: contract.status,
+            acceptedAt: contract.acceptedAt?.toISOString() ?? null,
+            currentVersionId: contract.currentVersionId,
+          }),
+          users: json({
+            deliveryOwnerMemberId: owner.id,
+            commercialOwnerMemberId: opportunity.ownerMemberId,
+            accountId: opportunity.accountId,
+          }),
+          risks: json(opportunity.commercialNotes
+            ? [{ code: "COMMERCIAL_NOTE", description: opportunity.commercialNotes }]
+            : []),
+          contractTotalCents: contractVersion?.totalCents ?? opportunity.amountCents,
+          createdByActorId: context.actorId,
+        },
+      });
+      const deliveryLinesFromSales = opportunity.offers.flatMap((offer) => offer.lines.length > 0
+        ? offer.lines.map((line) => ({
+            id: line.id,
+            productKind: line.productKindSnapshot,
+            revenueCategory: line.revenueCategorySnapshot,
+            totalCents: line.totalCents,
+          }))
+        : [{
+            id: offer.id,
+            productKind: offer.product.kind,
+            revenueCategory: offer.product.revenueCategory,
+            totalCents: offer.totalCents,
+          }]);
+      if (deliveryLinesFromSales.length === 0 && opportunity.product) {
+        deliveryLinesFromSales.push({
+          id: opportunity.product.id,
+          productKind: opportunity.product.kind,
+          revenueCategory: opportunity.product.revenueCategory,
+          totalCents: opportunity.amountCents,
+        });
+      }
+      const deliveryLines = contractLines.length > 0
+        ? contractLines.map((line) => ({
+            id: line.id,
+            productKind: line.productKindSnapshot,
+            revenueCategory: line.revenueCategorySnapshot,
+            totalCents: line.totalCents,
+          }))
+        : deliveryLinesFromSales;
+      const planDefinitions = groupContractLinesIntoDeliveryPlans(deliveryLines);
+      if (planDefinitions.length === 0) {
+        fail("Contrato aceito sem escopo de entrega conciliável.", "ONBOARDING_DELIVERY_SCOPE_REQUIRED");
+      }
+      const reconciledTotal = planDefinitions.reduce((sum, plan) => sum + plan.contractedValueCents, 0n);
+      if (contractVersion && reconciledTotal !== contractVersion.totalCents) {
+        fail("Valores dos planos não conciliam com o contrato aceito.", "ONBOARDING_DELIVERY_VALUE_MISMATCH");
+      }
+      for (const definition of planDefinitions) {
+        const plan = await transaction.deliveryPlan.create({
+          data: {
+            workspaceId: context.workspaceId,
+            handoffId: handoff.id,
+            transferVersionId: transferVersion.id,
+            type: definition.type,
+            title: deliveryPlanTitles[definition.type],
+            currency: opportunity.currency,
+            contractedValueCents: definition.contractedValueCents,
+            sourceContractLineIds: json(definition.sourceContractLineIds),
+            createdByActorId: context.actorId,
+          },
+        });
+        await transaction.deliveryChecklistItem.createMany({
+          data: deliveryPlanChecklists[definition.type].map(([key, name, expectedDurationHours], index) => ({
+            workspaceId: context.workspaceId,
+            deliveryPlanId: plan.id,
+            key,
+            name,
+            position: index + 1,
+            required: true,
+            expectedDurationHours,
+          })),
+        });
+      }
       await appendEvent(transaction, {
         workspaceId: context.workspaceId,
         handoffId: handoff.id,
@@ -441,6 +604,19 @@ export function createOnboardingService(options: ServiceOptions) {
             },
           });
         }
+        const plans = await transaction.deliveryPlan.findMany({
+          where: { workspaceId: context.workspaceId, handoffId: id, status: "DRAFT" },
+        });
+        if (plans.length === 0) fail("Handoff sem plano de entrega exige revisão.", "ONBOARDING_DELIVERY_PLAN_REQUIRED");
+        await transaction.deliveryPlan.updateMany({
+          where: { workspaceId: context.workspaceId, handoffId: id, status: "DRAFT" },
+          data: {
+            status: "ACCEPTED",
+            acceptedByActorId: context.actorId,
+            acceptedAt: now,
+            acceptanceReason: input.reason,
+          },
+        });
       }
       const eventTypes = {
         MARK_READY: "HANDOFF_READY",

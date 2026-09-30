@@ -247,12 +247,12 @@ Cada etapa pode virar uma issue/épico. Dentro dela, `Txx.y` é a task e os iten
 
 ### Etapa 18 — Entrega, CS, renovação e expansão da Politizai
 
-- [ ] **T18.1 — Fechar o ciclo de valor por oferta.**
-  - [ ] Reusar contrato, assinatura, handoff, onboarding, CS e Farmer; criar checklists separados para licença, implantação, serviço operado e projeto Lab.
-  - [ ] Transferir diagnóstico, promessa, escopo, aprovações, usuários e riscos com aceite explícito da equipe de entrega.
-- [ ] **T18.2 — Medir e agir após ganho.**
-  - [ ] Acompanhar adoção, entregáveis, capacidade, solicitações, saúde, resultado e riscos; renovação inicia por data/estado sem envio automático indevido.
-  - [ ] Nova decisão comercial abre oportunidade de expansão própria; churn e perda têm motivo e aprendizado.
+- [x] **T18.1 — Fechar o ciclo de valor por oferta.**
+  - [x] Reusar contrato, assinatura, handoff, onboarding, CS e Farmer; criar checklists separados para licença, implantação, serviço operado e projeto Lab.
+  - [x] Transferir diagnóstico, promessa, escopo, aprovações, usuários e riscos com aceite explícito da equipe de entrega.
+- [x] **T18.2 — Medir e agir após ganho.**
+  - [x] Acompanhar adoção, entregáveis, capacidade, solicitações, saúde, resultado e riscos; renovação inicia por data/estado sem envio automático indevido.
+  - [x] Nova decisão comercial abre oportunidade de expansão própria; churn e perda têm motivo e aprendizado.
 
 **Aceite:** uma venda OS+serviço produz dois planos de entrega coerentes, contrato e valores conciliados, revisão de valor e renovação rastreável. **Dependência:** 02, 05, 11, 15–16.
 

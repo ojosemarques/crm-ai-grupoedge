@@ -20,6 +20,12 @@ export const createRenewalSchema = z.object({
   nextActionAt: z.coerce.date(), idempotencyKey: idem,
 }).strict();
 
+export const initializeDueRenewalsSchema = z.object({
+  windowDays: z.number().int().min(1).max(365).default(90),
+  nextActionLeadDays: z.number().int().min(0).max(30).default(1),
+  idempotencyKey: idem,
+}).strict();
+
 export const renewalActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("SET_RISK"), expectedRevision: z.number().int().positive(), riskLevel: z.enum(["NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"]), riskReasonCode: z.string().trim().min(2).max(80).optional(), evidence: z.string().trim().min(3).max(2_000).optional(), reason, idempotencyKey: idem }).refine(v => v.riskLevel === "NONE" || Boolean(v.riskReasonCode && v.evidence), { message: "Risco exige motivo e evidência." }),
   z.object({ action: z.literal("NEXT_ACTION"), expectedRevision: z.number().int().positive(), nextActionDescription: z.string().trim().min(3).max(500), nextActionAt: z.coerce.date(), reason, idempotencyKey: idem }),
@@ -46,9 +52,14 @@ export const expansionReviewSchema = z.object({
 export const farmerRevenueDecisionSchema = z.object({
   subscriptionId: id, renewalId: id.nullable().optional(), type: z.enum(["CONTRACTION", "CHURN"]),
   newMrrCents: cents, effectiveAt: z.coerce.date(), reasonCode: z.string().trim().min(2).max(80),
-  comment: reason, evidence: reason, logoChurn: z.boolean().default(false), revenueChurn: z.boolean().default(false),
+  comment: reason, evidence: reason, learning: z.string().trim().min(8).max(2_000).optional(),
+  logoChurn: z.boolean().default(false), revenueChurn: z.boolean().default(false),
   idempotencyKey: idem,
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.type === "CHURN" && !value.learning) {
+    context.addIssue({ code: "custom", path: ["learning"], message: "Churn exige aprendizado registrado." });
+  }
+});
 
 export const farmerCorrectionSchema = z.object({ decisionId: id, reason: z.string().trim().min(8).max(2_000), idempotencyKey: idem }).strict();
 export const farmerBackfillSchema = z.object({ mode: z.enum(["DRY_RUN", "EXECUTE"]), runKey: idem }).strict();
@@ -78,4 +89,19 @@ export function renewalRate(renewed: number, decided: number) {
 export function netRevenueRetention(openingMrr: bigint | null, expansion: bigint, contraction: bigint, churn: bigint) {
   if (openingMrr === null || openingMrr <= 0n) return null;
   return Number(openingMrr + expansion + contraction + churn) / Number(openingMrr);
+}
+
+export function renewalEligibility(input: Readonly<{
+  status: string;
+  endsAt: Date | null;
+  now: Date;
+  windowDays: number;
+  hasRenewal: boolean;
+}>) {
+  if (input.status !== "ACTIVE") return { eligible: false, reason: "SUBSCRIPTION_NOT_ACTIVE" } as const;
+  if (!input.endsAt) return { eligible: false, reason: "MISSING_END_DATE" } as const;
+  if (input.hasRenewal) return { eligible: false, reason: "RENEWAL_ALREADY_EXISTS" } as const;
+  const horizon = new Date(input.now.getTime() + input.windowDays * 86_400_000);
+  if (input.endsAt > horizon) return { eligible: false, reason: "OUTSIDE_RENEWAL_WINDOW" } as const;
+  return { eligible: true, reason: "ACTIVE_SUBSCRIPTION_DUE" } as const;
 }

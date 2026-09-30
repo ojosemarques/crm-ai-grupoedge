@@ -167,16 +167,20 @@ describe("CRM-54 Farmer, renovação, expansão, contração e churn", () => {
       subscriptionId, type: "CHURN", newMrrCents: 0, effectiveAt: clock,
       reasonCode: "CUSTOMER_CANCELLED", comment: "Cliente confirmou cancelamento.",
       evidence: "Fato confirmado pelo responsável.", logoChurn: false, revenueChurn: false,
+      learning: "Revisar a adoção trinta dias antes da próxima renovação.",
       idempotencyKey: "crm54:test:churn:invalid",
     })).rejects.toThrow("Churn exige MRR zero");
     const decision = await service.confirmRevenueDecision(closer, {
       subscriptionId, type: "CHURN", newMrrCents: 0, effectiveAt: clock,
       reasonCode: "CUSTOMER_CANCELLED", comment: "Cliente confirmou cancelamento.",
       evidence: "Fato confirmado pelo responsável.", logoChurn: true, revenueChurn: true,
+      learning: "Antecipar a revisão de valor quando a adoção ficar abaixo do acordado.",
       idempotencyKey: "crm54:test:churn:001",
     });
     const churn = await database.churnEvent.findFirstOrThrow({ where: { workspaceId, decisionId: decision.id } });
     expect(churn).toMatchObject({ logoChurn: true, revenueChurn: true });
+    expect(churn.evidence).toContain("Aprendizado: Antecipar a revisão de valor");
+    expect((await database.auditLog.findFirstOrThrow({ where: { workspaceId, entityType: "FarmerRevenueDecision", entityId: decision.id } })).changes).toMatchObject({ reasonCode: "CUSTOMER_CANCELLED", learning: "Antecipar a revisão de valor quando a adoção ficar abaixo do acordado." });
     await expect(database.churnEvent.update({ where: { id: churn.id }, data: { evidence: "mutação proibida" } })).rejects.toThrow();
   });
 

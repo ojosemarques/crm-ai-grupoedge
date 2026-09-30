@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { createPostSaleOperatingReviewService } from "@/modules/customer-success/application/post-sale-operating-review-service";
 import {
   calculateCustomerHealth,
   customerSuccessQuerySchema,
@@ -46,6 +47,8 @@ async function appendEvent(tx: Prisma.TransactionClient, input: {
 }
 
 export function createCustomerSuccessService(options: Options) {
+  const operatingReviewService = createPostSaleOperatingReviewService(options);
+
   async function screen(context: AuthenticatedContext, raw: unknown = {}) {
     const query = customerSuccessQuerySchema.parse(raw);
     await options.authorization.assertAuthorized(context, PermissionKeys.CUSTOMER_SUCCESS_READ, resource(context.workspaceId, undefined, context.memberId));
@@ -82,7 +85,13 @@ export function createCustomerSuccessService(options: Options) {
     const accountMap = new Map(accounts.map((item) => [item.id, item]));
     const actualMilestones = await options.database.successPlanMilestone.findMany({ where: { workspaceId: context.workspaceId, planId: { in: plans.map((item) => item.id) } }, orderBy: [{ planId: "asc" }, { position: "asc" }] });
     const planMap = new Map(plans.map((item) => [item.accountId, { ...item, milestones: actualMilestones.filter((milestone) => milestone.planId === item.id) }]));
-    const items = pageItems.map((item) => ({ ...item, account: accountMap.get(item.accountId)!, health: latestHealth.get(item.accountId) ?? null, plan: planMap.get(item.accountId) ?? null }));
+    const items = await Promise.all(pageItems.map(async (item) => ({
+      ...item,
+      account: accountMap.get(item.accountId)!,
+      health: latestHealth.get(item.accountId) ?? null,
+      plan: planMap.get(item.accountId) ?? null,
+      operatingReview: await operatingReviewService.accountReview(context, item.accountId),
+    })));
     return {
       generatedAt: now.toISOString(), timeZone: "America/Sao_Paulo", total: filtered.length, page: query.page, pageSize: query.pageSize,
       metrics: {

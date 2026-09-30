@@ -117,8 +117,9 @@ export function FarmerWorkspace({ screen }: { screen: FarmerScreenView }) {
     const newValue = type === "CHURN" ? "0" : (await actionDialog.prompt("Novo MRR em centavos", "", { type: "number" }));
     if (newValue === null) return;
     const evidence = (await actionDialog.prompt("Evidência e confirmação do cliente:"))?.trim();
-    if (newValue === null || !evidence || !(await actionDialog.confirm(`Confirmar ${type} de ${money(subscription.currentMrrCents)} para ${money(newValue)}? Um movimento será registrado no histórico.`))) return;
-    await run(() => fetch("/api/farmer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "REVENUE_DECISION", payload: { subscriptionId: subscription.id, renewalId: item.id, type, newMrrCents: newValue, effectiveAt: new Date().toISOString(), reasonCode: type === "CHURN" ? "CUSTOMER_CANCELLED" : "SCOPE_REDUCTION", comment: evidence, evidence, logoChurn: type === "CHURN", revenueChurn: true, idempotencyKey: idem(`farmer-${type.toLowerCase()}`) } }) }), "Decisão financeira registrada com movimento de receita rastreável.");
+    const learning = type === "CHURN" ? (await actionDialog.prompt("Aprendizado para evitar ou antecipar perdas semelhantes:"))?.trim() : undefined;
+    if (newValue === null || !evidence || (type === "CHURN" && (!learning || learning.length < 8)) || !(await actionDialog.confirm(`Confirmar ${type} de ${money(subscription.currentMrrCents)} para ${money(newValue)}? Um movimento será registrado no histórico.`))) return;
+    await run(() => fetch("/api/farmer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "REVENUE_DECISION", payload: { subscriptionId: subscription.id, renewalId: item.id, type, newMrrCents: newValue, effectiveAt: new Date().toISOString(), reasonCode: type === "CHURN" ? "CUSTOMER_CANCELLED" : "SCOPE_REDUCTION", comment: evidence, evidence, learning, logoChurn: type === "CHURN", revenueChurn: true, idempotencyKey: idem(`farmer-${type.toLowerCase()}`) } }) }), "Decisão financeira registrada com movimento de receita rastreável.");
   }
   async function correctDecision(decision: Detail["decisions"][number]) {
     const reason = (await actionDialog.prompt("Motivo documentado da reversão:"))?.trim();
