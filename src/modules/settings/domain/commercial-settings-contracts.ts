@@ -68,10 +68,18 @@ export type CommercialSettingsScreen = Readonly<{
   }>[];
   products: readonly Readonly<{
     id: string;
+    catalogItemId: string;
+    version: number;
     sku: string;
     name: string;
     description: string | null;
     listPriceCents: string;
+    kind: "PRODUCT" | "MODULE" | "LINE" | "PLAN" | "LICENSE" | "IMPLEMENTATION" | "RECURRING_SERVICE" | "PROJECT";
+    revenueCategory: "SOFTWARE" | "IMPLEMENTATION" | "RECURRING_SERVICE" | "PROJECT";
+    audience: "INSTITUTIONAL" | "INDIVIDUAL" | "GOVERNMENT";
+    availability: "DRAFT" | "AVAILABLE" | "CAPACITY_LIMITED" | "FUTURE" | "RETIRED";
+    capacityUnits: number | null;
+    approvedConditions: string;
     active: boolean;
     updatedAt: string;
     opportunitiesInUse: number;
@@ -79,6 +87,8 @@ export type CommercialSettingsScreen = Readonly<{
   }>[];
   offerTemplates: readonly Readonly<{
     id: string;
+    catalogTemplateId: string;
+    version: number;
     productId: string;
     productName: string;
     key: string;
@@ -88,6 +98,9 @@ export type CommercialSettingsScreen = Readonly<{
     discountCents: string;
     validDays: number | null;
     active: boolean;
+    availability: "DRAFT" | "AVAILABLE" | "CAPACITY_LIMITED" | "FUTURE" | "RETIRED";
+    approvedConditions: string;
+    components: readonly Readonly<{ productId: string; productName: string; revenueCategory: "SOFTWARE" | "IMPLEMENTATION" | "RECURRING_SERVICE" | "PROJECT"; position: number; quantity: number; unitPriceCents: string; discountCents: string }>[];
     updatedAt: string;
     offersInUse: number;
   }>[];

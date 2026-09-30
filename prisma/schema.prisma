@@ -622,6 +622,8 @@ enum AccountSize {
 }
 
 enum AccountContactRoleType {
+  BUYER
+  SPONSOR
   DECISION_MAKER
   CHAMPION
   INFLUENCER
@@ -842,6 +844,38 @@ enum ContractVersionState {
   DRAFT
   ISSUED
   SUPERSEDED
+}
+
+enum CatalogItemKind {
+  PRODUCT
+  MODULE
+  LINE
+  PLAN
+  LICENSE
+  IMPLEMENTATION
+  RECURRING_SERVICE
+  PROJECT
+}
+
+enum CatalogRevenueCategory {
+  SOFTWARE
+  IMPLEMENTATION
+  RECURRING_SERVICE
+  PROJECT
+}
+
+enum CatalogAudience {
+  INSTITUTIONAL
+  INDIVIDUAL
+  GOVERNMENT
+}
+
+enum CatalogAvailability {
+  DRAFT
+  AVAILABLE
+  CAPACITY_LIMITED
+  FUTURE
+  RETIRED
 }
 
 enum ContractBillingFrequency {
@@ -2322,6 +2356,8 @@ model Workspace {
   products                     Product[]
   offerTemplates               OfferTemplate[]
   offers                       Offer[]
+  catalogBundleLines           CatalogBundleLine[]
+  offerLines                   OfferLine[]
   meetings                     Meeting[]
   meetingHistory               MeetingHistory[]
   activities                   Activity[]
@@ -4412,19 +4448,29 @@ model OpportunityOutcomeSnapshot {
 }
 
 model Product {
-  id               String    @id @default(uuid()) @db.Uuid
-  workspaceId      String    @db.Uuid
-  sku              String
-  name             String
-  description      String?
-  listPriceCents   BigInt
-  currency         Currency  @default(BRL)
-  active           Boolean   @default(true)
-  createdByActorId String    @db.Uuid
-  updatedByActorId String    @db.Uuid
-  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
-  deletedAt        DateTime? @db.Timestamptz(3)
+  id                 String                 @id @default(uuid()) @db.Uuid
+  workspaceId        String                 @db.Uuid
+  catalogItemId      String                 @default(uuid()) @db.Uuid
+  version            Int                    @default(1)
+  sku                String
+  name               String
+  description        String?
+  kind               CatalogItemKind        @default(PRODUCT)
+  revenueCategory    CatalogRevenueCategory @default(SOFTWARE)
+  audience           CatalogAudience        @default(INSTITUTIONAL)
+  availability       CatalogAvailability    @default(AVAILABLE)
+  capacityUnits      Int?
+  approvedConditions String                 @default("Condições comerciais padrão aprovadas.")
+  availableFrom      DateTime?              @db.Timestamptz(3)
+  availableUntil     DateTime?              @db.Timestamptz(3)
+  listPriceCents     BigInt
+  currency           Currency               @default(BRL)
+  active             Boolean                @default(true)
+  createdByActorId   String                 @db.Uuid
+  updatedByActorId   String                 @db.Uuid
+  createdAt          DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime               @updatedAt @db.Timestamptz(3)
+  deletedAt          DateTime?              @db.Timestamptz(3)
 
   workspace                   Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   createdBy                   Actor                        @relation("ProductCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
@@ -4433,42 +4479,72 @@ model Product {
   offerTemplates              OfferTemplate[]
   opportunities               Opportunity[]
   opportunityOutcomeSnapshots OpportunityOutcomeSnapshot[]
+  bundleLines                 CatalogBundleLine[]
+  offerLines                  OfferLine[]
 
   @@unique([workspaceId, id])
+  @@unique([workspaceId, catalogItemId, version])
   @@index([workspaceId, sku, deletedAt])
   @@index([workspaceId, active, deletedAt])
   @@map("products")
 }
 
 model OfferTemplate {
-  id               String    @id @default(uuid()) @db.Uuid
-  workspaceId      String    @db.Uuid
-  productId        String    @db.Uuid
-  key              String
-  name             String
-  description      String?
-  priceCents       BigInt
-  discountCents    BigInt    @default(0)
-  currency         Currency  @default(BRL)
-  validDays        Int?
-  active           Boolean   @default(true)
-  createdByActorId String    @db.Uuid
-  updatedByActorId String    @db.Uuid
-  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
-  deletedAt        DateTime? @db.Timestamptz(3)
+  id                 String              @id @default(uuid()) @db.Uuid
+  workspaceId        String              @db.Uuid
+  productId          String              @db.Uuid
+  catalogTemplateId  String              @default(uuid()) @db.Uuid
+  version            Int                 @default(1)
+  key                String
+  name               String
+  description        String?
+  priceCents         BigInt
+  discountCents      BigInt              @default(0)
+  currency           Currency            @default(BRL)
+  validDays          Int?
+  active             Boolean             @default(true)
+  availability       CatalogAvailability @default(AVAILABLE)
+  approvedConditions String              @default("Condições comerciais padrão aprovadas.")
+  createdByActorId   String              @db.Uuid
+  updatedByActorId   String              @db.Uuid
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @db.Timestamptz(3)
+  deletedAt          DateTime?           @db.Timestamptz(3)
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  product   Product   @relation(fields: [workspaceId, productId], references: [workspaceId, id], onDelete: Restrict)
-  createdBy Actor     @relation("OfferTemplateCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
-  updatedBy Actor     @relation("OfferTemplateUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
-  offers    Offer[]
+  workspace  Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  product    Product             @relation(fields: [workspaceId, productId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy  Actor               @relation("OfferTemplateCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy  Actor               @relation("OfferTemplateUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  offers     Offer[]
+  components CatalogBundleLine[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, productId, id])
+  @@unique([workspaceId, catalogTemplateId, version])
   @@index([workspaceId, key, active, deletedAt])
   @@index([workspaceId, productId, active, deletedAt])
   @@map("offer_templates")
+}
+
+model CatalogBundleLine {
+  id              String   @id @default(uuid()) @db.Uuid
+  workspaceId     String   @db.Uuid
+  offerTemplateId String   @db.Uuid
+  productId       String   @db.Uuid
+  position        Int
+  quantity        Int      @default(1)
+  unitPriceCents  BigInt
+  discountCents   BigInt   @default(0)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  offerTemplate OfferTemplate @relation(fields: [workspaceId, offerTemplateId], references: [workspaceId, id], onDelete: Restrict)
+  product       Product       @relation(fields: [workspaceId, productId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, offerTemplateId, position])
+  @@index([workspaceId, productId])
+  @@map("catalog_bundle_lines")
 }
 
 model Offer {
@@ -4498,6 +4574,7 @@ model Offer {
   offerTemplate OfferTemplate? @relation(fields: [workspaceId, productId, offerTemplateId], references: [workspaceId, productId, id], onDelete: Restrict)
   createdBy     Actor          @relation("OfferCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
   updatedBy     Actor          @relation("OfferUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  lines         OfferLine[]
 
   @@unique([workspaceId, id])
   @@index([workspaceId, opportunityId, createdAt])
@@ -4505,6 +4582,35 @@ model Offer {
   @@index([workspaceId, offerTemplateId, createdAt])
   @@index([workspaceId, validUntil])
   @@map("offers")
+}
+
+model OfferLine {
+  id                         String                 @id @default(uuid()) @db.Uuid
+  workspaceId                String                 @db.Uuid
+  offerId                    String                 @db.Uuid
+  productId                  String                 @db.Uuid
+  position                   Int
+  productVersionSnapshot     Int
+  productSkuSnapshot         String
+  productNameSnapshot        String
+  productKindSnapshot        CatalogItemKind
+  revenueCategorySnapshot    CatalogRevenueCategory
+  approvedConditionsSnapshot String
+  quantity                   Int
+  unitPriceCents             BigInt
+  discountCents              BigInt                 @default(0)
+  totalCents                 BigInt
+  currency                   Currency               @default(BRL)
+  createdAt                  DateTime               @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  offer     Offer     @relation(fields: [workspaceId, offerId], references: [workspaceId, id], onDelete: Restrict)
+  product   Product   @relation(fields: [workspaceId, productId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, offerId, position])
+  @@index([workspaceId, productId])
+  @@map("offer_lines")
 }
 
 model CommercialContract {
@@ -4979,22 +5085,26 @@ model ContractVersion {
 }
 
 model ContractLineSnapshot {
-  id                    String   @id @default(uuid()) @db.Uuid
-  workspaceId           String   @db.Uuid
-  contractVersionId     String   @db.Uuid
-  position              Int
-  sourceOfferId         String?  @db.Uuid
-  sourceOfferTemplateId String?  @db.Uuid
-  productId             String   @db.Uuid
-  productSkuSnapshot    String
-  productNameSnapshot   String
-  offerNameSnapshot     String
-  quantity              Int
-  unitPriceCents        BigInt
-  discountCents         BigInt
-  totalCents            BigInt
-  currency              Currency @default(BRL)
-  createdAt             DateTime @default(now()) @db.Timestamptz(3)
+  id                         String                 @id @default(uuid()) @db.Uuid
+  workspaceId                String                 @db.Uuid
+  contractVersionId          String                 @db.Uuid
+  position                   Int
+  sourceOfferId              String?                @db.Uuid
+  sourceOfferTemplateId      String?                @db.Uuid
+  productId                  String                 @db.Uuid
+  productSkuSnapshot         String
+  productNameSnapshot        String
+  productVersionSnapshot     Int                    @default(1)
+  productKindSnapshot        CatalogItemKind        @default(PRODUCT)
+  revenueCategorySnapshot    CatalogRevenueCategory @default(SOFTWARE)
+  approvedConditionsSnapshot String                 @default("Condições comerciais padrão aprovadas.")
+  offerNameSnapshot          String
+  quantity                   Int
+  unitPriceCents             BigInt
+  discountCents              BigInt
+  totalCents                 BigInt
+  currency                   Currency               @default(BRL)
+  createdAt                  DateTime               @default(now()) @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, contractVersionId, position])

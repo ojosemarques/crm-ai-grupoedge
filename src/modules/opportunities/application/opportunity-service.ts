@@ -4,6 +4,7 @@ import type {
   PrismaClient,
 } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { isCatalogItemSellable } from "@/modules/catalog/domain/catalog-sellability-policy";
 import { projectOpportunityOwnership } from "@/modules/lifecycle/application/lifecycle-projection-writer";
 import { getAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
 import {
@@ -421,7 +422,7 @@ type OpportunityRow = Prisma.OpportunityGetPayload<{
     stageHistory: { where: { exitedAt: null }; take: 1; orderBy: { enteredAt: "desc" } };
     tasks: { where: { status: { in: ["OPEN", "IN_PROGRESS"] }; deletedAt: null }; take: 1; orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }] };
     meetings: { where: { status: "COMPLETED" }; take: 1 };
-    offers: { where: { deletedAt: null }; orderBy: [{ createdAt: "desc" }, { id: "desc" }]; include: { product: { select: { name: true } } } };
+    offers: { where: { deletedAt: null }; orderBy: [{ createdAt: "desc" }, { id: "desc" }]; include: { product: { select: { name: true } }; lines: { orderBy: { position: "asc" } } } };
   };
 }>;
 
@@ -506,6 +507,7 @@ function serializeOpportunity(
       acceptedAt: offer.acceptedAt?.toISOString() ?? null,
       justification: offer.justification,
       createdAt: offer.createdAt.toISOString(),
+      lines: offer.lines.map((line) => ({ productName: line.productNameSnapshot, productVersion: line.productVersionSnapshot, revenueCategory: line.revenueCategorySnapshot, quantity: line.quantity, totalCents: line.totalCents.toString() })),
     })),
     transitions: transitionOptions(stages, transitions, row),
     canWrite,
@@ -530,7 +532,7 @@ const opportunityInclude = {
   offers: {
     where: { deletedAt: null },
     orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }],
-    include: { product: { select: { name: true } } },
+    include: { product: { select: { name: true } }, lines: { orderBy: { position: "asc" } } },
   },
 } satisfies Prisma.OpportunityInclude;
 
@@ -816,12 +818,12 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
     const refs = await referenceOptions(options.database, context, readScope.scope, readScope.ownerIds);
     const [products, templates, meetings, accounts] = await Promise.all([
       options.database.product.findMany({
-        where: { workspaceId: context.workspaceId, active: true, deletedAt: null },
+        where: { workspaceId: context.workspaceId, active: true, audience: "INSTITUTIONAL", availability: { in: ["AVAILABLE", "CAPACITY_LIMITED"] }, deletedAt: null },
         orderBy: [{ name: "asc" }, { id: "asc" }],
         select: { id: true, name: true, listPriceCents: true },
       }),
       options.database.offerTemplate.findMany({
-        where: { workspaceId: context.workspaceId, active: true, deletedAt: null },
+        where: { workspaceId: context.workspaceId, active: true, availability: { in: ["AVAILABLE", "CAPACITY_LIMITED"] }, deletedAt: null },
         orderBy: [{ name: "asc" }, { id: "asc" }],
         select: { id: true, productId: true, name: true, priceCents: true, discountCents: true, validDays: true },
       }),
@@ -1310,7 +1312,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
   async function registerProposal(context: AuthenticatedContext, payload: unknown) {
     const parsed = proposalSchema.safeParse(payload);
     if (!parsed.success) invalidInput(parsed.error);
-    const totalCents = parsed.data.unitPriceCents * BigInt(parsed.data.quantity) - parsed.data.discountCents;
+    let totalCents = parsed.data.unitPriceCents * BigInt(parsed.data.quantity) - parsed.data.discountCents;
     if (totalCents < 0n) invalidInput("O desconto não pode superar o valor bruto.");
     if (totalCents === 0n && !parsed.data.justification) invalidInput("Proposta sem valor exige justificativa.");
     if (!parsed.data.confirmed) conflict("CONFIRMATION_REQUIRED", "Confirme explicitamente o registro da proposta.");
@@ -1339,12 +1341,11 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
       const [product, template, proposalStage] = await Promise.all([
         transaction.product.findFirst({
           where: { id: parsed.data.productId, workspaceId: context.workspaceId, active: true, deletedAt: null },
-          select: { id: true },
         }),
         parsed.data.offerTemplateId
           ? transaction.offerTemplate.findFirst({
               where: { id: parsed.data.offerTemplateId, workspaceId: context.workspaceId, productId: parsed.data.productId, active: true, deletedAt: null },
-              select: { id: true },
+              include: { components: { orderBy: { position: "asc" }, include: { product: true } } },
             })
           : Promise.resolve(null),
         transaction.pipelineStage.findFirst({
@@ -1352,7 +1353,9 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
         }),
       ]);
       if (!product) notFound("Produto não encontrado ou inativo.");
+      if (!isCatalogItemSellable(product, now)) conflict("CATALOG_ITEM_NOT_SELLABLE", "A versão do catálogo não está aprovada para venda.");
       if (parsed.data.offerTemplateId && !template) notFound("Oferta/plano não pertence ao produto selecionado.");
+      if (template && template.components.some((component) => !isCatalogItemSellable(component.product, now))) conflict("CATALOG_COMPONENT_NOT_SELLABLE", "A oferta contém componente indisponível, futuro ou sem capacidade.");
       if (!proposalStage) conflict("PIPELINE_CONFIGURATION_INVALID", "Etapa Proposta não encontrada.");
       if (parsed.data.nextAction) {
         await createOpportunityTask(transaction, {
@@ -1371,6 +1374,11 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
       const validUntil = parsed.data.validUntilDate
         ? parseWorkspaceLocalDateTime(`${parsed.data.validUntilDate}T23:59`, timeZone)
         : null;
+      const proposalLines = template?.components.length
+        ? template.components.map((component) => ({ product: component.product, quantity: component.quantity, unitPriceCents: component.unitPriceCents, discountCents: component.discountCents }))
+        : [{ product, quantity: parsed.data.quantity, unitPriceCents: parsed.data.unitPriceCents, discountCents: parsed.data.discountCents }];
+      totalCents = proposalLines.reduce((sum, line) => sum + line.unitPriceCents * BigInt(line.quantity) - line.discountCents, 0n);
+      if (totalCents < 0n) invalidInput("A composição da proposta possui total inválido.");
       const offer = await transaction.offer.create({
         data: {
           workspaceId: context.workspaceId,
@@ -1390,6 +1398,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
           updatedAt: now,
         },
       });
+      await transaction.offerLine.createMany({ data: proposalLines.map((line, position) => ({ workspaceId: context.workspaceId, offerId: offer.id, productId: line.product.id, position: position + 1, productVersionSnapshot: line.product.version, productSkuSnapshot: line.product.sku, productNameSnapshot: line.product.name, productKindSnapshot: line.product.kind, revenueCategorySnapshot: line.product.revenueCategory, approvedConditionsSnapshot: line.product.approvedConditions, quantity: line.quantity, unitPriceCents: line.unitPriceCents, discountCents: line.discountCents, totalCents: line.unitPriceCents * BigInt(line.quantity) - line.discountCents })) });
       const history = opportunity.stageHistory[0];
       if (!history || history.stageId !== opportunity.currentStageId) conflict("STAGE_HISTORY_INCONSISTENT", "O histórico aberto não corresponde à etapa atual.");
       const changesStage = opportunity.currentStage.opportunityStageCode === "OPPORTUNITY_CONFIRMED";

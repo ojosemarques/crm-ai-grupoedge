@@ -15,7 +15,7 @@ arquivos `.env*` locais são ignorados.
 
 O schema `crm` foi criado pela migration Supabase
 `20260929204214_crm_private_schema.sql`. Os modelos do CRM são criados pelas
-60 migrations Prisma existentes, usando uma conexão de migração separada.
+61 migrations Prisma existentes, usando uma conexão de migração separada.
 `public` permanece sem tabelas da aplicação. As roles Supabase `anon`,
 `authenticated` e `service_role` não recebem acesso ao schema `crm`.
 

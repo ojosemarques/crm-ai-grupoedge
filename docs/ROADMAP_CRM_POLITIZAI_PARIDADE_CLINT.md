@@ -68,12 +68,12 @@ Cada etapa pode virar uma issue/épico. Dentro dela, `Txx.y` é a task e os iten
 
 ### Etapa 02 — Catálogo comercial e fronteiras de dados
 
-- [ ] **T02.1 — Modelar ofertas e tipos de receita.**
-  - [ ] Versionar produto, módulo, linha, plano, licença, implantação, serviço recorrente e projeto, com disponibilidade, capacidade e condições aprovadas.
-  - [ ] Vincular oportunidade/proposta/contrato a uma versão do catálogo; bloquear promessa de IA individual, Governo ou serviço futuro como ativo.
-- [ ] **T02.2 — Definir domínio e finalidade.**
-  - [ ] Formalizar conta institucional, vínculo datado da pessoa, papel de comprador/patrocinador/usuário, oferta e decisão de compra.
-  - [ ] Separar fisicamente e em RBAC/finalidade o CRM comercial dos tenants/dados de cidadão do Politizai OS; registrar regra de retenção e acesso.
+- [x] **T02.1 — Modelar ofertas e tipos de receita.**
+  - [x] Versionar produto, módulo, linha, plano, licença, implantação, serviço recorrente e projeto, com disponibilidade, capacidade e condições aprovadas.
+  - [x] Vincular oportunidade/proposta/contrato a uma versão do catálogo; bloquear promessa de IA individual, Governo ou serviço futuro como ativo.
+- [x] **T02.2 — Definir domínio e finalidade.**
+  - [x] Formalizar conta institucional, vínculo datado da pessoa, papel de comprador/patrocinador/usuário, oferta e decisão de compra.
+  - [x] Separar fisicamente e em RBAC/finalidade o CRM comercial dos tenants/dados de cidadão do Politizai OS; registrar regra de retenção e acesso.
 
 **Aceite:** proposta discrimina software, implantação, serviço e projeto; usuário do CRM não consulta dados operacionais de um gabinete por essa via. **Dependência:** 01.
 

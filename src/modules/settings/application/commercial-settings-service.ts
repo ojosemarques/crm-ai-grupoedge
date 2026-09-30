@@ -9,6 +9,7 @@ import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
+import { isCatalogItemSellable } from "@/modules/catalog/domain/catalog-sellability-policy";
 
 type AuthorizationPort = Readonly<{
   assertAuthorized: ReturnType<typeof getAuthorizationService>["assertAuthorized"];
@@ -82,6 +83,12 @@ const productCommand = z.object({
   id: idSchema.nullable(), expectedUpdatedAt: expectedAtSchema.nullable(),
   sku: z.string().trim().min(2).max(80), name: z.string().trim().min(2).max(160),
   description: z.string().trim().max(2_000).nullable(), listPriceCents: centsSchema,
+  kind: z.enum(["PRODUCT", "MODULE", "LINE", "PLAN", "LICENSE", "IMPLEMENTATION", "RECURRING_SERVICE", "PROJECT"]).default("PRODUCT"),
+  revenueCategory: z.enum(["SOFTWARE", "IMPLEMENTATION", "RECURRING_SERVICE", "PROJECT"]).default("SOFTWARE"),
+  audience: z.enum(["INSTITUTIONAL", "INDIVIDUAL", "GOVERNMENT"]).default("INSTITUTIONAL"),
+  availability: z.enum(["DRAFT", "AVAILABLE", "CAPACITY_LIMITED", "FUTURE", "RETIRED"]).default("AVAILABLE"),
+  capacityUnits: z.number().int().positive().nullable().default(null),
+  approvedConditions: z.string().trim().min(3).max(4_000).default("Condições comerciais padrão aprovadas."),
 }).strict();
 const productStatusCommand = z.object({ action: z.literal("SET_PRODUCT_ACTIVE"), ...baseCommand, id: idSchema, active: z.boolean() }).strict();
 const offerTemplateCommand = z.object({
@@ -89,8 +96,12 @@ const offerTemplateCommand = z.object({
   id: idSchema.nullable(), expectedUpdatedAt: expectedAtSchema.nullable(), productId: idSchema,
   key: keySchema, name: z.string().trim().min(2).max(160), description: z.string().trim().max(2_000).nullable(),
   priceCents: centsSchema, discountCents: centsSchema, validDays: z.number().int().min(1).max(365).nullable(),
+  availability: z.enum(["DRAFT", "AVAILABLE", "CAPACITY_LIMITED", "FUTURE", "RETIRED"]).default("AVAILABLE"),
+  approvedConditions: z.string().trim().min(3).max(4_000).default("Condições comerciais padrão aprovadas."),
+  components: z.array(z.object({ productId: idSchema, quantity: z.number().int().min(1).max(1000), unitPriceCents: centsSchema, discountCents: centsSchema }).strict()).max(32).default([]),
 }).strict().superRefine((value, context) => {
   if (value.discountCents > value.priceCents) context.addIssue({ code: "custom", message: "O desconto não pode superar o preço." });
+  for (const component of value.components) if (component.discountCents > component.unitPriceCents * BigInt(component.quantity)) context.addIssue({ code: "custom", message: "O desconto de um componente não pode superar seu total." });
 });
 const offerTemplateStatusCommand = z.object({ action: z.literal("SET_OFFER_TEMPLATE_ACTIVE"), ...baseCommand, id: idSchema, active: z.boolean() }).strict();
 const reasonCommand = z.object({
@@ -154,7 +165,7 @@ export function createCommercialSettingsService(options: SettingsServiceOptions)
       options.database.scoringRuleVersion.findFirst({ where: { workspaceId, active: true }, orderBy: [{ version: "desc" }], include: { _count: { select: { leadScores: true } } } }),
       options.database.leadPriorityBand.findMany({ where: { workspaceId, active: true, deletedAt: null, slaPolicy: { active: true, deletedAt: null } }, orderBy: [{ position: "asc" }], include: { slaPolicy: { include: { _count: { select: { priorityBands: true } } } }, _count: { select: { slaCycles: true } } } }),
       options.database.product.findMany({ where: { workspaceId, deletedAt: null }, orderBy: [{ active: "desc" }, { name: "asc" }], include: { _count: { select: { opportunities: true, offers: true } } } }),
-      options.database.offerTemplate.findMany({ where: { workspaceId, deletedAt: null }, orderBy: [{ active: "desc" }, { name: "asc" }], include: { product: { select: { name: true } }, _count: { select: { offers: true } } } }),
+      options.database.offerTemplate.findMany({ where: { workspaceId, deletedAt: null }, orderBy: [{ active: "desc" }, { name: "asc" }], include: { product: { select: { name: true } }, components: { orderBy: { position: "asc" }, include: { product: { select: { name: true, revenueCategory: true } } } }, _count: { select: { offers: true } } } }),
       options.database.lossReason.findMany({ where: { workspaceId, deletedAt: null }, orderBy: [{ position: "asc" }, { name: "asc" }], include: { _count: { select: { opportunities: true } } } }),
       options.database.disqualificationReason.findMany({ where: { workspaceId, deletedAt: null }, orderBy: [{ position: "asc" }, { name: "asc" }], include: { _count: { select: { leads: true } } } }),
       options.database.pipeline.findMany({ where: { workspaceId, deletedAt: null }, orderBy: [{ entityType: "asc" }, { name: "asc" }], include: {
@@ -196,8 +207,8 @@ export function createCommercialSettingsService(options: SettingsServiceOptions)
         healthyMaxSeconds: band.slaPolicy.healthyMaxSeconds, attentionMaxSeconds: band.slaPolicy.attentionMaxSeconds,
         historicalCycles: band._count.slaCycles,
       })),
-      products: products.map((product) => ({ id: product.id, sku: product.sku, name: product.name, description: product.description, listPriceCents: product.listPriceCents.toString(), active: product.active, updatedAt: product.updatedAt.toISOString(), opportunitiesInUse: product._count.opportunities, offersInUse: product._count.offers })),
-      offerTemplates: templates.map((template) => ({ id: template.id, productId: template.productId, productName: template.product.name, key: template.key, name: template.name, description: template.description, priceCents: template.priceCents.toString(), discountCents: template.discountCents.toString(), validDays: template.validDays, active: template.active, updatedAt: template.updatedAt.toISOString(), offersInUse: template._count.offers })),
+      products: products.map((product) => ({ id: product.id, catalogItemId: product.catalogItemId, version: product.version, sku: product.sku, name: product.name, description: product.description, listPriceCents: product.listPriceCents.toString(), kind: product.kind, revenueCategory: product.revenueCategory, audience: product.audience, availability: product.availability, capacityUnits: product.capacityUnits, approvedConditions: product.approvedConditions, active: product.active, updatedAt: product.updatedAt.toISOString(), opportunitiesInUse: product._count.opportunities, offersInUse: product._count.offers })),
+      offerTemplates: templates.map((template) => ({ id: template.id, catalogTemplateId: template.catalogTemplateId, version: template.version, productId: template.productId, productName: template.product.name, key: template.key, name: template.name, description: template.description, priceCents: template.priceCents.toString(), discountCents: template.discountCents.toString(), validDays: template.validDays, availability: template.availability, approvedConditions: template.approvedConditions, components: template.components.map((component) => ({ productId: component.productId, productName: component.product.name, revenueCategory: component.product.revenueCategory, position: component.position, quantity: component.quantity, unitPriceCents: component.unitPriceCents.toString(), discountCents: component.discountCents.toString() })), active: template.active, updatedAt: template.updatedAt.toISOString(), offersInUse: template._count.offers })),
       lossReasons: lossReasons.map((reason) => ({ id: reason.id, key: reason.key, name: reason.name, position: reason.position, active: reason.active, updatedAt: reason.updatedAt.toISOString(), recordsInUse: reason._count.opportunities })),
       disqualificationReasons: disqualificationReasons.map((reason) => ({ id: reason.id, key: reason.key, name: reason.name, position: reason.position, active: reason.active, updatedAt: reason.updatedAt.toISOString(), recordsInUse: reason._count.leads })),
       pipelines: pipelines.map((pipeline) => ({
@@ -392,22 +403,25 @@ export function createCommercialSettingsService(options: SettingsServiceOptions)
 
   async function applyProduct(transaction: Prisma.TransactionClient, context: AuthenticatedContext, command: z.infer<typeof productCommand>) {
     await assertUniqueCatalogKey(transaction, context, "product", command.sku, command.id);
+    const active = isCatalogItemSellable({ active: true, audience: command.audience, availability: command.availability, capacityUnits: command.capacityUnits });
     if (!command.id) {
-      const product = await transaction.product.create({ data: { workspaceId: context.workspaceId, sku: command.sku, name: command.name, description: command.description, listPriceCents: command.listPriceCents, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
-      await writeAudit(transaction, context, "settings.product.created", "Product", product.id, null, { sku: product.sku, name: product.name, listPriceCents: product.listPriceCents.toString() });
+      const product = await transaction.product.create({ data: { workspaceId: context.workspaceId, sku: command.sku, name: command.name, description: command.description, kind: command.kind, revenueCategory: command.revenueCategory, audience: command.audience, availability: command.availability, capacityUnits: command.capacityUnits, approvedConditions: command.approvedConditions, listPriceCents: command.listPriceCents, active, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+      await writeAudit(transaction, context, "settings.product.version_created", "Product", product.id, null, { catalogItemId: product.catalogItemId, version: product.version, sku: product.sku, name: product.name, kind: product.kind, revenueCategory: product.revenueCategory, availability: product.availability, active: product.active, listPriceCents: product.listPriceCents.toString() });
       return;
     }
     const current = await transaction.product.findFirst({ where: { id: command.id, workspaceId: context.workspaceId, deletedAt: null } });
     if (!current) notFound("Produto não encontrado.");
     if (!command.expectedUpdatedAt || current.updatedAt.getTime() !== new Date(command.expectedUpdatedAt).getTime()) conflict("SETTINGS_VERSION_CONFLICT", "O produto mudou. Recarregue antes de confirmar.");
-    const updated = await transaction.product.update({ where: { id: current.id }, data: { sku: command.sku, name: command.name, description: command.description, listPriceCents: command.listPriceCents, updatedByActorId: context.actorId } });
-    await writeAudit(transaction, context, "settings.product.updated", "Product", current.id, { sku: current.sku, name: current.name, description: current.description, listPriceCents: current.listPriceCents.toString() }, { sku: updated.sku, name: updated.name, description: updated.description, listPriceCents: updated.listPriceCents.toString() });
+    await transaction.product.update({ where: { id: current.id }, data: { active: false, updatedByActorId: context.actorId } });
+    const updated = await transaction.product.create({ data: { workspaceId: context.workspaceId, catalogItemId: current.catalogItemId, version: current.version + 1, sku: command.sku, name: command.name, description: command.description, kind: command.kind, revenueCategory: command.revenueCategory, audience: command.audience, availability: command.availability, capacityUnits: command.capacityUnits, approvedConditions: command.approvedConditions, listPriceCents: command.listPriceCents, active, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+    await writeAudit(transaction, context, "settings.product.version_created", "Product", updated.id, { productVersionId: current.id, version: current.version }, { catalogItemId: updated.catalogItemId, productVersionId: updated.id, version: updated.version, sku: updated.sku, name: updated.name, kind: updated.kind, revenueCategory: updated.revenueCategory, availability: updated.availability, active: updated.active, listPriceCents: updated.listPriceCents.toString() });
   }
 
   async function applyProductStatus(transaction: Prisma.TransactionClient, context: AuthenticatedContext, command: z.infer<typeof productStatusCommand>) {
     const current = await transaction.product.findFirst({ where: { id: command.id, workspaceId: context.workspaceId, deletedAt: null } });
     if (!current) notFound("Produto não encontrado.");
     if (current.active === command.active) return;
+    if (command.active && !isCatalogItemSellable(current)) conflict("CATALOG_ITEM_NOT_SELLABLE", "Somente versão institucional disponível e com capacidade pode ser ativada.");
     await transaction.product.update({ where: { id: current.id }, data: { active: command.active, updatedByActorId: context.actorId } });
     await writeAudit(transaction, context, command.active ? "settings.product.activated" : "settings.product.deactivated", "Product", current.id, { active: current.active }, { active: command.active });
   }
@@ -416,16 +430,23 @@ export function createCommercialSettingsService(options: SettingsServiceOptions)
     const product = await transaction.product.findFirst({ where: { id: command.productId, workspaceId: context.workspaceId, deletedAt: null } });
     if (!product) notFound("Produto da oferta não encontrado.");
     if (!product.active) conflict("INACTIVE_CATALOG_ITEM", "Reative o produto antes de criar ou alterar esta oferta.");
+    const componentIds = [...new Set(command.components.map((component) => component.productId))];
+    const components = componentIds.length ? await transaction.product.findMany({ where: { workspaceId: context.workspaceId, id: { in: componentIds }, deletedAt: null } }) : [product];
+    if (components.length !== (componentIds.length || 1) || components.some((component) => !isCatalogItemSellable(component))) conflict("CATALOG_COMPONENT_NOT_SELLABLE", "Todos os componentes devem ser versões ativas, institucionais e disponíveis.");
+    const lineInputs = command.components.length ? command.components : [{ productId: product.id, quantity: 1, unitPriceCents: command.priceCents, discountCents: command.discountCents }];
     await assertUniqueCatalogKey(transaction, context, "offerTemplate", command.key, command.id);
     if (!command.id) {
-      const template = await transaction.offerTemplate.create({ data: { workspaceId: context.workspaceId, productId: product.id, key: command.key, name: command.name, description: command.description, priceCents: command.priceCents, discountCents: command.discountCents, validDays: command.validDays, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+      const template = await transaction.offerTemplate.create({ data: { workspaceId: context.workspaceId, productId: product.id, key: command.key, name: command.name, description: command.description, priceCents: command.priceCents, discountCents: command.discountCents, validDays: command.validDays, availability: command.availability, approvedConditions: command.approvedConditions, active: command.availability === "AVAILABLE" || command.availability === "CAPACITY_LIMITED", createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+      await transaction.catalogBundleLine.createMany({ data: lineInputs.map((component, position) => ({ workspaceId: context.workspaceId, offerTemplateId: template.id, productId: component.productId, position: position + 1, quantity: component.quantity, unitPriceCents: component.unitPriceCents, discountCents: component.discountCents })) });
       await writeAudit(transaction, context, "settings.offer_template.created", "OfferTemplate", template.id, null, { productId: template.productId, key: template.key, name: template.name, priceCents: template.priceCents.toString(), discountCents: template.discountCents.toString(), validDays: template.validDays });
       return;
     }
     const current = await transaction.offerTemplate.findFirst({ where: { id: command.id, workspaceId: context.workspaceId, deletedAt: null } });
     if (!current) notFound("Oferta/plano não encontrado.");
     if (!command.expectedUpdatedAt || current.updatedAt.getTime() !== new Date(command.expectedUpdatedAt).getTime()) conflict("SETTINGS_VERSION_CONFLICT", "A oferta mudou. Recarregue antes de confirmar.");
-    const updated = await transaction.offerTemplate.update({ where: { id: current.id }, data: { productId: product.id, key: command.key, name: command.name, description: command.description, priceCents: command.priceCents, discountCents: command.discountCents, validDays: command.validDays, updatedByActorId: context.actorId } });
+    await transaction.offerTemplate.update({ where: { id: current.id }, data: { active: false, updatedByActorId: context.actorId } });
+    const updated = await transaction.offerTemplate.create({ data: { workspaceId: context.workspaceId, productId: product.id, catalogTemplateId: current.catalogTemplateId, version: current.version + 1, key: command.key, name: command.name, description: command.description, priceCents: command.priceCents, discountCents: command.discountCents, validDays: command.validDays, availability: command.availability, approvedConditions: command.approvedConditions, active: command.availability === "AVAILABLE" || command.availability === "CAPACITY_LIMITED", createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+    await transaction.catalogBundleLine.createMany({ data: lineInputs.map((component, position) => ({ workspaceId: context.workspaceId, offerTemplateId: updated.id, productId: component.productId, position: position + 1, quantity: component.quantity, unitPriceCents: component.unitPriceCents, discountCents: component.discountCents })) });
     await writeAudit(transaction, context, "settings.offer_template.updated", "OfferTemplate", current.id,
       { productId: current.productId, key: current.key, name: current.name, priceCents: current.priceCents.toString(), discountCents: current.discountCents.toString(), validDays: current.validDays },
       { productId: updated.productId, key: updated.key, name: updated.name, priceCents: updated.priceCents.toString(), discountCents: updated.discountCents.toString(), validDays: updated.validDays });

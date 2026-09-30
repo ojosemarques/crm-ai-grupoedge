@@ -102,7 +102,8 @@ describe("configurações comerciais seguras", () => {
     const created = await service().apply(admin, { action: "SAVE_PRODUCT", id: null, expectedUpdatedAt: null, sku: "TEST-NEW", name: "Produto novo", description: null, listPriceCents: "12345", confirmed: true });
     const product = created.products.find((item) => item.sku === "TEST-NEW"); expect(product).toBeDefined();
     const edited = await service().apply(admin, { action: "SAVE_PRODUCT", id: product!.id, expectedUpdatedAt: product!.updatedAt, sku: product!.sku, name: "Produto editado", description: "Descrição", listPriceCents: "15000", confirmed: true });
-    expect(edited.products.find((item) => item.id === product!.id)).toMatchObject({ name: "Produto editado", listPriceCents: "15000" });
+    expect(edited.products.find((item) => item.catalogItemId === product!.catalogItemId && item.version === 2)).toMatchObject({ name: "Produto editado", listPriceCents: "15000", active: true });
+    expect(edited.products.find((item) => item.id === product!.id)).toMatchObject({ version: 1, active: false });
     const foreignProduct = await database.product.findFirstOrThrow({ where: { workspaceId: otherWorkspaceId } });
     await expect(service().apply(admin, { action: "SET_PRODUCT_ACTIVE", id: foreignProduct.id, active: false, confirmed: true })).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(database.product.findUniqueOrThrow({ where: { id: foreignProduct.id } })).resolves.toMatchObject({ active: true });

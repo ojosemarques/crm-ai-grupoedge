@@ -67,7 +67,16 @@ beforeAll(async () => {
     database.product.findFirstOrThrow({ where: { workspaceId, active: true, deletedAt: null } }),
   ]);
   const opportunity = await database.opportunity.create({ data: { workspaceId, leadId: intake.leadId, accountId: fixtureAccount.id, pipelineId: pipeline.id, currentStageId: pipeline.stages[0]!.id, ownerMemberId: owner.id, productId: product.id, name: "Oportunidade contratual fictícia", status: "OPEN", amountCents: 480000n, mrrCents: 40000n, tcvCents: 480000n, probabilityBps: 5500, createdByActorId: fixtureActor.id, updatedByActorId: fixtureActor.id } });
-  await database.offer.create({ data: { workspaceId, opportunityId: opportunity.id, productId: product.id, name: "Plano contratual fictício", quantity: 1, unitPriceCents: 480000n, totalCents: 480000n, createdByActorId: fixtureActor.id, updatedByActorId: fixtureActor.id } });
+  const parts = await Promise.all([
+    database.product.create({ data: { workspaceId, sku: "CRM48-IMPL", name: "Implantação contratual", kind: "IMPLEMENTATION", revenueCategory: "IMPLEMENTATION", listPriceCents: 80000n, createdByActorId: fixtureActor.id, updatedByActorId: fixtureActor.id } }),
+    database.product.create({ data: { workspaceId, sku: "CRM48-SVC", name: "Serviço contratual", kind: "RECURRING_SERVICE", revenueCategory: "RECURRING_SERVICE", listPriceCents: 100000n, createdByActorId: fixtureActor.id, updatedByActorId: fixtureActor.id } }),
+    database.product.create({ data: { workspaceId, sku: "CRM48-PROJ", name: "Projeto contratual", kind: "PROJECT", revenueCategory: "PROJECT", listPriceCents: 50000n, createdByActorId: fixtureActor.id, updatedByActorId: fixtureActor.id } }),
+  ]);
+  const offer = await database.offer.create({ data: { workspaceId, opportunityId: opportunity.id, productId: product.id, name: "Plano contratual fictício", quantity: 1, unitPriceCents: 480000n, totalCents: 480000n, createdByActorId: fixtureActor.id, updatedByActorId: fixtureActor.id } });
+  await database.offerLine.createMany({ data: [
+    { workspaceId, offerId: offer.id, productId: product.id, position: 1, productVersionSnapshot: product.version, productSkuSnapshot: product.sku, productNameSnapshot: product.name, productKindSnapshot: product.kind, revenueCategorySnapshot: "SOFTWARE", approvedConditionsSnapshot: product.approvedConditions, quantity: 1, unitPriceCents: 250000n, totalCents: 250000n },
+    ...parts.map((part, index) => ({ workspaceId, offerId: offer.id, productId: part.id, position: index + 2, productVersionSnapshot: part.version, productSkuSnapshot: part.sku, productNameSnapshot: part.name, productKindSnapshot: part.kind, revenueCategorySnapshot: part.revenueCategory, approvedConditionsSnapshot: part.approvedConditions, quantity: 1, unitPriceCents: part.listPriceCents, totalCents: part.listPriceCents })),
+  ] });
 });
 
 afterAll(async () => database.$disconnect());
@@ -85,7 +94,9 @@ describe("CRM-48 contratos e versões comerciais", () => {
     const version = await database.contractVersion.findFirstOrThrow({ where: { workspaceId, contractId: first.contractId } });
     expect(stored).toMatchObject({ status: "DRAFT", currentVersionId: version.id, revision: 1 });
     expect(version).toMatchObject({ state: "DRAFT", versionNumber: 1, totalCents: BigInt(opportunity.totalCents) });
-    expect(await database.contractLineSnapshot.count({ where: { workspaceId, contractVersionId: version.id } })).toBe(1);
+    const lines = await database.contractLineSnapshot.findMany({ where: { workspaceId, contractVersionId: version.id }, orderBy: { position: "asc" } });
+    expect(lines).toHaveLength(4);
+    expect(lines.map((line) => line.revenueCategorySnapshot)).toEqual(["SOFTWARE", "IMPLEMENTATION", "RECURRING_SERVICE", "PROJECT"]);
     expect(await database.contractClauseSnapshot.count({ where: { workspaceId, contractVersionId: version.id } })).toBeGreaterThan(0);
     expect(await database.auditLog.count({ where: { workspaceId, entityId: first.contractId, action: "contract.created" } })).toBe(1);
   });

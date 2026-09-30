@@ -26,6 +26,7 @@ let closer1: AuthenticatedContext;
 let closer2: AuthenticatedContext;
 let system: ServiceActorContext;
 let productId: string;
+let composedOfferTemplateId: string;
 let lossReasonId: string;
 let sequence = 80_000_000;
 
@@ -178,6 +179,19 @@ beforeAll(async () => {
     database.lossReason.findFirstOrThrow({ where: { workspaceId, active: true, deletedAt: null } }),
   ]);
   productId = product.id;
+  const catalogParts = await Promise.all([
+    database.product.create({ data: { workspaceId, sku: "STAGE2-IMPL", name: "Implantação", kind: "IMPLEMENTATION", revenueCategory: "IMPLEMENTATION", listPriceCents: 100000n, approvedConditions: "Escopo aprovado de implantação.", createdByActorId: systemActor.id, updatedByActorId: systemActor.id } }),
+    database.product.create({ data: { workspaceId, sku: "STAGE2-SVC", name: "Serviço recorrente", kind: "RECURRING_SERVICE", revenueCategory: "RECURRING_SERVICE", listPriceCents: 120000n, approvedConditions: "Capacidade recorrente aprovada.", createdByActorId: systemActor.id, updatedByActorId: systemActor.id } }),
+    database.product.create({ data: { workspaceId, sku: "STAGE2-PROJ", name: "Projeto", kind: "PROJECT", revenueCategory: "PROJECT", listPriceCents: 50000n, approvedConditions: "Entrega de projeto aprovada.", createdByActorId: systemActor.id, updatedByActorId: systemActor.id } }),
+  ]);
+  const composedTemplate = await database.offerTemplate.create({ data: { workspaceId, productId: product.id, key: "stage2-composed", name: "Oferta completa", priceCents: 570000n, approvedConditions: "Composição aprovada.", createdByActorId: systemActor.id, updatedByActorId: systemActor.id } });
+  composedOfferTemplateId = composedTemplate.id;
+  await database.catalogBundleLine.createMany({ data: [
+    { workspaceId, offerTemplateId: composedTemplate.id, productId: product.id, position: 1, quantity: 1, unitPriceCents: 300000n },
+    { workspaceId, offerTemplateId: composedTemplate.id, productId: catalogParts[0].id, position: 2, quantity: 1, unitPriceCents: 100000n },
+    { workspaceId, offerTemplateId: composedTemplate.id, productId: catalogParts[1].id, position: 3, quantity: 1, unitPriceCents: 120000n },
+    { workspaceId, offerTemplateId: composedTemplate.id, productId: catalogParts[2].id, position: 4, quantity: 1, unitPriceCents: 50000n },
+  ] });
   lossReasonId = reason.id;
 });
 
@@ -298,7 +312,7 @@ describe("pipeline comercial de oportunidades", () => {
       opportunityId: created.opportunityId,
       expectedRevision: state.revision,
       productId,
-      offerTemplateId: null,
+      offerTemplateId: composedOfferTemplateId,
       name: "Plano anual Politizai",
       quantity: 1,
       unitPriceCents: "600000",
@@ -312,11 +326,12 @@ describe("pipeline comercial de oportunidades", () => {
     expect(won.status).toBe("WON");
     const stored = await database.opportunity.findUniqueOrThrow({
       where: { id: created.opportunityId },
-      include: { offers: true, currentStage: true },
+      include: { offers: { include: { lines: { orderBy: { position: "asc" } } } }, currentStage: true },
     });
     expect(stored).toMatchObject({ status: "WON", amountCents: 570000n, tcvCents: 570000n });
     expect(stored.currentStage.opportunityStageCode).toBe("WON");
     expect(stored.offers[0]).toMatchObject({ totalCents: 570000n, acceptedAt: expect.any(Date) });
+    expect(stored.offers[0]!.lines.map((line) => line.revenueCategorySnapshot)).toEqual(["SOFTWARE", "IMPLEMENTATION", "RECURRING_SERVICE", "PROJECT"]);
     await expect(database.offer.update({
       where: { id: stored.offers[0]!.id },
       data: { totalCents: 0n, justification: null },

@@ -10,6 +10,13 @@ sustenta entrada, distribuição, SLA, trabalho comercial, métricas, automaçõ
 IA local e auditoria. O schema está em `prisma/schema.prisma`; regras que o
 Prisma não expressa estão versionadas nas 23 migrations SQL existentes.
 
+O modelo contém somente o domínio comercial interno da Politizai. Conta pode
+representar a instituição compradora, mas cidadãos, atendimentos e dados
+operacionais de gabinete pertencem ao Politizai OS e são proibidos nesta base.
+Consulte o contrato de projeto Supabase dedicado, schema privado `crm`, dados
+permitidos, RBAC, finalidade, retenção e deny-by-default em
+[`CRM_COMMERCIAL_DATA_BOUNDARY.md`](./CRM_COMMERCIAL_DATA_BOUNDARY.md).
+
 ## Qualificação PACTO
 
 `LeadQualification` representa o agregado atual e mantém `revision`, mínimo

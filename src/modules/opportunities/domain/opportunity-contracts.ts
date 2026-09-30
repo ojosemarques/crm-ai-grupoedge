@@ -48,6 +48,7 @@ export type OpportunityListItem = Readonly<{
     acceptedAt: string | null;
     justification: string | null;
     createdAt: string;
+    lines: readonly Readonly<{ productName: string; productVersion: number; revenueCategory: "SOFTWARE" | "IMPLEMENTATION" | "RECURRING_SERVICE" | "PROJECT"; quantity: number; totalCents: string }>[];
   }>[];
   transitions: readonly OpportunityTransitionOption[];
   canWrite: boolean;

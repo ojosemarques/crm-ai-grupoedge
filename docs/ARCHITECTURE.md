@@ -6,6 +6,12 @@ O Politizai CRM é um monólito modular. A aplicação web e os futuros jobs usa
 mesma base de código, o mesmo domínio e o mesmo banco. Não serão criados
 microserviços.
 
+O CRM comercial ocupa um projeto Supabase dedicado e o schema privado `crm`.
+Dados de cidadãos, atendimentos e demais operações de gabinete pertencem ao
+Politizai OS e não entram neste domínio. O contrato completo de separação,
+finalidade, RBAC, retenção e negação por padrão está em
+[`CRM_COMMERCIAL_DATA_BOUNDARY.md`](./CRM_COMMERCIAL_DATA_BOUNDARY.md).
+
 No aceite local após a CRM-30, aplicação web, worker PostgreSQL, seed
 demonstrativo, métricas, automações simuladas e provider de IA determinístico
 estão implementados no mesmo repositório. Publicação, integrações externas e

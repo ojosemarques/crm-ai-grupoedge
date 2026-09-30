@@ -1,0 +1,9 @@
+-- Production history bridge only.
+-- The canonical, portable DDL is the Prisma migration:
+-- prisma/migrations/20260930014000_stage02_commercial_catalog_boundaries/migration.sql
+--
+-- Production received that exact DDL through the linked Supabase migration
+-- runner because its dedicated Prisma migrator credential was unavailable on
+-- this host. The runner also recorded the canonical Prisma name and checksum
+-- in crm._prisma_migrations. Fresh environments apply the DDL through Prisma;
+-- this file intentionally performs no second schema mutation.
