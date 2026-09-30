@@ -54,6 +54,14 @@ describe("contrato de ambiente PROD-03", () => {
     expect(() => loadEnvironmentContract(withoutExplicitAdapterMode)).toThrow(/EXTERNAL_ADAPTERS_MODE/);
   });
 
+  it("permite credencial OpenAI somente no servidor sem impedir o login", () => {
+    const environment = { ...staging, APP_ENV: "production", OPENAI_API_KEY: "server-only-test-key" };
+    expect(loadEnvironmentContract(environment).isRemote).toBe(true);
+    expect(loadEnvironmentContract({ ...environment, COPILOT_EXTERNAL_ENABLED: "true", OPENAI_MODEL: "gpt-5.5" }).isRemote).toBe(true);
+    expect(() => loadEnvironmentContract({ ...environment, NEXT_PUBLIC_OPENAI_API_KEY: "server-only-test-key" })).toThrow(/NEXT_PUBLIC_OPENAI_API_KEY/);
+    expect(() => loadEnvironmentContract({ ...environment, META_ADS_ACCESS_TOKEN: "unconfigured-adapter-test" })).toThrow(/META_ADS_ACCESS_TOKEN/);
+  });
+
   it.each([
     ["sem HTTPS", { ...staging, APP_CANONICAL_URL: "http://crm-politizai-staging.example.com" }, "APP_CANONICAL_URL"],
     ["host inesperado", { ...staging, DATABASE_EXPECTED_HOST: "outro.example" }, "DATABASE_EXPECTED_HOST"],

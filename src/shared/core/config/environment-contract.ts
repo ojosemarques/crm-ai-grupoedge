@@ -21,7 +21,6 @@ const EXTERNAL_CREDENTIAL_NAMES = new Set([
   "GOOGLE_ADS_SERVICE_ACCOUNT_EMAIL",
   "GOOGLE_ADS_SERVICE_ACCOUNT_PRIVATE_KEY",
   "GOOGLE_ADS_DEVELOPER_TOKEN",
-  "OPENAI_API_KEY",
 ]);
 
 const booleanString = z.enum(["true", "false"]);
