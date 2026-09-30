@@ -1,3 +1,5 @@
+SET search_path TO crm, public;
+
 CREATE TYPE "AnalyticsWidgetType" AS ENUM ('LINE', 'AREA', 'BAR', 'PIE', 'DONUT', 'FUNNEL', 'TABLE', 'NUMBER', 'KPI');
 CREATE TYPE "AnalyticsAggregation" AS ENUM ('SUM', 'AVERAGE', 'COUNT', 'RATE', 'LATEST');
 
