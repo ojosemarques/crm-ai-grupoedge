@@ -64,6 +64,11 @@ export function createAIGovernanceService(options: Options) {
     return {
       mode: "LOCAL_DETERMINISTIC" as const,
       externalProviderEnabled: false,
+      copilot: {
+        externalProviderEnabled: process.env.COPILOT_EXTERNAL_ENABLED === "true" && Boolean(process.env.OPENAI_API_KEY?.trim()) && Boolean(process.env.OPENAI_MODEL?.trim()),
+        model: process.env.OPENAI_MODEL?.trim() || null,
+        requiresExplicitSaleConfirmation: true,
+      },
       period: { from: since.toISOString(), to: now().toISOString(), timeZone: workspace.timeZone },
       versions: versions.map((version) => ({
         id: version.id, key: version.key, version: version.version, name: version.name,

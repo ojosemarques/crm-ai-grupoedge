@@ -4,7 +4,7 @@ import { SESSION_COOKIE_NAME } from "@/modules/auth/http/session-cookie";
 import { resolveCorrelationId } from "@/shared/core/http/correlation";
 import { buildContentSecurityPolicy } from "@/shared/core/security/security-headers";
 
-const PUBLIC_ROUTES = new Set(["/login", "/acesso-negado", "/sessao-expirada"]);
+const PUBLIC_ROUTES = new Set(["/login", "/acesso-negado", "/sessao-expirada", "/politizai-analytics.js"]);
 
 export function proxy(request: NextRequest): NextResponse {
   const correlationId = resolveCorrelationId(request.headers);
@@ -38,6 +38,9 @@ export function proxy(request: NextRequest): NextResponse {
 
   response.headers.set("Content-Security-Policy", policy);
   response.headers.set("X-Correlation-Id", correlationId);
+  if (request.nextUrl.pathname === "/politizai-analytics.js" && response.status === 200) {
+    response.headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+  }
 
   return response;
 }

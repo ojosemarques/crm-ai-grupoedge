@@ -36,5 +36,6 @@ describe("finance domain", () => {
 
   it("rejeita período invertido", () => {
     expect(() => financeQuerySchema.parse({ from: "2026-10-01", to: "2026-09-01" })).toThrow("posterior");
+    expect(() => financeQuerySchema.parse({ from: "2020-01-01", to: "2026-09-01" })).toThrow("366 dias");
   });
 });

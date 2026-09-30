@@ -71,3 +71,9 @@ export const mediaImportConfirmSchema = z.object({ previewRunId: z.string().uuid
 export const mediaImportRollbackSchema = z.object({ importRunId: z.string().uuid(), reason: z.string().trim().min(3).max(500), idempotencyKey: z.string().trim().min(8).max(200) }).strict();
 export const mediaBackfillSchema = z.object({ mode: z.enum(["DRY_RUN","EXECUTE"]), idempotencyKey: z.string().trim().min(8).max(200) }).strict();
 export const mediaReconciliationSchema = z.object({ periodStart: z.coerce.date(), periodEnd: z.coerce.date(), idempotencyKey: z.string().trim().min(8).max(200) }).strict().refine((v) => v.periodEnd > v.periodStart, { path: ["periodEnd"], message: "Período inválido." });
+
+export const mediaIssueReviewSchema = z.object({
+  issueId: z.string().uuid(),
+  status: z.enum(["ACKNOWLEDGED", "RESOLVED"]),
+  reason: z.string().trim().min(3).max(500),
+}).strict();

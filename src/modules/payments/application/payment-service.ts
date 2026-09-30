@@ -247,7 +247,7 @@ export function createPaymentService(options: Options) {
       if (replay?.invoiceId) return tx.invoice.findFirstOrThrow({ where: { id: replay.invoiceId, workspaceId: context.workspaceId } });
       const existing = await tx.invoice.findFirst({ where: { workspaceId: context.workspaceId, subscriptionId: subscription.id, billingPeriodStart: input.billingPeriodStart, billingPeriodEnd: input.billingPeriodEnd } });
       if (existing) return existing;
-      const subtotal = BigInt(subscription.quantity) * subscription.recurringPriceCents;
+      const subtotal = BigInt(subscription.quantity) * subscription.recurringPriceCents + input.upfrontCents;
       const total = invoiceTotalCents(subtotal, 0n);
       if (total > BigInt(Number.MAX_SAFE_INTEGER)) fail("O valor da cobrança excede o limite seguro do sandbox local.", "PAYMENT_AMOUNT_TOO_LARGE");
       const invoice = await tx.invoice.create({ data: {
@@ -271,7 +271,8 @@ export function createPaymentService(options: Options) {
         createdByActorId: context.actorId,
         updatedByActorId: context.actorId,
       } });
-      await tx.invoiceLine.create({ data: { workspaceId: context.workspaceId, invoiceId: invoice.id, position: 1, descriptionSnapshot: invoice.descriptionSnapshot, quantity: subscription.quantity, unitPriceCents: subscription.recurringPriceCents, discountCents: 0n, totalCents: total, currency: subscription.currency } });
+      await tx.invoiceLine.create({ data: { workspaceId: context.workspaceId, invoiceId: invoice.id, position: 1, descriptionSnapshot: invoice.descriptionSnapshot, quantity: subscription.quantity, unitPriceCents: subscription.recurringPriceCents, discountCents: 0n, totalCents: BigInt(subscription.quantity) * subscription.recurringPriceCents, currency: subscription.currency } });
+      if (input.upfrontCents > 0n) await tx.invoiceLine.create({ data: { workspaceId: context.workspaceId, invoiceId: invoice.id, position: 2, descriptionSnapshot: "Entrada contratual", quantity: 1, unitPriceCents: input.upfrontCents, discountCents: 0n, totalCents: input.upfrontCents, currency: subscription.currency } });
       await appendPaymentEventInTransaction(tx, { workspaceId: context.workspaceId, invoiceId: invoice.id, type: "INVOICE_CREATED", actorId: context.actorId, reason: "Cobrança criada explicitamente a partir da assinatura.", idempotencyKey: input.idempotencyKey, correlationId: input.idempotencyKey, occurredAt: options.now(), safeMetadata: { subscriptionId: subscription.id, totalCents: total.toString(), currency: subscription.currency } });
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "payment.invoice.created", entityType: "Invoice", entityId: invoice.id, origin: "DOMAIN", changes: { subscriptionId: subscription.id, totalCents: total.toString(), currency: subscription.currency, status: "DRAFT" } } });
       return invoice;

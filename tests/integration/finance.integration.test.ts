@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createFinanceService } from "@/modules/finance/application/finance-service";
+import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
@@ -47,5 +48,42 @@ describe("financeiro integrado", () => {
   it("nega SDR por padrão e isola workspace adulterado", async () => {
     await expect(service.screen(sdr, {})).rejects.toMatchObject({ code: "ACCESS_DENIED" });
     await expect(service.screen({ ...admin, workspaceId: randomUUID() }, {})).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+  });
+
+  it("preserva movimentos históricos no saldo e separa custos diretos na DRE", async () => {
+    const before = await service.screen(admin);
+    const account = await service.command(admin, { action: "CREATE_ACCOUNT", name: "Conta histórico", type: "BANK", openingBalanceCents: "10000" }) as { id: string };
+    const category = await service.command(admin, { action: "CREATE_CATEGORY", key: "custos_entrega", name: "Custos de entrega", kind: "EXPENSE", dreGroup: "custos_diretos" }) as { id: string };
+    await service.command(admin, { action: "CREATE_ENTRY", categoryId: category.id, financialAccountId: account.id, direction: "EXPENSE", status: "SETTLED", description: "Despesa anterior ao período", amountCents: "2500", competenceAt: "2026-08-10", dueAt: "2026-08-10", settledAt: "2026-08-10", idempotencyKey: "finance:test:historical" });
+    await service.command(admin, { action: "CREATE_ENTRY", categoryId: category.id, financialAccountId: account.id, direction: "EXPENSE", status: "PLANNED", description: "Entrega prevista no período", amountCents: "1000", competenceAt: "2026-09-10", dueAt: "2026-09-10", idempotencyKey: "finance:test:planned" });
+    const screen = await service.screen(admin);
+    expect(screen.accounts.find((row) => row.id === account.id)?.balanceCents).toBe("7500");
+    expect(BigInt(screen.summary.cashBalanceCents) - BigInt(before.summary.cashBalanceCents)).toBe(7500n);
+    expect(BigInt(screen.summary.projectedCashCents) - BigInt(before.summary.projectedCashCents)).toBe(6500n);
+    expect(screen.dre.find((row) => row.categoryId === "group:custos_diretos")).toMatchObject({ resultCents: "-1000", total: true });
+    expect(screen.cashFlow).toHaveLength(30);
+    expect(screen.cashFlow.at(-1)?.balanceCents).toBe(screen.summary.cashBalanceCents);
+  });
+
+  it("registra comissão paga e despesa uma única vez na conta selecionada", async () => {
+    const systemActor = await database.actor.findFirstOrThrow({ where: { workspaceId, type: "SYSTEM" } });
+    const intake = await createLeadIntakeService({ database, authorization: createAuthorizationService({ database }), now: () => new Date("2026-09-20") }).intake({ channel: "MANUAL", idempotencyKey: "finance:test:commission-lead", fullName: "Cliente comissão", phone: "+5511987654321", sourceKey: "manual", priorityBandCode: "P1", interestSummary: "Comissão de teste", rawPayload: { test: true } }, { workspaceId, actorId: systemActor.id, actorKey: systemActor.key, actorType: "SYSTEM" });
+    if (intake.outcome === "REJECTED") throw new Error(intake.code);
+    const stage = await database.pipelineStage.findFirstOrThrow({ where: { workspaceId, opportunityStageCode: "WON", deletedAt: null } });
+    const product = await database.product.findFirstOrThrow({ where: { workspaceId, active: true, deletedAt: null } });
+    const opportunity = await database.opportunity.create({ data: { workspaceId, productId: product.id, leadId: intake.leadId, pipelineId: stage.pipelineId, currentStageId: stage.id, ownerMemberId: admin.memberId, name: "Venda com comissão", status: "WON", amountCents: 100_000n, tcvCents: 100_000n, probabilityBps: 10_000, closedAt: new Date("2026-09-20"), createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
+    const rule = await database.commissionRule.create({ data: { workspaceId, sellerMemberId: opportunity.ownerMemberId!, percentageBps: 500, effectiveFrom: new Date("2026-01-01"), createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
+    const commission = await database.commission.create({ data: { workspaceId, sellerMemberId: opportunity.ownerMemberId!, ruleId: rule.id, opportunityId: opportunity.id, basisCents: 100_000n, percentageBps: 500, amountCents: 5_000n, earnedAt: new Date("2026-09-20"), idempotencyKey: "finance:test:commission", createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
+    const account = await service.command(admin, { action: "CREATE_ACCOUNT", name: "Banco comissões", type: "BANK", openingBalanceCents: "10000" }) as { id: string };
+    await service.command(admin, { action: "UPDATE_COMMISSION", commissionId: commission.id, status: "APPROVED", expectedRevision: 1 });
+    await expect(service.command(admin, { action: "UPDATE_COMMISSION", commissionId: commission.id, status: "PAID", expectedRevision: 2 })).rejects.toThrow("Selecione a conta");
+    await expect(service.command(admin, { action: "UPDATE_COMMISSION", commissionId: commission.id, status: "PAID", expectedRevision: 2, financialAccountId: randomUUID() })).rejects.toMatchObject({ code: "FINANCE_ACCOUNT_NOT_FOUND" });
+    await service.command(admin, { action: "UPDATE_COMMISSION", commissionId: commission.id, status: "PAID", expectedRevision: 2, financialAccountId: account.id });
+    await expect(service.command(admin, { action: "UPDATE_COMMISSION", commissionId: commission.id, status: "PAID", expectedRevision: 2, financialAccountId: account.id })).rejects.toMatchObject({ code: "FINANCE_COMMISSION_TRANSITION" });
+    const entries = await database.financialEntry.findMany({ where: { workspaceId, idempotencyKey: `finance:commission-payment:${commission.id}` } });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ direction: "EXPENSE", status: "SETTLED", amountCents: 5000n, financialAccountId: account.id, competenceAt: new Date("2026-09-20") });
+    const screen = await service.screen(admin);
+    expect(screen.accounts.find((row) => row.id === account.id)?.balanceCents).toBe("5000");
   });
 });

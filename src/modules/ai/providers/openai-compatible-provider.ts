@@ -81,6 +81,14 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   async generate(request: AIProviderRequest): Promise<AIProviderResponse> {
+    return this.generateJson({
+      system: request.prompt.system,
+      input: { input: request.input, requiredOutputContract: requiredOutputContract(request.agent) },
+      temperature: 0,
+    });
+  }
+
+  async generateJson(request: Readonly<{ system: string; input: unknown; maxOutputTokens?: number; temperature?: number }>): Promise<AIProviderResponse> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
     try {
@@ -94,16 +102,14 @@ export class OpenAICompatibleProvider implements AIProvider {
         signal: controller.signal,
         body: JSON.stringify({
           model: this.#model,
-          temperature: 0,
+          ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
           response_format: { type: "json_object" },
+          ...(request.maxOutputTokens ? { max_completion_tokens: request.maxOutputTokens } : {}),
           messages: [
-            { role: "system", content: request.prompt.system },
+            { role: "system", content: request.system },
             {
               role: "user",
-              content: JSON.stringify({
-                input: request.input,
-                requiredOutputContract: requiredOutputContract(request.agent),
-              }),
+              content: JSON.stringify(request.input),
             },
           ],
         }),

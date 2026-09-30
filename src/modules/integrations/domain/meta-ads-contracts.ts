@@ -127,6 +127,7 @@ export const META_ADS_RECOGNIZED_ACTIONS = new Set([
   "purchase",
   "omni_purchase",
   "offsite_conversion.fb_pixel_purchase",
+  "video_view",
 ]);
 
 export type MetaAdsConfiguration = z.output<typeof metaAdsConfigurationSchema>;
@@ -183,6 +184,12 @@ export function metaActionValue(actions: readonly MetaAdsAction[] | undefined, c
     total += integerMetric(action.value) ?? 0n;
   }
   return found ? total : null;
+}
+
+// Meta AdsActionStats defines actions.video_view as "3-Second Video Views".
+// https://developers.facebook.com/docs/marketing-api/reference/ads-action-stats/
+export function metaVideoComparable(actions: readonly MetaAdsAction[] | undefined) {
+  return { videoMetricVersion: "meta-3s-v1", videoViews3s: metaActionValue(actions, ["video_view"])?.toString() ?? null };
 }
 
 export function metaActionMoneyValue(actions: readonly MetaAdsAction[] | undefined, candidates: readonly string[]): bigint | null {

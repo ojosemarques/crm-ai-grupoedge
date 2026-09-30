@@ -128,7 +128,7 @@ export function createAssistantService(options: Options) {
     ]);
     const canApprove = context.roleKey === AccessRoleKeys.ADMINISTRATOR && manage.allowed;
     if (!query.allowed && !propose.allowed) fail("Você não possui acesso ao assistente.", "ACCESS_DENIED", 403);
-    const proposals = await options.database.aIAssistantProposal.findMany({ where: { workspaceId: context.workspaceId, ...(!canApprove ? { requestedByActorId: context.actorId } : {}) }, orderBy: [{ updatedAt: "desc" }, { id: "asc" }], take: 100 });
+    const proposals = await options.database.aIAssistantProposal.findMany({ where: { workspaceId: context.workspaceId, type: { in: ["AGENT", "PIPELINE_MODEL", "AUTOMATION", "CHART"] }, ...(!canApprove ? { requestedByActorId: context.actorId } : {}) }, orderBy: [{ updatedAt: "desc" }, { id: "asc" }], take: 100 });
     return {
       generatedAt: options.now().toISOString(),
       capabilities: { canQuery: query.allowed, canPropose: propose.allowed, canApprove, canUndo: canApprove },
@@ -215,7 +215,7 @@ export function createAssistantService(options: Options) {
 
   async function approve(context: AuthenticatedContext, payload: Extract<AssistantCommand, { action: "APPROVE" }>["payload"]) {
     await assertAdmin(context);
-    const locked = await options.database.aIAssistantProposal.updateMany({ where: { id: payload.proposalId, workspaceId: context.workspaceId, status: "DRAFT", revision: payload.expectedRevision }, data: { status: "PUBLISHING", revision: { increment: 1 } } });
+    const locked = await options.database.aIAssistantProposal.updateMany({ where: { id: payload.proposalId, workspaceId: context.workspaceId, type: { in: ["AGENT", "PIPELINE_MODEL", "AUTOMATION", "CHART"] }, status: "DRAFT", revision: payload.expectedRevision }, data: { status: "PUBLISHING", revision: { increment: 1 } } });
     if (!locked.count) fail("A proposta mudou ou já foi finalizada.", "PROPOSAL_REVISION_CONFLICT", 409);
     const proposal = await options.database.aIAssistantProposal.findUniqueOrThrow({ where: { id: payload.proposalId } });
     let publishedTarget: Awaited<ReturnType<typeof publishTarget>> | null = null;
@@ -249,7 +249,7 @@ export function createAssistantService(options: Options) {
 
   async function undo(context: AuthenticatedContext, payload: Extract<AssistantCommand, { action: "UNDO" }>["payload"]) {
     await assertAdmin(context);
-    const locked = await options.database.aIAssistantProposal.updateMany({ where: { id: payload.proposalId, workspaceId: context.workspaceId, status: "PUBLISHED" }, data: { status: "UNDOING" } });
+    const locked = await options.database.aIAssistantProposal.updateMany({ where: { id: payload.proposalId, workspaceId: context.workspaceId, type: { in: ["AGENT", "PIPELINE_MODEL", "AUTOMATION", "CHART"] }, status: "PUBLISHED" }, data: { status: "UNDOING" } });
     if (!locked.count) fail("Somente a versão publicada vigente pode ser desfeita.", "UNDO_UNAVAILABLE", 409);
     const proposal = await options.database.aIAssistantProposal.findUniqueOrThrow({ where: { id: payload.proposalId } });
     try {

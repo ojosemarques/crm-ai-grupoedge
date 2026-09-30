@@ -12,6 +12,9 @@ export const financeQuerySchema = z.object({
   if (value.from && value.to && value.to <= value.from) {
     context.addIssue({ code: "custom", path: ["to"], message: "O fim deve ser posterior ao início." });
   }
+  if (value.from && value.to && value.to.getTime() - value.from.getTime() > 366 * 86_400_000) {
+    context.addIssue({ code: "custom", path: ["to"], message: "Consulte até 366 dias por vez." });
+  }
 });
 
 export const createFinancialCategorySchema = z.object({
@@ -81,7 +84,12 @@ export const updateCommissionSchema = z.object({
   commissionId: id,
   status: z.enum(["APPROVED", "PAID"]),
   expectedRevision: z.number().int().positive(),
-}).strict();
+  financialAccountId: id.optional(),
+}).strict().superRefine((value, context) => {
+  if (value.status === "PAID" && !value.financialAccountId) {
+    context.addIssue({ code: "custom", path: ["financialAccountId"], message: "Selecione a conta usada no pagamento da comissão." });
+  }
+});
 
 export const reconcileCommissionsSchema = z.object({
   action: z.literal("RECONCILE_COMMISSIONS"),

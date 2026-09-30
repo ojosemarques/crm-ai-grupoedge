@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 type Screen = Awaited<ReturnType<typeof import("@/modules/ai/application/ai-governance-service").getAIGovernanceService>> extends never ? never : {
   mode: "LOCAL_DETERMINISTIC";
   externalProviderEnabled: boolean;
+  copilot: { externalProviderEnabled: boolean; model: string | null; requiresExplicitSaleConfirmation: boolean };
   period: { from: string; to: string; timeZone: string };
   versions: Array<{ id: string; key: string; version: number; name: string; description: string; riskLevel: string; status: string; provider: string; model: string; prompt: string; owner: string; confidenceThresholdBps: number; limits: { timeoutMs: number; maxRetries: number; rateLimitPerMinute: number; maxInputTokens: number; maxOutputTokens: number; maxEstimatedCostCents: number }; latestEvaluation: { status: string; passed: number; failed: number; createdAt: string } | null; approvedBy: string | null; approvedAt: string | null; approvalReason: string | null }>;
   observability: { totalExecutions: number; successfulExecutions: number; failureExecutions: number; fallbackExecutions: number; successRateBps: number | null; averageDurationMs: number | null; decisions: Record<string, number>; alerts: string[] };
@@ -65,9 +66,11 @@ export function AIGovernanceWorkspace({ initialScreen, roleKey }: Readonly<{ ini
     <div className={styles.workspace}>
       <section className="surface-panel p-5" aria-label="Estado dos provedores">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="text-lg font-semibold">Execução local governada</h2><p className="text-sm text-muted-foreground">Mock determinístico ativo. Provedor externo desabilitado; nenhuma credencial ou egress configurado.</p></div>
-          <span className="status-badge" data-tone="success">Local e seguro</span>
+          <div><h2 className="text-lg font-semibold">Copilot operacional</h2><p className="text-sm text-muted-foreground">{screen.copilot.externalProviderEnabled ? `OpenAI configurada · Modelo ${screen.copilot.model}. O chat usa somente fontes autorizadas e pede confirmação antes de fechar vendas.` : "Consultas diretas ao CRM disponíveis. Configure OpenAI no servidor para habilitar a conversa livre e as propostas de fechamento."}</p></div>
+          <span className="status-badge" data-tone={screen.copilot.externalProviderEnabled ? "success" : "warning"}>{screen.copilot.externalProviderEnabled ? "OpenAI configurada" : "Modo local"}</span>
         </div>
+        <p className="mt-3 text-sm text-muted-foreground">Para habilitar: nas variáveis de ambiente do servidor, defina <code>OPENAI_API_KEY</code>, <code>OPENAI_MODEL</code> e <code>COPILOT_EXTERNAL_ENABLED=true</code>, depois publique a configuração. Não cole a chave no chat. Avalie e aprove o caso “Síntese gerencial de métricas” abaixo para autorizar o Copilot neste workspace.</p>
+        <p className="mt-2 text-sm text-muted-foreground">A habilitação autoriza enviar o contexto mínimo permitido ao usuário para a API OpenAI. Sem chave, financeiro, anúncios e pós-venda oferecem consultas diretas. O fechamento gera uma prévia; apenas o botão de confirmação executa a operação. As avaliações e os agentes clássicos abaixo continuam usando seu provedor local.</p>
       </section>
 
       {feedback ? <div aria-live="polite" className={feedback.tone === "success" ? "rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900" : "rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900"} role="status">{feedback.message}</div> : null}

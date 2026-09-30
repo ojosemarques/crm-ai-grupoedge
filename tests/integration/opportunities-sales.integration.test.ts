@@ -175,7 +175,7 @@ beforeAll(async () => {
     humanContext("closer2@demo.politizai.local"),
   ]);
   const [product, reason] = await Promise.all([
-    database.product.findFirstOrThrow({ where: { workspaceId, active: true, deletedAt: null } }),
+    database.product.findFirstOrThrow({ where: { workspaceId, active: true, deletedAt: null, revenueCategory: "SOFTWARE" }, orderBy: { sku: "asc" } }),
     database.lossReason.findFirstOrThrow({ where: { workspaceId, active: true, deletedAt: null } }),
   ]);
   productId = product.id;

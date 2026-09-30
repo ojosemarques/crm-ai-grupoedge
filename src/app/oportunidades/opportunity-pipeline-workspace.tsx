@@ -12,6 +12,7 @@ import styles from "../pipeline/pipeline-workspace.module.css";
 import { DataTableShell } from "@/components/ui/surface";
 import { SalesGatesPanel } from "@/components/opportunities/sales-gates-panel";
 import { AccountPlanPanel } from "@/components/opportunities/account-plan-panel";
+import { SaleCompletionPanel } from "@/components/opportunities/sale-completion-panel";
 import type {
   OpportunityListItem,
   OpportunityPipelineScreen,
@@ -260,6 +261,7 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
               <Button disabled={pending} type="submit">Registrar proposta</Button>
             </form>
           ) : null}
+          <SaleCompletionPanel key={selected.id} opportunity={selected} sellers={screen.closerOptions} onBusyChange={setPending} onCommitted={() => router.refresh()} />
           <form className="grid gap-3 rounded-md border p-4" onSubmit={transition}>
             <h3 className="font-semibold">Alterar etapa</h3>
             <label className="text-sm">Destino<select className={inputClass} name="targetStageId" required><option value="">Selecione</option>{selected.transitions.filter((item) => item.code !== "PROPOSAL").map((item) => <option disabled={!item.allowed} key={item.stageId} value={item.stageId}>{item.name}{item.blockReason ? ` — ${item.blockReason}` : ""}</option>)}</select></label>

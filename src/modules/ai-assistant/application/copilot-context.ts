@@ -1,0 +1,63 @@
+import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { getFinanceService } from "@/modules/finance/application/finance-service";
+import { getOpportunityService } from "@/modules/opportunities/application/opportunity-service";
+import { getContractService } from "@/modules/contracts/application/contract-service";
+import { getCustomerSuccessService } from "@/modules/customer-success/application/customer-success-service";
+import { getMarketingAttributionService } from "@/modules/marketing/application/marketing-attribution-service";
+import { getMediaPerformanceService } from "@/modules/marketing/application/media-performance-service";
+import { getIntegrationPlatformService } from "@/modules/integrations/application/integration-platform-service";
+import { ApplicationError } from "@/shared/core/errors/application-error";
+import { getDatabaseClient } from "@/shared/core/database/client";
+import { resolveCopilotPeriod } from "@/modules/ai-assistant/domain/copilot-period";
+
+export type CopilotSource = { key: string; label: string; href: string; data: unknown };
+export type CopilotContext = { sources: CopilotSource[]; unavailable: string[]; period?: ReturnType<typeof resolveCopilotPeriod> };
+
+// The module services remain the authoritative boundary for row, team and tenant access.
+export async function loadCopilotContext(context: AuthenticatedContext, message = "", now = new Date()): Promise<CopilotContext> {
+  const workspace = await getDatabaseClient().workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
+  const period = resolveCopilotPeriod(message, now, workspace.timeZone);
+  const normalized = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const question = normalized(message);
+  const loaders = [
+    { key: "financeiro", label: "Financeiro", href: "/financeiro", load: async () => {
+      const data = await getFinanceService().screen(context, { from: period.from, to: period.to });
+      return { period: data.period, coverage: "Receitas, despesas e DRE respeitam o período; MRR e contas em aberto representam o estado atual, não uma reconstrução histórica.", summary: data.summary, dre: data.dre, cashFlow: data.cashFlow, commissionRules: data.commissionRules, receivables: data.receivables.slice(0, 30), sampleLimit: 30, receivableCount: data.receivables.length };
+    } },
+    { key: "oportunidades", label: "Pipeline de vendas", href: "/oportunidades", load: async () => {
+      const data = await getOpportunityService().getPipelineScreen(context, {});
+      const relevant = (names: readonly (string | null)[]) => names.some((name) => name && name.length > 2 && question.includes(normalized(name)));
+      const rows = data.stages.flatMap((stage) => stage.opportunities).sort((a, b) => Number(relevant([b.name, b.leadName, b.accountName])) - Number(relevant([a.name, a.leadName, a.accountName])));
+      return { generatedAt: data.generatedAt, sellers: data.closerOptions, stages: data.stages.map((stage) => ({ name: stage.name, count: stage.count })), opportunities: rows.slice(0, 100).map((item) => ({ id: item.id, revision: item.revision, name: item.name, leadName: item.leadName, accountName: item.accountName, ownerMemberId: item.ownerMemberId, ownerName: item.ownerName, status: item.status, stageName: item.stageName, amountCents: item.amountCents, mrrCents: item.mrrCents, tcvCents: item.tcvCents, sourceName: item.sourceName, offers: item.offers.map((offer) => ({ id: offer.id, name: offer.name, totalCents: offer.totalCents })), canWrite: item.canWrite })), sampleLimit: 100, matchingRecordsFirst: true };
+    } },
+    { key: "contratos", label: "Contratos", href: "/contratos", load: async () => {
+      const data = await getContractService().getScreen(context, {});
+      return { metrics: data.metrics, templates: data.templateVersions, generatedAt: data.generatedAt };
+    } },
+    { key: "pos_venda", label: "Customer Success", href: "/customer-success", load: async () => {
+      const data = await getCustomerSuccessService().screen(context);
+      return { metrics: data.metrics, generatedAt: data.generatedAt, formulas: data.formulas, total: data.total, sampleLimit: data.pageSize, clients: data.items.map((item) => ({ name: item.account.name, state: item.state, nextActionAt: item.nextActionAt, health: item.health ? { status: item.health.status, score: item.health.score } : null, adoption: item.operatingReview.adoption, deliverables: item.operatingReview.deliverables, requests: item.operatingReview.requests, result: item.operatingReview.result, renewal: item.operatingReview.renewal })) };
+    } },
+    { key: "atribuicao", label: "Atribuição e UTMs", href: "/aquisicao", load: async () => {
+      const data = await getMarketingAttributionService().getScreen(context, { periodStart: period.from, periodEnd: period.to });
+      return { summary: data.summary, period: data.period, sourceBreakdown: data.sourceBreakdown, missingInformation: data.missingInformation };
+    } },
+    { key: "anuncios", label: "Performance de mídia", href: "/aquisicao/midia", load: async () => {
+      const data = await getMediaPerformanceService().getScreen(context, { periodStart: period.from, periodEnd: period.to });
+      return { period: data.period, metrics: data.metrics, totals: data.totals, funnel: data.funnel, acquisitionFunnel: data.acquisitionFunnel, mediaBreakdown: data.mediaBreakdown, pageAnalytics: data.pageAnalytics, missingInformation: data.missingInformation };
+    } },
+    { key: "integracoes", label: "Integrações", href: "/integracoes", load: async () => {
+      const data = await getIntegrationPlatformService().list(context);
+      return { generatedAt: data.generatedAt, summary: data.summary, connections: data.connections.map((item) => ({ name: item.displayName, provider: item.providerKey, status: item.status, enabled: item.enabled, capabilityLevel: item.capabilityLevel })) };
+    } },
+  ];
+  const results = await Promise.all(loaders.map(async (loader) => {
+    try {
+      return { source: { key: loader.key, label: loader.label, href: loader.href, data: await loader.load() } };
+    } catch (error) {
+      if (error instanceof ApplicationError && error.statusCode === 403) return { unavailable: loader.key };
+      throw error;
+    }
+  }));
+  return { period, sources: results.flatMap((result) => result.source ? [result.source] : []), unavailable: results.flatMap((result) => result.unavailable ? [result.unavailable] : []) };
+}

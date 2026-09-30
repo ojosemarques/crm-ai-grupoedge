@@ -1,0 +1,9 @@
+.flow { display: flex; align-items: stretch; gap: 1.75rem; padding: 0; margin: 1.25rem 0; list-style: none; }
+.stage { position: relative; flex: 1; min-width: 0; border: 1px solid var(--border, #e5e7eb); border-radius: 12px; padding: 1rem; display: grid; gap: .35rem; }
+.stage:not(:last-child)::after { content: "→"; position: absolute; right: -1.4rem; top: 40%; color: var(--muted-foreground, #64748b); }
+.stage strong { font-size: 1.8rem; line-height: 1.2; }
+.stage small, .branch small { color: var(--muted-foreground, #64748b); }
+.branch { border-left: 2px dashed var(--border, #e5e7eb); padding: .7rem 1rem; margin: 0 0 1rem 25%; display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; }
+.selector { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin-top: 1rem; }
+.selector select { max-width: 100%; border: 1px solid var(--border, #e5e7eb); border-radius: 6px; padding: .5rem; background: transparent; }
+@media (max-width: 700px) { .flow { flex-direction: column; gap: 1.5rem; } .stage:not(:last-child)::after { content: "↓"; top: auto; bottom: -1.4rem; right: 50%; } .branch { margin-left: 1rem; } }

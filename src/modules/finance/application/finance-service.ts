@@ -13,6 +13,7 @@ import {
   settleFinancialEntrySchema,
   updateCommissionSchema,
 } from "@/modules/finance/domain/finance-contracts";
+import { buildDre, dailyCashFlow, type CashMovement } from "@/modules/finance/domain/finance-reporting";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -40,18 +41,19 @@ function defaultPeriod(now: Date) {
   return { from, to };
 }
 
-async function reconcileCommissionsInTransaction(tx: Transaction, context: AuthenticatedContext, through: Date) {
+export async function reconcileCommissionsInTransaction(tx: Transaction, context: AuthenticatedContext, through: Date, opportunityId?: string) {
   const rules = await tx.commissionRule.findMany({
-    where: { workspaceId: context.workspaceId, active: true, effectiveFrom: { lte: through }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: through } }] },
+    where: { workspaceId: context.workspaceId, effectiveFrom: { lte: through }, OR: [{ active: true }, { effectiveTo: { not: null } }] },
+    orderBy: [{ effectiveFrom: "desc" }, { id: "asc" }],
   });
   let created = 0;
   for (const rule of rules) {
     const opportunities = await tx.opportunity.findMany({
-      where: { workspaceId: context.workspaceId, ownerMemberId: rule.sellerMemberId, status: "WON", closedAt: { not: null, gte: rule.effectiveFrom, lte: through }, deletedAt: null },
+      where: { workspaceId: context.workspaceId, ...(opportunityId ? { id: opportunityId } : {}), ownerMemberId: rule.sellerMemberId, status: "WON", closedAt: { not: null, gte: rule.effectiveFrom, lte: through, ...(rule.effectiveTo ? { lt: rule.effectiveTo } : {}) }, deletedAt: null },
       select: { id: true, ownerMemberId: true, amountCents: true, tcvCents: true, currency: true, closedAt: true },
     });
     const existing = new Set((await tx.commission.findMany({
-      where: { workspaceId: context.workspaceId, ruleId: rule.id, opportunityId: { in: opportunities.map((item) => item.id) } },
+      where: { workspaceId: context.workspaceId, opportunityId: { in: opportunities.map((item) => item.id) } },
       select: { opportunityId: true },
     })).map((item) => item.opportunityId));
     for (const opportunity of opportunities) {
@@ -72,7 +74,7 @@ async function reconcileCommissionsInTransaction(tx: Transaction, context: Authe
         amountCents: commissionAmountCents(basisCents, rule.percentageBps),
         currency: opportunity.currency,
         earnedAt: opportunity.closedAt!,
-        idempotencyKey: `finance:commission:${rule.id}:${opportunity.id}`,
+        idempotencyKey: `finance:commission:${opportunity.id}`,
         createdByActorId: context.actorId,
         updatedByActorId: context.actorId,
       } });
@@ -89,12 +91,14 @@ export function createFinanceService(options: Options) {
     const fallback = defaultPeriod(options.now());
     const from = query.from ?? fallback.from;
     const to = query.to ?? fallback.to;
+    financeQuerySchema.parse({ from, to });
+    const projectionTo = new Date(to.getTime() + 30 * 86_400_000);
     const canManage = (await options.authorization.authorize(context, PermissionKeys.FINANCE_MANAGE, resource(context.workspaceId))).allowed;
     const canManageCommissions = (await options.authorization.authorize(context, PermissionKeys.FINANCE_COMMISSIONS, resource(context.workspaceId))).allowed;
-    const [categories, financialAccounts, entries, invoices, payments, subscriptions, movements, opportunities, rules, commissions, members] = await Promise.all([
+    const [categories, financialAccounts, entries, invoices, payments, subscriptions, movements, opportunities, rules, commissions, members, priorManualBalances] = await Promise.all([
       options.database.financialCategory.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
       options.database.financialAccount.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
-      options.database.financialEntry.findMany({ where: { workspaceId: context.workspaceId, OR: [{ competenceAt: { gte: from, lt: to } }, { dueAt: { gte: from, lt: to } }, { settledAt: { gte: from, lt: to } }] }, orderBy: [{ dueAt: "desc" }, { createdAt: "desc" }] }),
+      options.database.financialEntry.findMany({ where: { workspaceId: context.workspaceId, OR: [{ competenceAt: { gte: from, lt: to } }, { dueAt: { gte: from, lt: to } }, { settledAt: { gte: from, lt: to } }, { status: "PLANNED" }] }, orderBy: [{ dueAt: "desc" }, { createdAt: "desc" }] }),
       options.database.invoice.findMany({ where: { workspaceId: context.workspaceId, status: { notIn: ["VOIDED", "CANCELLED", "DRAFT"] }, OR: [{ billingPeriodStart: { gte: from, lt: to } }, { status: { in: ["OPEN", "PARTIALLY_PAID"] } }] }, orderBy: [{ dueAt: "asc" }] }),
       options.database.payment.findMany({ where: { workspaceId: context.workspaceId, OR: [{ occurredAt: { lt: to } }, { reversedAt: { lt: to } }] } }),
       options.database.subscription.findMany({ where: { workspaceId: context.workspaceId, status: { in: ["ACTIVE", "CANCELLATION_SCHEDULED"] } } }),
@@ -103,6 +107,7 @@ export function createFinanceService(options: Options) {
       options.database.commissionRule.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { effectiveFrom: "desc" }] }),
       options.database.commission.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ earnedAt: "desc" }] }),
       options.database.workspaceMember.findMany({ where: { workspaceId: context.workspaceId, status: "ACTIVE", deletedAt: null }, select: { id: true, user: { select: { displayName: true } } }, orderBy: { user: { displayName: "asc" } } }),
+      options.database.financialEntry.groupBy({ by: ["financialAccountId", "direction"], where: { workspaceId: context.workspaceId, status: "SETTLED", settledAt: { lt: from } }, _sum: { amountCents: true } }),
     ]);
 
     const manualReceived = entries.filter((item) => item.status === "SETTLED" && item.direction === "INCOME" && item.settledAt && item.settledAt >= from && item.settledAt < to).reduce((sum, item) => sum + item.amountCents, 0n);
@@ -113,12 +118,16 @@ export function createFinanceService(options: Options) {
       return sum + confirmed - reversed;
     }, 0n);
     const received = manualReceived + paymentReceived;
+    const reversals = payments.filter((item) => item.reversedAt && item.reversedAt >= from && item.reversedAt < to).reduce((sum, item) => sum + item.amountCents, 0n);
     const mrr = subscriptions.reduce((sum, item) => sum + item.currentMrrCents, 0n);
     const tcv = opportunities.reduce((sum, item) => sum + (item.tcvCents > 0n ? item.tcvCents : item.amountCents), 0n);
     const memberName = new Map(members.map((item) => [item.id, item.user.displayName]));
     const commissionTotal = (status: "PENDING" | "APPROVED" | "PAID") => commissions.filter((item) => item.status === status).reduce((sum, item) => sum + item.amountCents, 0n);
-    const manualBalance = (accountId?: string) => entries
-      .filter((item) => item.status === "SETTLED" && item.settledAt && item.settledAt < to && (!accountId || item.financialAccountId === accountId))
+    const priorManualBalance = (accountId?: string) => priorManualBalances
+      .filter((item) => !accountId || item.financialAccountId === accountId)
+      .reduce((sum, item) => sum + (item.direction === "INCOME" ? 1n : -1n) * (item._sum.amountCents ?? 0n), 0n);
+    const manualBalance = (accountId?: string) => priorManualBalance(accountId) + entries
+      .filter((item) => item.status === "SETTLED" && item.settledAt && item.settledAt >= from && item.settledAt < to && (!accountId || item.financialAccountId === accountId))
       .reduce((sum, item) => sum + (item.direction === "INCOME" ? item.amountCents : -item.amountCents), 0n);
     const paymentBalance = payments.reduce((sum, item) => {
       const confirmed = item.occurredAt < to ? item.amountCents : 0n;
@@ -138,33 +147,28 @@ export function createFinanceService(options: Options) {
         return rows;
       }),
     ].sort((left, right) => String(right.dueAt).localeCompare(String(left.dueAt)));
-    const cashFlow = [{
-      bucket: from.toISOString().slice(0, 10),
-      from: from.toISOString(),
-      to: to.toISOString(),
-      incomeCents: money(received),
-      expenseCents: money(manualExpenses),
-      resultCents: money(received - manualExpenses),
-      balanceCents: money(cashBalance),
-    }];
-    const invoiceRevenue = invoices.filter((item) => item.billingPeriodStart >= from && item.billingPeriodStart < to).reduce((sum, item) => sum + item.totalCents, 0n);
-    const dreByCategory = new Map<string, { category: string; income: bigint; expense: bigint }>();
-    for (const item of entries.filter((row) => row.status !== "CANCELLED" && row.competenceAt >= from && row.competenceAt < to)) {
-      const label = categoryName.get(item.categoryId) ?? "Sem categoria";
-      const row = dreByCategory.get(item.categoryId) ?? { category: label, income: 0n, expense: 0n };
-      if (item.direction === "INCOME") row.income += item.amountCents; else row.expense += item.amountCents;
-      dreByCategory.set(item.categoryId, row);
-    }
-    const manualCompetenceIncome = [...dreByCategory.values()].reduce((sum, row) => sum + row.income, 0n);
-    const competenceExpenses = [...dreByCategory.values()].reduce((sum, row) => sum + row.expense, 0n);
-    const competenceRevenue = invoiceRevenue + manualCompetenceIncome;
-    const dre = [
-      { categoryId: "crm-revenue", category: "Receita de clientes", incomeCents: money(invoiceRevenue), expenseCents: "0", resultCents: money(invoiceRevenue) },
-      ...[...dreByCategory].map(([categoryId, row]) => ({ categoryId, category: row.category, incomeCents: money(row.income), expenseCents: money(row.expense), resultCents: money(row.income - row.expense) })),
-      { categoryId: "net-result", category: "Resultado líquido", incomeCents: money(competenceRevenue), expenseCents: money(competenceExpenses), resultCents: money(competenceRevenue - competenceExpenses), total: true },
+    const cashOpeningBalance = cashBalance - received + manualExpenses;
+    const cashMovements: CashMovement[] = [
+      ...entries.flatMap((item) => item.status === "SETTLED" && item.settledAt ? [{ at: item.settledAt, direction: item.direction, amountCents: item.amountCents }] : []),
+      ...payments.flatMap((item): CashMovement[] => [{ at: item.occurredAt, direction: "INCOME", amountCents: item.amountCents }, ...(item.reversedAt ? [{ at: item.reversedAt, direction: "EXPENSE" as const, amountCents: item.amountCents }] : [])]),
     ];
+    const cashFlow = dailyCashFlow(from, to, cashOpeningBalance, cashMovements);
+    const projectionMovements: CashMovement[] = [
+      ...entries.filter((item) => item.status === "PLANNED" && item.dueAt < projectionTo).map((item) => ({ at: item.dueAt < to ? to : item.dueAt, direction: item.direction, amountCents: item.amountCents })),
+      ...invoices.filter((item) => ["OPEN", "PARTIALLY_PAID"].includes(item.status) && item.dueAt < projectionTo).map((item) => ({ at: item.dueAt < to ? to : item.dueAt, direction: "INCOME" as const, amountCents: item.totalCents - item.paidCents })),
+    ];
+    const cashProjection = dailyCashFlow(to, projectionTo, cashBalance, projectionMovements);
+    const categoryGroup = new Map(categories.map((item) => [item.id, item.dreGroup]));
+    const statement = buildDre([
+      ...invoices.filter((item) => item.billingPeriodStart >= from && item.billingPeriodStart < to).map((item) => ({ categoryId: "crm-revenue", category: "Receita de clientes", group: "receita_bruta", direction: "INCOME" as const, amountCents: item.totalCents })),
+      ...entries.filter((item) => item.status !== "CANCELLED" && item.competenceAt >= from && item.competenceAt < to).map((item) => ({ categoryId: item.categoryId, category: categoryName.get(item.categoryId) ?? "Sem categoria", group: categoryGroup.get(item.categoryId) ?? null, direction: item.direction, amountCents: item.amountCents })),
+    ]);
+    const dre = statement.lines;
+    const openManual = (direction: "INCOME" | "EXPENSE") => entries.filter((item) => item.status === "PLANNED" && item.direction === direction).reduce((sum, item) => sum + item.amountCents, 0n);
+    const periodCommissions = commissions.filter((item) => item.earnedAt >= from && item.earnedAt < to);
     const summary = {
-      receivedCents: money(received), incomeCents: money(received), expenseCents: money(manualExpenses), resultCents: money(received - manualExpenses), cashBalanceCents: money(cashBalance), mrrCents: money(mrr), tcvCents: money(tcv), netRevenueCents: money(competenceRevenue), grossProfitCents: money(competenceRevenue - competenceExpenses), netIncomeCents: money(competenceRevenue - competenceExpenses), receivableOpenCents: money(invoices.reduce((sum, item) => sum + item.totalCents - item.paidCents, 0n)), payableOpenCents: money(entries.filter((item) => item.status === "PLANNED" && item.direction === "EXPENSE").reduce((sum, item) => sum + item.amountCents, 0n)), commissionCents: money(commissions.reduce((sum, item) => sum + item.amountCents, 0n)), commissionGeneratedCents: money(commissions.reduce((sum, item) => sum + item.amountCents, 0n)), commissionPendingCents: money(commissionTotal("PENDING")), commissionApprovedCents: money(commissionTotal("APPROVED")), commissionPaidCents: money(commissionTotal("PAID")), newMrrCents: money(movements.filter((item) => item.type === "NEW").reduce((sum, item) => sum + item.deltaMrrCents, 0n)), churnMrrCents: money(movements.filter((item) => item.type === "CHURN").reduce((sum, item) => sum + -item.deltaMrrCents, 0n)),
+      openingBalanceCents: money(cashOpeningBalance), closingBalanceCents: money(cashBalance), projectedCashCents: cashProjection.at(-1)?.balanceCents ?? money(cashBalance), unallocatedPaymentBalanceCents: money(paymentBalance), marginPercent: statement.netRevenue > 0n ? `${Number(statement.netIncome * 10_000n / statement.netRevenue) / 100}%` : "—",
+      receivedCents: money(received), incomeCents: money(received + reversals), expenseCents: money(manualExpenses + reversals), resultCents: money(received - manualExpenses), cashBalanceCents: money(cashBalance), mrrCents: money(mrr), tcvCents: money(tcv), netRevenueCents: money(statement.netRevenue), grossProfitCents: money(statement.grossProfit), netIncomeCents: money(statement.netIncome), receivableOpenCents: money(openManual("INCOME") + invoices.reduce((sum, item) => sum + item.totalCents - item.paidCents, 0n)), payableOpenCents: money(openManual("EXPENSE")), commissionCents: money(commissions.reduce((sum, item) => sum + item.amountCents, 0n)), commissionGeneratedCents: money(periodCommissions.reduce((sum, item) => sum + item.amountCents, 0n)), commissionPendingCents: money(commissionTotal("PENDING")), commissionApprovedCents: money(commissionTotal("APPROVED")), commissionPaidCents: money(commissionTotal("PAID")), newMrrCents: money(movements.filter((item) => item.type === "NEW").reduce((sum, item) => sum + item.deltaMrrCents, 0n)), churnMrrCents: money(movements.filter((item) => item.type === "CHURN").reduce((sum, item) => sum + -item.deltaMrrCents, 0n)),
     };
 
     return Object.freeze({
@@ -174,6 +178,8 @@ export function createFinanceService(options: Options) {
       summary,
       metrics: summary,
       cashFlow,
+      cashProjection,
+      projectionPeriod: { from: to.toISOString(), to: projectionTo.toISOString() },
       dre,
       categories: categories.map((item) => ({ id: item.id, key: item.key, name: item.name, kind: item.kind, dreGroup: item.dreGroup, active: item.active })),
       accounts: financialAccounts.map((item) => ({ id: item.id, name: item.name, type: item.type, openingBalanceCents: money(item.openingBalanceCents), balanceCents: money(item.openingBalanceCents + manualBalance(item.id)), active: item.active })),
@@ -227,6 +233,8 @@ export function createFinanceService(options: Options) {
       return options.database.$transaction(async (tx) => {
         const seller = await tx.workspaceMember.findFirst({ where: { id: input.sellerMemberId, workspaceId: context.workspaceId, status: "ACTIVE", deletedAt: null } });
         if (!seller) fail("Vendedor não encontrado neste workspace.", "FINANCE_SELLER_NOT_FOUND", 404);
+        const laterRule = await tx.commissionRule.findFirst({ where: { workspaceId: context.workspaceId, sellerMemberId: input.sellerMemberId, effectiveFrom: { gte: input.effectiveFrom } } });
+        if (laterRule) fail("Já existe regra com início igual ou posterior. A nova vigência deve ser posterior à última regra.", "FINANCE_COMMISSION_RULE_OVERLAP");
         await tx.commissionRule.updateMany({ where: { workspaceId: context.workspaceId, sellerMemberId: input.sellerMemberId, active: true, effectiveFrom: { lt: input.effectiveFrom } }, data: { active: false, effectiveTo: input.effectiveFrom, updatedByActorId: context.actorId } });
         const rule = await tx.commissionRule.create({ data: { workspaceId: context.workspaceId, sellerMemberId: input.sellerMemberId, percentageBps: input.percentageBps, effectiveFrom: input.effectiveFrom, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
         const reconciliation = await reconcileCommissionsInTransaction(tx, context, options.now());
@@ -240,13 +248,34 @@ export function createFinanceService(options: Options) {
     }
     const input = updateCommissionSchema.parse(command);
     await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_COMMISSIONS, resource(context.workspaceId, input.commissionId));
-    const current = await options.database.commission.findFirst({ where: { id: input.commissionId, workspaceId: context.workspaceId } });
-    if (!current) fail("Comissão não encontrada.", "FINANCE_COMMISSION_NOT_FOUND", 404);
-    if (!nextCommissionStatus(current.status, input.status)) fail("Transição de comissão inválida.", "FINANCE_COMMISSION_TRANSITION");
-    const at = options.now();
-    const result = await options.database.commission.updateMany({ where: { id: current.id, workspaceId: context.workspaceId, status: current.status, revision: input.expectedRevision }, data: input.status === "APPROVED" ? { status: "APPROVED", approvedAt: at, approvedByActorId: context.actorId, revision: { increment: 1 }, updatedByActorId: context.actorId } : { status: "PAID", paidAt: at, paidByActorId: context.actorId, revision: { increment: 1 }, updatedByActorId: context.actorId } });
-    if (result.count !== 1) fail("Comissão alterada por outra pessoa.", "FINANCE_COMMISSION_CONFLICT");
-    return options.database.commission.findFirstOrThrow({ where: { id: current.id, workspaceId: context.workspaceId } });
+    if (input.status === "PAID") await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_MANAGE, resource(context.workspaceId));
+    return options.database.$transaction(async (tx) => {
+      const current = await tx.commission.findFirst({ where: { id: input.commissionId, workspaceId: context.workspaceId } });
+      if (!current) fail("Comissão não encontrada.", "FINANCE_COMMISSION_NOT_FOUND", 404);
+      if (!nextCommissionStatus(current.status, input.status)) fail("Transição de comissão inválida.", "FINANCE_COMMISSION_TRANSITION");
+      const at = options.now();
+      if (input.status === "PAID") {
+        const account = await tx.financialAccount.findFirst({ where: { id: input.financialAccountId!, workspaceId: context.workspaceId, active: true } });
+        if (!account) fail("Conta financeira não encontrada.", "FINANCE_ACCOUNT_NOT_FOUND", 404);
+        if (current.amountCents > 0n) {
+          const category = await tx.financialCategory.upsert({
+            where: { workspaceId_key: { workspaceId: context.workspaceId, key: "comissoes_vendas" } },
+            create: { workspaceId: context.workspaceId, key: "comissoes_vendas", name: "Comissões de vendas", kind: "EXPENSE", dreGroup: "despesas_operacionais", createdByActorId: context.actorId, updatedByActorId: context.actorId },
+            update: {},
+          });
+          if (category.kind !== "EXPENSE" || !category.active) fail("A categoria comissoes_vendas deve estar ativa e ser de despesa.", "FINANCE_CATEGORY_MISMATCH");
+          await tx.financialEntry.create({ data: {
+            workspaceId: context.workspaceId, categoryId: category.id, financialAccountId: account.id,
+            direction: "EXPENSE", status: "SETTLED", description: `Comissão da venda ${current.opportunityId}`,
+            amountCents: current.amountCents, competenceAt: current.earnedAt, dueAt: at, settledAt: at,
+            idempotencyKey: `finance:commission-payment:${current.id}`, createdByActorId: context.actorId, updatedByActorId: context.actorId,
+          } });
+        }
+      }
+      const result = await tx.commission.updateMany({ where: { id: current.id, workspaceId: context.workspaceId, status: current.status, revision: input.expectedRevision }, data: input.status === "APPROVED" ? { status: "APPROVED", approvedAt: at, approvedByActorId: context.actorId, revision: { increment: 1 }, updatedByActorId: context.actorId } : { status: "PAID", paidAt: at, paidByActorId: context.actorId, revision: { increment: 1 }, updatedByActorId: context.actorId } });
+      if (result.count !== 1) fail("Comissão alterada por outra pessoa.", "FINANCE_COMMISSION_CONFLICT");
+      return tx.commission.findFirstOrThrow({ where: { id: current.id, workspaceId: context.workspaceId } });
+    }, { isolationLevel: "Serializable" });
   }
 
   return Object.freeze({ screen, command });

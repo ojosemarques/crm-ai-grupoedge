@@ -4,6 +4,7 @@ import type {
   PrismaClient,
 } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { reconcileCommissionsInTransaction } from "@/modules/finance/application/finance-service";
 import { isCatalogItemSellable } from "@/modules/catalog/domain/catalog-sellability-policy";
 import { projectOpportunityOwnership } from "@/modules/lifecycle/application/lifecycle-projection-writer";
 import { assertPipelineRequiredFields } from "@/modules/pipeline-templates/application/opportunity-required-fields";
@@ -1295,6 +1296,9 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
           updatedAt: effectiveAt,
         },
       });
+      if (targetCode === "WON") {
+        await reconcileCommissionsInTransaction(transaction, context, effectiveAt, opportunity.id);
+      }
       if (targetCode === "WON" && opportunity.offers[0]) {
         await transaction.offer.update({
           where: { id: opportunity.offers[0].id },

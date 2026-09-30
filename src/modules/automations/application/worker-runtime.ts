@@ -1,3 +1,4 @@
+import { getMediaPerformanceService } from "@/modules/marketing/application/media-performance-service";
 import { createDefaultAutomationActionRegistry } from "@/modules/automations/application/predefined-entry-automation-actions";
 import { getAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
 import { createLifecycleAutomationScanner } from "@/modules/automations/application/lifecycle-automation-scheduler";
@@ -52,6 +53,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
         { key: "whatsapp", processNext: whatsappWorker.processNext },
         { key: "automations", processNext: automationWorker.processNext },
         { key: "meta-conversions", processNext: metaConversionWorker.processNext },
+        { key: "marketing-audit", processNext: getMediaPerformanceService().processDailyReconciliation },
       ],
     }),
   });

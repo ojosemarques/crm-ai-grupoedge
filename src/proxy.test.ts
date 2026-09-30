@@ -5,6 +5,14 @@ import { SESSION_COOKIE_NAME } from "@/modules/auth/http/session-cookie";
 import { proxy } from "@/proxy";
 
 describe("proteção otimista de rotas", () => {
+  it("libera somente o script público de analytics para instalação nas páginas", () => {
+    const script = proxy(new NextRequest("http://localhost:3000/politizai-analytics.js"));
+    expect(script.status).toBe(200);
+    expect(script.headers.get("Cross-Origin-Resource-Policy")).toBe("cross-origin");
+    const other = proxy(new NextRequest("http://localhost:3000/private.js"));
+    expect(other.status).toBe(307);
+    expect(other.headers.get("Cross-Origin-Resource-Policy")).toBeNull();
+  });
   it("redireciona uma URL protegida sem cookie", () => {
     const response = proxy(new NextRequest("http://localhost:3000/"));
 

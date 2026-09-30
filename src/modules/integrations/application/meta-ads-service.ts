@@ -15,6 +15,7 @@ import {
   integerMetric,
   metaActionMoneyValue,
   metaActionValue,
+  metaVideoComparable,
   metaAdsConfigurationSchema,
   metaAdsConfigureSchema,
   normalizeMetaMediaStatus,
@@ -307,11 +308,14 @@ export function createMetaAdsService(options: Options) {
           if (!account || !campaign || !adSet || !ad) { ignoredCount += 1; continue; }
           const metrics = metricBundle(insight); const currency = insight.account_currency ?? account.currency;
           const grainKey = [META_ADS_PROVIDER_KEY, insight.account_id, insight.campaign_id, insight.adset_id, insight.ad_id, insight.date_start, currency].join("|");
-          const comparable = metricComparable(metrics);
+          const videoMetrics = metaVideoComparable(insight.actions);
+          const comparable = { ...metricComparable(metrics), ...videoMetrics };
           const previous = await tx.marketingPerformanceFact.findFirst({ where: { workspaceId: context.workspaceId, grainKey }, orderBy: { revision: "desc" } });
           const previousComparable = previous ? metricComparable({ values: { spendCents: previous.spendCents, impressions: previous.impressions, reach: previous.reach, clicks: previous.clicks, linkClicks: previous.linkClicks, landingPageViews: previous.landingPageViews, reportedLeads: previous.reportedLeads, reportedPurchases: previous.reportedPurchases, reportedRevenueCents: previous.reportedRevenueCents }, availableMetrics: previous.availableMetrics, missingMetrics: previous.missingMetrics }) : null;
-          if (previousComparable && factHash(previousComparable) === factHash(comparable)) { ignoredCount += 1; continue; }
-          const fact = await tx.marketingPerformanceFact.create({ data: { workspaceId: context.workspaceId, importRunId: null, integrationSyncRunId: run.id, channelId: hierarchy.channel.id, adAccountId: account.id, campaignId: campaign.id, adGroupId: adSet.id, adId: ad.id, creativeId: creative?.id ?? null, granularity: "DAILY", grainKey, revision: (previous?.revision ?? 0) + 1, supersedesFactId: previous?.id ?? null, periodStart: startInstant(insight.date_start), periodEnd: endInstant(insight.date_stop), timeZone: account.timeZone, currency, ...metrics.values, sourceRowNumber: rowNumber, sourceProvider: META_ADS_PROVIDER_KEY, providerApiVersion: config.graphApiVersion, providerExternalId: insight.ad_id, availableMetrics: metrics.availableMetrics, missingMetrics: metrics.missingMetrics, collectedAt: options.now(), sourceEvidence: json({ syncRunId: run.id, graphApiVersion: config.graphApiVersion, accountExternalId: insight.account_id, campaignExternalId: insight.campaign_id, adSetExternalId: insight.adset_id, adExternalId: insight.ad_id, availableMetrics: metrics.availableMetrics, missingMetrics: metrics.missingMetrics, rawPayloadPersisted: false }), createdByActorId: context.actorId } });
+          const previousEvidence = previous?.sourceEvidence as { videoMetricVersion?: string; videoViews3s?: string | null } | null;
+          const previousWithVideo = previousComparable ? { ...previousComparable, videoMetricVersion: previousEvidence?.videoMetricVersion ?? null, videoViews3s: previousEvidence?.videoViews3s ?? null } : null;
+          if (previousWithVideo && factHash(previousWithVideo) === factHash(comparable)) { ignoredCount += 1; continue; }
+          const fact = await tx.marketingPerformanceFact.create({ data: { workspaceId: context.workspaceId, importRunId: null, integrationSyncRunId: run.id, channelId: hierarchy.channel.id, adAccountId: account.id, campaignId: campaign.id, adGroupId: adSet.id, adId: ad.id, creativeId: creative?.id ?? null, granularity: "DAILY", grainKey, revision: (previous?.revision ?? 0) + 1, supersedesFactId: previous?.id ?? null, periodStart: startInstant(insight.date_start), periodEnd: endInstant(insight.date_stop), timeZone: account.timeZone, currency, ...metrics.values, sourceRowNumber: rowNumber, sourceProvider: META_ADS_PROVIDER_KEY, providerApiVersion: config.graphApiVersion, providerExternalId: insight.ad_id, availableMetrics: metrics.availableMetrics, missingMetrics: metrics.missingMetrics, collectedAt: options.now(), sourceEvidence: json({ ...videoMetrics, syncRunId: run.id, graphApiVersion: config.graphApiVersion, accountExternalId: insight.account_id, campaignExternalId: insight.campaign_id, adSetExternalId: insight.adset_id, adExternalId: insight.ad_id, availableMetrics: metrics.availableMetrics, missingMetrics: metrics.missingMetrics, rawPayloadPersisted: false }), createdByActorId: context.actorId } });
           const actions = [...(insight.actions ?? []).map((item) => ({ ...item, kind: "count" as const })), ...(insight.action_values ?? []).map((item) => ({ ...item, kind: "value_cents" as const }))];
           const groupedActions = new Map<string, { providerActionType: string; kind: "count" | "value_cents"; value: bigint }>();
           for (const action of actions) {

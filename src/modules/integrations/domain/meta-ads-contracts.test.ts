@@ -5,11 +5,19 @@ import {
   integerMetric,
   metaActionMoneyValue,
   metaActionValue,
+  metaVideoComparable,
   metaAdsConfigurationSchema,
   normalizeMetaMediaStatus,
 } from "@/modules/integrations/domain/meta-ads-contracts";
 
 describe("CRM-40 contratos do Meta Ads", () => {
+  it("considera somente video_view como visualização de 3s e detecta atualização sem mudança de custo", () => {
+    expect(metaVideoComparable([{ action_type: "video_view", value: "0" }])).toEqual({ videoMetricVersion: "meta-3s-v1", videoViews3s: "0" });
+    expect(metaVideoComparable([{ action_type: "video_continuous_2_sec_watched_actions", value: "100" }]).videoViews3s).toBeNull();
+    expect(metaVideoComparable(undefined).videoViews3s).toBeNull();
+    expect(metaVideoComparable([{ action_type: "video_view", value: "100" }])).not.toEqual(metaVideoComparable([{ action_type: "video_view", value: "101" }]));
+    expect(classifyMetaAction("video_view")).toBe("RECOGNIZED");
+  });
   it("valida somente versão e contas permitidas", () => {
     expect(metaAdsConfigurationSchema.parse({ graphApiVersion: "v26.0", selectedAccountIds: ["act_123456"], initialSince: "2026-09-01" })).toMatchObject({ lookbackDays: 7 });
     expect(() => metaAdsConfigurationSchema.parse({ graphApiVersion: "v99.0", selectedAccountIds: [], initialSince: "2026-09-01" })).toThrow();

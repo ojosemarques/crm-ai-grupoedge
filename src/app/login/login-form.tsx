@@ -25,7 +25,7 @@ export function LoginForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          workspace: LOGIN_WORKSPACE,
+          workspace: formData.get("workspace") || LOGIN_WORKSPACE,
           email: formData.get("email"),
           password: formData.get("password"),
         }),
@@ -50,6 +50,10 @@ export function LoginForm() {
 
   return (
     <form className="login-form" method="post" onSubmit={handleSubmit}>
+      <label className="login-field">
+        Empresa
+        <input className="login-field__input" name="workspace" defaultValue={LOGIN_WORKSPACE} required pattern="[a-z0-9][a-z0-9-]*" autoComplete="organization" aria-label="Workspace" />
+      </label>
       <label className="login-field">
         E-mail
         <input

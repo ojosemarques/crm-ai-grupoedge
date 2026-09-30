@@ -27,6 +27,7 @@ export const createInvoiceSchema = z
     billingPeriodEnd: z.coerce.date(),
     dueAt: z.coerce.date(),
     description: z.string().trim().min(3).max(240).optional(),
+    upfrontCents: z.coerce.bigint().nonnegative().max(BigInt(Number.MAX_SAFE_INTEGER)).default(0n),
     idempotencyKey: z.string().trim().min(8).max(180),
   })
   .superRefine((value, context) => {

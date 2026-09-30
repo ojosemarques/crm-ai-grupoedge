@@ -43,6 +43,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
     items: [
       { href: "/meu-dia", icon: "meu-dia", label: "Meu Dia", roles: operationalRoles },
       { href: "/pipeline", icon: "pipeline", label: "Pipeline", roles: leadRoles },
+      { href: "/oportunidades", icon: "receita", label: "Vendas e propostas", permission: "opportunities.read" },
       { href: "/leads", icon: "leads", label: "Leads", roles: leadRoles },
       { href: "/agenda", icon: "agenda", label: "Agenda" },
       { href: "/inbox", icon: "inbox", label: "Conversas" },
@@ -65,6 +66,27 @@ const navigationGroups: ReadonlyArray<Readonly<{
     label: "Financeiro",
     items: [
       { href: "/financeiro", icon: "receita", label: "Financeiro", permission: "finance.read" },
+      { href: "/pagamentos", icon: "receita", label: "Cobranças e pagamentos", permission: "payments.read" },
+      { href: "/contratos", icon: "meu-dia", label: "Contratos", permission: "contracts.read" },
+    ],
+  },
+  {
+    label: "Clientes",
+    items: [
+      { href: "/contas", icon: "leads", label: "Clientes e empresas", permission: "accounts.read" },
+      { href: "/onboarding", icon: "pipeline", label: "Onboarding", permission: "onboarding.read" },
+      { href: "/customer-success", icon: "equipe", label: "Sucesso do cliente", permission: "customer_success.read" },
+      { href: "/customer-service", icon: "inbox", label: "Atendimento e satisfação", permission: "customer_service.read" },
+      { href: "/farmer", icon: "receita", label: "Renovações e expansão", permission: "farmer.read" },
+    ],
+  },
+  {
+    label: "Marketing",
+    items: [
+      { href: "/aquisicao/midia", icon: "dashboard", label: "Anúncios e funil", permission: "marketing.media.read" },
+      { href: "/integracoes/meta-ads", icon: "configuracoes", label: "Meta Ads", permission: "integrations.read" },
+      { href: "/integracoes/google-ads", icon: "configuracoes", label: "Google Ads", permission: "integrations.read" },
+      { href: "/integracoes", icon: "configuracoes", label: "Integrações", permission: "integrations.read" },
     ],
   },
   {
@@ -72,6 +94,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
     items: [
       { href: "/copilot", icon: "copilot", label: "Copilot gerencial", roles: managerRoles },
       { href: "/assistente", icon: "copilot", label: "Assistente", roles: managerRoles },
+      { href: "/governanca-ia", icon: "configuracoes", label: "Configuração da IA", permission: "ai.governance.read" },
       { href: "/notificacoes", icon: "notificacoes", label: "Notificações" },
     ],
   },
@@ -91,10 +114,12 @@ const navigationGroups: ReadonlyArray<Readonly<{
 ];
 
 const sections = [
-  { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/pipeline", "/leads", "/agenda", "/inbox", "/atividades", "/automacoes"] },
+  { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/pipeline", "/oportunidades", "/leads", "/agenda", "/inbox", "/atividades", "/automacoes"] },
   { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/metas", "/forecast", "/metricas-receita", "/receita", "/analises"] },
-  { key: "finance", label: "Financeiro", icon: "receita", paths: ["/financeiro"] },
-  { key: "assistants", label: "Assistentes", icon: "copilot", paths: ["/copilot", "/assistente", "/notificacoes"] },
+  { key: "finance", label: "Financeiro", icon: "receita", paths: ["/financeiro", "/pagamentos", "/contratos"] },
+  { key: "customers", label: "Clientes", icon: "leads", paths: ["/contas", "/onboarding", "/customer-success", "/customer-service", "/farmer"] },
+  { key: "marketing", label: "Marketing", icon: "dashboard", paths: ["/aquisicao/midia", "/aquisicao", "/integracoes/meta-ads", "/integracoes/google-ads", "/integracoes"] },
+  { key: "assistants", label: "Assistentes", icon: "copilot", paths: ["/copilot", "/assistente", "/governanca-ia", "/notificacoes"] },
   { key: "settings", label: "Configurações", icon: "configuracoes", paths: ["/configuracoes", "/administracao", "/auditoria", "/qualidade-dados", "/operacoes", "/privacidade"] },
 ] as const;
 
@@ -198,7 +223,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const roleKey = session?.user.role.key;
   const permissionKeys = new Set(session?.user.permissionKeys ?? []);
   const canCreateLead = roleKey ? operationalRoles.some((role) => role === roleKey) : false;
-  const canUseCopilot = permissionKeys.has("ai.manager.query");
+  const canUseCopilot = permissionKeys.has("ai.use");
   const allowedItems = navigationGroups.flatMap((group) => group.items).filter((item) =>
     (!item.permission || permissionKeys.has(item.permission)) &&
     (!item.roles || (roleKey && item.roles.includes(roleKey))),
@@ -224,7 +249,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             {session ? <GlobalSearch /> : null}
             {canCreateLead ? <Link aria-label="Novo lead" className={styles.newButton} href="/leads/entrada"><Icon name="mais" size={14} /><span>Novo</span></Link> : null}
             <Link aria-label="Notificações" className={styles.iconButton} href="/notificacoes"><Icon name="notificacoes" size={17} /></Link>
-            {canUseCopilot ? <button aria-controls="copilot-drawer" aria-expanded={copilotOpen} className={styles.copilotButton} onClick={() => setCopilotOpen((current) => !current)} type="button"><Icon name="copilot" size={16} /><span>Copilot</span></button> : null}
+            {canUseCopilot ? <button aria-label="Copilot" aria-controls="copilot-drawer" aria-expanded={copilotOpen} className={styles.copilotButton} onClick={() => setCopilotOpen((current) => !current)} type="button"><Icon name="copilot" size={16} /><span>Copilot</span></button> : null}
           </div>
         </header>
         <button aria-label="Fechar navegação" className={cn(styles.backdrop, menuOpen && styles.visible)} onClick={() => setMenuOpen(false)} tabIndex={menuOpen ? 0 : -1} type="button" />
