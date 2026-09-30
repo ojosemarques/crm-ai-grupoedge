@@ -8,6 +8,8 @@ import { enforceRateLimit, readLimitedJson, sensitiveEndpointPolicies } from "@/
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// Up to two bounded read-only searches followed by the final model response.
+export const maxDuration = 180;
 
 export async function GET(request: NextRequest) {
   try {

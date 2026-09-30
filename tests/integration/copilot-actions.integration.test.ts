@@ -93,6 +93,23 @@ describe("ações operacionais do Copilot", () => {
     expect((await actions.options(viewer)).categories).toEqual([]);
   });
 
+  it("não confirma uma despesa usando lançamento direto que ocupou a mesma chave sem recibo Copilot", async () => {
+    const action = expense();
+    const expectedPreview = await actions.preview(admin, action);
+    const key = confirmation();
+    const existing = await finance.command(admin, {
+      action: "CREATE_ENTRY", direction: "EXPENSE", categoryId, financialAccountId,
+      description: "Lançamento direto com outros valores", amountCents: "2500",
+      competenceAt: now().toISOString(), dueAt: now().toISOString(), status: "PLANNED",
+      idempotencyKey: key.idempotencyKey,
+    }) as { id: string };
+    const count = await database.financialEntry.count({ where: { workspaceId } });
+    await expect(actions.execute(admin, action, { ...key, expectedPreview })).rejects.toMatchObject({ code: "COPILOT_ACTION_REPLAY_CONFLICT" });
+    expect(await database.financialEntry.count({ where: { workspaceId } })).toBe(count);
+    expect(await database.financialEntry.findUniqueOrThrow({ where: { id: existing.id } })).toMatchObject({ amountCents: 2500n, status: "PLANNED", description: "Lançamento direto com outros valores" });
+    expect(await database.auditLog.count({ where: { workspaceId, action: "ai.copilot.action.executed", metadata: { path: ["idempotencyKey"], equals: key.idempotencyKey } } })).toBe(0);
+  });
+
   it("fluxo local persiste proposta, exige confirmação e recupera histórico sem OpenAI", async () => {
     const copilot = createCopilotService({ database, authorization, now, actions, sales: createSaleCompletionService({ database, now }), generate: null, loadContext: async () => ({ sources: [], unavailable: [] }), fallback: async () => ({}) });
     const action: CopilotAction = { kind: "CREATE_TASK", leadId, title: "Revisar proposta local", taskKind: "FOLLOW_UP", priority: "MEDIUM", dueAt: "2026-10-02T15:00:00Z" };

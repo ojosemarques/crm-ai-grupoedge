@@ -7,6 +7,10 @@ import { getAssistantService } from "@/modules/ai-assistant/application/assistan
 import { loadCopilotContext, type CopilotContext } from "@/modules/ai-assistant/application/copilot-context";
 import { localCopilotAnswer, localCopilotSources } from "@/modules/ai-assistant/application/copilot-local-answer";
 import { resolveCopilotPeriod } from "@/modules/ai-assistant/domain/copilot-period";
+import { generateCopilotWithSearch, type CopilotSearchEvidence } from "@/modules/ai-assistant/application/copilot-retrieval";
+import { searchCopilotRecords } from "@/modules/ai-assistant/application/copilot-record-search";
+import { copilotRecordInputGuide } from "@/modules/ai-assistant/domain/copilot-record-contracts";
+import { getCopilotPlanService } from "@/modules/ai-assistant/application/copilot-plan-service";
 import { OpenAICompatibleProvider } from "@/modules/ai/providers/openai-compatible-provider";
 import { AIProviderError } from "@/modules/ai/providers/ai-provider";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
@@ -21,6 +25,8 @@ type Options = {
   authorization: Pick<ReturnType<typeof getAuthorizationService>, "assertAuthorized">;
   loadContext: (context: AuthenticatedContext, message?: string, now?: Date, retrievalQuery?: string) => Promise<CopilotContext>;
   generate: ((input: unknown) => Promise<unknown>) | null;
+  search?: typeof searchCopilotRecords;
+  plans?: Pick<ReturnType<typeof getCopilotPlanService>, "propose" | "confirm" | "cancel" | "screen">;
   sales: {
     authorize: (context: AuthenticatedContext, payload: CopilotSale) => Promise<unknown>;
     preview: (context: AuthenticatedContext, payload: CopilotSale) => Promise<unknown>;
@@ -73,10 +79,11 @@ export function createCopilotService(options: Options) {
   async function screen(context: AuthenticatedContext) {
     await authorize(context);
     const where = { workspaceId: context.workspaceId, requestedByActorId: context.actorId, type: { in: proposalTypes } };
-    const [pendingRows, historyRows, actionOptions] = await Promise.all([
+    const [pendingRows, historyRows, actionOptions, plans] = await Promise.all([
       options.database.aIAssistantProposal.findMany({ where: { ...where, OR: [{ status: "DRAFT", createdAt: { gt: new Date(options.now().getTime() - lifetimeMs) } }, { status: { in: ["EXECUTING", "EXECUTION_FAILED"] } }] }, orderBy: { createdAt: "desc" }, take: 10 }),
       options.database.aIAssistantProposal.findMany({ where, orderBy: { createdAt: "desc" }, take: 30 }),
       options.actions.options(context),
+      options.plans?.screen(context) ?? { pending: [], history: [] },
     ]);
     const readable = new Map<string, boolean>();
     for (const row of [...pendingRows, ...historyRows]) {
@@ -85,12 +92,12 @@ export function createCopilotService(options: Options) {
     return {
       mode: options.generate ? "OPENAI" : "LOCAL",
       options: actionOptions,
-      pending: pendingRows.filter((row) => readable.get(row.id)).map(present),
-      history: historyRows.filter((row) => readable.get(row.id)).map((row) => ({
+      pending: [...plans.pending, ...pendingRows.filter((row) => readable.get(row.id)).map(present)].sort((a, b) => b.expiresAt.localeCompare(a.expiresAt)).slice(0, 10),
+      history: [...plans.history, ...historyRows.filter((row) => readable.get(row.id)).map((row) => ({
         id: row.id, type: row.type, preview: row.preview,
         status: (row.status === "DRAFT" && options.now().getTime() - row.createdAt.getTime() >= lifetimeMs) || (row.status === "CANCELLED" && row.cancellationReason === "Prévia expirada; substituída por uma nova solicitação.") ? "EXPIRED" : row.status,
         createdAt: row.createdAt.toISOString(), approvedAt: row.approvedAt?.toISOString() ?? null, cancelledAt: row.cancelledAt?.toISOString() ?? null,
-      })),
+      }))].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 30),
     };
   }
 
@@ -119,25 +126,35 @@ export function createCopilotService(options: Options) {
     return present(row);
   }
 
-  function verifyActionContext(action: CopilotAction, data: CopilotContext, available: Awaited<ReturnType<Options["actions"]["options"]>>) {
+  function verifyActionContext(action: CopilotAction, data: CopilotContext, available: Awaited<ReturnType<Options["actions"]["options"]>>, evidence: CopilotSearchEvidence[] = []) {
     const has = (records: readonly { id: string }[], id: string) => records.some((record) => record.id === id);
-    let allowed = available.capabilities.includes(action.kind);
+    const found = (entity: string, id: string, revision?: number) => evidence.some(({ result }) => result?.entity === entity && result.records.some((record) => record.id === id && (revision === undefined || record.data.revision === revision)));
+    // Search proves read access only. Canonical preview always reauthorizes the
+    // specific write before a proposal can be persisted.
+    let allowed = available.capabilities.includes(action.kind)
+      || (action.kind === "CREATE_TASK" && found("LEAD", action.leadId))
+      || (action.kind === "RECORD_PAYMENT" && found("INVOICE", action.invoiceId, action.expectedRevision));
     if (action.kind === "CREATE_TASK") {
-      allowed = allowed && has(available.leads, action.leadId);
+      allowed = allowed && (has(available.leads, action.leadId) || found("LEAD", action.leadId));
       if (action.opportunityId) {
         const opportunities = data.sources.find((source) => source.key === "oportunidades")?.data as { opportunities?: { id: string; canWrite: boolean }[] } | undefined;
-        allowed = allowed && Boolean(opportunities?.opportunities?.some((row) => row.id === action.opportunityId && row.canWrite));
+        allowed = allowed && (Boolean(opportunities?.opportunities?.some((row) => row.id === action.opportunityId && row.canWrite)) || found("OPPORTUNITY", action.opportunityId));
       }
     }
-    if (action.kind === "UPDATE_CUSTOMER") allowed = allowed && available.customers.some((row) => row.id === action.accountId && row.revision === action.expectedRevision);
-    if (action.kind === "CREATE_EXPENSE") allowed = allowed && has(available.categories, action.categoryId) && has(available.financialAccounts, action.financialAccountId) && (!action.customerAccountId || has(available.customers, action.customerAccountId));
-    if (action.kind === "RECORD_PAYMENT") allowed = allowed && available.invoices.some((row) => row.id === action.invoiceId && row.revision === action.expectedRevision) && has(available.financialAccounts, action.financialAccountId);
+    if (action.kind === "UPDATE_CUSTOMER") allowed = allowed && (available.customers.some((row) => row.id === action.accountId && row.revision === action.expectedRevision) || found("CUSTOMER", action.accountId, action.expectedRevision));
+    if (action.kind === "CREATE_EXPENSE") allowed = allowed && (has(available.categories, action.categoryId) || found("CATEGORY", action.categoryId)) && (has(available.financialAccounts, action.financialAccountId) || found("FINANCIAL_ACCOUNT", action.financialAccountId)) && (!action.customerAccountId || has(available.customers, action.customerAccountId) || found("CUSTOMER", action.customerAccountId));
+    if (action.kind === "RECORD_PAYMENT") allowed = allowed && (available.invoices.some((row) => row.id === action.invoiceId && row.revision === action.expectedRevision) || found("INVOICE", action.invoiceId, action.expectedRevision)) && (has(available.financialAccounts, action.financialAccountId) || found("FINANCIAL_ACCOUNT", action.financialAccountId));
     if (!allowed) fail("A ação usa registros que não estão no contexto autorizado. Selecione os registros pelo formulário de ações.", "COPILOT_UNKNOWN_RESOURCE", 403);
   }
 
   async function command(context: AuthenticatedContext, raw: unknown) {
     const input = copilotCommandSchema.parse(raw);
     await authorize(context);
+    if (input.action === "PROPOSE_PLAN") {
+      if (!options.plans) fail("Planos de ações indisponíveis neste ambiente.", "COPILOT_PLAN_UNAVAILABLE", 503);
+      const proposal = await options.plans.propose(context, "Formulário: plano de ações", input.payload);
+      return { answer: "Revise todas as etapas. O plano só será executado após sua confirmação e será desfeito por inteiro se alguma etapa falhar.", sources: [], links: [], proposal, mode: "LOCAL" };
+    }
     if (input.action === "PROPOSE" || input.action === "PROPOSE_SALE") {
       const proposal = await propose(context, input.action === "PROPOSE" ? `Formulário: ${input.payload.kind}` : "Formulário: fechar venda", input.payload, input.action === "PROPOSE_SALE");
       return { answer: "Confira os dados e os efeitos abaixo. A ação só será executada após sua confirmação.", sources: [], links: [], proposal, mode: "LOCAL" };
@@ -154,10 +171,13 @@ export function createCopilotService(options: Options) {
       if (!policy) fail("A síntese gerencial de IA precisa estar aprovada na governança deste workspace.", "AI_USE_CASE_NOT_APPROVED");
       const retrievalQuery = /["“][^"”]{2,80}["”]/.test(input.message) ? input.message : [input.message, ...input.history.filter((item) => item.role === "user").slice(-2).map((item) => item.content.slice(0, 600))].join("\n");
       const [data, actionOptions] = await Promise.all([options.loadContext(context, input.message, options.now(), retrievalQuery), options.actions.options(context, retrievalQuery)]);
-      const modelInput = { now: options.now().toISOString(), message: redact(input.message), history: input.history.map((item) => ({ ...item, content: redact(item.content) })), context: data, actionOptions, responseSchema: copilotResponseSchema, actionInputGuide: copilotActionInputGuide };
+      const modelInput = { now: options.now().toISOString(), message: redact(input.message), history: input.history.map((item) => ({ ...item, content: redact(item.content) })), context: data, actionOptions, responseSchema: copilotResponseSchema, actionInputGuide: copilotActionInputGuide, searchInputGuide: copilotRecordInputGuide };
       if (JSON.stringify(json(modelInput)).length > 100_000) fail("O contexto excede o limite desta consulta. Use os filtros dos módulos para uma análise mais específica.", "COPILOT_CONTEXT_LIMIT", 400);
       let generated: unknown;
-      try { generated = await options.generate(sanitize(modelInput)); }
+      let evidence: CopilotSearchEvidence[] = [];
+      try {
+        ({ generated, evidence } = await generateCopilotWithSearch({ input: modelInput, generate: options.generate, search: options.search ? (query) => options.search!(context, query) : undefined, sanitize }));
+      }
       catch (error) {
         if (error instanceof AIProviderError) {
           const messages: Record<string, string> = {
@@ -180,26 +200,44 @@ export function createCopilotService(options: Options) {
         fail("A IA retornou uma proposta incompleta ou inválida. Reformule a solicitação; nenhum registro foi alterado.", "COPILOT_INVALID_OUTPUT", 502);
       }
       const output = parsed.data;
-      const sources = data.sources.filter((source) => output.sources.includes(source.key)).map(({ key, label, href }) => ({ key, label, href }));
-      let proposal: ReturnType<typeof present> | null = null;
-      if (output.sale) {
-        const sale = output.sale;
+      const sourceCatalog = [...data.sources, ...evidence.flatMap(({ result }) => result ? [result.source] : [])];
+      const sources = [...new Map(sourceCatalog.filter((source) => output.sources.includes(source.key)).map(({ key, label, href }) => [key, { key, label, href }])).values()];
+      let proposal: ReturnType<typeof present> | Awaited<ReturnType<NonNullable<Options["plans"]>["propose"]>> | null = null;
+      const verifySaleContext = (sale: CopilotSale) => {
         const opportunityData = data.sources.find((source) => source.key === "oportunidades")?.data as { opportunities?: Array<{ id: string; revision: number; canWrite: boolean }> } | undefined;
-        if (!opportunityData?.opportunities?.some((item) => item.id === sale.opportunityId && item.revision === sale.expectedRevision && item.canWrite)) fail("A oportunidade proposta não está no contexto autorizado e editável. Selecione o registro correto.", "COPILOT_UNKNOWN_OPPORTUNITY", 403);
+        const searched = evidence.some(({ result }) => result?.entity === "OPPORTUNITY" && result.records.some((item) => item.id === sale.opportunityId && item.data.revision === sale.expectedRevision && item.data.canWrite === true));
+        if (!searched && !opportunityData?.opportunities?.some((item) => item.id === sale.opportunityId && item.revision === sale.expectedRevision && item.canWrite)) fail("A oportunidade proposta não está no contexto autorizado e editável. Selecione o registro correto.", "COPILOT_UNKNOWN_OPPORTUNITY", 403);
         const linkedCustomerId = sale.customer?.mode === "LINK" ? sale.customer.accountId : null;
-        if (linkedCustomerId && !actionOptions.customers.some((item) => item.id === linkedCustomerId)) fail("O cliente proposto não está no contexto autorizado. Selecione o cadastro pelo pipeline.", "COPILOT_UNKNOWN_RESOURCE", 403);
-        proposal = await propose(context, input.message, sale, true);
+        if (linkedCustomerId && !actionOptions.customers.some((item) => item.id === linkedCustomerId) && !evidence.some(({ result }) => result?.entity === "CUSTOMER" && result.records.some((item) => item.id === linkedCustomerId))) fail("O cliente proposto não está no contexto autorizado. Selecione o cadastro pelo pipeline.", "COPILOT_UNKNOWN_RESOURCE", 403);
+      };
+      if (output.plan) {
+        if (!options.plans) fail("Planos de ações indisponíveis neste ambiente.", "COPILOT_PLAN_UNAVAILABLE", 503);
+        for (const step of output.plan.steps) {
+          if (step.kind === "CLOSE_SALE") verifySaleContext(step.payload);
+          else verifyActionContext(step, data, actionOptions, evidence);
+        }
+        proposal = await options.plans.propose(context, input.message, output.plan);
+      } else if (output.sale) {
+        verifySaleContext(output.sale);
+        proposal = await propose(context, input.message, output.sale, true);
       } else if (output.operation) {
-        verifyActionContext(output.operation, data, actionOptions);
+        verifyActionContext(output.operation, data, actionOptions, evidence);
         proposal = await propose(context, input.message, output.operation, false);
       }
-      await options.database.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "ai.copilot.queried", entityType: "Workspace", entityId: context.workspaceId, changes: { requestFingerprint: hash(input.message), sources: sources.map((source) => source.key), externalProvider: true, governanceVersionId: policy.id, proposalId: proposal?.id ?? null } } });
-      const coverage = data.period ? `\n\nPeríodo financeiro e de aquisição: ${data.period.fromDate} a ${data.period.toDate} (${data.period.timeZone})${data.period.assumed ? "; mês atual assumido por ausência de período explícito" : ""}. CRM, contratos, CS e integrações mostram o estado atual.` : "";
-      return { answer: output.answer + coverage, sources, links: sources.map((source) => ({ ...source, entityType: "MODULE" })), proposal, mode: "OPENAI" };
+      await options.database.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "ai.copilot.queried", entityType: "Workspace", entityId: context.workspaceId, changes: { requestFingerprint: hash(input.message), sources: sources.map((source) => source.key), searches: evidence.map(({ query, result }) => ({ entity: query.entity, page: query.page, count: result?.records.length ?? null, hasMore: result?.hasMore ?? null })), externalProvider: true, governanceVersionId: policy.id, proposalId: proposal?.id ?? null } } });
+      const coverage = data.period ? `\n\nPeríodo do resumo financeiro e de aquisição: ${data.period.fromDate} a ${data.period.toDate} (${data.period.timeZone})${data.period.assumed ? "; mês atual assumido por ausência de período explícito" : ""}. CRM, contratos, CS e integrações mostram o estado atual.${evidence.length ? " As buscas detalhadas têm filtros e cobertura próprios, informados em cada resultado; não se limitam necessariamente ao período do resumo." : ""}` : "";
+      const recordLinks = evidence.flatMap(({ result }) => result && output.sources.includes(result.source.key) ? result.records.map(({ label, href }) => ({ label, href, entityType: result.entity })) : []);
+      const links = [...new Map([...recordLinks, ...sources.map((source) => ({ ...source, entityType: "MODULE" }))].map((link) => [link.href, link])).values()].slice(0, 15);
+      return { answer: output.answer + coverage, sources, links, proposal, mode: "OPENAI" };
     }
 
-    const proposal = await options.database.aIAssistantProposal.findFirst({ where: { id: input.proposalId, workspaceId: context.workspaceId, requestedByActorId: context.actorId, type: { in: proposalTypes } } });
+    const proposal = await options.database.aIAssistantProposal.findFirst({ where: { id: input.proposalId, workspaceId: context.workspaceId, requestedByActorId: context.actorId, type: { in: [...proposalTypes, "ACTION_PLAN"] } } });
     if (!proposal) fail("Proposta inexistente ou não autorizada.", "COPILOT_PROPOSAL_NOT_FOUND", 404);
+    if (proposal.type === "ACTION_PLAN") {
+      if (!options.plans) fail("Planos de ações indisponíveis neste ambiente.", "COPILOT_PLAN_UNAVAILABLE", 503);
+      const decision = { proposalId: input.proposalId, expectedRevision: input.expectedRevision };
+      return input.action === "CONFIRM" ? options.plans.confirm(context, { ...decision, confirmed: true }) : options.plans.cancel(context, decision);
+    }
     const resuming = input.action === "CONFIRM" && ["EXECUTING", "EXECUTION_FAILED", "PUBLISHED"].includes(proposal.status) && proposal.revision === input.expectedRevision + 1 && proposal.approvedByActorId === context.actorId;
     if (!resuming && (proposal.status !== "DRAFT" || proposal.revision !== input.expectedRevision)) fail("A proposta já foi finalizada ou alterada. Atualize a conversa.", "COPILOT_REVISION_CONFLICT");
     if (input.action === "CANCEL") {
@@ -250,7 +288,7 @@ export function getCopilotService() {
   const model = process.env.OPENAI_MODEL?.trim();
   const provider = process.env.COPILOT_EXTERNAL_ENABLED === "true" && key && model ? new OpenAICompatibleProvider({ endpoint: "https://api.openai.com/v1/chat/completions", model, authorizationToken: key, timeoutMs: 45_000 }) : null;
   return createCopilotService({
-    database: getDatabaseClient(), authorization: getAuthorizationService(), now: () => new Date(), loadContext: loadCopilotContext, sales: getSaleCompletionService(), actions: getCopilotActionsService(),
+    database: getDatabaseClient(), authorization: getAuthorizationService(), now: () => new Date(), loadContext: loadCopilotContext, search: searchCopilotRecords, plans: getCopilotPlanService(), sales: getSaleCompletionService(), actions: getCopilotActionsService(),
     generate: provider ? async (input) => (await provider.generateJson({ system: copilotSystemPrompt, input, maxOutputTokens: 12000 })).output : null,
     fallback: async (context, message) => {
       const workspace = await getDatabaseClient().workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });

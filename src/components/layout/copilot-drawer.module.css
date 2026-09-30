@@ -47,4 +47,14 @@
 .historyItem > button, .refreshButton { color: var(--primary); font-size: 11px; text-align: left; }
 .footer { border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 10px; padding: 13px; text-align: center; }
 .before { color: var(--muted-foreground); font-weight: 400; }.proposal dd { overflow-wrap: anywhere; }
+.planToggle { align-items: center; display: flex; font-size: 11px; gap: 8px; margin-bottom: 14px; }.planToggle input { height: 16px; width: 16px; }
+.planBuilder { border: 1px solid var(--border); border-radius: 12px; display: grid; font-size: 11px; gap: 10px; margin-bottom: 18px; padding: 12px; }
+.planBuilder p { color: var(--muted-foreground); font-size: 10px; line-height: 1.5; }.planBuilder ol { display: grid; gap: 8px; list-style: none; padding: 0; }
+.planBuilder li { border-top: 1px solid var(--border); display: grid; gap: 8px; padding-top: 9px; }.planBuilder li span { display: block; margin-top: 3px; overflow-wrap: anywhere; }
+.stepControls { display: flex; gap: 6px; }.stepControls button { border: 1px solid var(--border); border-radius: 7px; font-size: 11px; min-height: 32px; min-width: 32px; padding: 5px 8px; }
+.stepControls button:disabled, .primaryButton:disabled { opacity: .45; }
+.proposal .planNotice { background: var(--surface-selected); border-radius: 8px; color: var(--foreground); padding: 9px; }
+.proposal .planSteps { display: grid; gap: 12px; list-style: none; margin-top: 12px; padding: 0; }.planSteps > li { border-top: 1px solid var(--border); min-width: 0; padding-top: 12px; }
+.stepHeading { align-items: center; display: flex; gap: 7px; margin-bottom: 8px; }.stepHeading > span { align-items: center; background: var(--primary); border-radius: 50%; color: var(--primary-foreground); display: flex; flex-shrink: 0; height: 22px; justify-content: center; width: 22px; }
+.planSteps dl > div { flex-wrap: wrap; }.planSteps dd { margin-left: auto; }.planSteps strong, .planSteps p { overflow-wrap: anywhere; }
 @media (max-width: 600px) { .drawer { width: calc(100vw - 8px); } }

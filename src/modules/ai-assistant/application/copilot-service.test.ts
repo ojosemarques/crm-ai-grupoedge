@@ -5,6 +5,7 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 import { AIProviderError } from "@/modules/ai/providers/ai-provider";
 import { createCopilotService } from "./copilot-service";
 import { copilotCommandSchema, copilotSaleSchema } from "../domain/copilot-contracts";
+import { resolveCopilotPeriod } from "../domain/copilot-period";
 import type { CopilotAction, CopilotActionOptions, CopilotActionPreview } from "../domain/copilot-action-contracts";
 
 const id = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -47,6 +48,45 @@ function harness() {
 }
 
 describe("Copilot operacional", () => {
+  it("distingue o período dos indicadores da cobertura da busca histórica", async () => {
+    const h = harness();
+    h.generate.mockResolvedValueOnce({ answer: "Buscando histórico", sources: [], searches: [{ entity: "INVOICE", from: "2025-01-01", to: "2025-01-31" }] }).mockResolvedValueOnce({ answer: "Nenhuma cobrança localizada em janeiro de 2025.", sources: ["cobrancas"] });
+    const search = vi.fn(async () => ({ entity: "INVOICE" as const, source: { key: "cobrancas", label: "Cobranças", href: "/pagamentos" }, page: 1, pageSize: 10, total: 0, hasMore: false, nextPage: null, records: [], coverage: "Vencimentos em janeiro de 2025", filters: { query: "", from: "2025-01-01", to: "2025-01-31" } }));
+    const service = createCopilotService({ ...h.options, search, loadContext: async () => ({ ...await h.loadContext(), period: resolveCopilotPeriod("Resumo", now, "America/Sao_Paulo") }) });
+    const response = await service.command(context, { action: "CHAT", message: "Localize cobranças antigas" });
+    expect(response.answer).toContain("Período do resumo financeiro");
+    expect(response.answer).toContain("As buscas detalhadas têm filtros e cobertura próprios");
+  });
+
+  it("busca registro fora da amostra e valida a referência antes de preparar ação", async () => {
+    const h = harness();
+    const customerId = id(90);
+    const search = vi.fn(async () => ({ entity: "CUSTOMER" as const, source: { key: "busca_clientes", label: "Clientes encontrados", href: "/contas" }, page: 2, pageSize: 10, total: 11, hasMore: false, nextPage: null, records: [{ id: customerId, label: "Empresa distante", href: `/contas/${customerId}`, data: { revision: 4 } }], coverage: "Base autorizada", filters: { query: "Empresa distante" } }));
+    h.generate.mockResolvedValueOnce({ answer: "Buscando", sources: [], searches: [{ entity: "CUSTOMER", query: "Empresa distante", page: 2 }] }).mockResolvedValueOnce({ answer: "Confira o nome", sources: ["busca_clientes"], operation: { kind: "UPDATE_CUSTOMER", accountId: customerId, expectedRevision: 4, changes: { name: "Empresa revisada" } } });
+    const service = createCopilotService({ ...h.options, search });
+    await expect(service.command(context, { action: "CHAT", message: "Atualize Empresa distante" })).resolves.toMatchObject({ proposal: { type: "UPDATE_CUSTOMER" }, sources: [{ key: "busca_clientes" }], links: expect.arrayContaining([{ label: "Empresa distante", href: `/contas/${customerId}`, entityType: "CUSTOMER" }]) });
+    expect(search).toHaveBeenCalledWith(context, expect.objectContaining({ page: 2 }));
+    expect(h.actions.preview).toHaveBeenCalledWith(context, expect.objectContaining({ accountId: customerId, expectedRevision: 4 }));
+    expect(h.actions.execute).not.toHaveBeenCalled();
+  });
+
+  it("prepara plano somente após validar todas as referências do modelo", async () => {
+    const h = harness();
+    const plan = { steps: [
+      { kind: "CREATE_TASK", leadId: id(50), title: "Ligar", taskKind: "CALL", priority: "LOW", dueAt: now.toISOString() },
+      { kind: "UPDATE_CUSTOMER", accountId: id(51), expectedRevision: 1, changes: { size: "SMALL" } },
+    ] };
+    const plans = { propose: vi.fn(async () => ({ id: id(80), type: "ACTION_PLAN" as const, revision: 1, expiresAt: now.toISOString(), preview: { kind: "ACTION_PLAN" as const, title: "Plano", summary: "2 etapas", atomic: true as const, steps: [], impact: [] }, resuming: false })), screen: vi.fn(async () => ({ pending: [], history: [] })), confirm: vi.fn(), cancel: vi.fn() };
+    const service = createCopilotService({ ...h.options, plans });
+    h.generate.mockResolvedValueOnce({ answer: "Confira todas as etapas", sources: [], plan });
+    await expect(service.command(context, { action: "CHAT", message: "Atualize o cliente e crie a tarefa" })).resolves.toMatchObject({ proposal: { type: "ACTION_PLAN" } });
+    expect(plans.propose).toHaveBeenCalledWith(context, expect.any(String), plan);
+    expect(plans.confirm).not.toHaveBeenCalled();
+    h.generate.mockResolvedValueOnce({ answer: "Confira", sources: [], plan: { steps: [plan.steps[0], { ...plan.steps[1], accountId: id(99) }] } });
+    await expect(service.command(context, { action: "CHAT", message: "Mesmo plano" })).rejects.toMatchObject({ code: "COPILOT_UNKNOWN_RESOURCE" });
+    expect(plans.propose).toHaveBeenCalledTimes(1);
+  });
+
   it("rejeita confirmação implícita e payloads extras antes de qualquer efeito", () => {
     expect(copilotCommandSchema.safeParse({ action: "CONFIRM", proposalId: id(20), expectedRevision: 1 }).success).toBe(false);
     expect(copilotCommandSchema.safeParse({ action: "CONFIRM", proposalId: id(20), expectedRevision: 1, confirmed: true, sale }).success).toBe(false);
@@ -201,7 +241,7 @@ describe("ações tipadas do Copilot", () => {
     expect(h.rows[0]).toMatchObject({ status: "CANCELLED", revision: 2 });
     expect(h.rows[1]).toMatchObject({ status: "DRAFT", revision: 1 });
     expect(h.rows.filter((row) => row.status === "DRAFT")).toHaveLength(1);
-    expect((await h.service.screen(context)).history[0]?.status).toBe("EXPIRED");
+    expect((await h.service.screen(context)).history.find((row) => row.id === h.rows[0]!.id)?.status).toBe("EXPIRED");
     expect(h.database.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "ai.copilot.expired" }) }));
     expect(h.actions.execute).not.toHaveBeenCalled();
   });
@@ -290,7 +330,7 @@ describe("contrato das ações enviado ao provedor externo", () => {
     const message = `Preparar ${action.kind} com os dados informados`;
     const result = await h.service.command(context, { action: "CHAT", message });
     const sent = h.generate.mock.calls[0]![0] as { responseSchema: { properties: Record<string, unknown> }; actionInputGuide: Record<string, { outputField: string }>; actionOptions: CopilotActionOptions };
-    expect(Object.keys(sent.responseSchema.properties)).toEqual(["answer", "sources", "sale", "operation"]);
+    expect(Object.keys(sent.responseSchema.properties)).toEqual(["answer", "sources", "sale", "operation", "plan", "searches"]);
     expect(Object.keys(sent.actionInputGuide)).toEqual(["CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT", "CLOSE_SALE"]);
     expect(sent.actionInputGuide[action.kind]?.outputField).toBe("operation");
     expect(sent.actionOptions.capabilities).toContain(action.kind);

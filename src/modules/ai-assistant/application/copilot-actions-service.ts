@@ -152,6 +152,8 @@ export function createCopilotActionsService(options: Options) {
         result = { answer: "Cadastro do cliente atualizado conforme a prévia.", result: { id: account.id, revision: account.revision }, targetType: "Account", targetId: account.id, links: linksFor(action.kind, account.id) };
       } else if (action.kind === "CREATE_EXPENSE") {
         const { kind: _kind, paymentConfirmed: _confirmed, ...input } = action; void _kind; void _confirmed;
+        const existingEntry = await tx.financialEntry.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey: confirmation.idempotencyKey } }, select: { id: true } });
+        if (existingEntry) fail("Esta confirmação já identifica outro lançamento financeiro. Prepare uma nova proposta.", "COPILOT_ACTION_REPLAY_CONFLICT");
         const entry = await createFinanceService({ database, authorization, now: options.now }).command(context, { ...input, action: "CREATE_ENTRY", direction: "EXPENSE", idempotencyKey: confirmation.idempotencyKey }) as { id: string };
         result = { answer: action.status === "SETTLED" ? "Despesa registrada como paga, conforme sua declaração de pagamento real." : "Despesa registrada como conta a pagar.", result: { id: entry.id }, targetType: "FinancialEntry", targetId: entry.id, links: linksFor(action.kind) };
       } else {

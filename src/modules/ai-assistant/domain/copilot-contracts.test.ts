@@ -21,7 +21,7 @@ const at = "2026-10-01T10:00:00-03:00";
 
 describe("contrato fornecido ao modelo do Copilot", () => {
   it("publica todos os tipos de ação e campos obrigatórios no schema de resposta", () => {
-    expect(response.required).toEqual(["answer", "sources", "sale", "operation"]);
+    expect(response.required).toEqual(expect.arrayContaining(["answer", "sources", "sale", "operation", "searches"]));
     expect(operations.map((schema) => schema.properties!.kind!.const)).toEqual(["CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT"]);
     expect(operation("CREATE_EXPENSE").required).toEqual(expect.arrayContaining(["categoryId", "financialAccountId", "amountCents", "competenceAt", "dueAt", "status"]));
     expect(operation("RECORD_PAYMENT").required).toEqual(expect.arrayContaining(["invoiceId", "expectedRevision", "receivedAt", "method", "reference", "receiptConfirmed"]));
