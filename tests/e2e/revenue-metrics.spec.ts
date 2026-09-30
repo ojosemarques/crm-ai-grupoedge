@@ -13,8 +13,11 @@ async function login(page: Page, email: string) {
 test("gestor consulta métricas, estados explícitos e drilldown", async ({ page }) => {
   await login(page, "gestor@demo.politizai.local");
   await page.goto("/metricas-receita?preset=MONTH");
-  await expect(page.getByRole("heading", { name: "Métricas de receita", level: 1 })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Movimentação do MRR" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Dashboard executivo/, level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Indicadores executivos" })).toBeVisible();
+  await expect(page.getByText("Receita contratada", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Margem de caixa", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Retorno por campanha" })).toBeVisible();
   await page.getByRole("link", { name: /MRR ativo final/ }).click();
   await expect(page.getByRole("heading", { name: "MRR ativo final" })).toBeVisible();
   await page.getByRole("link", { name: "Retenção" }).click();

@@ -32,9 +32,11 @@ describe("camada canônica de métricas de receita", () => {
   it("reconcilia métricas, comparação, coortes e drilldown no mesmo contrato", async () => {
     const service = createRevenueMetricsService({ database, authorization, now: () => now });
     const screen = await service.getScreen(manager, { preset: "MONTH" });
-    expect(screen.registryVersion).toBe("crm57.1");
+    expect(screen.registryVersion).toBe("crm57.3");
     expect(screen.bridge.reconciled).toBe(true);
     expect(screen.metrics.map((item) => item.metricId)).toContain("revenue.closing_mrr");
+    expect(screen.metrics.map((item) => item.metricId)).toContain("cash.margin");
+    expect(Array.isArray(screen.campaignReturns)).toBe(true);
     expect(screen.comparisons).toHaveLength(screen.metrics.length);
     expect(screen.series.find((item) => item.metricId === "revenue.closing_mrr")?.points.length).toBeGreaterThan(0);
     const page = await service.getDrilldown(manager, { preset: "MONTH", metric: "revenue.net_new_mrr" });

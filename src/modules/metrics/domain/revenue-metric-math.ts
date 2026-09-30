@@ -19,6 +19,34 @@ export function divideBasisPoints(numerator: bigint, denominator: bigint): numbe
   return Number((numerator * 10_000n + denominator / 2n) / denominator);
 }
 
+export function aggregateCampaignReturns(
+  spendRows: readonly Readonly<{ campaignId: string | null; spendCents: bigint }>[],
+  revenueRows: readonly Readonly<{ campaignId: string | null; attributedRevenueCents: bigint }>[],
+) {
+  const totals = new Map<string, { spendCents: bigint; attributedRevenueCents: bigint }>();
+  for (const row of spendRows) {
+    if (!row.campaignId) continue;
+    const current = totals.get(row.campaignId) ?? { spendCents: 0n, attributedRevenueCents: 0n };
+    current.spendCents += row.spendCents;
+    totals.set(row.campaignId, current);
+  }
+  for (const row of revenueRows) {
+    if (!row.campaignId) continue;
+    const current = totals.get(row.campaignId) ?? { spendCents: 0n, attributedRevenueCents: 0n };
+    current.attributedRevenueCents += row.attributedRevenueCents;
+    totals.set(row.campaignId, current);
+  }
+  return [...totals.entries()].map(([campaignId, values]) => Object.freeze({
+    campaignId,
+    ...values,
+    returnBasisPoints: divideBasisPoints(values.attributedRevenueCents, values.spendCents),
+  })).sort((left, right) => {
+    if (left.attributedRevenueCents !== right.attributedRevenueCents) return left.attributedRevenueCents > right.attributedRevenueCents ? -1 : 1;
+    if (left.spendCents !== right.spendCents) return left.spendCents > right.spendCents ? -1 : 1;
+    return left.campaignId.localeCompare(right.campaignId);
+  });
+}
+
 export function balanceAt(movements: readonly LedgerMovement[], at: Date): bigint {
   return movements.reduce((sum, movement) => movement.effectiveAt < at ? sum + movement.deltaMrrCents : sum, 0n);
 }

@@ -5,8 +5,8 @@ import { createDashboardMetricsService } from "@/modules/metrics/application/das
 import { createMetricsService } from "@/modules/metrics/application/metrics-service";
 import type { DashboardPeriodInterval } from "@/modules/metrics/domain/dashboard-contracts";
 import { revenueMetricRegistry, REVENUE_METRICS_REGISTRY_VERSION, getRevenueMetricDefinition } from "@/modules/metrics/domain/revenue-metric-registry";
-import { buildRevenueBridge, cohortRetention, compareValues, divideBasisPoints, metricState, type LedgerMovement } from "@/modules/metrics/domain/revenue-metric-math";
-import type { RevenueCohortRow, RevenueDrilldownPage, RevenueDrilldownRecord, RevenueMetricComparison, RevenueMetricsScreen, RevenueMetricValue, RevenueQualitySignal, RevenueTimeSeries } from "@/modules/metrics/domain/revenue-metrics-contracts";
+import { aggregateCampaignReturns, buildRevenueBridge, cohortRetention, compareValues, divideBasisPoints, metricState, type LedgerMovement } from "@/modules/metrics/domain/revenue-metric-math";
+import type { RevenueCampaignReturn, RevenueCohortRow, RevenueDrilldownPage, RevenueDrilldownRecord, RevenueMetricComparison, RevenueMetricsScreen, RevenueMetricValue, RevenueQualitySignal, RevenueTimeSeries } from "@/modules/metrics/domain/revenue-metrics-contracts";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -17,7 +17,7 @@ import { z } from "zod";
 
 type AuthorizationPort = ReturnType<typeof getAuthorizationService>;
 type Options = Readonly<{ database: PrismaClient; authorization: AuthorizationPort; now: () => Date }>;
-type PeriodFacts = Readonly<{ values: Map<string, RevenueMetricValue>; records: Map<string, RevenueDrilldownRecord[]> }>;
+type PeriodFacts = Readonly<{ values: Map<string, RevenueMetricValue>; records: Map<string, RevenueDrilldownRecord[]>; campaignReturns: readonly RevenueCampaignReturn[] }>;
 
 const requestSchema = z.object({
   asOf: z.string().datetime({ offset: true }).optional(),
@@ -149,10 +149,10 @@ export function createRevenueMetricsService(options: Options) {
     const invoiceIds = invoices.map((item) => item.id);
     const paymentRows = invoiceIds.length === 0 ? [] : await options.database.payment.findMany({ where: { workspaceId: context.workspaceId, invoiceId: { in: invoiceIds }, providerKey: { not: PAYMENT_PROVIDER_KEY }, occurredAt: { lt: new Date(currentPeriod.to) } }, select: { id: true, invoiceId: true, amountCents: true, status: true, occurredAt: true, reversedAt: true } });
     const canReadFinance = wholeWorkspace && (await options.authorization.authorize(context, PermissionKeys.FINANCE_READ, { workspaceId: context.workspaceId, resourceType: "Finance" })).allowed;
-    const manualIncome = canReadFinance ? await options.database.financialEntry.findMany({ where: { workspaceId: context.workspaceId, status: "SETTLED", direction: "INCOME", settledAt: { gte: new Date(previousPeriod.from), lt: new Date(currentPeriod.to) } }, select: { id: true, description: true, amountCents: true, settledAt: true } }) : [];
+    const settledFinancialEntries = canReadFinance ? await options.database.financialEntry.findMany({ where: { workspaceId: context.workspaceId, status: "SETTLED", settledAt: { gte: new Date(previousPeriod.from), lt: new Date(currentPeriod.to) } }, select: { id: true, description: true, direction: true, amountCents: true, settledAt: true } }) : [];
     const marketingCampaignIds = dashboardScreen.query.filters.campaignIds.length === 0 ? [] : (await options.database.marketingCampaign.findMany({ where: { workspaceId: context.workspaceId, legacyAcquisitionCampaignId: { in: [...dashboardScreen.query.filters.campaignIds] } }, select: { id: true } })).map((item) => item.id);
     const marketingCreativeIds = dashboardScreen.query.filters.creativeIds.length === 0 ? [] : (await options.database.marketingCreative.findMany({ where: { workspaceId: context.workspaceId, legacyAcquisitionCreativeId: { in: [...dashboardScreen.query.filters.creativeIds] } }, select: { id: true } })).map((item) => item.id);
-    const marketingFacts = scope !== "WORKSPACE" ? [] : await options.database.marketingPerformanceFact.findMany({ where: { workspaceId: context.workspaceId, periodStart: { gte: new Date(previousPeriod.from), lt: new Date(currentPeriod.to) }, ...(dashboardScreen.query.filters.campaignIds.length ? { campaignId: { in: marketingCampaignIds.length ? marketingCampaignIds : [zeroUuid] } } : {}), ...(dashboardScreen.query.filters.creativeIds.length ? { creativeId: { in: marketingCreativeIds.length ? marketingCreativeIds : [zeroUuid] } } : {}) }, orderBy: [{ grainKey: "asc" }, { revision: "desc" }], select: { id: true, grainKey: true, revision: true, status: true, periodStart: true, periodEnd: true, spendCents: true, currency: true, missingMetrics: true, sourceProvider: true } });
+    const marketingFacts = scope !== "WORKSPACE" ? [] : await options.database.marketingPerformanceFact.findMany({ where: { workspaceId: context.workspaceId, periodStart: { gte: new Date(previousPeriod.from), lt: new Date(currentPeriod.to) }, ...(dashboardScreen.query.filters.campaignIds.length ? { campaignId: { in: marketingCampaignIds.length ? marketingCampaignIds : [zeroUuid] } } : {}), ...(dashboardScreen.query.filters.creativeIds.length ? { creativeId: { in: marketingCreativeIds.length ? marketingCreativeIds : [zeroUuid] } } : {}) }, orderBy: [{ grainKey: "asc" }, { revision: "desc" }], select: { id: true, campaignId: true, grainKey: true, revision: true, status: true, periodStart: true, periodEnd: true, spendCents: true, currency: true, missingMetrics: true, sourceProvider: true } });
     const marketingByGrain = new Map<string, (typeof marketingFacts)[number]>();
     for (const item of marketingFacts) if (!marketingByGrain.has(item.grainKey)) marketingByGrain.set(item.grainKey, item);
     const latestMarketing = [...marketingByGrain.values()].filter((item) => item.status === "CONFIRMED" && item.currency === "BRL");
@@ -162,6 +162,8 @@ export function createRevenueMetricsService(options: Options) {
     const attributionTouchpoints = attributionCredits.length === 0 ? [] : await options.database.marketingTouchpoint.findMany({ where: { workspaceId: context.workspaceId, id: { in: unique(attributionCredits.flatMap((item) => item.touchpointId ? [item.touchpointId] : [])) } }, select: { id: true, leadId: true, sourceId: true, campaignId: true, creativeId: true, occurredAt: true } });
     const conversionById = new Map(attributionConversions.map((item) => [item.id, item]));
     const touchpointById = new Map(attributionTouchpoints.map((item) => [item.id, item]));
+    const campaignIds = unique([...latestMarketing.flatMap((item) => item.campaignId ? [item.campaignId] : []), ...attributionTouchpoints.flatMap((item) => item.campaignId ? [item.campaignId] : [])]);
+    const campaignNames = new Map((scope === "WORKSPACE" && campaignIds.length > 0 ? await options.database.marketingCampaign.findMany({ where: { workspaceId: context.workspaceId, id: { in: campaignIds } }, select: { id: true, name: true } }) : []).map((item) => [item.id, item.name]));
 
     const forecastScreen = await import("@/modules/forecast/application/forecast-service").then(({ createForecastService }) => createForecastService(options).screen(context, { asOf: asOf.toISOString() }));
     const forecast = forecastScreen.snapshots.find((item) => new Date(item.asOf) <= asOf) ?? null;
@@ -184,8 +186,10 @@ export function createRevenueMetricsService(options: Options) {
       const initialAccounts = new Set([...initialAccountBalances].filter(([, balance]) => balance > 0n).map(([id]) => id));
       const logoChurnRows = churnEvents.filter((item) => initialAccounts.has(item.accountId) && item.effectiveAt >= from && item.effectiveAt < cut);
       const periodPayments = paymentRows.filter((item) => item.occurredAt < cut && (item.occurredAt >= from || Boolean(item.reversedAt && item.reversedAt >= from && item.reversedAt < cut)));
-      const periodManualIncome = manualIncome.filter((item) => item.settledAt && item.settledAt >= from && item.settledAt < cut);
+      const periodManualIncome = settledFinancialEntries.filter((item) => item.direction === "INCOME" && item.settledAt && item.settledAt >= from && item.settledAt < cut);
+      const periodExpenses = settledFinancialEntries.filter((item) => item.direction === "EXPENSE" && item.settledAt && item.settledAt >= from && item.settledAt < cut);
       const received = sum(periodManualIncome.map((item) => item.amountCents)) + periodPayments.reduce((total, item) => total + (item.occurredAt >= from ? item.amountCents : 0n) - (item.reversedAt && item.reversedAt >= from && item.reversedAt < cut ? item.amountCents : 0n), 0n);
+      const settledExpenses = sum(periodExpenses.map((item) => item.amountCents));
       const overdue = invoices.filter((item) => item.createdAt < cut && item.dueAt < cut && !["VOIDED", "CANCELLED", "DRAFT"].includes(item.status));
       const overdueTotal = sum(overdue.map((item) => item.totalCents));
       const paidThroughCut = paymentRows.filter((item) => item.occurredAt < cut).reduce((byInvoice, item) => byInvoice.set(item.invoiceId, (byInvoice.get(item.invoiceId) ?? 0n) + item.amountCents - (item.reversedAt && item.reversedAt < cut ? item.amountCents : 0n)), new Map<string, bigint>());
@@ -206,12 +210,25 @@ export function createRevenueMetricsService(options: Options) {
         const touchpoint = credit.touchpointId ? touchpointById.get(credit.touchpointId) : null;
         if (!touchpoint) return [];
         if (dashboardScreen.query.filters.sourceIds.length && (!touchpoint.sourceId || !dashboardScreen.query.filters.sourceIds.includes(touchpoint.sourceId))) return [];
-        if (dashboardScreen.query.filters.campaignIds.length && (!touchpoint.campaignId || !dashboardScreen.query.filters.campaignIds.includes(touchpoint.campaignId))) return [];
-        if (dashboardScreen.query.filters.creativeIds.length && (!touchpoint.creativeId || !dashboardScreen.query.filters.creativeIds.includes(touchpoint.creativeId))) return [];
+        if (dashboardScreen.query.filters.campaignIds.length && (!touchpoint.campaignId || !marketingCampaignIds.includes(touchpoint.campaignId))) return [];
+        if (dashboardScreen.query.filters.creativeIds.length && (!touchpoint.creativeId || !marketingCreativeIds.includes(touchpoint.creativeId))) return [];
         return [{ credit, conversion, touchpoint }];
       });
       const attributedRevenue = matchingCreditRows.reduce((total, item) => total + item.conversion.valueCents! * BigInt(item.credit.creditBps) / 10_000n, 0n);
       const attributedAccountIds = new Set(matchingCreditRows.flatMap((item) => item.conversion.opportunityId ? opportunityRows.find((opportunity) => opportunity.id === item.conversion.opportunityId)?.accountId ?? [] : []));
+      const campaignReturnState = !attributionRun ? "UNAVAILABLE" as const : attributionRunPartial || mediaPartial ? "PARTIAL" as const : "AVAILABLE" as const;
+      const campaignReturns: RevenueCampaignReturn[] = aggregateCampaignReturns(
+        periodMarketing.map((item) => ({ campaignId: item.campaignId, spendCents: item.spendCents })),
+        matchingCreditRows.map((item) => ({ campaignId: item.touchpoint.campaignId, attributedRevenueCents: item.conversion.valueCents! * BigInt(item.credit.creditBps) / 10_000n })),
+      ).map((item) => Object.freeze({
+        campaignId: item.campaignId,
+        campaignName: campaignNames.get(item.campaignId) ?? "Campanha sem nome",
+        spendCents: item.spendCents.toString(),
+        attributedRevenueCents: item.attributedRevenueCents.toString(),
+        returnBasisPoints: item.returnBasisPoints,
+        state: item.spendCents === 0n ? "NO_DENOMINATOR" as const : campaignReturnState,
+        coverageBasisPoints: attributionRun?.coverageBps ?? null,
+      }));
       const values = new Map<string, RevenueMetricValue>();
       const records = new Map<string, RevenueDrilldownRecord[]>();
       const put = (value: RevenueMetricValue, rows: readonly RevenueDrilldownRecord[] = []) => { values.set(value.metricId, value); records.set(value.metricId, [...rows]); };
@@ -241,6 +258,10 @@ export function createRevenueMetricsService(options: Options) {
         ...(item.occurredAt >= from ? [record({ key: `payment:${item.id}:confirmed`, entityType: "PAYMENT", entityId: item.id, title: "Pagamento confirmado", subtitle: item.invoiceId, occurredAt: item.occurredAt.toISOString(), contribution: item.amountCents.toString(), href: `/pagamentos?invoiceId=${item.invoiceId}`, provenance: "Payment.occurredAt" })] : []),
         ...(item.reversedAt && item.reversedAt >= from && item.reversedAt < cut ? [record({ key: `payment:${item.id}:reversed`, entityType: "PAYMENT", entityId: item.id, title: `Pagamento ${item.status}`, subtitle: item.invoiceId, occurredAt: item.reversedAt.toISOString(), contribution: (-item.amountCents).toString(), href: `/pagamentos?invoiceId=${item.invoiceId}`, provenance: "Payment.reversedAt" })] : []),
       ])]);
+      put(canReadFinance ? metric("cash.margin", divideBasisPoints(received - settledExpenses, received), { numerator: received - settledExpenses, denominator: received, state: received === 0n ? "NO_DENOMINATOR" : undefined, reason: "Margem gerencial sobre caixa realizado; usa recebimentos líquidos e saídas financeiras liquidadas no mesmo período." }) : unavailable("cash.margin", "A margem exige permissão Financeiro e visão WORKSPACE sem filtros comerciais.", "SUPPRESSED"), canReadFinance ? [
+        ...(records.get("cash.received") ?? []),
+        ...periodExpenses.map((item) => record({ key: `margin-expense:${item.id}`, entityType: "FINANCIAL_ENTRY", entityId: item.id, title: item.description, subtitle: "Saída liquidada", occurredAt: item.settledAt!.toISOString(), contribution: (-item.amountCents).toString(), href: "/financeiro", provenance: "FinancialEntry.settledAt" })),
+      ] : []);
       put(metric("cash.delinquency", divideBasisPoints(overdueBalance, overdueTotal), { numerator: overdueBalance, denominator: overdueTotal, state: overdueTotal === 0n ? "NO_DENOMINATOR" : period.to < options.now().toISOString() ? "PARTIAL" : undefined, reason: overdueTotal === 0n ? "Não há faturas vencidas elegíveis." : period.to < options.now().toISOString() ? "Corte histórico usa pagamentos append-only, mas o cadastro atual da fatura pode ter sido atualizado depois do corte." : "Saldo vencido reconstruído por pagamentos até asOf." }), overdue.map((item) => record({ key: `invoice:${item.id}`, entityType: "INVOICE", entityId: item.id, title: item.invoiceNumber, subtitle: item.accountNameSnapshot, occurredAt: item.dueAt.toISOString(), contribution: (item.totalCents - (paidThroughCut.get(item.id) ?? 0n)).toString(), href: `/pagamentos?invoiceId=${item.id}`, provenance: "Invoice + Payment" })));
       const incompatibleMediaFilter = dashboardScreen.query.filters.sdrMemberIds.length > 0 || dashboardScreen.query.filters.closerMemberIds.length > 0 || dashboardScreen.query.filters.teamIds.length > 0 || dashboardScreen.query.filters.priorityCodes.length > 0 || dashboardScreen.query.filters.productIds.length > 0;
       if (scope !== "WORKSPACE") {
@@ -266,7 +287,7 @@ export function createRevenueMetricsService(options: Options) {
           put(metric("acquisition.attribution_coverage", attributionRun.coverageBps, { numerator: attributionRun.attributedCount, denominator: attributionRun.conversionCount, state: attributionRunPartial ? "PARTIAL" : attributionRun.conversionCount === 0 ? "NO_DENOMINATOR" : undefined, coverage: attributionRun.coverageBps }), attributionRows);
         }
       }
-      return { values, records };
+      return { values, records, campaignReturns };
     };
 
     const current = buildPeriod(currentPeriod, dashboardScreen.overview);
@@ -309,7 +330,7 @@ export function createRevenueMetricsService(options: Options) {
         if (metricId === "revenue.closing_mrr") return Object.freeze({ bucket: bucket.key, from: bucket.from.toISOString(), to: bucket.to.toISOString(), value: buildRevenueBridge(ledger, new Date(currentPeriod.from), bucket.to, bucket.to).closingMrrCents, state: "AVAILABLE" as const });
         if (metricId === "revenue.net_new_mrr") { const value = buildRevenueBridge(ledger, bucket.from, bucket.to, bucket.to).netNewMrrCents; return Object.freeze({ bucket: bucket.key, from: bucket.from.toISOString(), to: bucket.to.toISOString(), value, state: BigInt(value) === 0n ? "ZERO" as const : "AVAILABLE" as const }); }
         if (metricId === "sales.bookings") { const value = contractRows.filter((item) => item.acceptedAt && item.acceptedAt >= bucket.from && item.acceptedAt < bucket.to).reduce((total, item) => total + (item.currentVersionId ? versionById.get(item.currentVersionId)?.totalCents ?? 0n : 0n), 0n); return Object.freeze({ bucket: bucket.key, from: bucket.from.toISOString(), to: bucket.to.toISOString(), value: value.toString(), state: value === 0n ? "ZERO" as const : "AVAILABLE" as const }); }
-        if (metricId === "cash.received") { const value = sum(manualIncome.filter((item) => item.settledAt && item.settledAt >= bucket.from && item.settledAt < bucket.to && item.settledAt < asOf).map((item) => item.amountCents)) + paymentRows.filter((item) => item.occurredAt < asOf).reduce((total, item) => total + (item.occurredAt >= bucket.from && item.occurredAt < bucket.to ? item.amountCents : 0n) - (item.reversedAt && item.reversedAt >= bucket.from && item.reversedAt < bucket.to && item.reversedAt < asOf ? item.amountCents : 0n), 0n); return Object.freeze({ bucket: bucket.key, from: bucket.from.toISOString(), to: bucket.to.toISOString(), value: value.toString(), state: value === 0n ? "ZERO" as const : "AVAILABLE" as const }); }
+        if (metricId === "cash.received") { const value = sum(settledFinancialEntries.filter((item) => item.direction === "INCOME" && item.settledAt && item.settledAt >= bucket.from && item.settledAt < bucket.to && item.settledAt < asOf).map((item) => item.amountCents)) + paymentRows.filter((item) => item.occurredAt < asOf).reduce((total, item) => total + (item.occurredAt >= bucket.from && item.occurredAt < bucket.to ? item.amountCents : 0n) - (item.reversedAt && item.reversedAt >= bucket.from && item.reversedAt < bucket.to && item.reversedAt < asOf ? item.amountCents : 0n), 0n); return Object.freeze({ bucket: bucket.key, from: bucket.from.toISOString(), to: bucket.to.toISOString(), value: value.toString(), state: value === 0n ? "ZERO" as const : "AVAILABLE" as const }); }
         const value = dashboardScreen.overview.evidence.leadReceipts.filter((item) => new Date(item.occurredAt) >= bucket.from && new Date(item.occurredAt) < bucket.to).length;
         return Object.freeze({ bucket: bucket.key, from: bucket.from.toISOString(), to: bucket.to.toISOString(), value, state: value === 0 ? "ZERO" as const : "AVAILABLE" as const });
       })),
@@ -342,7 +363,7 @@ export function createRevenueMetricsService(options: Options) {
     }
     for (const [cohort, rows] of cohortMap) records.set(`cohort:${cohort}`, rows.map((item) => record({ key: `subscription:${item.id}`, entityType: "SUBSCRIPTION", entityId: item.id, title: item.subscriptionNumber, subtitle: item.accountNameSnapshot, occurredAt: item.startsAt.toISOString(), contribution: movements.filter((movement) => movement.subscriptionId === item.id && movement.effectiveAt <= asOf).reduce((total, movement) => total + movement.deltaMrrCents, 0n).toString(), href: `/receita?subscriptionId=${item.id}`, provenance: "Subscription + RevenueMovement" })));
 
-    const screen: RevenueMetricsScreen = Object.freeze({ registryVersion: REVENUE_METRICS_REGISTRY_VERSION, generatedAt: options.now().toISOString(), scope, query: Object.freeze({ preset: dashboardScreen.query.preset, period: currentPeriod, comparisonPeriod: previousPeriod, asOf: asOf.toISOString(), filters: dashboardScreen.query.filters }), metrics: Object.freeze(orderedMetrics), comparisons: Object.freeze(comparisons), bridge: currentBridge, series: Object.freeze(series), cohorts: Object.freeze(cohorts), quality: Object.freeze(quality), forecastSnapshot: forecast ? Object.freeze({ id: forecast.id, asOf: forecast.asOf, coverageState: forecast.coverageState, coverageBasisPoints: forecast.coverageBps }) : null, hasData: orderedMetrics.some((item) => item.state === "AVAILABLE" && item.value !== "0" && item.value !== 0) });
+    const screen: RevenueMetricsScreen = Object.freeze({ registryVersion: REVENUE_METRICS_REGISTRY_VERSION, generatedAt: options.now().toISOString(), scope, query: Object.freeze({ preset: dashboardScreen.query.preset, period: currentPeriod, comparisonPeriod: previousPeriod, asOf: asOf.toISOString(), filters: dashboardScreen.query.filters }), metrics: Object.freeze(orderedMetrics), comparisons: Object.freeze(comparisons), bridge: currentBridge, series: Object.freeze(series), cohorts: Object.freeze(cohorts), campaignReturns: Object.freeze(current.campaignReturns), quality: Object.freeze(quality), forecastSnapshot: forecast ? Object.freeze({ id: forecast.id, asOf: forecast.asOf, coverageState: forecast.coverageState, coverageBasisPoints: forecast.coverageBps }) : null, hasData: orderedMetrics.some((item) => item.state === "AVAILABLE" && item.value !== "0" && item.value !== 0) });
     return { screen, records, page: parsed.data.page, pageSize: parsed.data.pageSize, metricId: parsed.data.metric };
   }
 

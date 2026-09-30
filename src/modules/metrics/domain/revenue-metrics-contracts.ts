@@ -112,6 +112,16 @@ export type RevenueCohortRow = Readonly<{
   drilldownId: string;
 }>;
 
+export type RevenueCampaignReturn = Readonly<{
+  campaignId: string;
+  campaignName: string;
+  spendCents: string;
+  attributedRevenueCents: string;
+  returnBasisPoints: number | null;
+  state: RevenueMetricState;
+  coverageBasisPoints: number | null;
+}>;
+
 export type RevenueQualitySignal = Readonly<{
   id: string;
   label: string;
@@ -153,6 +163,7 @@ export type RevenueMetricsScreen = Readonly<{
   bridge: RevenueBridge;
   series: readonly RevenueTimeSeries[];
   cohorts: readonly RevenueCohortRow[];
+  campaignReturns: readonly RevenueCampaignReturn[];
   quality: readonly RevenueQualitySignal[];
   forecastSnapshot: Readonly<{
     id: string;

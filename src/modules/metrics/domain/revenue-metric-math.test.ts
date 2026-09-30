@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRevenueBridge, cohortRetention, compareValues, divideBasisPoints, metricState, type LedgerMovement } from "./revenue-metric-math";
+import { aggregateCampaignReturns, buildRevenueBridge, cohortRetention, compareValues, divideBasisPoints, metricState, type LedgerMovement } from "./revenue-metric-math";
 
 const day = (value: number) => new Date(`2026-08-${String(value).padStart(2, "0")}T12:00:00.000Z`);
 const movements: LedgerMovement[] = [
@@ -34,5 +34,16 @@ describe("métricas canônicas de receita", () => {
   it("interpreta subida de SLA/custo como direção desfavorável", () => {
     expect(compareValues(120, 60, "DOWN")).toMatchObject({ direction: "UP", interpretation: "NEGATIVE", percentageBasisPoints: 10_000 });
     expect(compareValues(0, 0, "UP")).toMatchObject({ direction: "STABLE", percentageBasisPoints: null });
+  });
+
+  it("reúne investimento e receita atribuída por campanha sem misturar campanhas", () => {
+    expect(aggregateCampaignReturns(
+      [{ campaignId: "a", spendCents: 10_000n }, { campaignId: "a", spendCents: 5_000n }, { campaignId: "b", spendCents: 20_000n }, { campaignId: null, spendCents: 99_000n }],
+      [{ campaignId: "a", attributedRevenueCents: 45_000n }, { campaignId: "b", attributedRevenueCents: 10_000n }, { campaignId: "c", attributedRevenueCents: 5_000n }],
+    )).toEqual([
+      { campaignId: "a", spendCents: 15_000n, attributedRevenueCents: 45_000n, returnBasisPoints: 30_000 },
+      { campaignId: "b", spendCents: 20_000n, attributedRevenueCents: 10_000n, returnBasisPoints: 5_000 },
+      { campaignId: "c", spendCents: 0n, attributedRevenueCents: 5_000n, returnBasisPoints: null },
+    ]);
   });
 });
