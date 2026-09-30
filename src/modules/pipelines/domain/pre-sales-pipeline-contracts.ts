@@ -41,15 +41,10 @@ export type LeadPipelineCard = Readonly<{
   priorityCode: "P1" | "P2" | "P3" | null;
   score: number | null;
   responsibleName: string;
-  currentStageId: string;
-  currentStageCode: LeadStageCode;
   currentStageName: string;
-  stageEnteredAt: string;
-  updatedAt: string;
   nextActionAt: string | null;
   nextActionDescription: string | null;
   pactoReady: boolean;
-  allowedTransitions: readonly StageTransitionOption[];
 }>;
 
 export type LeadPipelineStageColumn = Readonly<{
@@ -90,7 +85,6 @@ export type PreSalesPipelineScreen = Readonly<{
     stageCode: "ALL" | LeadStageCode;
   }>;
   responsibleOptions: readonly Readonly<{ value: string; label: string }>[];
-  disqualificationReasons: readonly Readonly<{ id: string; name: string }>[];
   stages: readonly LeadPipelineStageColumn[];
   canWrite: boolean;
   canCorrect: boolean;

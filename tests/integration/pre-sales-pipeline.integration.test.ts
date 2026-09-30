@@ -176,9 +176,10 @@ describe("pipeline de pré-vendas e transições", () => {
     expect(screen.stages.reduce((total, stage) => total + stage.count, 0)).toBe(1);
     expect(screen.stages.find((stage) => stage.code === "NEW")?.leads[0]).toMatchObject({
       id: lead.leadId,
-      currentStageCode: "NEW",
+      currentStageName: "Novo",
     });
-    expect(screen.stages.find((stage) => stage.code === "NEW")?.leads[0]?.allowedTransitions)
+    const managerState = await state(lead.leadId);
+    expect(managerState.transitions)
       .toEqual(expect.arrayContaining([
         expect.objectContaining({ code: "TRYING_CONTACT", allowed: true }),
         expect.objectContaining({ code: "QUALIFIED", allowed: false }),

@@ -12,6 +12,7 @@ import { DataTableShell } from "@/components/ui/surface";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import type {
   LeadPipelineCard,
+  LeadPipelineState,
   LeadPipelineStageColumn,
   PreSalesPipelineScreen,
   StageTransitionOption,
@@ -26,10 +27,10 @@ function formatDate(value: string | null, timeZone: string) {
   }).format(new Date(value));
 }
 
-async function responseResult(response: Response) {
+async function responseResult<T>(response: Response): Promise<T> {
   const body = (await response.json().catch(() => ({}))) as { error?: { message?: string }; result?: unknown };
   if (!response.ok) throw new Error(body.error?.message ?? "Não foi possível alterar a etapa.");
-  return body.result;
+  return body.result as T;
 }
 
 function allCards(stages: readonly LeadPipelineStageColumn[]) {
@@ -43,6 +44,7 @@ export function PreSalesPipelineWorkspace({
   const router = useRouter();
   const [view, setView] = useState(initialView);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [selectedLeadState, setSelectedLeadState] = useState<LeadPipelineState | null>(null);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
   const cards = useMemo(() => allCards(screen.stages), [screen.stages]);
@@ -53,6 +55,7 @@ export function PreSalesPipelineWorkspace({
 
   async function transition(
     lead: LeadPipelineCard,
+    state: LeadPipelineState,
     option: StageTransitionOption,
     data: Readonly<{
       reason: string;
@@ -70,13 +73,14 @@ export function PreSalesPipelineWorkspace({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           targetStageId: option.stageId,
-          expectedUpdatedAt: lead.updatedAt,
+          expectedUpdatedAt: state.updatedAt,
           ...data,
         }),
       });
       await responseResult(response);
       setNotice({ kind: "success", message: `${lead.fullName} foi movido para ${option.name}.` });
       setSelectedLeadId(null);
+      setSelectedLeadState(null);
       router.refresh();
     } catch (error) {
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." });
@@ -87,12 +91,12 @@ export function PreSalesPipelineWorkspace({
 
   async function submitTransition(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedLead) return;
+    if (!selectedLead || !selectedLeadState) return;
     const form = new FormData(event.currentTarget);
     const managerCorrection = form.get("managerCorrection") === "on";
-    const option = selectedLead.allowedTransitions.find((item) => item.stageId === form.get("targetStageId"));
+    const option = selectedLeadState.transitions.find((item) => item.stageId === form.get("targetStageId"));
     if (!option) return;
-    await transition(selectedLead, option, {
+    await transition(selectedLead, selectedLeadState, option, {
       reason: String(form.get("reason") ?? ""),
       managerCorrection,
       confirmed: form.get("confirmed") === "on",
@@ -106,15 +110,38 @@ export function PreSalesPipelineWorkspace({
     event.dataTransfer.setData("text/plain", lead.id);
   }
 
+  async function loadLeadState(lead: LeadPipelineCard): Promise<LeadPipelineState | null> {
+    setPending(true);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/leads/${lead.id}/stage`, { cache: "no-store" });
+      return await responseResult<LeadPipelineState>(response);
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." });
+      return null;
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function openTransition(lead: LeadPipelineCard) {
+    const state = await loadLeadState(lead);
+    if (!state) return;
+    setSelectedLeadState(state);
+    setSelectedLeadId(lead.id);
+  }
+
   async function dropOnStage(event: React.DragEvent<HTMLElement>, stage: LeadPipelineStageColumn) {
     event.preventDefault();
     const lead = cards.find((item) => item.id === event.dataTransfer.getData("text/plain"));
-    const option = lead?.allowedTransitions.find((item) => item.stageId === stage.id);
-    if (!lead || !option || !option.allowed || option.requiresConfirmation || option.requiresDisqualificationReason) {
+    if (!lead) return;
+    const state = await loadLeadState(lead);
+    const option = state?.transitions.find((item) => item.stageId === stage.id);
+    if (!state || !option || !option.allowed || option.requiresConfirmation || option.requiresDisqualificationReason) {
       setNotice({ kind: "error", message: option?.blockReason ?? "Use Alterar etapa para concluir esta transição com os dados obrigatórios." });
       return;
     }
-    await transition(lead, option, {
+    await transition(lead, state, option, {
       reason: "Movido pelo quadro de pré-vendas.",
       managerCorrection: false,
       confirmed: false,
@@ -165,7 +192,7 @@ export function PreSalesPipelineWorkspace({
                       <Link aria-label={`Abrir atividades de ${lead.fullName}`} href={`/leads/${lead.id}/historico`} title="Atividades e histórico"><Icon name="meu-dia" size={13} /></Link>
                       <Link aria-label={`Abrir contato de ${lead.fullName}`} href={`/leads/${lead.id}`} title="Contato"><Icon name="leads" size={13} /></Link>
                       <span className={styles.activity} title={`${lead.nextActionDescription ?? "Sem próxima atividade"} · ${formatDate(lead.nextActionAt, screen.timeZone)}`}><Icon name="relogio" size={12} />{lead.nextActionAt ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: screen.timeZone }).format(new Date(lead.nextActionAt)) : "Sem prazo"}</span>
-                      <button aria-label={`Alterar etapa de ${lead.fullName}`} className={styles.moveButton} disabled={!screen.canWrite || pending} onClick={() => setSelectedLeadId(lead.id)} title="Alterar etapa" type="button"><Icon name="seta-direita" size={13} /></button>
+                      <button aria-label={`Alterar etapa de ${lead.fullName}`} className={styles.moveButton} disabled={!screen.canWrite || pending} onClick={() => void openTransition(lead)} title="Alterar etapa" type="button"><Icon name="seta-direita" size={13} /></button>
                     </footer>
                   </article>
                 ))}
@@ -187,15 +214,15 @@ export function PreSalesPipelineWorkspace({
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="sticky top-0 z-10 border-b bg-muted"><tr><th className="p-3">Lead</th><th className="p-3">Etapa</th><th className="p-3">Prioridade</th><th className="p-3">Responsável</th><th className="p-3">Próxima ação</th><th className="p-3">Ação</th></tr></thead>
               <tbody>{visibleStages.flatMap((stage) => stage.leads).map((lead) => (
-                <tr className="border-b last:border-0" key={lead.id}><td className="p-3"><Link className="font-medium underline" href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link></td><td className="p-3"><span className="stage-badge">{lead.currentStageName}</span></td><td className="p-3">{lead.score === null ? "Ausente" : <span className="priority-badge" data-priority={lead.priorityCode}>{lead.priorityCode} · {lead.score}</span>}</td><td className="p-3">{lead.responsibleName}</td><td className="p-3">{lead.nextActionDescription ?? "Ausente"}</td><td className="p-3"><Button disabled={!screen.canWrite || pending} onClick={() => setSelectedLeadId(lead.id)} size="sm" type="button" variant="secondary">Alterar etapa</Button></td></tr>
+                <tr className="border-b last:border-0" key={lead.id}><td className="p-3"><Link className="font-medium underline" href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link></td><td className="p-3"><span className="stage-badge">{lead.currentStageName}</span></td><td className="p-3">{lead.score === null ? "Ausente" : <span className="priority-badge" data-priority={lead.priorityCode}>{lead.priorityCode} · {lead.score}</span>}</td><td className="p-3">{lead.responsibleName}</td><td className="p-3">{lead.nextActionDescription ?? "Ausente"}</td><td className="p-3"><Button disabled={!screen.canWrite || pending} onClick={() => void openTransition(lead)} size="sm" type="button" variant="secondary">Alterar etapa</Button></td></tr>
               ))}</tbody>
             </table>
           </DataTableShell>
         </section>
       )}
 
-      {selectedLead ? (
-        <AccessibleDialog busy={pending} labelledBy="transition-title" onDismiss={() => setSelectedLeadId(null)} className="max-w-xl">
+      {selectedLead && selectedLeadState ? (
+        <AccessibleDialog busy={pending} labelledBy="transition-title" onDismiss={() => { setSelectedLeadId(null); setSelectedLeadState(null); }} className="max-w-xl">
           <form onSubmit={submitTransition}>
             <h2 className="text-xl font-bold" id="transition-title">Alterar etapa de {selectedLead.fullName}</h2>
             <p className="mt-1 text-sm text-muted-foreground">Etapa atual: {selectedLead.currentStageName}</p>
@@ -203,18 +230,18 @@ export function PreSalesPipelineWorkspace({
             <label className="mt-4 block text-sm">Etapa de destino
               <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" name="targetStageId" required>
                 <option value="">Selecione</option>
-                {selectedLead.allowedTransitions.map((option) => <option key={option.stageId} value={option.stageId}>{option.name}{option.allowed ? "" : ` — ${option.blockReason}`}</option>)}
+                {selectedLeadState.transitions.map((option) => <option key={option.stageId} value={option.stageId}>{option.name}{option.allowed ? "" : ` — ${option.blockReason}`}</option>)}
               </select>
             </label>
             <label className="mt-4 block text-sm">Motivo
               <textarea className="mt-1 min-h-20 w-full rounded-md border bg-background px-3 py-2" name="reason" required />
             </label>
             <label className="mt-4 block text-sm">Motivo de desqualificação
-              <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" name="disqualificationReasonId"><option value="">Não se aplica</option>{screen.disqualificationReasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select>
+              <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" name="disqualificationReasonId"><option value="">Não se aplica</option>{selectedLeadState.disqualificationReasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select>
             </label>
             <label className="mt-4 flex items-start gap-2 text-sm"><input name="confirmed" type="checkbox" /><span>Confirmo esta transição quando ela for sensível ou uma correção gerencial.</span></label>
-            <ul className="mt-4 space-y-1 text-xs text-muted-foreground">{selectedLead.allowedTransitions.filter((option) => option.blockReason).map((option) => <li key={option.stageId}>{option.name}: {option.blockReason}</li>)}</ul>
-            <div className="mt-6 flex justify-end gap-2"><Button disabled={pending} onClick={() => setSelectedLeadId(null)} type="button" variant="secondary">Cancelar</Button><Button disabled={pending} type="submit">{pending ? "Salvando…" : "Confirmar transição"}</Button></div>
+            <ul className="mt-4 space-y-1 text-xs text-muted-foreground">{selectedLeadState.transitions.filter((option) => option.blockReason).map((option) => <li key={option.stageId}>{option.name}: {option.blockReason}</li>)}</ul>
+            <div className="mt-6 flex justify-end gap-2"><Button disabled={pending} onClick={() => { setSelectedLeadId(null); setSelectedLeadState(null); }} type="button" variant="secondary">Cancelar</Button><Button disabled={pending} type="submit">{pending ? "Salvando…" : "Confirmar transição"}</Button></div>
           </form>
         </AccessibleDialog>
       ) : null}

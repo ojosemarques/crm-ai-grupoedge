@@ -35,47 +35,93 @@ type AuthorizationServiceOptions = Readonly<{
 }>;
 
 export function createAuthorizationService(options: AuthorizationServiceOptions) {
-  async function hasValidContext(context: AuthenticatedContext): Promise<boolean> {
-    const [member, actor] = await Promise.all([
-      options.database.workspaceMember.findFirst({
-        where: {
-          id: context.memberId,
-          workspaceId: context.workspaceId,
-          userId: context.userId,
-          roleId: context.roleId,
-          status: "ACTIVE",
-          deletedAt: null,
-          role: { deletedAt: null },
-          workspace: { status: "ACTIVE", deletedAt: null },
-        },
-        select: { id: true },
-      }),
-      options.database.actor.findFirst({
-        where: {
-          id: context.actorId,
-          workspaceId: context.workspaceId,
-          userId: context.userId,
-          type: "HUMAN",
-        },
-        select: { id: true },
-      }),
-    ]);
+  const contextChecks = new WeakMap<AuthenticatedContext, Promise<boolean>>();
+  const grants = new WeakMap<AuthenticatedContext, Map<PermissionKey, Promise<{ scope: PermissionScope } | null>>>();
+  const teamIds = new WeakMap<AuthenticatedContext, Promise<string[]>>();
 
-    return Boolean(member && actor);
+  async function hasValidContext(context: AuthenticatedContext): Promise<boolean> {
+    const cached = contextChecks.get(context);
+    if (cached) return cached;
+    const check = (async () => {
+      const [member, actor] = await Promise.all([
+        options.database.workspaceMember.findFirst({
+          where: {
+            id: context.memberId,
+            workspaceId: context.workspaceId,
+            userId: context.userId,
+            roleId: context.roleId,
+            status: "ACTIVE",
+            deletedAt: null,
+            role: { deletedAt: null },
+            workspace: { status: "ACTIVE", deletedAt: null },
+          },
+          select: { id: true },
+        }),
+        options.database.actor.findFirst({
+          where: {
+            id: context.actorId,
+            workspaceId: context.workspaceId,
+            userId: context.userId,
+            type: "HUMAN",
+          },
+          select: { id: true },
+        }),
+      ]);
+
+      return Boolean(member && actor);
+    })().catch((error: unknown) => {
+      contextChecks.delete(context);
+      throw error;
+    });
+    contextChecks.set(context, check);
+    return check;
   }
 
   async function getTeamIds(context: AuthenticatedContext): Promise<string[]> {
-    const memberships = await options.database.teamMember.findMany({
-      where: {
-        workspaceId: context.workspaceId,
-        workspaceMemberId: context.memberId,
-        deletedAt: null,
-        team: { deletedAt: null },
-      },
-      select: { teamId: true },
-    });
+    const cached = teamIds.get(context);
+    if (cached) return cached;
+    const lookup = (async () => {
+      const memberships = await options.database.teamMember.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          workspaceMemberId: context.memberId,
+          deletedAt: null,
+          team: { deletedAt: null },
+        },
+        select: { teamId: true },
+      });
 
-    return memberships.map((membership) => membership.teamId);
+      return memberships.map((membership) => membership.teamId);
+    })().catch((error: unknown) => {
+      teamIds.delete(context);
+      throw error;
+    });
+    teamIds.set(context, lookup);
+    return lookup;
+  }
+
+  function getGrant(context: AuthenticatedContext, permissionKey: PermissionKey) {
+    let contextGrants = grants.get(context);
+    if (!contextGrants) {
+      contextGrants = new Map();
+      grants.set(context, contextGrants);
+    }
+    const cached = contextGrants.get(permissionKey);
+    if (cached) return cached;
+    const lookup = options.database.rolePermission.findFirst({
+        where: {
+          workspaceId: context.workspaceId,
+          roleId: context.roleId,
+          permission: { key: permissionKey },
+          role: { deletedAt: null },
+        },
+        select: { scope: true },
+      }).catch((error: unknown) => {
+        contextGrants?.delete(permissionKey);
+        throw error;
+      });
+    contextGrants.set(permissionKey, lookup);
+    return lookup;
   }
 
   async function queueBelongsToTeams(
@@ -239,15 +285,7 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
       };
     }
 
-    const grant = await options.database.rolePermission.findFirst({
-      where: {
-        workspaceId: context.workspaceId,
-        roleId: context.roleId,
-        permission: { key: permissionKey },
-        role: { deletedAt: null },
-      },
-      select: { scope: true },
-    });
+    const grant = await getGrant(context, permissionKey);
 
     if (!grant) {
       return {

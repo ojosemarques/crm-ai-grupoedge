@@ -564,18 +564,13 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       resourceType: "LeadPipeline",
       memberId: context.memberId,
     };
-    const [workspace, groupedCounts, write, correct, ownerRefs, queueRefs, reasons, stageRows] = await Promise.all([
+    const [workspace, groupedCounts, write, correct, ownerRefs, queueRefs, stageRows] = await Promise.all([
       options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } }),
       options.database.lead.groupBy({ by: ["currentStageId"], where: baseWhere, _count: { _all: true } }),
       options.authorization.authorize(context, PermissionKeys.LEADS_WRITE, pipelineResource),
       options.authorization.authorize(context, PermissionKeys.LEADS_ASSIGN, pipelineResource),
       options.database.lead.findMany({ where: { ...baseWhere, ownerMemberId: { not: null } }, distinct: ["ownerMemberId"], select: { ownerMemberId: true } }),
       options.database.lead.findMany({ where: { ...baseWhere, queueId: { not: null } }, distinct: ["queueId"], select: { queueId: true } }),
-      options.database.disqualificationReason.findMany({
-        where: { workspaceId: context.workspaceId, active: true, deletedAt: null },
-        orderBy: [{ position: "asc" }, { name: "asc" }],
-        select: { id: true, name: true },
-      }),
       Promise.all(pipeline.stages.map(async (stage) => {
         if (!isLeadStageCode(stage.leadStageCode)) return [];
         if (parsed.data.stageCode !== "ALL" && parsed.data.stageCode !== stage.leadStageCode) return [];
@@ -598,12 +593,6 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
               orderBy: [{ revisionNumber: "desc" }, { id: "desc" }],
               take: 1,
               select: { isQualificationReady: true },
-            },
-            stageHistory: {
-              where: { exitedAt: null },
-              orderBy: [{ enteredAt: "desc" }, { id: "desc" }],
-              take: 1,
-              select: { enteredAt: true },
             },
           },
         });
@@ -637,15 +626,10 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
           priorityCode: lead.currentScore?.leadScore.priorityBandCode ?? null,
           score: lead.currentScore?.leadScore.score ?? null,
           responsibleName: lead.owner?.user.displayName ?? lead.queue?.name ?? "Responsável não identificado",
-          currentStageId: stage.id,
-          currentStageCode: stageCode,
           currentStageName: stage.name,
-          stageEnteredAt: (lead.stageHistory[0]?.enteredAt ?? lead.createdAt).toISOString(),
-          updatedAt: lead.updatedAt.toISOString(),
           nextActionAt: task?.dueAt.toISOString() ?? null,
           nextActionDescription: task?.title ?? null,
           pactoReady,
-          allowedTransitions: transitionOptions(pipeline.stages, pipeline.transitions, stageCode, Boolean(task), pactoReady),
         };
       });
       return [{
@@ -669,7 +653,6 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         ...members.map((member) => ({ value: `member:${member.id}`, label: member.user.displayName })),
         ...queues.map((queue) => ({ value: `queue:${queue.id}`, label: queue.name })),
       ],
-      disqualificationReasons: reasons,
       stages: columns,
       canWrite: write.allowed,
       canCorrect: correct.allowed,
