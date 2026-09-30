@@ -12,3 +12,24 @@ export function revenueChartData(metricId: string, series: readonly RevenueTimeS
     }) ?? [],
   };
 }
+
+/** Null buckets break paths; zero is a real observation on the baseline. */
+export function revenueLineSegments(points: readonly { value: number | null }[]) {
+  const segments: { index: number; value: number }[][] = [];
+  let current: { index: number; value: number }[] = [];
+  points.forEach((point, index) => {
+    if (point.value === null) {
+      if (current.length) segments.push(current);
+      current = [];
+    } else current.push({ index, value: point.value });
+  });
+  if (current.length) segments.push(current);
+  return segments;
+}
+
+export function revenueChartDomain(values: readonly (number | null)[]) {
+  const numbers = values.filter((value): value is number => value !== null);
+  const minimum = Math.min(0, ...numbers);
+  const maximum = Math.max(0, ...numbers);
+  return { minimum, maximum: minimum === maximum ? 1 : maximum };
+}

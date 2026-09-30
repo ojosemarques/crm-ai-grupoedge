@@ -1,9 +1,9 @@
 .workspace { display: grid; gap: 22px; min-width: 0; color: var(--text); }
 .metrics { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 10px; }
 .metric { position: relative; display: block; min-width: 0; padding: 16px 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); text-decoration: none; transition: border-color 150ms ease, background 150ms ease; }
-.metric::before { content: ""; position: absolute; right: 16px; top: 16px; width: 7px; height: 7px; border-radius: 50%; background: #9c7ede; }
+.metric::before { content: ""; position: absolute; right: 16px; top: 16px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .metric:nth-child(2)::before { background: #6dc5d9; }.metric:nth-child(3)::before { background: #edba74; }.metric:nth-child(4)::before { background: #ee90a7; }.metric:nth-child(5)::before { background: #89c6a9; }
-a.metric:hover { border-color: #d4c4ef; background: var(--primary-soft); }
+a.metric:hover { border-color: var(--border-strong); background: var(--primary-soft); }
 .metric > p:first-child { color: var(--text-muted); font-size: 10px; padding-right: 12px; margin: 0; }
 .metric > p:nth-child(2) { color: var(--text); font-size: 26px; font-weight: 550; line-height: 1.2; letter-spacing: -.8px; margin: 12px 0 0; font-variant-numeric: tabular-nums; }
 .metric > span { display: block; margin-top: 8px; font-size: 9px; color: var(--text-muted); }
@@ -25,7 +25,7 @@ a.metric:hover { border-color: #d4c4ef; background: var(--primary-soft); }
 .card details > summary { font-size: 11px; color: var(--primary); }
 .card button { font-size: 10px; min-height: 29px; }
 .profile { display: flex; align-items: center; gap: 10px; }
-.avatar { display: grid; place-items: center; flex: 0 0 35px; width: 35px; height: 35px; border-radius: 10px; background: #eadcf9; color: #754ba1; font-size: 11px; font-weight: 650; }
+.avatar { display: grid; place-items: center; flex: 0 0 35px; width: 35px; height: 35px; border-radius: 10px; background: #f4e4d7; color: #805136; font-size: 11px; font-weight: 650; }
 .health { display: grid; gap: 6px; margin-top: 14px; padding: 12px; border-radius: 7px; background: var(--surface-muted); }
 .health > p:first-child { font-size: 11px; font-weight: 600; }
 .health p { font-size: 11px; color: var(--text-muted); }
@@ -38,8 +38,8 @@ a.metric:hover { border-color: #d4c4ef; background: var(--primary-soft); }
 .milestones > li small, .milestones > li p + p { font-size: 10px; color: var(--text-muted); }
 .progress { appearance: none; display: block; width: 100%; height: 4px; margin-top: 15px; border: 0; border-radius: 4px; background: var(--surface-muted); overflow: hidden; }
 .progress::-webkit-progress-bar { background: var(--surface-muted); border-radius: 4px; }
-.progress::-webkit-progress-value { background: #8b63d4; border-radius: 4px; }
-.progress::-moz-progress-bar { background: #8b63d4; border-radius: 4px; }
+.progress::-webkit-progress-value { background: var(--accent); border-radius: 4px; }
+.progress::-moz-progress-bar { background: var(--accent); border-radius: 4px; }
 .progressLabel { display: flex; justify-content: space-between; margin-top: 6px; font-size: 9px; color: var(--text-muted); }
 .filters { padding: 0; }
 .filters form { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }

@@ -2,7 +2,7 @@
 .profile { padding: 24px 22px; border-right: 1px solid var(--border); }
 .back { color: var(--text-muted); font-size: 11px; }
 .identity { text-align: center; display: grid; justify-items: center; gap: 8px; margin: 30px 0 23px; }
-.avatar { display: grid; place-items: center; width: 78px; height: 78px; border-radius: 50%; background: #e5d6ff; color: #7137c5; font-size: 25px; margin-bottom: 7px; }
+.avatar { display: grid; place-items: center; width: 78px; height: 78px; border-radius: 50%; background: #ffdfc6; color: #845237; font-size: 25px; margin-bottom: 7px; }
 .identity h1 { font-size: 21px; line-height: 1.35; font-weight: 650; letter-spacing: -.03em; }
 .identity p { font-size: 12px; color: var(--text-muted); }
 .shortcuts { display: flex; justify-content: space-around; gap: 12px; margin-bottom: 24px; }
@@ -43,7 +43,7 @@
 .meeting svg { color: var(--primary); flex-shrink: 0; }
 .timeline { margin-left: 5px; border-left: 1px solid var(--border); display: grid; gap: 18px; }
 .timeline li { position: relative; padding-left: 22px; }
-.timelineDot { position: absolute; top: 20px; left: -5px; height: 8px; width: 8px; border-radius: 50%; background: #b2a0d6; outline: 4px solid var(--surface-muted); }
+.timelineDot { position: absolute; top: 20px; left: -5px; height: 8px; width: 8px; border-radius: 50%; background: #d1aa85; outline: 4px solid var(--surface-muted); }
 .textLink { display: inline-flex; align-items: center; gap: 7px; color: var(--primary); font-size: 10px; }
 .context { border-left: 1px solid var(--border); }
 .context > section { padding: 23px 20px; border-bottom: 1px solid var(--border); }

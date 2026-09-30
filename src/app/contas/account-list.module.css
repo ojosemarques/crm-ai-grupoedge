@@ -3,7 +3,7 @@
 .summary > div { display: flex; align-items: center; gap: 14px; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .summary small { display: block; font-size: 10px; color: var(--text-muted); }
 .summary strong { display: block; margin-top: 5px; font-size: 26px; font-weight: 550; letter-spacing: -1px; }
-.metricIcon { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 44px; border-radius: 12px; color: #8753cf; background: #f0e5fc; }
+.metricIcon { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 44px; border-radius: 18px; color: #8753cf; background: #f0e5fc; }
 .metricIcon[data-tone="blue"] { color: #518ac3; background: #e7f2fc; }
 .metricIcon[data-tone="green"] { color: #4caa83; background: #e5f8ee; }
 .directory { padding: 0; }

@@ -16,7 +16,7 @@ export default async function AcquisitionPage() {
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     throw error;
   }
-  return <main className="page-canvas page-canvas-wide">
+  return <main className="page-canvas page-canvas-wide analytics-canvas">
     <PageHeader eyebrow="Revenue OS" title="Aquisição e atribuição" description="Entenda as origens dos contatos, acompanhe conversões e compare modelos de atribuição." />
     <AcquisitionWorkspace initial={screen} />
   </main>;

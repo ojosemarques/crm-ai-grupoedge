@@ -1,4 +1,4 @@
-.workspace { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 660px; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.workspace { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 660px; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; }
 .sidebar { display: flex; flex-direction: column; gap: 24px; padding: 22px 18px; border-right: 1px solid var(--border); }
 .miniHeader { display: flex; align-items: center; gap: 7px; margin-bottom: 14px; }
 .miniHeader strong { flex: 1; font-size: 11px; text-transform: capitalize; }

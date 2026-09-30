@@ -1,7 +1,7 @@
 .workspace { display: grid; gap: 22px; min-width: 0; color: var(--text); }
 .workspace > * { min-width: 0; margin-top: 0; margin-bottom: 0; }
 .workspace :global(.surface-panel), .panel { border-radius: 9px; border: 1px solid var(--border); background: var(--surface); box-shadow: none; padding: 21px; min-width: 0; }
-.workspace :global(.surface-panel--accent) { background: var(--primary-soft); border-color: #ded1f6; }
+.workspace :global(.surface-panel--accent) { background: var(--primary-soft); border-color: var(--border-strong); }
 .workspace :global(.surface-panel--critical) { background: #fff4f4; border-color: #efc5ca; }
 .workspace :global(.surface-panel--subtle) { background: var(--surface-muted); }
 .workspace :global(.section-header) { gap: 15px; }

@@ -15,5 +15,5 @@ export default async function ForecastPage({ searchParams }: Readonly<{ searchPa
   try {
     screen = await getForecastService().screen(context, query);
   } catch (error) { if (error instanceof AccessDeniedError) redirect("/acesso-negado"); throw error; }
-  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Gestão comercial" title="Forecast" description="Planeje a receita, acompanhe compromissos e entenda a evolução das previsões." meta={`${context.displayName} · ${screen.asOf}`} /><ForecastWorkspace screen={screen as ForecastScreenView} /></main>;
+  return <main className="page-canvas page-canvas-wide analytics-canvas"><PageHeader eyebrow="Gestão comercial" title="Forecast" description="Planeje a receita, acompanhe compromissos e entenda a evolução das previsões." meta={`${context.displayName} · ${new Intl.DateTimeFormat("pt-BR", { timeZone: screen.cycles[0]?.timeZone ?? "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(screen.asOf))}`} /><ForecastWorkspace screen={screen as ForecastScreenView} /></main>;
 }

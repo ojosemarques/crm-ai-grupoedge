@@ -1,141 +1,123 @@
 import Link from "next/link";
-import { Button, buttonVariants } from "@/components/ui/button";
+import type { ReactNode } from "react";
 import { EmptyState } from "@/components/ui/empty-state";
-import { SectionHeader, Surface, DataTableShell } from "@/components/ui/surface";
-import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
-import type { RevenueDrilldownPage, RevenueMetricState, RevenueMetricsScreen } from "@/modules/metrics/domain/revenue-metrics-contracts";
+import type { RevenueDrilldownPage, RevenueMetricDefinition, RevenueMetricState, RevenueMetricUnit, RevenueMetricValue, RevenueMetricsScreen } from "@/modules/metrics/domain/revenue-metrics-contracts";
 import { revenueMetricRegistryById } from "@/modules/metrics/domain/revenue-metric-registry";
 import { RevenueSeriesChart } from "./revenue-metrics-charts";
 import styles from "./revenue-metrics.module.css";
 
 const stateLabels: Record<RevenueMetricState, string> = { AVAILABLE: "Disponível", ZERO: "Zero", NO_DENOMINATOR: "Sem denominador", UNAVAILABLE: "Indisponível", NOT_APPLICABLE: "Não aplicável", PARTIAL: "Parcial", SUPPRESSED: "Suprimido" };
-const stateTones: Record<RevenueMetricState, StatusTone> = { AVAILABLE: "success", ZERO: "neutral", NO_DENOMINATOR: "warning", UNAVAILABLE: "warning", NOT_APPLICABLE: "neutral", PARTIAL: "warning", SUPPRESSED: "danger" };
-const sections = [{ id: "summary", label: "Resumo" }, { id: "mrr", label: "MRR" }, { id: "retention", label: "Retenção" }, { id: "forecast", label: "Forecast" }, { id: "quality", label: "Qualidade" }, { id: "catalog", label: "Definições" }] as const;
-const filterNames = {
-  sdrMemberIds: "sdr",
-  closerMemberIds: "closer",
-  teamIds: "team",
-  sourceIds: "source",
-  campaignIds: "campaign",
-  creativeIds: "creative",
-  priorityCodes: "priority",
-  productIds: "product",
-} as const;
+const sections = [{ id: "summary", label: "Visão geral" }, { id: "mrr", label: "Receita recorrente" }, { id: "retention", label: "Retenção" }, { id: "forecast", label: "Forecast" }, { id: "quality", label: "Qualidade" }, { id: "catalog", label: "Definições" }] as const;
+const filterNames = { sdrMemberIds: "sdr", closerMemberIds: "closer", teamIds: "team", sourceIds: "source", campaignIds: "campaign", creativeIds: "creative", priorityCodes: "priority", productIds: "product" } as const;
 
-function formatMetric(metricId: string, value: string | number | null) {
+function formatValue(unit: RevenueMetricUnit | undefined, value: string | number | null) {
   if (value === null) return "—";
-  const definition = revenueMetricRegistryById.get(metricId);
-  if (definition?.unit === "CENTS") {
-    const cents = BigInt(value);
-    const absolute = cents < 0n ? -cents : cents;
+  if (unit === "CENTS") {
+    const cents = BigInt(value), absolute = cents < 0n ? -cents : cents;
     return `${cents < 0n ? "−" : ""}R$ ${new Intl.NumberFormat("pt-BR").format(absolute / 100n)},${(absolute % 100n).toString().padStart(2, "0")}`;
   }
-  if (definition?.unit === "BASIS_POINTS") return `${(Number(value) / 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
-  if (definition?.unit === "SECONDS") return `${Number(value).toLocaleString("pt-BR")} s`;
-  return Number(value).toLocaleString("pt-BR");
+  if (unit === "BASIS_POINTS") return `${(Number(value) / 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
+  if (unit === "SECONDS") return `${Number(value).toLocaleString("pt-BR")} s`;
+  return typeof value === "string" && /^-?\d+$/.test(value) ? BigInt(value).toLocaleString("pt-BR") : Number(value).toLocaleString("pt-BR");
 }
-
+const money = (value: string | number | null) => formatValue("CENTS", value);
+const formatMetric = (id: string, value: string | number | null) => formatValue(revenueMetricRegistryById.get(id)?.unit, value);
 function persistedQuery(screen: RevenueMetricsScreen) {
-  const query = new URLSearchParams({
-    preset: screen.query.preset,
-    fromDate: screen.query.period.fromDate,
-    toDate: screen.query.period.toDate,
-  });
-  for (const [filter, parameter] of Object.entries(filterNames)) {
-    for (const value of screen.query.filters[filter as keyof typeof filterNames]) {
-      query.append(parameter, value);
-    }
-  }
+  const query = new URLSearchParams({ preset: screen.query.preset, fromDate: screen.query.period.fromDate, toDate: screen.query.period.toDate, asOf: screen.query.asOf });
+  for (const [filter, parameter] of Object.entries(filterNames)) for (const value of screen.query.filters[filter as keyof typeof filterNames]) query.append(parameter, value);
   return query;
 }
-
-function sectionHref(query: URLSearchParams, section: string, metric?: string) {
+function sectionHref(query: URLSearchParams, section: string, metric?: string, page?: number, pageSize?: number) {
   const href = new URLSearchParams(query);
   href.set("section", section);
   if (metric) href.set("metric", metric);
+  if (page) href.set("page", String(page));
+  if (pageSize) href.set("pageSize", String(pageSize));
   return `/metricas-receita?${href}`;
 }
-
-function MetricCards({ screen, ids }: Readonly<{ screen: RevenueMetricsScreen; ids: readonly string[] }>) {
-  const byId = new Map(screen.metrics.map((item) => [item.metricId, item]));
-  const comparisons = new Map(screen.comparisons.map((item) => [item.metricId, item]));
-  const query = persistedQuery(screen);
-  return <div className={styles.metricGrid}>{ids.map((id) => {
-    const item = byId.get(id);
-    const definition = revenueMetricRegistryById.get(id);
-    if (!item || !definition) return null;
-    const comparison = comparisons.get(id);
-    const change = comparison?.percentageDifferenceBasisPoints;
-    const trend = change === null || change === undefined ? "Sem base comparável" : `${comparison?.direction === "UP" ? "↑" : comparison?.direction === "DOWN" ? "↓" : "→"} ${Math.abs(change / 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}% vs. período anterior`;
-    const content = <><span className={styles.metricLabel}>{definition.name}</span><strong className={styles.metricValue}>{formatMetric(id, item.value)}</strong><span className={styles.metricTrend} data-interpretation={comparison?.interpretation}>{trend}</span><span className={styles.metricFoot}><State state={item.state} /><small>{definition.description}</small></span></>;
-    return item.drilldownId ? <Link className={styles.metricCard} href={sectionHref(query, "drilldown", id)} key={id}>{content}</Link> : <article className={styles.metricCard} key={id}>{content}</article>;
-  })}</div>;
+function State({ state }: Readonly<{ state: RevenueMetricState }>) { return <span className={styles.state} data-state={state}>{stateLabels[state]}</span>; }
+function Arrow() { return <svg aria-hidden="true" fill="none" height="16" viewBox="0 0 24 24" width="16"><path d="M6 18 18 6M6 6h12v12" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" /></svg>; }
+function Panel({ title, description, action, children, className = "" }: Readonly<{ title: string; description?: string; action?: ReactNode; children: ReactNode; className?: string }>) {
+  return <section className={`${styles.panel} ${className}`}><header className={styles.panelHeader}><div><h2>{title}</h2>{description ? <p>{description}</p> : null}</div>{action}</header>{children}</section>;
 }
-
-function State({ state }: Readonly<{ state: RevenueMetricState }>) { return <StatusBadge tone={stateTones[state]}>{stateLabels[state]}</StatusBadge>; }
-
-function SeriesPanel({ screen, metricId, title, description, variant = "area" }: Readonly<{ screen: RevenueMetricsScreen; metricId: string; title: string; description: string; variant?: "area" | "bar" }>) {
-  const source = screen.series.find((item) => item.metricId === metricId);
-  return <Surface className={styles.chartPanel}><SectionHeader eyebrow="Série histórica" title={title} description={description} /><RevenueSeriesChart metricId={metricId} series={screen.series} variant={variant} /><details className={styles.chartDetails}><summary>Consultar valores por período</summary><DataTableShell className="mt-3"><table><thead><tr><th>Período</th><th>Valor</th><th>Estado</th></tr></thead><tbody>{source?.points.map((point) => <tr key={point.bucket}><td>{point.bucket}</td><td>{formatMetric(metricId, point.value)}</td><td><State state={point.state} /></td></tr>)}</tbody></table></DataTableShell></details></Surface>;
+function MetricBasis({ item, definition }: Readonly<{ item: RevenueMetricValue; definition: RevenueMetricDefinition }>) {
+  return <details className={styles.metricDetails}><summary>Base de cálculo <span aria-hidden="true">+</span></summary><div><p>{definition.formula}</p><dl><dt>{definition.numerator}</dt><dd>{formatValue(undefined, item.numerator)}</dd>{definition.denominator ? <><dt>{definition.denominator}</dt><dd>{formatValue(undefined, item.denominator)}</dd></> : null}<dt>Cobertura</dt><dd>{item.coverageBasisPoints === null ? "Indisponível" : formatValue("BASIS_POINTS", item.coverageBasisPoints)}</dd></dl><small>Numerador e denominador na unidade da fonte; valores monetários em centavos.</small><p>{item.reason}</p></div></details>;
 }
-
+function MetricCard({ screen, id, featured = false }: Readonly<{ screen: RevenueMetricsScreen; id: string; featured?: boolean }>) {
+  const item = screen.metrics.find((metric) => metric.metricId === id), definition = revenueMetricRegistryById.get(id);
+  if (!item || !definition) return null;
+  const comparison = screen.comparisons.find((metric) => metric.metricId === id), change = comparison?.percentageDifferenceBasisPoints;
+  return <article className={styles.metricCard} data-featured={featured || undefined}>
+    <div className={styles.metricTop}><span>{definition.name}</span>{item.drilldownId ? <Link aria-label={`Detalhar ${definition.name}`} className={styles.roundAction} href={sectionHref(persistedQuery(screen), "drilldown", id)}><Arrow /></Link> : <span className={styles.metricSymbol} aria-hidden="true">◈</span>}</div>
+    <strong className={styles.metricValue}>{formatMetric(id, item.value)}</strong>
+    <div className={styles.metricComparison}><span className={styles.trend} data-interpretation={comparison?.interpretation}>{change === null || change === undefined ? "Sem comparação" : `${comparison?.direction === "UP" ? "↑" : comparison?.direction === "DOWN" ? "↓" : "→"} ${Math.abs(change / 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`}</span><small>vs. período anterior</small></div>
+    <p className={styles.metricDescription}>{definition.description}</p>
+    {featured && screen.series.some((series) => series.metricId === id) ? <div className={styles.featureChart}><RevenueSeriesChart metricId={id} series={screen.series.filter((series) => series.metricId === id)} /></div> : null}
+    <div className={styles.metricBottom}><State state={item.state} />{comparison ? <span>Anterior: {formatMetric(id, comparison.previous.value)}</span> : null}</div>
+    <MetricBasis item={item} definition={definition} />
+  </article>;
+}
+function MetricCards({ screen, ids }: Readonly<{ screen: RevenueMetricsScreen; ids: readonly string[] }>) { return <div className={styles.metricGrid}>{ids.map((id) => <MetricCard id={id} key={id} screen={screen} />)}</div>; }
+function SeriesPanel({ screen, metricId, compareMetricId, title, description, variant = "area" }: Readonly<{ screen: RevenueMetricsScreen; metricId: string; compareMetricId?: string; title: string; description: string; variant?: "area" | "bar" }>) {
+  const sources = screen.series.filter((item) => item.metricId === metricId || item.metricId === compareMetricId);
+  return <Panel title={title} description={description} action={<span className={styles.panelIcon} aria-hidden="true">↗</span>}><RevenueSeriesChart metricId={metricId} {...(compareMetricId ? { compareMetricId } : {})} series={sources} variant={variant} /><details className={styles.chartDetails}><summary>Ver dados completos <span aria-hidden="true">↗</span></summary>{sources.some((source) => source.points.length) ? <div className={styles.tableWrap}><table><thead><tr><th>Período</th><th>Indicador</th><th>Valor exato</th><th>Estado</th></tr></thead><tbody>{sources.flatMap((source) => source.points.map((point) => <tr key={`${source.metricId}-${point.bucket}`}><td>{point.bucket}</td><td>{revenueMetricRegistryById.get(source.metricId)?.name}</td><td>{formatMetric(source.metricId, point.value)}</td><td><State state={point.state} /></td></tr>))}</tbody></table></div> : <p className={styles.muted}>Nenhum ponto disponível para este recorte.</p>}</details></Panel>;
+}
 function BridgePanel({ screen }: Readonly<{ screen: RevenueMetricsScreen }>) {
   const bridge = screen.bridge;
   const entries = [
-    { label: "MRR inicial", value: bridge.openingMrrCents, tone: "neutral" },
-    { label: "New + expansão + reativação", value: (BigInt(bridge.newMrrCents) + BigInt(bridge.expansionMrrCents) + BigInt(bridge.reactivationMrrCents)).toString(), tone: "positive" },
-    { label: "Contração + churn", value: (-(BigInt(bridge.contractionMrrCents) + BigInt(bridge.churnMrrCents))).toString(), tone: "negative" },
-    { label: "Ajustes", value: bridge.adjustmentsCents, tone: "neutral" },
-    { label: "MRR final", value: bridge.closingMrrCents, tone: "final" },
-  ] as const;
-  return <Surface className={styles.bridgePanel}><SectionHeader eyebrow="Ponte reconciliada" title="Movimentação do MRR" description="Saldo inicial, movimentos e saldo final com seus sinais reais." action={<StatusBadge tone={bridge.reconciled ? "success" : "danger"}>{bridge.reconciled ? "Ponte fechada" : "Requer reconciliação"}</StatusBadge>} /><div className={styles.bridgeGrid}>{entries.map((entry) => <div className={styles.bridgeItem} data-tone={entry.tone} key={entry.label}><span>{entry.label}</span><strong>{formatMetric("revenue.closing_mrr", entry.value)}</strong></div>)}</div></Surface>;
+    { label: "MRR inicial", value: BigInt(bridge.openingMrrCents), tone: "neutral" },
+    { label: "Novo + expansão + reativação", value: BigInt(bridge.newMrrCents) + BigInt(bridge.expansionMrrCents) + BigInt(bridge.reactivationMrrCents), tone: "positive" },
+    { label: "Contração + churn", value: -(BigInt(bridge.contractionMrrCents) + BigInt(bridge.churnMrrCents)), tone: "negative" },
+    { label: "Ajustes", value: BigInt(bridge.adjustmentsCents), tone: "neutral" },
+    { label: "MRR final", value: BigInt(bridge.closingMrrCents), tone: "final" },
+  ];
+  let running = 0n;
+  const bars = entries.map((entry, index) => { const from = index === 0 || index === entries.length - 1 ? 0n : running; const to = from + entry.value; running = to; return { ...entry, from, to }; });
+  const bounds = bars.flatMap((bar) => [bar.from, bar.to]);
+  const min = bounds.reduce((a, b) => b < a ? b : a, 0n), max = bounds.reduce((a, b) => b > a ? b : a, 0n);
+  const range = max - min || 1n;
+  const y = (value: bigint) => 148 - Number((value - min) * 122n / range);
+  return <Panel title="Como o MRR se movimentou" description="Do saldo inicial ao fechamento, com todos os movimentos do período." action={<span className={styles.state} data-state={bridge.reconciled ? "AVAILABLE" : "SUPPRESSED"}>{bridge.reconciled ? "Reconciliado" : "Revisar conciliação"}</span>}>
+    <svg className={styles.bridgeChart} viewBox="0 0 800 175" role="img" aria-label="Ponte de receita recorrente. Valores e sinais na lista abaixo."><line stroke="#e7e8e4" x1="35" x2="770" y1={y(0n)} y2={y(0n)} />{bars.map((bar, index) => <g key={bar.label}><title>{`${bar.label}: ${money(bar.value.toString())}`}</title>{index < bars.length - 1 ? <line stroke="#c6c9c1" strokeDasharray="4 4" x1={index * 150 + 124} x2={(index + 1) * 150 + 49} y1={y(bar.to)} y2={y(bar.to)} /> : null}<rect fill={bar.tone === "positive" ? "#469de4" : bar.tone === "negative" ? "#9274e7" : bar.tone === "final" ? "#ff6b2c" : "#cbd0c7"} height={Math.max(2, Math.abs(y(bar.to) - y(bar.from)))} rx="5" width="76" x={index * 150 + 49} y={Math.min(y(bar.to), y(bar.from))} /><text fill="#858880" fontSize="11" textAnchor="middle" x={index * 150 + 87} y="171">{String(index + 1).padStart(2, "0")}</text></g>)}</svg>
+    <div className={styles.bridgeGrid}>{entries.map((entry, index) => <div data-tone={entry.tone} key={entry.label}><span><small>{String(index + 1).padStart(2, "0")}</small>{entry.label}</span><strong>{money(entry.value.toString())}</strong></div>)}</div>
+  </Panel>;
 }
-
 function ForecastBars({ screen }: Readonly<{ screen: RevenueMetricsScreen }>) {
-  const ids = ["forecast.pipeline", "forecast.best_case", "forecast.commit", "forecast.weighted"] as const;
-  const items = ids.flatMap((id) => {
-    const metric = screen.metrics.find((item) => item.metricId === id);
-    const definition = revenueMetricRegistryById.get(id);
-    return metric && definition ? [{ id, metric, definition }] : [];
-  });
+  const ids = ["forecast.pipeline", "forecast.best_case", "forecast.commit", "forecast.weighted"];
+  const items = ids.flatMap((id) => { const metric = screen.metrics.find((item) => item.metricId === id), definition = revenueMetricRegistryById.get(id); return metric && definition ? [{ id, metric, definition }] : []; });
   const maximum = items.reduce((max, item) => item.metric.value !== null && BigInt(item.metric.value) > max ? BigInt(item.metric.value) : max, 0n);
-  return <Surface className={styles.forecastPanel}><SectionHeader eyebrow="Cenários independentes" title="Comparação do forecast" description="As faixas mostram cenários separados; os valores não são parcelas de um total." /><div className={styles.forecastRows}>{items.map(({ id, metric, definition }) => { const width = maximum > 0n && metric.value !== null && BigInt(metric.value) > 0n ? Number(BigInt(metric.value) * 100n / maximum) : 0; return <div className={styles.forecastRow} key={id}><div><span>{definition.name}</span><strong>{formatMetric(id, metric.value)}</strong></div><progress max={100} value={width} /><small>{stateLabels[metric.state]}</small></div>; })}</div></Surface>;
+  return <Panel title="Visão dos cenários" description="Comparação de valores independentes, na mesma escala. Os cenários não devem ser somados."><div className={styles.forecastRows}>{items.map(({ id, metric, definition }, index) => { const width = maximum > 0n && metric.value !== null && BigInt(metric.value) > 0n ? Number(BigInt(metric.value) * 1000n / maximum) : 0; return <div className={styles.forecastRow} key={id}><div><span>{definition.name}</span><strong>{formatMetric(id, metric.value)}</strong></div><svg aria-hidden="true" viewBox="0 0 1000 16" preserveAspectRatio="none"><rect fill="#f0f1ee" height="16" rx="8" width="1000" /><rect fill={["#ff6b2c", "#469de4", "#9274e7", "#34372f"][index]} height="16" rx="8" width={width} /></svg><State state={metric.state} /></div>; })}</div></Panel>;
+}
+function CohortPanel({ screen, compact = false }: Readonly<{ screen: RevenueMetricsScreen; compact?: boolean }>) {
+  const maximum = Math.max(10000, ...screen.cohorts.map((row) => row.retentionBasisPoints ?? 0));
+  const rows = compact ? screen.cohorts.slice(-4) : screen.cohorts;
+  return <Panel title="Retenção por coorte" description="MRR no corte / MRR inicial de cada coorte de ativação." action={compact ? <Link className={styles.roundAction} aria-label="Ver todas as coortes" href={sectionHref(persistedQuery(screen), "retention")}><Arrow /></Link> : undefined}>
+    {rows.length ? <div className={styles.cohortBars}>{rows.map((row) => <Link href={sectionHref(persistedQuery(screen), "drilldown", row.drilldownId)} key={row.cohort}><div><span>{row.cohort} <small>{row.subscriptionCount} assinaturas{row.censored ? " · Em formação" : ""}</small></span><strong>{formatValue("BASIS_POINTS", row.retentionBasisPoints)}</strong></div><svg aria-hidden="true" viewBox="0 0 1000 12" preserveAspectRatio="none"><rect fill="#eeedf2" height="12" rx="6" width="1000" />{row.retentionBasisPoints !== null ? <rect fill="#9274e7" height="12" rx="6" width={Math.max(0, row.retentionBasisPoints) / maximum * 1000} /> : null}<line stroke="#656b5b" strokeDasharray="2 2" x1={10000 / maximum * 1000} x2={10000 / maximum * 1000} y1="0" y2="12" /></svg><small>{money(row.currentMrrCents)} de {money(row.initialMrrCents)} · {stateLabels[row.state]}</small></Link>)}</div> : <EmptyState compact title="Sem coortes neste recorte" description="As coortes aparecem quando há assinaturas com ativação no universo autorizado." />}
+    {rows.length ? <p className={styles.chartNote}>Traço: 100% do MRR inicial. A escala se expande para retenção acima de 100%.</p> : null}
+  </Panel>;
+}
+function DefinitionDetails({ definition }: Readonly<{ definition: RevenueMetricDefinition }>) {
+  return <dl className={styles.definitionGrid}><dt>Objetivo</dt><dd>{definition.objective}</dd><dt>Numerador</dt><dd>{definition.numerator}</dd><dt>Denominador</dt><dd>{definition.denominator ?? "Não se aplica"}</dd><dt>Fonte oficial</dt><dd>{definition.sourceOfTruth.join(" + ")}</dd><dt>Data do fato</dt><dd>{definition.factTimestamp}</dd><dt>Período e corte</dt><dd>{definition.periodRule} {definition.asOfRule}</dd><dt>Timezone</dt><dd>{definition.timeZoneRule}</dd><dt>Coorte</dt><dd>{definition.cohortRule ?? "Não se aplica"}</dd><dt>Cobertura</dt><dd>{definition.coverageRule}</dd><dt>Comparação</dt><dd>{definition.comparisonRule}</dd><dt>Cancelamentos</dt><dd>{definition.cancellationRule}</dd><dt>Reversões</dt><dd>{definition.reversalRule}</dd><dt>Duplicidades</dt><dd>{definition.duplicateRule}</dd><dt>Filtros / dimensões</dt><dd>{definition.supportedFilters.join(", ")} / {definition.supportedDimensions.join(", ")}</dd><dt>Limitações</dt><dd>{definition.limitations.length ? definition.limitations.join(" ") : "Nenhuma limitação adicional registrada."}</dd><dt>Detalhamento</dt><dd>{definition.drilldownRule}</dd></dl>;
 }
 
 export function RevenueMetricsWorkspace({ screen, section, drilldown }: Readonly<{ screen: RevenueMetricsScreen; section: string; drilldown: RevenueDrilldownPage | null }>) {
-  const query = persistedQuery(screen);
-  const filterCount = Object.values(screen.query.filters).reduce((total, values) => total + values.length, 0);
+  const query = persistedQuery(screen), filterCount = Object.values(screen.query.filters).reduce((total, values) => total + values.length, 0);
   return <div className={`analytics-canvas ${styles.workspace}`}>
-    <section className={styles.hero}><div><span>Indicadores · {screen.scope === "WORKSPACE" ? "Visão geral" : screen.scope === "TEAM" ? "Equipe" : "Meus registros"}</span><h1>Receita e retenção</h1><p>Acompanhe vendas, recorrência e previsão de receita.</p></div><div className={styles.heroMeta}><span>Atualizado</span><strong>{new Date(screen.generatedAt).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</strong>{filterCount > 0 ? <small>{filterCount} filtros aplicados</small> : null}</div></section>
-    <Surface className={styles.filterPanel} tone="subtle">
-      <form className={styles.filterForm} method="get">
-        <label className="grid gap-1 text-sm font-medium">Período<select name="preset" defaultValue={screen.query.preset}><option value="TODAY">Hoje</option><option value="YESTERDAY">Ontem</option><option value="WEEK">Semana</option><option value="MONTH">Mês</option><option value="CUSTOM">Personalizado</option></select></label>
-        <label className="grid gap-1 text-sm font-medium">Data inicial<input name="fromDate" type="date" defaultValue={screen.query.period.fromDate} /></label>
-        <label className="grid gap-1 text-sm font-medium">Data final<input name="toDate" type="date" defaultValue={screen.query.period.toDate} /></label>
-        <input name="section" type="hidden" value={section === "drilldown" ? "summary" : section} />
-        {Object.entries(filterNames).flatMap(([filter, parameter]) => screen.query.filters[filter as keyof typeof filterNames].map((value) => <input key={`${parameter}:${value}`} name={parameter} type="hidden" value={value} />))}
-        <Button size="sm" type="submit">Aplicar período</Button>
-        <details className={styles.periodDetails}><summary>Comparação e atualização</summary><div><p>Atual: {screen.query.period.fromDate} a {screen.query.period.toDate}</p><p>Anterior: {screen.query.comparisonPeriod.fromDate} a {screen.query.comparisonPeriod.toDate}</p><p>Corte: {new Date(screen.query.asOf).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</p></div></details>
-      </form>
-    </Surface>
-    <nav aria-label="Seções das métricas" className={styles.tabs}>{sections.map((item) => <Link aria-current={section === item.id ? "page" : undefined} href={sectionHref(query, item.id)} key={item.id}>{item.label}</Link>)}</nav>
-    {!screen.hasData && section !== "catalog" && section !== "drilldown" ? <div className={styles.noData} role="status">Ainda não há fatos financeiros neste recorte. Os indicadores exibem seus estados reais, sem séries fictícias.</div> : null}
+    <header className={styles.hero}><div><span className={styles.eyebrow}>Indicadores <span aria-hidden="true">/</span> Receita</span><h1>Uma visão completa da sua receita<span>.</span></h1><p>Vendas, recorrência e retenção. Cada resultado conectado à sua origem.</p></div><div className={styles.heroMeta}><span className={styles.scope}>{screen.scope === "WORKSPACE" ? "Visão do workspace" : screen.scope === "TEAM" ? "Visão da equipe" : "Meus registros"}</span><small>Atualizado em {new Date(screen.generatedAt).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</small></div></header>
+    <div className={styles.toolbar}><nav aria-label="Seções das métricas" className={styles.tabs}>{sections.map((item) => <Link aria-current={section === item.id ? "page" : undefined} href={sectionHref(query, item.id)} key={item.id}>{item.label}</Link>)}</nav><span className={styles.periodPill}>{screen.query.period.fromDate.split("-").reverse().join("/")} <span aria-hidden="true">—</span> {screen.query.period.toDate.split("-").reverse().join("/")}</span></div>
+    <form className={styles.filterForm} method="get"><label>Período<select name="preset" defaultValue={screen.query.preset}><option value="TODAY">Hoje</option><option value="YESTERDAY">Ontem</option><option value="WEEK">Esta semana</option><option value="MONTH">Este mês</option><option value="CUSTOM">Personalizado</option></select></label><label>De<input name="fromDate" type="date" defaultValue={screen.query.period.fromDate} /></label><label>Até<input name="toDate" type="date" defaultValue={screen.query.period.toDate} /></label><input name="section" type="hidden" value={section === "drilldown" ? "summary" : section} />{Object.entries(filterNames).flatMap(([filter, parameter]) => screen.query.filters[filter as keyof typeof filterNames].map((value) => <input key={`${parameter}:${value}`} name={parameter} type="hidden" value={value} />))}<button className={styles.primaryButton} type="submit">Atualizar visão <span aria-hidden="true">↗</span></button><details className={styles.periodDetails}><summary>{filterCount ? `${filterCount} filtros · ` : ""}Sobre este recorte</summary><div><p>Atual: {screen.query.period.fromDate} a {screen.query.period.toDate}</p><p>Anterior: {screen.query.comparisonPeriod.fromDate} a {screen.query.comparisonPeriod.toDate}</p><p>Corte: {new Date(screen.query.asOf).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</p><p>Fuso: {screen.query.period.timeZone}</p>{Object.entries(filterNames).map(([filter, parameter]) => screen.query.filters[filter as keyof typeof filterNames].length ? <p key={parameter}>{parameter}: {screen.query.filters[filter as keyof typeof filterNames].join(", ")}</p> : null)}</div></details></form>
+    {!screen.hasData && section !== "catalog" && section !== "drilldown" ? <div className={styles.noData} role="status"><span aria-hidden="true">ⓘ</span> Ainda não há fatos financeiros neste recorte. Os indicadores mantêm seus estados de disponibilidade.</div> : null}
     {section === "summary" ? <>
-      <MetricCards screen={screen} ids={["sales.bookings", "revenue.closing_mrr", "cash.received", "sales.win_rate"]} />
-      <div className={styles.chartGrid}><SeriesPanel description="Valor contratado em cada período." metricId="sales.bookings" screen={screen} title="Bookings" variant="bar" /><SeriesPanel description="Pagamentos confirmados líquidos de reversões." metricId="cash.received" screen={screen} title="Caixa recebido" /></div>
-      <MetricCards screen={screen} ids={["revenue.net_new_mrr", "retention.grr", "retention.nrr", "forecast.commit"]} />
-      <BridgePanel screen={screen} />
+      <div className={styles.overviewGrid}><MetricCard featured id="revenue.closing_mrr" screen={screen} /><div className={styles.overviewTiles}>{["sales.bookings", "cash.received", "revenue.net_new_mrr", "sales.win_rate"].map((id) => <MetricCard id={id} key={id} screen={screen} />)}</div></div>
+      <div className={styles.wideGrid}><SeriesPanel compareMetricId="cash.received" description="Contratos aceitos e pagamentos confirmados líquidos de reversões." metricId="sales.bookings" screen={screen} title="Vendas e entrada de caixa" variant="bar" /><CohortPanel compact screen={screen} /></div>
+      <div className={styles.sectionHeading}><h2>Saúde da receita</h2><span>Retenção, renovação e compromisso comercial</span></div><MetricCards screen={screen} ids={["retention.grr", "retention.nrr", "retention.renewal_rate", "forecast.commit"]} /><BridgePanel screen={screen} /><div className={styles.sectionHeading}><h2>Vendas e recebíveis</h2><span>Volume contratado, aquisição e exposição de caixa</span></div><MetricCards screen={screen} ids={["sales.leads", "sales.tcv", "sales.contracted_mrr", "cash.delinquency"]} />
     </> : null}
-    {section === "mrr" ? <>
-      <MetricCards screen={screen} ids={["revenue.opening_mrr", "revenue.closing_mrr", "revenue.net_new_mrr", "revenue.arr"]} />
-      <div className={styles.chartGrid}><SeriesPanel description="Saldo recorrente no fechamento de cada período." metricId="revenue.closing_mrr" screen={screen} title="MRR final" /><SeriesPanel description="Variação da receita recorrente em cada período." metricId="revenue.net_new_mrr" screen={screen} title="Net New MRR" variant="bar" /></div>
-      <MetricCards screen={screen} ids={["revenue.new_mrr", "revenue.expansion_mrr", "revenue.reactivation_mrr", "revenue.contraction_mrr", "revenue.churned_mrr"]} />
-      <BridgePanel screen={screen} />
-    </> : null}
-    {section === "retention" ? <><MetricCards screen={screen} ids={["retention.grr", "retention.nrr", "retention.logo_churn", "retention.renewal_rate"]} /><Surface className="p-5"><SectionHeader title="Coortes de ativação" description="A coorte do mês em curso aparece como parcial/censurada." />{screen.cohorts.length ? <DataTableShell className="mt-4"><table><thead><tr><th>Coorte</th><th>Assinaturas</th><th>MRR inicial</th><th>MRR no corte</th><th>Retenção</th><th>Estado</th></tr></thead><tbody>{screen.cohorts.map((row) => <tr key={row.cohort}><td><Link className="link" href={sectionHref(query, "drilldown", row.drilldownId)}>{row.cohort}</Link></td><td>{row.subscriptionCount}</td><td>{formatMetric("revenue.opening_mrr", row.initialMrrCents)}</td><td>{formatMetric("revenue.closing_mrr", row.currentMrrCents)}</td><td>{row.retentionBasisPoints === null ? "—" : `${row.retentionBasisPoints / 100}%`}</td><td><State state={row.state} /></td></tr>)}</tbody></table></DataTableShell> : <EmptyState compact title="Sem coortes" description="Não há assinaturas com ativação no universo autorizado." />}</Surface></> : null}
-    {section === "forecast" ? <><MetricCards screen={screen} ids={["forecast.pipeline", "forecast.best_case", "forecast.commit", "forecast.weighted", "forecast.gap"]} /><ForecastBars screen={screen} /><Surface className="p-5" tone="subtle"><SectionHeader title="Corte imutável" description={screen.forecastSnapshot ? `Snapshot ${screen.forecastSnapshot.id} em ${new Date(screen.forecastSnapshot.asOf).toLocaleString("pt-BR")}. Cobertura ${(screen.forecastSnapshot.coverageBasisPoints / 100).toLocaleString("pt-BR")}%.` : "Nenhum snapshot compatível com o período."} /></Surface></> : null}
-    {section === "quality" ? <Surface className="p-5"><SectionHeader title="Qualidade e cobertura" description="Problemas de cobertura não são convertidos silenciosamente em zero." /><div className={styles.qualityGrid}>{screen.quality.map((item) => <article className={styles.qualityCard} key={item.id}><div><strong>{item.label}</strong><State state={item.state} /></div><p>{item.detail}</p>{item.coverageBasisPoints !== null ? <progress aria-label={`${item.label}: cobertura`} max={10000} value={item.coverageBasisPoints} /> : null}{item.action ? <small>Ação: {item.action}</small> : null}</article>)}</div></Surface> : null}
-    {section === "catalog" ? <Surface className="p-5"><SectionHeader title={`Catálogo ${screen.registryVersion}`} description="Definições únicas, versionadas e reutilizáveis por API e interface." /><DataTableShell className="mt-4"><table><thead><tr><th>Métrica</th><th>Fórmula</th><th>Fonte oficial</th><th>Timestamp</th></tr></thead><tbody>{[...revenueMetricRegistryById.values()].map((item) => <tr key={item.id}><td><strong>{item.name}</strong><br /><small>{item.id}@v{item.version}</small></td><td>{item.formula}</td><td>{item.sourceOfTruth.join(" + ")}</td><td>{item.factTimestamp}</td></tr>)}</tbody></table></DataTableShell></Surface> : null}
-    {section === "drilldown" && drilldown ? <Surface className="p-5"><SectionHeader title={drilldown.metric.name} description={`${drilldown.metric.formula} · ${drilldown.total} registros`} action={<Link className={buttonVariants({ variant: "secondary", size: "sm" })} href={sectionHref(query, "summary")}>Voltar</Link>} />{drilldown.records.length ? <DataTableShell className="mt-4"><table><thead><tr><th>Registro</th><th>Data</th><th>Contribuição</th><th>Fonte</th></tr></thead><tbody>{drilldown.records.map((item) => <tr key={item.key}><td><Link className="link" href={item.href}>{item.title}</Link><br /><small>{item.subtitle}</small></td><td>{new Date(item.occurredAt).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</td><td>{item.unit === "CENTS" ? formatMetric(drilldown.metric.id, item.contribution) : item.contribution}</td><td>{item.provenance}</td></tr>)}</tbody></table></DataTableShell> : <EmptyState compact title="Nenhum registro" description="O estado da métrica é válido, mas este recorte não contém fatos individuais." />}</Surface> : null}
+    {section === "mrr" ? <><MetricCards screen={screen} ids={["revenue.opening_mrr", "revenue.closing_mrr", "revenue.net_new_mrr", "revenue.arr"]} /><div className={styles.chartGrid}><SeriesPanel description="Saldo recorrente no fechamento de cada período." metricId="revenue.closing_mrr" screen={screen} title="Evolução da receita recorrente" /><SeriesPanel description="Variação líquida, incluindo expansões, perdas e ajustes." metricId="revenue.net_new_mrr" screen={screen} title="Crescimento líquido do MRR" variant="bar" /></div><BridgePanel screen={screen} /><div className={styles.sectionHeading}><h2>O que explica a variação</h2><span>Explore cada movimento da receita</span></div><MetricCards screen={screen} ids={["revenue.new_mrr", "revenue.expansion_mrr", "revenue.reactivation_mrr", "revenue.contraction_mrr", "revenue.churned_mrr"]} /></> : null}
+    {section === "retention" ? <><MetricCards screen={screen} ids={["retention.grr", "retention.nrr", "retention.logo_churn", "retention.renewal_rate"]} /><CohortPanel screen={screen} /><Panel title="Coortes de ativação" description="A coorte em curso permanece marcada como parcial / em formação.">{screen.cohorts.length ? <div className={styles.tableWrap}><table><thead><tr><th>Coorte</th><th>Assinaturas</th><th>MRR inicial</th><th>MRR no corte</th><th>Retenção</th><th>Estado</th></tr></thead><tbody>{screen.cohorts.map((row) => <tr key={row.cohort}><td><Link href={sectionHref(query, "drilldown", row.drilldownId)}>{row.cohort} ↗</Link></td><td>{row.subscriptionCount}</td><td>{money(row.initialMrrCents)}</td><td>{money(row.currentMrrCents)}</td><td>{formatValue("BASIS_POINTS", row.retentionBasisPoints)}</td><td><State state={row.state} />{row.censored ? <small className={styles.cellNote}>Em formação</small> : null}</td></tr>)}</tbody></table></div> : <EmptyState compact title="Sem coortes" description="Não há assinaturas com ativação no universo autorizado." />}</Panel></> : null}
+    {section === "forecast" ? <><div className={styles.wideGrid}><ForecastBars screen={screen} /><MetricCard featured id="forecast.commit" screen={screen} /></div><MetricCards screen={screen} ids={["forecast.pipeline", "forecast.best_case", "forecast.weighted", "forecast.gap"]} /><MetricCards screen={screen} ids={["goals.attainment", "forecast.pipeline_coverage", "forecast.accuracy"]} /><Panel title="Origem da previsão" description="Snapshot imutável para reproduzir a leitura do corte.">{screen.forecastSnapshot ? <dl className={styles.snapshot}><div><dt>Identificador</dt><dd>{screen.forecastSnapshot.id}</dd></div><div><dt>Corte</dt><dd>{new Date(screen.forecastSnapshot.asOf).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</dd></div><div><dt>Cobertura</dt><dd>{formatValue("BASIS_POINTS", screen.forecastSnapshot.coverageBasisPoints)} <small>{screen.forecastSnapshot.coverageState}</small></dd></div></dl> : <EmptyState compact title="Sem snapshot compatível" description="Publique uma leitura de forecast para o período e escopo selecionados." />}</Panel></> : null}
+    {section === "quality" ? <><div className={styles.sectionHeading}><h2>Confiança em cada número</h2><span>Cobertura e ações para completar sua leitura</span></div><div className={styles.qualityGrid}>{screen.quality.map((item) => <article className={styles.qualityCard} key={item.id}><div className={styles.metricTop}><h2>{item.label}</h2><State state={item.state} /></div><strong className={styles.coverageValue}>{formatValue("BASIS_POINTS", item.coverageBasisPoints)}<small>de cobertura</small></strong>{item.coverageBasisPoints !== null ? <progress aria-label={`${item.label}: cobertura`} max={10000} value={item.coverageBasisPoints} /> : <p className={styles.muted}>Cobertura não disponível neste recorte.</p>}<p>{item.detail}</p>{item.action ? <div className={styles.qualityAction}><span>Próxima ação</span><p>{item.action}</p></div> : null}{item.drilldownId ? <Link className={styles.textLink} href={sectionHref(query, "drilldown", item.drilldownId)}>Examinar registros <Arrow /></Link> : null}</article>)}</div>{!screen.quality.length ? <EmptyState compact title="Sem sinais de qualidade" description="Não há sinais disponíveis no universo autorizado." /> : null}</> : null}
+    {section === "catalog" ? <Panel title="Dicionário de indicadores" description={`Registro ${screen.registryVersion}. Fórmulas, fontes e regras usadas em todos os resultados.`}><div className={styles.catalog}>{[...revenueMetricRegistryById.values()].map((item) => <details key={item.id}><summary><span><strong>{item.name}</strong><small>{item.id} · v{item.version}</small></span><span className={styles.formula}>{item.formula}</span><span className={styles.catalogPlus} aria-hidden="true">+</span></summary><div className={styles.definitionBody}><p>{item.description}</p><DefinitionDetails definition={item} /></div></details>)}</div></Panel> : null}
+    {section === "drilldown" && drilldown ? <Panel title={drilldown.metric.name} description={drilldown.metric.description} action={<Link className={styles.secondaryButton} href={sectionHref(query, "summary")}>← Visão geral</Link>}><div className={styles.drilldownSummary}><strong>{drilldown.total.toLocaleString("pt-BR")} <span>registros de origem</span></strong><p>{drilldown.metric.formula}</p></div>{drilldown.records.length ? <div className={styles.tableWrap}><table><thead><tr><th>Registro</th><th>Data do fato</th><th>Contribuição</th><th>Proveniência</th></tr></thead><tbody>{drilldown.records.map((item) => <tr key={item.key}><td><Link href={item.href}>{item.title} ↗</Link><small className={styles.cellNote}>{item.subtitle}</small></td><td>{new Date(item.occurredAt).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</td><td>{formatValue(item.unit, item.contribution)}</td><td>{item.provenance}</td></tr>)}</tbody></table></div> : <EmptyState compact title="Nenhum registro" description="Este recorte não contém fatos individuais para a métrica." />}<nav aria-label="Páginas dos registros" className={styles.pagination}><span>Página {drilldown.page} de {drilldown.totalPages} · {drilldown.pageSize} por página</span><div>{drilldown.page > 1 ? <Link className={styles.secondaryButton} href={sectionHref(query, "drilldown", drilldown.metric.id, drilldown.page - 1, drilldown.pageSize)}>Anterior</Link> : null}{drilldown.page < drilldown.totalPages ? <Link className={styles.secondaryButton} href={sectionHref(query, "drilldown", drilldown.metric.id, drilldown.page + 1, drilldown.pageSize)}>Próxima →</Link> : null}</div></nav><details className={styles.chartDetails}><summary>Entender a base deste indicador</summary><DefinitionDetails definition={drilldown.metric} /></details></Panel> : null}
+    <footer className={styles.footer}><span>Receita & indicadores</span><span>Valores em BRL · {screen.query.period.timeZone} · Registro {screen.registryVersion}</span></footer>
   </div>;
 }

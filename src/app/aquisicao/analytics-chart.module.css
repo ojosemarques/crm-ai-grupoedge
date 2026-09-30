@@ -1,0 +1,15 @@
+.chart { min-width: 0; }
+.legend { display: flex; flex-wrap: wrap; justify-content: end; gap: 16px; margin: 8px 0; }
+.legend > span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11px; }
+.plot { width: 100%; display: block; overflow: visible; }
+.grid line { stroke: #e9ebe8; stroke-dasharray: 3 5; }
+.grid text, .axisLabel { fill: #8a8d86; font-size: 11px; }
+.cursor { stroke: #b9beb6; stroke-dasharray: 4 4; }
+.hitArea { cursor: crosshair; outline: none; }
+.hitArea:focus-visible { stroke: #20231f; stroke-width: 1; }
+.readout { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 22px; border-top: 1px solid var(--border); padding-top: 14px; min-height: 58px; }
+.readout > span { color: var(--text-muted); font-size: 11px; margin-right: auto; }
+.readout > div { display: grid; gap: 3px; }
+.readout small { color: var(--text-muted); font-size: 10px; }
+.readout strong { font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+@media(max-width: 600px) { .legend { justify-content: start; gap: 10px; } .readout { gap: 10px 14px; } .readout strong { font-size: 11px; } }

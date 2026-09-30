@@ -1,4 +1,4 @@
-.workspace { border: 1px solid var(--border); border-radius: 12px; display: grid; grid-template-columns: 205px minmax(0, 1fr); min-height: 660px; overflow: clip; }
+.workspace { border: 1px solid var(--border); border-radius: 18px; display: grid; grid-template-columns: 205px minmax(0, 1fr); min-height: 660px; overflow: clip; }
 .navigation { background: var(--surface); border-right: 1px solid var(--border); padding: 20px 10px; }
 .navigation > p { color: var(--muted-foreground); font-size: 9px; letter-spacing: .04em; margin: 0 10px 15px; text-transform: uppercase; }
 .navigation button { align-items: center; border-radius: 6px; color: var(--muted-foreground); display: flex; font-size: 11px; gap: 10px; margin-bottom: 5px; padding: 12px 10px; text-align: left; width: 100%; }

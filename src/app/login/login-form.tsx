@@ -49,7 +49,7 @@ export function LoginForm() {
   }
 
   return (
-    <form className="login-form" onSubmit={handleSubmit}>
+    <form className="login-form" method="post" onSubmit={handleSubmit}>
       <label className="login-field">
         E-mail
         <input

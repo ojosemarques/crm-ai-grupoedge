@@ -16,5 +16,5 @@ export default async function GeographicIntelligencePage({ searchParams }: Reado
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     throw error;
   }
-  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Revenue OS" title="Inteligência geográfica" description="Territórios, aquisição e funil sobre localização explícita e persistida. Sem tiles, geocoder ou envio de dados a terceiros."/><GeographicWorkspace initial={screen}/></main>;
+  return <main className="page-canvas page-canvas-wide analytics-canvas"><PageHeader eyebrow="Revenue OS" title="Inteligência geográfica" description="Explore a distribuição da sua operação, compare regiões e acompanhe a cobertura comercial."/><GeographicWorkspace initial={screen}/></main>;
 }

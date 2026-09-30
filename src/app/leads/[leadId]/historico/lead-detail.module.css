@@ -11,9 +11,9 @@
 .tabs button[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); background: transparent; }
 .stages { display: flex; overflow-x: auto; background: var(--primary-soft); margin: 18px 0 0; padding: 20px 25px 23px; }
 .stages li { position: relative; min-width: 115px; flex: 1; display: grid; justify-items: center; align-content: start; gap: 10px; text-align: center; }
-.stages li::before { content: ""; position: absolute; height: 2px; top: 15px; left: -50%; right: 50%; background: #ded0f7; }
+.stages li::before { content: ""; position: absolute; height: 2px; top: 15px; left: -50%; right: 50%; background: #dde1d6; }
 .stages li:first-child::before { display: none; }
-.stages li > span { z-index: 1; display: grid; place-items: center; background: #dcc6f6; width: 31px; height: 31px; border-radius: 50%; color: #684194; font-size: 13px; }
+.stages li > span { z-index: 1; display: grid; place-items: center; background: #e5e8df; width: 31px; height: 31px; border-radius: 50%; color: #626d54; font-size: 13px; }
 .stages strong { font-size: 10px; font-weight: 500; color: var(--text-muted); }
 .stages li[aria-current="step"] > span { color: white; background: var(--primary); box-shadow: 0 0 0 4px var(--surface); }
 .stages li[aria-current="step"] strong { color: var(--primary); font-weight: 650; }
@@ -56,6 +56,6 @@
 .content :global(#tarefas) > ul > li { border-color: var(--border); border-radius: 6px; padding: 15px; }
 .content :global(#tarefas) > ul > li > form { border-top: 1px solid var(--border); padding-top: 12px; }
 .content ol > li { background: var(--surface); border-color: var(--border); border-radius: 6px; position: relative; padding-left: 20px; }
-.content ol > li::before { content: ""; position: absolute; top: 20px; left: -5px; width: 8px; height: 8px; border-radius: 50%; background: #c6b5e5; outline: 4px solid var(--surface); }
+.content ol > li::before { content: ""; position: absolute; top: 20px; left: -5px; width: 8px; height: 8px; border-radius: 50%; background: #f7b17e; outline: 4px solid var(--surface); }
 @media (max-width: 1250px) { .layout { grid-template-columns: 200px minmax(0,1fr); } .context { grid-column: 1/-1; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-top: 1px solid var(--border); } }
 @media (max-width: 700px) { .header { padding: 18px; } .header h1 { font-size: 20px; } .layout { display: flex; flex-direction: column; } .profile { width: 100%; } .facts { grid-template-columns: repeat(2,minmax(0,1fr)); } .content { width: 100%; padding: 14px; border: 0; border-top: 1px solid var(--border); } .context { width: 100%; display: block; } .tabs { gap: 0; padding: 0 8px; } .stages { padding-left: 15px; } }

@@ -2,30 +2,34 @@
 :root,
 :root[data-theme="light"] {
   color-scheme: light;
-  --brand-navy: #322d59;
-  --brand-blue: #6826d9;
-  --brand-steel: #8552d6;
-  --brand-sky: #dac8f7;
-  --brand-ice: #f8f9fd;
-  --background: #fff;
-  --foreground: #322d59;
+  --brand-navy: #242620;
+  --brand-blue: #f16d36;
+  --brand-steel: #f16d36;
+  --brand-sky: #ffd7bd;
+  --accent: #f87335;
+  --accent-hover: #e65d22;
+  --pipeline-lane: #eeefeb;
+  --pipeline-count: #e2e5dc;
+  --brand-ice: #f6f7f5;
+  --background: #f4f5f3;
+  --foreground: #242620;
   --surface: #fff;
-  --surface-subtle: #f1f3fe;
-  --surface-selected: #eee8fc;
-  --surface-priority: #e4d7fa;
+  --surface-subtle: #f5f6f4;
+  --surface-selected: #f0f1ee;
+  --surface-priority: #ffe3cd;
   --card: #fff;
-  --card-foreground: #322d59;
-  --primary: #6826d9;
-  --primary-hover: #5720bd;
+  --card-foreground: #242620;
+  --primary: #242620;
+  --primary-hover: #3b3e34;
   --primary-foreground: #fff;
-  --secondary: #f6f4fc;
-  --secondary-foreground: #322d59;
-  --muted: #f2f2f8;
-  --muted-foreground: #7c7891;
-  --border: #ecebf3;
-  --border-strong: #d8d3e6;
-  --ring: #9363e6;
-  --link: #6826d9;
+  --secondary: #f5f6f4;
+  --secondary-foreground: #242620;
+  --muted: #f2f3f0;
+  --muted-foreground: #6c7267;
+  --border: #eceee9;
+  --border-strong: #d8dcd3;
+  --ring: #f48552;
+  --link: #ba481a;
   --info: #4589bb;
   --info-surface: #def1ff;
   --success: #398665;
@@ -34,16 +38,16 @@
   --warning-surface: #fff0d9;
   --danger: #c75269;
   --danger-surface: #ffe6eb;
-  --inactive: #898498;
-  --inactive-surface: #f0eef7;
-  --radius-control: 6px;
-  --radius-panel: 12px;
-  --radius-modal: 16px;
+  --inactive: #898e84;
+  --inactive-surface: #f0f2ed;
+  --radius-control: 10px;
+  --radius-panel: 20px;
+  --radius-modal: 22px;
   --radius-pill: 999px;
   --radius: var(--radius-panel);
-  --shadow-card: 0 2px 6px #30254c04;
-  --shadow-floating: 0 16px 54px #30254c1c;
-  --shadow-xs: 0 1px 3px #30254c06;
+  --shadow-card: 0 2px 6px #1b211005;
+  --shadow-floating: 0 16px 54px #1b21101c;
+  --shadow-xs: 0 1px 3px #1b211008;
   --shadow-lg: var(--shadow-floating);
   --text: var(--foreground);
   --text-muted: var(--muted-foreground);
@@ -52,27 +56,26 @@
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --background: #171719;
-  --foreground: #eeeaf5;
-  --surface: #1d1d20;
-  --surface-subtle: #242329;
-  --surface-selected: #342948;
-  --surface-priority: #44335d;
-  --card: #222225;
-  --card-foreground: #eeeaf5;
-  --primary: #8e66ed;
-  --primary-hover: #a184f3;
-  --primary-foreground: #fff;
-  --brand-navy: #eeeaf5;
-  --brand-blue: #a187ef;
-  --brand-steel: #a187ef;
-  --secondary: #2a282e;
-  --secondary-foreground: #eeeaf5;
-  --muted: #2a282e;
-  --muted-foreground: #aaa5b7;
-  --border: #323037;
-  --border-strong: #554c63;
-  --link: #b295f2;
+  --background: #171917;
+  --foreground: #f0f1ed;
+  --surface: #20231f;
+  --surface-subtle: #282c26;
+  --surface-selected: #34392f;
+  --surface-priority: #503529;
+  --card: #20231f;
+  --card-foreground: #f0f1ed;
+  --primary: #ebeee6;
+  --primary-hover: #fff;
+  --brand-navy: #f0f1ed;
+  --brand-blue: #ffa278;
+  --brand-steel: #ffbd99;
+  --secondary: #282c26;
+  --secondary-foreground: #f0f1ed;
+  --muted: #282c26;
+  --muted-foreground: #afb4a8;
+  --border: #363b31;
+  --border-strong: #505846;
+  --link: #ffa278;
   --info: #8dbff2;
   --info-surface: #24303d;
   --success: #8bd4aa;
@@ -81,12 +84,15 @@
   --warning-surface: #3c3124;
   --danger: #ee96a5;
   --danger-surface: #422a31;
-  --inactive: #aaa4b5;
-  --inactive-surface: #2b2930;
+  --inactive: #a8aea0;
+  --inactive-surface: #282c26;
+  --primary-foreground: #20231f;
+  --pipeline-lane: #252a23;
+  --pipeline-count: #394331;
   --shadow-card: 0 2px 6px #0001;
   --shadow-floating: 0 16px 54px #0006;
 }
-body { letter-spacing: -.018em; }
+body { letter-spacing: -.012em; }
 ::selection { background: var(--surface-priority); color: var(--foreground); }
 :where(a, button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
 button:not(:disabled), summary, select { cursor: pointer; }
@@ -94,15 +100,15 @@ button:not(:disabled), summary, select { cursor: pointer; }
 /* Chart dimensions must survive the policy that blocks SSR style attributes. */
 .recharts-responsive-container { height: 100%; min-width: 0; width: 100%; }
 .recharts-responsive-container > div { height: 0; overflow: visible; width: 0; }
-.app-content > main { margin: 0 !important; max-width: none !important; min-height: calc(100dvh - 56px) !important; padding: 24px 26px 36px !important; width: 100% !important; }
+.app-content > main { margin: 0 !important; max-width: none !important; min-height: calc(100dvh - 88px) !important; padding: 20px 20px 36px !important; width: 100% !important; }
 .page-header__eyebrow { color: var(--muted-foreground); font-size: 9px; font-weight: 500; letter-spacing: .03em; }
-.page-header__description { font-size: 11px; max-width: 80ch; }
-.page-header h1 { font-weight: 600; letter-spacing: -.04em; }
+.page-header__description { font-size: 12px; max-width: 80ch; }
+.page-header h1 { font-weight: 500; letter-spacing: -.04em; }
 .section-header h2 { font-size: 14px; font-weight: 500; }
 .section-header p:not(.section-header__eyebrow) { font-size: 11px; }
 .section-header__eyebrow { font-size: 9px; letter-spacing: .04em; }
 .surface-panel, .data-table-shell { box-shadow: var(--shadow-card); }
-.stat-card__value { font-weight: 600; letter-spacing: -.04em; margin-top: 8px; }
+.stat-card__value { font-weight: 500; letter-spacing: -.04em; margin-top: 8px; }
 .stat-card__label { font-size: 11px; }
 .stat-card__hint { font-size: 10px; margin-top: 7px; }
 .status-badge { border: 0; font-size: 10px; font-weight: 400; gap: 4px; min-height: 18px; padding: 2px 6px; }
@@ -110,7 +116,7 @@ button:not(:disabled), summary, select { cursor: pointer; }
 .status-badge[data-tone="info"] { color: var(--info); }
 .priority-badge { background: var(--surface-selected); border: 0; color: var(--brand-steel); font-size: 10px; }
 .stage-badge { background: var(--surface-selected); border: 0; color: var(--primary); font-size: 10px; font-weight: 500; }
-.data-table-shell { border-radius: 9px; }
+.data-table-shell { border-radius: 16px; }
 .data-table-shell :where(th, td) { border-bottom: 1px solid var(--border); padding: 12px 14px; }
 .data-table-shell th { background: var(--surface-subtle); font-size: 10px; font-weight: 500; }
 .data-table-shell td { font-size: 11px; }
@@ -118,14 +124,13 @@ button:not(:disabled), summary, select { cursor: pointer; }
 .empty-state { background: var(--surface); border-style: dashed; box-shadow: none; }
 .empty-state h2, .empty-state h3 { font-size: 13px; font-weight: 500; }
 .empty-state p { font-size: 11px; }
-.dialog-backdrop, .global-search { background: #29213f45; backdrop-filter: blur(4px); }
+.dialog-backdrop, .global-search { background: #20231f45; backdrop-filter: blur(4px); }
 .dialog-panel { border: 1px solid var(--border-strong); border-radius: var(--radius-modal); box-shadow: var(--shadow-floating); padding: 24px; }
-.dialog-panel h2 { font-size: 18px; font-weight: 600; }
+.dialog-panel h2 { font-size: 20px; font-weight: 500; }
 .dialog-panel label { font-size: 11px; }
 .lead-tabs { background: var(--surface); }
-.analytics-canvas { background: #f7f8fb; border: 1px solid var(--border); border-radius: 18px; color: var(--foreground); padding: 22px; }
-:root[data-theme="dark"] .analytics-canvas { background: var(--surface-subtle); }
+.analytics-canvas { background: transparent; color: var(--foreground); padding: 0; }
 :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { border-color: var(--border); font-size: 12px; }
 :where(input, textarea)::placeholder { color: var(--muted-foreground); opacity: .8; }
-@media (max-width: 800px) { .app-content > main { padding: 18px 14px 28px !important; }.analytics-canvas { padding: 14px; border-radius: 12px; } }
+@media (max-width: 800px) { .app-content > main { padding: 18px 14px 28px !important; }.analytics-canvas { padding: 0; } }
 @media (prefers-reduced-motion: no-preference) { .surface-panel, .stat-card { transition: border-color .15s ease; }.surface-panel:hover, .stat-card:hover { border-color: var(--border-strong); } }

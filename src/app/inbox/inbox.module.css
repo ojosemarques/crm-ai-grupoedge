@@ -17,7 +17,7 @@
 .workspace :global(.inbox-list__header) p, .workspace :global(.inbox-list__header) button { font-size: 10px; }
 .workspace :global(.inbox-conversation-row) { position: relative; padding: 14px 12px 14px 60px; min-height: 98px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; width: 100%; }
 .workspace :global(.inbox-conversation-row)[aria-current="true"] { background: var(--primary-soft); box-shadow: inset 3px 0 var(--primary); }
-.avatar { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%; background: #e2d7fc; color: #6235a7; font-size: 12px; font-weight: 600; }
+.avatar { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%; background: #e9ece4; color: #535f45; font-size: 12px; font-weight: 600; }
 .workspace :global(.inbox-conversation-row) > .avatar { position: absolute; top: 17px; left: 13px; }
 .workspace :global(.inbox-conversation-row):nth-of-type(3n) > .avatar { background: #daf2ef; color: #2d8176; }
 .workspace :global(.inbox-conversation-row):nth-of-type(3n+1) > .avatar { background: #ffe2d0; color: #a6582d; }
@@ -36,7 +36,7 @@
 .workspace :global(.inbox-sla) small { font-size: 9px; }
 .workspace :global(.inbox-messages) { flex: 1; min-height: 0; padding: 24px; overflow-y: auto; gap: 16px; background: var(--surface); }
 .workspace :global(.inbox-message) { width: fit-content; max-width: 85%; padding: 13px 15px; border: 0; border-radius: 9px 9px 9px 2px; background: var(--surface-muted); box-shadow: none; }
-.workspace :global(.inbox-message)[data-direction="OUTBOUND"] { margin-left: auto; border-radius: 9px 9px 2px 9px; background: #e5f1ff; color: #343653; }
+.workspace :global(.inbox-message)[data-direction="OUTBOUND"] { margin-left: auto; border-radius: 9px 9px 2px 9px; background: #e5f1ff; color: #34444e; }
 .workspace :global(.inbox-message) p { font-size: 12px; line-height: 1.7; }
 .workspace :global(.inbox-message__meta), .workspace :global(.inbox-message__status) { font-size: 9px; opacity: .8; }
 .workspace :global(.inbox-composer) { flex-shrink: 0; margin: 12px; padding: 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }

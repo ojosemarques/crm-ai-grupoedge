@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   Area,
   AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
   ResponsiveContainer,
@@ -75,7 +76,7 @@ function formatNumber(value: number, kind: DashboardTimeSeries["kind"]) {
     return new Intl.NumberFormat("pt-BR", {
       style: "currency",
       currency: "BRL",
-      maximumFractionDigits: 0,
+      maximumFractionDigits: 2,
     }).format(value);
   }
   if (kind === "RATE") return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
@@ -90,6 +91,14 @@ function axisValue(value: number, kind: DashboardTimeSeries["kind"]) {
   return new Intl.NumberFormat("pt-BR", { notation: value >= 1_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value);
 }
 
+function exactValue(value: number | string | null, kind: DashboardTimeSeries["kind"]) {
+  if (value === null) return "Sem amostra";
+  if (kind !== "MONEY") return formatNumber(Number(value), kind);
+  const cents = BigInt(value);
+  const absolute = cents < 0n ? -cents : cents;
+  return `${cents < 0n ? "−" : ""}R$ ${new Intl.NumberFormat("pt-BR").format(absolute / 100n)},${(absolute % 100n).toString().padStart(2, "0")}`;
+}
+
 function TrendChart({
   title,
   description,
@@ -100,6 +109,8 @@ function TrendChart({
   currentPeriodLabel,
   previousPeriodLabel,
 }: TrendChartProps) {
+  const gradientId = useId();
+  const descriptionId = useId();
   const available = allowedSeries.flatMap((id) => {
     const current = series.find((item) => item.id === id);
     return current ? [current] : [];
@@ -120,6 +131,8 @@ function TrendChart({
         label: currentPoint?.bucket ?? previousPoint?.bucket ?? `Ponto ${index + 1}`,
         currentBucket: currentPoint?.bucket ?? "—",
         previousBucket: previousPoint?.bucket ?? "—",
+        currentRaw: currentPoint?.value ?? null,
+        previousRaw: previousPoint?.value ?? null,
         current: numericValue(selected, currentPoint?.value ?? null),
         previous: numericValue(selected, previousPoint?.value ?? null),
       };
@@ -147,22 +160,23 @@ function TrendChart({
           </button>
         ))}
       </div>
-      <p className={styles.srOnly} id={`chart-description-${title.replace(/\W+/g, "-").toLowerCase()}`}>{chartDescription}</p>
+      <p className={styles.srOnly} id={descriptionId}>{chartDescription}</p>
+      <div className={styles.chartLegend}><span title={currentPeriodLabel}><i />Período atual</span><span title={previousPeriodLabel}><i />Período anterior</span></div>
       {!hasMeasuredValue ? (
         <div className={styles.chartEmpty} role="status">
           <strong>Sem eventos nesta série</strong>
-          <span>Os buckets reais permanecem disponíveis na tabela; nenhum ponto foi inventado.</span>
+          <span>Selecione outro indicador ou consulte os valores registrados na tabela.</span>
         </div>
       ) : (
         <div
-          aria-describedby={`chart-description-${title.replace(/\W+/g, "-").toLowerCase()}`}
+          aria-describedby={descriptionId}
           aria-label={`Gráfico de ${selected.label}`}
           className={styles.chartCanvas}
           role="img"
         >
           <ResponsiveContainer height="100%" width="100%">
-            <AreaChart accessibilityLayer data={data} margin={{ top: 12, right: 12, bottom: 4, left: 0 }}>
-              <defs><linearGradient id={`chart-fill-${title.replace(/\W+/g, "-").toLowerCase()}`} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="var(--chart-accent)" stopOpacity={0.3} /><stop offset="100%" stopColor="var(--chart-accent)" stopOpacity={0} /></linearGradient></defs>
+            <ComposedChart accessibilityLayer data={data} margin={{ top: 12, right: 12, bottom: 4, left: 0 }}>
+              <defs><linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="var(--chart-accent)" stopOpacity={0.3} /><stop offset="100%" stopColor="var(--chart-accent)" stopOpacity={0} /></linearGradient></defs>
               <CartesianGrid stroke="var(--border)" strokeDasharray="3 5" vertical={false} />
               <XAxis
                 axisLine={false}
@@ -182,14 +196,13 @@ function TrendChart({
               <Tooltip
                 contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "12px", boxShadow: "var(--shadow-card)" }}
                 formatter={(value, name) => [formatNumber(Number(value), selected.kind), String(name)]}
-                labelFormatter={(label) => `Bucket atual: ${String(label)}`}
+                labelFormatter={(label) => `Período: ${String(label)}`}
               />
-              <Legend iconType="line" verticalAlign="top" wrapperStyle={{ color: "var(--muted-foreground)", fontSize: 12, paddingBottom: 16 }} />
               <Area
                 activeDot={{ r: 5 }}
                 dataKey="current"
                 dot={data.length <= 14}
-                fill={`url(#chart-fill-${title.replace(/\W+/g, "-").toLowerCase()})`}
+                fill={`url(#${gradientId})`}
                 isAnimationActive={false}
                 name={`Atual · ${currentPeriodLabel}`}
                 stroke="var(--chart-accent)"
@@ -206,7 +219,7 @@ function TrendChart({
                 strokeWidth={2}
                 type="monotone"
               />
-            </AreaChart>
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       )}
@@ -214,14 +227,14 @@ function TrendChart({
         <summary>Ver dados em tabela</summary>
         <div className={styles.chartTableScroll}>
           <table className={styles.chartTable}>
-            <thead><tr><th>Bucket atual</th><th>Valor atual</th><th>Bucket anterior</th><th>Valor anterior</th></tr></thead>
+            <thead><tr><th>Período atual</th><th>Valor atual</th><th>Período anterior</th><th>Valor anterior</th></tr></thead>
             <tbody>
               {data.map((point) => (
                 <tr key={`${point.index}:${point.currentBucket}`}>
                   <td>{point.currentBucket}</td>
-                  <td>{point.current === null ? "Sem amostra" : formatNumber(point.current, selected.kind)}</td>
+                  <td>{exactValue(point.currentRaw, selected.kind)}</td>
                   <td>{point.previousBucket}</td>
-                  <td>{point.previous === null ? "Sem amostra" : formatNumber(point.previous, selected.kind)}</td>
+                  <td>{exactValue(point.previousRaw, selected.kind)}</td>
                 </tr>
               ))}
             </tbody>

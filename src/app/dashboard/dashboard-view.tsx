@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { CommercialEvolutionChart, CommercialFlowChart, KpiSparkline, RevenueSalesChart } from "@/app/dashboard/dashboard-charts";
 import styles from "@/app/dashboard/dashboard.module.css";
+import { ConnectedFunnel, StageDistribution } from "./dashboard-visuals";
 import { Icon, type IconName } from "@/components/ui/icon";
 import type {
   DashboardAttentionItem,
@@ -32,9 +33,10 @@ export function dashboardHref(query: DashboardQuery, view: string) {
 function formatMoney(cents: string | null) {
   if (cents === null) return "—";
   const value = BigInt(cents);
-  const whole = value / 100n;
-  const fraction = (value < 0n ? -value : value) % 100n;
-  return `R$ ${new Intl.NumberFormat("pt-BR").format(whole)},${fraction.toString().padStart(2, "0")}`;
+  const absolute = value < 0n ? -value : value;
+  const whole = absolute / 100n;
+  const fraction = absolute % 100n;
+  return `${value < 0n ? "−" : ""}R$ ${new Intl.NumberFormat("pt-BR").format(whole)},${fraction.toString().padStart(2, "0")}`;
 }
 
 function formatDuration(seconds: number | null) {
@@ -87,9 +89,8 @@ function ComparisonCard({ comparison, featured, query, series }: Readonly<{ comp
   return (
     <article className={`${styles.comparisonCard} ${featured ? styles.comparisonFeatured : ""}`} data-interpretation={comparison.interpretation}>
       <div className={styles.comparisonHeader}><span>{comparison.label}</span><span className={styles.comparisonIcon}><Icon name={comparisonIcons[comparison.id] ?? "tendencia"} size={15} /></span></div>
-      <strong className={styles.comparisonValue}>{formatValue(comparison.kind, comparison.current.value)}</strong>
+      <div className={styles.comparisonMeasure}><strong className={styles.comparisonValue}>{formatValue(comparison.kind, comparison.current.value)}</strong><KpiSparkline label={comparison.label} series={series} /></div>
       <p className={styles.comparisonDelta}><span aria-hidden="true">{comparison.direction === "UP" ? "↑" : comparison.direction === "DOWN" ? "↓" : "→"}</span>{comparisonSentence(comparison)}</p>
-      <KpiSparkline label={comparison.label} series={series} />
       <div className={styles.comparisonFooter}><details className={styles.comparisonFacts}><summary>Comparação</summary><div><p><span>Anterior</span><strong>{formatValue(comparison.kind, comparison.previous.value)}</strong></p><p>{periodLabel(comparison.previousPeriod.fromDate, comparison.previousPeriod.toDate)}</p>{comparison.current.denominator !== null ? <p>Base: {Number(comparison.current.numerator).toLocaleString("pt-BR")} de {comparison.current.denominator.toLocaleString("pt-BR")}</p> : null}</div></details><Link aria-label={`${comparison.label}: abrir registros`} className={styles.cardLink} href={dashboardHref(query, comparison.current.drilldownId)}>Registros <Icon name="seta-direita" size={12} /></Link></div>
     </article>
   );
@@ -113,7 +114,7 @@ function SegmentList({ title, description, segments, query, secondaryKind = "COU
   return (
     <section className={`${styles.panel} ${tone === "soft" ? styles.panelSoft : ""}`}>
       <header className={styles.panelHeader}><div><h2>{title}</h2><p>{description}</p></div></header>
-      {visibleSegments.length === 0 ? <div className={styles.segmentEmpty}>Sem dados para este recorte. Nenhum segmento foi inventado.</div> : (
+      {visibleSegments.length === 0 ? <div className={styles.segmentEmpty}>Sem dados para este recorte.</div> : (
         <ol className={styles.segmentList}>
           {visibleSegments.map((segment) => {
             const secondary = segment.secondaryValue === null ? null : secondaryKind === "DURATION" ? formatDuration(Number(segment.secondaryValue)) : secondaryKind === "MONEY" ? formatMoney(String(segment.secondaryValue)) : new Intl.NumberFormat("pt-BR").format(Number(segment.secondaryValue));
@@ -126,17 +127,10 @@ function SegmentList({ title, description, segments, query, secondaryKind = "COU
 }
 
 function FunnelPanel({ screen }: Readonly<{ screen: DashboardScreen }>) {
-  const max = Math.max(1, ...screen.fullFunnel.stages.map((stage) => stage.value));
   return (
     <section className={`${styles.panel} ${styles.funnelPanel}`}>
-      <header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Jornada completa</span><h2>Funil comercial</h2><p>Conversão e perda entre cada marco da coorte.</p></div></header>
-      <ol className={styles.funnelList}>
-        {screen.fullFunnel.stages.map((stage, index) => {
-          const previous = index > 0 ? screen.fullFunnel.stages[index - 1] : null;
-          const loss = previous ? Math.max(0, previous.value - stage.value) : null;
-          return <li key={stage.id}><Link className={styles.funnelItem} href={dashboardHref(screen.query, stage.drilldownId)}><span className={styles.funnelIdentity}><span className={styles.funnelStep}>{String(index + 1).padStart(2, "0")}</span><span><strong>{stage.id === "received" ? "Entrada" : stage.label}</strong><small>{loss === null ? "Base da coorte" : `Perda de ${loss.toLocaleString("pt-BR")}`}</small></span></span><progress aria-label={`${stage.label}: ${stage.value}`} className={`${styles.funnelTrack} ${styles.funnelBar}`} max={max} value={stage.value} /><span className={styles.funnelConversion}><strong>{stage.value.toLocaleString("pt-BR")}</strong><small>{stage.percentage === null ? "100% da base" : `${stage.percentage.toLocaleString("pt-BR")}% da etapa anterior`}</small></span></Link></li>;
-        })}
-      </ol>
+      <header className={styles.panelHeader}><div><h2>Seu funil, do primeiro contato à venda</h2><p>Volume de leads que alcançaram cada marco da jornada.</p></div></header>
+      <ConnectedFunnel stages={screen.fullFunnel.stages.map((stage) => ({ ...stage, href: dashboardHref(screen.query, stage.drilldownId) }))} />
       <div className={styles.outcomeGrid} aria-label="Desfechos do funil">
         {screen.fullFunnel.outcomes.map((outcome) => <Link className={styles.outcome} data-outcome={outcome.id} href={dashboardHref(screen.query, outcome.drilldownId)} key={outcome.id}><span>{outcome.label}</span><strong>{outcome.value.toLocaleString("pt-BR")}</strong><small>{outcome.percentage === null ? "Sem denominador" : `${outcome.percentage.toLocaleString("pt-BR")}% a partir de ${outcome.branchFrom === "received" ? "Entrada" : "Proposta"}`}</small></Link>)}
       </div>
@@ -148,7 +142,7 @@ function AttentionPanel({ items, query }: Readonly<{ items: readonly DashboardAt
   const total = items.reduce((sum, item) => sum + item.value, 0);
   return (
     <section className={`${styles.panel} ${styles.attentionPanel}`}>
-      <header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Ação necessária</span><h2>Precisa de atenção</h2><p>Prioridades para acompanhar hoje.</p></div><span className={styles.attentionTotal}>{total.toLocaleString("pt-BR")}</span></header>
+      <header className={styles.panelHeader}><div><h2>Prioridades de hoje</h2><p>Prioridades para acompanhar hoje.</p></div><span className={styles.attentionTotal}>{total.toLocaleString("pt-BR")}</span></header>
       <ol className={styles.attentionList}>{items.map((item) => <li key={item.id}><Link className={styles.attentionLink} data-severity={item.severity} href={dashboardHref(query, item.drilldownId)}><span className={styles.attentionMark}><Icon name={item.severity === "INFO" ? "automacoes" : "alerta"} size={16} /></span><span className={styles.attentionText}><strong>{item.label}</strong><span>{item.detail}</span></span><span className={styles.attentionValue}>{item.value.toLocaleString("pt-BR")}</span></Link></li>)}</ol>
     </section>
   );
@@ -167,7 +161,7 @@ function SlaPanel({ screen }: Readonly<{ screen: DashboardScreen }>) {
   ] as const;
   return (
     <section className={`${styles.panel} ${styles.slaPanel}`}>
-      <header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Velocidade</span><h2>SLA humano</h2><p>Política imediata — 0 minutos. As faixas não alteram o prazo.</p></div>{comparison ? <span className={styles.slaTrend} data-interpretation={comparison.interpretation}>{comparisonSentence(comparison)}</span> : null}</header>
+      <header className={styles.panelHeader}><div><h2>Velocidade de atendimento</h2><p>SLA humano imediato. Acompanhe o tempo até a primeira tentativa.</p></div>{comparison ? <span className={styles.slaTrend} data-interpretation={comparison.interpretation}>{comparisonSentence(comparison)}</span> : null}</header>
       <div className={styles.slaStats}>{statistics.map(([label, value, description]) => <Link href={dashboardHref(screen.query, drilldownId)} key={label}><span>{label}</span><strong>{value}</strong><small>{description}</small></Link>)}</div>
       {comparison ? <p className={styles.slaComparison}>Anterior: <strong>{formatValue(comparison.kind, comparison.previous.value)}</strong> · {periodLabel(comparison.previousPeriod.fromDate, comparison.previousPeriod.toDate)}</p> : null}
     </section>
@@ -177,7 +171,7 @@ function SlaPanel({ screen }: Readonly<{ screen: DashboardScreen }>) {
 function PerformancePanel({ screen }: Readonly<{ screen: DashboardScreen }>) {
   return (
     <section className={`${styles.panel} ${styles.performancePanel}`}>
-      <header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Equipe</span><h2>Performance operacional</h2><p>Contexto por função, sem ranking automático ou inferência causal.</p></div></header>
+      <header className={styles.panelHeader}><div><h2>Performance da equipe</h2><p>Resultados e ritmo de atendimento de cada pessoa.</p></div></header>
       {screen.performance.length === 0 ? <div className={styles.segmentEmpty}>Sem atividade atribuída no período.</div> : (
         <div className={styles.performanceScroll}><table className={styles.performanceTable}><thead><tr><th>Pessoa</th><th>Volume</th><th>Conversão</th><th>Receita</th><th>SLA</th><th>Reuniões</th><th>Show rate</th><th><span className={styles.srOnly}>Ação</span></th></tr></thead><tbody>{screen.performance.map((row) => <tr key={`${row.role}:${row.id}`}><td><span className={styles.roleBadge}>{row.role}</span><strong>{row.name}</strong></td><td>{row.volume.toLocaleString("pt-BR")}</td><td>{row.conversionPercentage === null ? "—" : `${row.conversionPercentage.toLocaleString("pt-BR")}%`}</td><td>{formatMoney(row.revenueCents)}</td><td>{formatDuration(row.slaSeconds)}</td><td>{row.meetings.toLocaleString("pt-BR")}</td><td>{row.showRate === null ? "—" : `${row.showRate.toLocaleString("pt-BR")}%`}</td><td><Link href={dashboardHref(screen.query, row.drilldownId)}>Ver registros</Link></td></tr>)}</tbody></table></div>
       )}
@@ -208,14 +202,14 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
   const previousPeriodLabel = periodLabel(screen.comparisonPeriod.fromDate, screen.comparisonPeriod.toDate);
 
   return (
-    <div className={`analytics-canvas ${styles.dashboard}`}>
+    <div className={styles.dashboard}>
       <header className={styles.dashboardHeader}>
-        <div><p className={styles.eyebrow}>Visão executiva · {scopeLabel}</p><h1>Olá, {displayName.split(/\s+/)[0]}.</h1><p className={styles.headerIntro}>Acompanhe resultado, velocidade e riscos da operação em um só lugar.</p></div>
+        <div><p className={styles.eyebrow}>{scopeLabel}</p><h1>Bom trabalho, {displayName.split(/\s+/)[0]}.</h1><p className={styles.headerIntro}>Veja seus resultados e acompanhe o que vem a seguir.</p></div>
         <div className={styles.headerActions}><Link className={styles.primaryAction} href={focusAction.href}>{focusAction.label}<Icon name="seta-direita" size={15} /></Link></div>
       </header>
 
       <section aria-label="Período e filtros do dashboard" className={styles.toolbar}>
-        <nav aria-label="Atalhos de período" className={styles.periodNav}>{(["TODAY", "YESTERDAY", "WEEK", "MONTH"] as const).map((preset) => { const names = { TODAY: "Hoje", YESTERDAY: "Ontem", WEEK: "Semana", MONTH: "Mês" }; return <Link aria-current={q.preset === preset ? "page" : undefined} className={`${styles.periodLink} ${q.preset === preset ? styles.periodActive : ""}`} href={`${basePath}?preset=${preset}`} key={preset}>{names[preset]}</Link>; })}</nav>
+        <nav aria-label="Atalhos de período" className={styles.periodNav}>{(["TODAY", "YESTERDAY", "WEEK", "MONTH"] as const).map((preset) => { const names = { TODAY: "Hoje", YESTERDAY: "Ontem", WEEK: "Semana", MONTH: "Mês" }; return <Link aria-current={q.preset === preset ? "page" : undefined} className={`${styles.periodLink} ${q.preset === preset ? styles.periodActive : ""}`} href={`${basePath}?${paramsFor({ ...q, preset }).toString()}`} key={preset}>{names[preset]}</Link>; })}</nav>
         <div className={styles.contextInline}><strong>{currentPeriodLabel}</strong><details><summary>Comparado ao período anterior</summary><div><p><span>Anterior</span>{previousPeriodLabel}</p><p><span>Filtros</span>{activeFilterGroups.length > 0 ? activeFilterGroups.join(" · ") : "Todos os registros"}</p><p><span>Atualização</span>{generatedLabel(screen.overview.generatedAt, screen.overview.period.timeZone)}</p><p>{roleName} · {screen.overview.period.timeZone}</p></div></details></div>
         <details className={styles.filterDetails} open={activeFilterCount > 0 || q.preset === "CUSTOM"}>
           <summary className={styles.filterSummary}><Icon name="filtro" size={15} /> Filtros{activeFilterCount > 0 ? <span className={styles.filterCount}>{activeFilterCount}</span> : null}</summary>
@@ -233,24 +227,27 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
       <section aria-label="Indicadores principais"><div className={styles.comparisonGrid}>{primaryComparisons.map((comparison, index) => <ComparisonCard comparison={comparison} featured={index === 0} key={comparison.id} query={q} series={screen.timeSeries.find((series) => series.id === comparison.id)} />)}</div></section>
 
       <div className={styles.primaryGrid}>
-        <section className={`${styles.panel} ${styles.evolutionPanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Evolução comercial</span><h2>Da entrada à venda</h2><p>Acompanhe o ritmo da operação e compare com o período anterior.</p></div></header><CommercialEvolutionChart currentPeriodLabel={currentPeriodLabel} description="Evolução dos principais marcos comerciais" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Evolução comercial" /></section>
+        <section className={`${styles.panel} ${styles.evolutionPanel}`}><header className={styles.panelHeader}><div><h2>Evolução comercial</h2><p>O ritmo da operação, dia após dia.</p></div><span className={styles.headerIcon}><Icon name="tendencia" size={16} /></span></header><CommercialEvolutionChart currentPeriodLabel={currentPeriodLabel} description="Evolução dos principais marcos comerciais" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Evolução comercial" /></section>
+        <StageDistribution segments={screen.backlogByStage.map((stage) => ({ ...stage, href: dashboardHref(q, stage.drilldownId) }))} />
+      </div>
+
+      <FunnelPanel screen={screen} />
+
+      <div className={styles.commercialGrid}>
+        <div className={styles.resultsStack}>
+          <section className={`${styles.panel} ${styles.revenuePanel}`}><header className={styles.panelHeader}><div><h2>Receita e vendas</h2><p>Resultados que movimentam o seu negócio.</p></div><span className={styles.ticketBadge}>Ticket médio <strong>{formatMoney(screen.overview.averageTicket.cents)}</strong></span></header><RevenueSalesChart currentPeriodLabel={currentPeriodLabel} description="Receita e vendas por período" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Receita e vendas" /></section>
+          <section className={styles.pulseStrip} aria-label="Marcos operacionais do período">{operationalPulse.map((metric) => <Link href={dashboardHref(q, metric.drilldownId)} key={metric.id}><span>{metric.label}</span><strong>{metricValue(metric)}</strong><small>{metric.denominator === null ? `${metric.numerator} registros` : `${metric.numerator} de ${metric.denominator}`}</small></Link>)}</section>
+        </div>
         <AttentionPanel items={screen.attention} query={q} />
       </div>
 
-      <section className={styles.pulseStrip} aria-label="Marcos operacionais do período">{operationalPulse.map((metric) => <Link href={dashboardHref(q, metric.drilldownId)} key={metric.id}><span>{metric.label}</span><strong>{metricValue(metric)}</strong><small>{metric.denominator === null ? `${metric.numerator} registros` : `${metric.numerator} de ${metric.denominator}`}</small></Link>)}</section>
+      <PerformancePanel screen={screen} />
 
-      <section className={`${styles.panel} ${styles.flowPanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Volume por marco</span><h2>Movimento do funil no período</h2><p>Volume de entradas, qualificações, agendamentos e vendas ao longo do período.</p></div></header><CommercialFlowChart series={screen.timeSeries} /></section>
-
-      <div className={styles.commercialGrid}>
-        <section className={`${styles.panel} ${styles.revenuePanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Receita e vendas</span><h2>Resultado ao longo do tempo</h2><p>Explore a receita gerada e a evolução das vendas.</p></div><span className={styles.ticketBadge}>Ticket {formatMoney(screen.overview.averageTicket.cents)}</span></header><RevenueSalesChart currentPeriodLabel={currentPeriodLabel} description="Receita e vendas por bucket temporal" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Receita e vendas" /></section>
-        <FunnelPanel screen={screen} />
-      </div>
+      <section className={`${styles.panel} ${styles.flowPanel}`}><header className={styles.panelHeader}><div><h2>Atividade ao longo do período</h2><p>Entradas, qualificações, agendamentos e vendas.</p></div></header><CommercialFlowChart series={screen.timeSeries} /></section>
 
       <SlaPanel screen={screen} />
 
       <section aria-labelledby="acquisition-title"><header className={styles.sectionHeader}><div><span className={styles.sectionTag}>Aquisição e qualidade</span><h2 id="acquisition-title">De onde vem o resultado</h2><p>Volume, conversão e qualidade da entrada em leituras separadas.</p></div></header><div className={styles.analysisGrid}><SegmentList description="Ganhos vigentes sobre os leads recebidos da origem." limit={6} query={q} segments={screen.sourceConversion} title="Conversão por origem" /><SegmentList description="Distribuição vigente entre P1, P2 e P3." limit={3} query={q} segments={screen.priorities} title="Prioridade da entrada" tone="soft" /><SegmentList description="Completude humana da coorte recebida." limit={5} query={q} segments={screen.pactoQuality} title="Qualidade do PACTO" /></div></section>
-
-      <PerformancePanel screen={screen} />
 
       <details className={styles.details}><summary>Explorar análises complementares <span>Campanhas, criativos, etapas, motivos e aging</span></summary><div className={styles.detailsContent}><SegmentList description="Volume de leads recebidos por origem." query={q} segments={screen.sources} title="Origem dos leads" /><SegmentList description="Distribuição dos leads recebidos." query={q} segments={screen.campaigns} title="Campanhas" /><SegmentList description="Distribuição dos leads recebidos." query={q} segments={screen.creatives} title="Criativos" /><SegmentList description="Entradas históricas por etapa e pipeline." query={q} segments={screen.stageConversion} title="Conversão por etapa" /><SegmentList description="Tempo médio calculado pelo histórico de etapas." query={q} secondaryKind="DURATION" segments={screen.stageTime} title="Tempo por etapa" /><SegmentList description="Eventos de desqualificação no período." query={q} segments={screen.disqualificationReasons} title="Motivos de desqualificação" /><SegmentList description="Perdas vigentes ocorridas no período." query={q} segments={screen.lossReasons} title="Motivos de perda" /><SegmentList description="Último estado persistido das reuniões decididas." query={q} segments={screen.noShowReasons} title="Motivos de no-show" /><SegmentList description="Leads em intervalo aberto no corte." query={q} segments={screen.backlogByStage} title="Backlog por etapa" /><SegmentList description="Tempo médio dos negócios em cada etapa." query={q} secondaryKind="DURATION" segments={screen.agingByStage} title="Aging por etapa" /></div></details>
     </div>

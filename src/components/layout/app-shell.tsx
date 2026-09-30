@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { LogoutButton } from "@/components/auth/logout-button";
 import { GlobalSearch } from "@/components/layout/global-search";
@@ -120,11 +120,21 @@ function initials(value: string) {
     .join("");
 }
 
+function subscribeToMobileLayout(onChange: () => void) {
+  const media = window.matchMedia("(max-width: 800px)");
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+const mobileLayoutSnapshot = () => window.matchMedia("(max-width: 800px)").matches;
+const serverLayoutSnapshot = () => false;
+
 export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const pathname = usePathname();
   const [session, setSession] = useState<SessionView | null | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
+  const isMobile = useSyncExternalStore(subscribeToMobileLayout, mobileLayoutSnapshot, serverLayoutSnapshot);
   const menuRef = useRef<HTMLElement>(null);
   const [theme, setTheme] = useState<"dark" | "light">("light");
   const publicRoute = publicRoutes.has(pathname);
@@ -222,10 +232,10 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
           </nav>
           <div className={styles.actions}>
             {session ? <GlobalSearch /> : null}
-            {canCreateLead ? <Link className={styles.newButton} href="/leads/entrada"><Icon name="mais" size={14} /><span>Novo</span></Link> : null}
+            {canCreateLead ? <Link aria-label="Novo lead" className={styles.newButton} href="/leads/entrada"><Icon name="mais" size={14} /><span>Novo</span></Link> : null}
             <Link aria-label="Notificações" className={styles.iconButton} href="/notificacoes"><Icon name="notificacoes" size={17} /></Link>
             <details className={styles.profile}>
-              <summary aria-label="Menu da conta"><span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span></summary>
+              <summary aria-label="Menu da conta"><span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span><span className={styles.profileIdentity}><strong>{session?.user.displayName.split(" ")[0] ?? "Minha conta"}</strong><small>{session?.user.role.name ?? "Workspace"}</small></span><span className={styles.profileChevron}>⌄</span></summary>
               <div className={styles.profilePanel}>
                 <strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small>
                 <Link href="/perfil" onClick={closeMenus}>Perfil e preferências</Link>
@@ -236,19 +246,20 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
           </div>
         </header>
         <button aria-label="Fechar navegação" className={cn(styles.backdrop, menuOpen && styles.visible)} onClick={() => setMenuOpen(false)} tabIndex={menuOpen ? 0 : -1} type="button" />
-        <aside className={cn(styles.sidebar, menuOpen && styles.open)} id="menu-principal" ref={menuRef}>
+        <aside aria-hidden={isMobile && !menuOpen ? true : undefined} className={cn(styles.sidebar, menuOpen && styles.open)} id="menu-principal" inert={isMobile && !menuOpen} ref={menuRef}>
+          <div className={styles.themeControls}><button aria-label="Usar tema claro" aria-pressed={theme === "light"} onClick={() => { if (theme !== "light") toggleTheme(); }} title="Tema claro" type="button"><Icon name="sol" size={17} /></button><button aria-label="Usar tema escuro" aria-pressed={theme === "dark"} onClick={() => { if (theme !== "dark") toggleTheme(); }} title="Tema escuro" type="button"><Icon name="lua" size={17} /></button></div>
           <div className={styles.sidebarHeading}><Icon name={activeSection?.icon ?? "dashboard"} size={15} /><span>{activeSection?.label ?? "Workspace"}</span><button aria-label={collapsed ? "Expandir menu" : "Recolher menu"} className={styles.collapseButton} onClick={() => setCollapsed(!collapsed)} type="button">{collapsed ? "›" : "‹"}</button></div>
           <nav aria-label="Navegação da área" className={styles.contextNav}>
             {session === undefined ? <div aria-label="Carregando navegação" className={styles.skeleton} role="status">{Array.from({ length: 5 }, (_, index) => <span key={index} />)}</div> : activeSection?.items.map((item, index) => (
-              <Link aria-current={isActive(pathname, item.href) ? "page" : undefined} className={styles.contextLink} href={item.href} key={item.href} onClick={() => setMenuOpen(false)} title={labels[item.href] ?? item.label}>
+              <Link aria-current={isActive(pathname, item.href) ? "page" : undefined} aria-label={labels[item.href] ?? item.label} className={styles.contextLink} href={item.href} key={item.href} onClick={() => setMenuOpen(false)} title={labels[item.href] ?? item.label}>
                 <span className={styles.navIcon} data-color={index % 5}><Icon name={item.icon} size={15} /></span><span>{labels[item.href] ?? item.label}</span>
               </Link>
             ))}
           </nav>
           <div className={styles.sidebarBottom}>
-            <Link href="/" onClick={() => setMenuOpen(false)} title="Meu workspace"><Icon name="meu-dia" size={16} /><span>Meu workspace</span></Link>
-            {availableSections.find((section) => section.key === "settings") ? <Link href={availableSections.find((section) => section.key === "settings")!.items[0]!.href} onClick={() => setMenuOpen(false)} title="Configurações"><Icon name="configuracoes" size={16} /><span>Configurações</span></Link> : null}
-            <Link className={styles.account} href="/perfil" onClick={() => setMenuOpen(false)} title="Minha conta"><span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span><span><strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small></span></Link>
+            <Link aria-label="Meu workspace" href="/" onClick={() => setMenuOpen(false)} title="Meu workspace"><Icon name="meu-dia" size={16} /><span>Meu workspace</span></Link>
+            {availableSections.find((section) => section.key === "settings") ? <Link aria-label="Configurações" href={availableSections.find((section) => section.key === "settings")!.items[0]!.href} onClick={() => setMenuOpen(false)} title="Configurações"><Icon name="configuracoes" size={16} /><span>Configurações</span></Link> : null}
+            <Link aria-label="Minha conta" className={styles.account} href="/perfil" onClick={() => setMenuOpen(false)} title="Minha conta"><span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span><span><strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small></span></Link>
           </div>
         </aside>
         <div className={styles.mobileBar}><button aria-controls="menu-principal" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)} type="button"><Icon name="dashboard" size={17} />{activeSection?.label ?? "Navegação"}<span>⌄</span></button></div>

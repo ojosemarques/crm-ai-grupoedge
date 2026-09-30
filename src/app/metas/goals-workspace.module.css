@@ -1,27 +1,32 @@
 .workspace { display: grid; gap: 24px; min-width: 0; }
 .overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
-.overviewCard { padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); display: grid; gap: 10px; }
+.overviewCard { padding: 20px; border: 1px solid var(--border); border-radius: 24px; background: var(--surface); display: grid; gap: 10px; }
 .overviewCard > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--text-muted); font-size: 11px; }
 .overviewCard > div svg { color: var(--primary); }
-.overviewCard > strong { font-size: 29px; font-weight: 600; letter-spacing: -.04em; line-height: 1.1; }
+.overviewCard > strong { font-size: 29px; font-weight: 500; letter-spacing: -.04em; line-height: 1.1; }
 .overviewCard small { color: var(--text-muted); font-size: 10px; }
-.overviewCard:nth-child(3) { background: #f2fcf7; border-color: #e0f1e8; }
+.overviewCard:nth-child(3) { background: #fff4eb; border-color: #ffebdc; }
 .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .planFilter { background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 7px 12px; font-size: 12px; min-width: 150px; max-width: 100%; }
 .sectionHeader { display: flex; align-items: end; justify-content: space-between; gap: 15px; margin-bottom: 15px; }
-.sectionHeader span { text-transform: uppercase; letter-spacing: .09em; font-size: 9px; color: var(--primary); }
-.sectionHeader h2 { font-size: 16px; font-weight: 600; margin-top: 4px; }
+.sectionHeader span { text-transform: uppercase; letter-spacing: .09em; font-size: 10px; color: var(--text-muted); }
+.sectionHeader h2 { font-size: 16px; font-weight: 500; margin-top: 4px; }
 .sectionHeader small { color: var(--text-muted); font-size: 11px; }
 .goalGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.goalCard { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; min-width: 0; }
+.goalCard { background: var(--surface); border: 1px solid var(--border); border-radius: 24px; padding: 20px; min-width: 0; }
 .goalCard > header { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
 .goalCard > header > div > span { color: var(--text-muted); font-size: 10px; }
-.goalCard h3 { font-size: 13px; font-weight: 600; margin-top: 4px; }
+.goalCard h3 { font-size: 13px; font-weight: 500; margin-top: 4px; }
 .gauge { position: relative; margin: 20px auto 12px; width: min(100%, 260px); }
 .gauge svg { display: block; width: 100%; }
-.gaugeTrack { stroke: var(--primary-soft); }
-.gaugeFill { stroke: var(--primary); }
-.gauge strong { position: absolute; left: 50%; bottom: 12%; transform: translateX(-50%); font-size: 29px; letter-spacing: -.035em; font-weight: 650; }
+.gaugeTrack { stroke: #f0eee9; }
+.gaugeFill { stroke: #ff6b2c; stroke-linecap: round; }
+.goalCard:nth-child(3n + 2) .gaugeFill { stroke: #7c5cdb; }
+.goalCard:nth-child(3n + 3) .gaugeFill { stroke: #4a9ed8; }
+.goalCard[data-achieved="true"] .gaugeFill { stroke: #53ad87; }
+.gaugeLabel { position: absolute; left: 50%; bottom: 9%; transform: translateX(-50%); display: grid; justify-items: center; gap: 3px; white-space: nowrap; }
+.gaugeLabel strong { font-size: 35px; letter-spacing: -.04em; font-weight: 500; }
+.gaugeLabel span { font-size: 10px; color: var(--text-muted); }
 .goalValues { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .goalValues > div { display: grid; gap: 4px; padding: 10px 12px; border-radius: 8px; background: var(--surface-muted); }
 .goalValues span { color: var(--text-muted); font-size: 10px; }
@@ -33,16 +38,38 @@
 .ruleDetails summary { cursor: pointer; }
 .ruleDetails p { margin-top: 8px; }
 .plans { display: grid; gap: 12px; }
-.planCard { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+.planCard { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 20px; }
 .editor { width: min(1040px, calc(100vw - 40px)); max-width: 1040px; padding: 28px; }
 .dialogClose { float: right; }
 .dialogClose button { border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text-muted); cursor: pointer; width: 28px; height: 28px; font-size: 20px; }
 .confirmDialog { width: min(460px, calc(100vw - 40px)); padding: 26px; }
 .confirmForm { display: grid; gap: 16px; }
-.confirmForm h2 { font-size: 20px; font-weight: 600; }
+.confirmForm h2 { font-size: 20px; font-weight: 500; }
 .confirmForm > p { color: var(--text-muted); font-size: 12px; }
 .confirmForm label { display: grid; gap: 8px; font-size: 12px; }
 .confirmForm textarea { border: 1px solid var(--border); border-radius: 7px; padding: 10px; background: var(--surface-muted); }
 .confirmForm > div { display: flex; justify-content: end; gap: 10px; }
 @media (max-width: 1100px) { .overview, .goalGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .overview { gap: 10px; } .overviewCard { padding: 14px; } .overviewCard > div { font-size: 10px; } .overviewCard small { font-size: 9px; } .goalGrid { grid-template-columns: minmax(0, 1fr); } .editor { padding: 20px; } }
+
+.portfolio { background: var(--surface); border: 1px solid var(--border); border-radius: 24px; padding: 24px; display: grid; grid-template-columns: .7fr 1.3fr 1fr; align-items: center; gap: 32px; }
+.portfolio > div:first-child { display: grid; gap: 5px; }
+.portfolio > div:first-child > span { color: var(--text-muted); font-size: 11px; }
+.portfolio > div:first-child > strong { font-weight: 500; font-size: 34px; letter-spacing: -.05em; }
+.portfolio > div:first-child > strong small { color: #a8aba3; font-size: 24px; }
+.portfolio p { color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.portfolioProgress > div { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 10px; }
+.portfolioProgress strong { font-weight: 500; }
+.portfolioProgress progress { display: block; appearance: none; width: 100%; height: 12px; border: 0; border-radius: 10px; overflow: hidden; margin-bottom: 10px; background: #f0f1ee; }
+.portfolioProgress progress::-webkit-progress-bar { background: #f0f1ee; }
+.portfolioProgress progress::-webkit-progress-value { background: #ff6b2c; border-radius: 10px; }
+.portfolioProgress progress::-moz-progress-bar { background: #ff6b2c; border-radius: 10px; }
+.goalFilters { display: flex; flex-wrap: wrap; gap: 7px; }
+.goalFilters button { border: 1px solid var(--border); border-radius: 30px; padding: 8px 13px; font-size: 11px; cursor: pointer; background: white; }
+.goalFilters button[aria-pressed="true"] { background: #242620; color: white; border-color: #242620; }
+.goalRemaining { margin-top: 12px; font-size: 11px; color: var(--text-muted); }
+.goalValues > div { border-radius: 12px; padding: 12px; }
+.goalCard footer { font-size: 11px; }
+.goalCard footer a { color: #ba481a; }
+@media(max-width:1100px) { .portfolio { grid-template-columns: 1fr 2fr; } .goalFilters { grid-column: 1 / -1; } }
+@media(max-width:600px) { .portfolio { grid-template-columns: 1fr; gap: 20px; padding: 20px; } .goalFilters { grid-column: auto; } }

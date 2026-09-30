@@ -74,7 +74,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-left: 3px solid var(--primary);
-  border-radius: 14px;
+  border-radius: 20px;
   color: var(--foreground);
   overflow: hidden;
   padding: 22px 24px;
@@ -273,7 +273,7 @@
 .summaryButton {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 20px;
   color: var(--text-muted);
   display: grid;
   gap: 12px;
@@ -590,7 +590,7 @@
 .sideCard {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 20px;
   padding: 18px;
 }
 
