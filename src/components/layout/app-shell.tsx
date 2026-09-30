@@ -218,12 +218,6 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             {availableSections.filter((section) => section.key !== "settings").map((section) => (
               <Link aria-current={activeSection?.key === section.key ? "true" : undefined} href={section.items[0]!.href} key={section.key} onClick={() => setMenuOpen(false)}>{section.label}</Link>
             ))}
-            <details className={styles.more}>
-              <summary><Icon name="dashboard" size={13} /> Mais</summary>
-              <div className={styles.morePanel}>
-                {availableSections.map((section) => <section key={section.key}><h2>{section.label}</h2>{section.items.map((item) => <Link href={item.href} key={item.href} onClick={closeMenus}><Icon name={item.icon} size={15} />{labels[item.href] ?? item.label}</Link>)}</section>)}
-              </div>
-            </details>
           </nav>
           <div className={styles.actions}>
             {session ? <GlobalSearch /> : null}
