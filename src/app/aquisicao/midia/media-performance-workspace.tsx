@@ -12,6 +12,7 @@ import type { MediaBreakdownDimension } from "@/modules/marketing/domain/media-b
 import type { FunnelDimension } from "@/modules/marketing/domain/acquisition-funnel";
 import styles from "../acquisition-workspace.module.css";
 import funnelStyles from "./strategy-funnel.module.css";
+import { StrategyFunnelEditor, type StrategyFunnelScreen } from "./strategy-funnel-editor";
 
 type Screen = Awaited<ReturnType<ReturnType<typeof getMediaPerformanceService>["getScreen"]>>;
 type ChartMetric = "spendCents" | "impressions" | "clicks" | "reportedLeads";
@@ -25,7 +26,7 @@ const metricValue = (amount: number | null, unit: Screen["metrics"][number]["uni
 const sample = "date,channelKey,channelName,accountKey,accountName,campaignKey,campaignName,adGroupKey,adGroupName,adKey,adName,creativeKey,creativeName,currency,timeZone,spendCents,impressions,reach,clicks,linkClicks,landingPageViews,reportedLeads,reportedPurchases,reportedRevenueCents";
 const chartOptions: readonly { key: ChartMetric; label: string }[] = [{ key: "spendCents", label: "Investimento" }, { key: "impressions", label: "Impressões" }, { key: "clicks", label: "Cliques" }, { key: "reportedLeads", label: "Leads" }];
 
-export function MediaPerformanceWorkspace({ initial }: Readonly<{ initial: Screen }>) {
+export function MediaPerformanceWorkspace({ initial, strategyInitial }: Readonly<{ initial: Screen; strategyInitial: StrategyFunnelScreen }>) {
   const router = useRouter();
   const [csv, setCsv] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -94,6 +95,8 @@ export function MediaPerformanceWorkspace({ initial }: Readonly<{ initial: Scree
 
     <div className={styles.primaryGrid}><Surface className={styles.panel}><SectionHeader title="Evolução da performance" description="Compare o comportamento dos seus indicadores ao longo dos dias." /><div aria-label="Indicador do gráfico" className={styles.chartTabs} role="group">{chartOptions.map((option) => <button aria-pressed={chartMetric === option.key} key={option.key} onClick={() => setChartMetric(option.key)} type="button">{option.label}</button>)}</div>{chartData.length ? <AnalyticsChart label={`Evolução diária de ${chartOptions.find((option) => option.key === chartMetric)?.label}`} points={chartData.map((point) => ({ label: point.date.slice(5).split("-").reverse().join("/"), values: { value: point.value } }))} series={[{ key: "value", label: chartOptions.find((option) => option.key === chartMetric)?.label ?? "Indicador", color: "#ff6b2c" }]} formatValue={(value) => chartMetric === "spendCents" ? money(value * 100) : value.toLocaleString("pt-BR")} /> : <div className={styles.chartEmpty}><Icon name="tendencia" size={28} /><strong>Acompanhe a evolução das campanhas</strong><span>Importe os dados de performance para visualizar o gráfico diário.</span></div>}<details className={styles.dataDetails}><summary>Ver dados em tabela</summary><DataTableShell className="mt-3"><table><thead><tr><th>Data</th><th>Investimento</th><th>Impressões</th><th>Cliques</th><th>Leads</th></tr></thead><tbody>{initial.trend.map((point) => <tr key={point.date}><td>{point.date}</td><td>{money(point.spendCents)}</td><td>{point.impressions}</td><td>{point.clicks}</td><td>{point.reportedLeads}</td></tr>)}</tbody></table></DataTableShell></details></Surface>
     <Surface className={styles.panel}><SectionHeader title="Funil de aquisição" description="Da mídia à jornada comercial no CRM." /><div className={styles.funnelGroups}>{[{ label: "Mídia", stages: initial.funnel.media }, { label: "CRM", stages: initial.funnel.crm }, { label: "Resultados", stages: initial.funnel.outcomes }].map((group) => { const max = Math.max(...group.stages.map((stage) => stage.value), 1); return <section key={group.label}><h3>{group.label}</h3>{group.stages.map((stage) => <div className={styles.funnelRow} key={stage.key}><div><span>{stage.label}</span><strong>{stage.value.toLocaleString("pt-BR")}</strong></div><progress aria-label={`${stage.label}: ${stage.value}`} max={max} value={stage.value} /></div>)}</section>; })}</div></Surface></div>
+
+    <StrategyFunnelEditor initial={strategyInitial} />
 
     <Surface className={styles.panel}>
       <SectionHeader title="Anúncios por origem" description="Investimento e eficiência de cada canal, campanha ou criativo. Moedas são mantidas separadas." />

@@ -10814,6 +10814,27 @@ model MarketingFormVersion {
   @@map("marketing_form_versions")
 }
 
+model StrategyFunnel {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @db.Uuid
+  name             String
+  description      String   @default("")
+  definition       Json
+  status           String   @default("ACTIVE")
+  revision         Int      @default(1)
+  idempotencyKey   String
+  createdByActorId String   @db.Uuid
+  updatedByActorId String   @db.Uuid
+  archivedAt       DateTime? @db.Timestamptz(3)
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, archivedAt, updatedAt])
+  @@map("strategy_funnels")
+}
+
 model MarketingSession {
   id                 String                        @id @default(uuid()) @db.Uuid
   workspaceId        String                        @db.Uuid

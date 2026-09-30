@@ -7,3 +7,45 @@
 .selector { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin-top: 1rem; }
 .selector select { max-width: 100%; border: 1px solid var(--border, #e5e7eb); border-radius: 6px; padding: .5rem; background: transparent; }
 @media (max-width: 700px) { .flow { flex-direction: column; gap: 1.5rem; } .stage:not(:last-child)::after { content: "↓"; top: auto; bottom: -1.4rem; right: 50%; } .branch { margin-left: 1rem; } }
+
+.editorPanel { overflow: hidden; }
+.editorToolbar { display: grid; grid-template-columns: minmax(12rem, .8fr) minmax(12rem, 1fr) minmax(16rem, 1.5fr); gap: .75rem; margin-top: 1rem; }
+.editorToolbar label { display: grid; gap: .35rem; color: var(--muted-foreground, #64748b); font-size: .8rem; font-weight: 650; }
+.editorToolbar input, .editorToolbar select, .editorStage input, .editorStage select, .addRow select { min-height: 2.5rem; width: 100%; border: 1px solid var(--border, #e5e7eb); border-radius: .65rem; padding: .55rem .7rem; background: var(--background, #fff); color: inherit; }
+.editorFlow { display: flex; align-items: stretch; gap: 0; padding: 0; margin: 1.25rem 0; overflow-x: auto; list-style: none; scroll-snap-type: x proximity; }
+.editorStageWrap { display: flex; align-items: center; min-width: 19rem; scroll-snap-align: start; }
+.editorStage { width: 16rem; min-height: 14.5rem; display: grid; align-content: start; gap: .7rem; border: 1px solid var(--border, #e5e7eb); border-radius: .9rem; padding: .9rem; background: color-mix(in srgb, var(--background, #fff) 96%, #ff6b2c 4%); }
+.stageHead { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.stageHead > span { color: #c2410c; font-size: .75rem; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
+.stageHead div { display: flex; }
+.stageHead button { width: 1.7rem; height: 1.7rem; border: 0; border-radius: .4rem; background: transparent; cursor: pointer; }
+.stageHead button:hover:not(:disabled) { background: #ffedd5; }
+.stageHead button:disabled { opacity: .35; cursor: default; }
+.editorStage dl { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin: 0; }
+.editorStage dl div { display: grid; gap: .15rem; }
+.editorStage dt, .editorStage small, .edgeMetric span, .edgeMetric small, .method { color: var(--muted-foreground, #64748b); font-size: .75rem; }
+.editorStage dd { margin: 0; font-weight: 750; }
+.edgeMetric { width: 3rem; display: grid; justify-items: center; gap: .15rem; text-align: center; }
+.edgeMetric::before { content: "→"; color: #ea580c; font-size: 1.15rem; }
+.edgeMetric strong { font-size: .76rem; color: #9a3412; }
+.edgeMetric span, .edgeMetric small { display: none; }
+.edgeMetric:hover { width: 9rem; }
+.edgeMetric:hover span, .edgeMetric:hover small { display: block; }
+.addRow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.addRow select { width: auto; min-width: 12rem; }
+.spacer { flex: 1; }
+.feedback { margin: .75rem 0 0; color: #9a3412; }
+.method { margin: 1rem 0 0; line-height: 1.5; }
+
+@media (max-width: 800px) {
+  .editorToolbar { grid-template-columns: 1fr; }
+  .description { grid-column: auto; }
+  .editorFlow { flex-direction: column; gap: .75rem; overflow: visible; }
+  .editorStageWrap { min-width: 0; flex-direction: column; align-items: stretch; }
+  .editorStage { width: 100%; min-height: 0; }
+  .edgeMetric { width: auto; padding: .35rem 0; }
+  .edgeMetric::before { content: "↓"; }
+  .edgeMetric span, .edgeMetric small { display: block; }
+  .addRow > *, .addRow select { width: 100%; }
+  .spacer { display: none; }
+}

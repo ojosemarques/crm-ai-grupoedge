@@ -92,6 +92,19 @@ export function createCustomerSuccessService(options: Options) {
       plan: planMap.get(item.accountId) ?? null,
       operatingReview: await operatingReviewService.accountReview(context, item.accountId),
     })));
+    const alerts = items.flatMap((item) => {
+      const account = item.account;
+      const review = item.operatingReview;
+      const onboarding = review.deliveryPlans.onboardingCases.find((candidate) => ["PENDING", "IN_PROGRESS", "BLOCKED"].includes(candidate.status) && candidate.targetAt < now);
+      const renewal = review.renewal && ["IN_REVIEW", "DEFERRED"].includes(review.renewal.status) && review.renewal.targetDate >= now && review.renewal.targetDate <= new Date(now.getTime() + 30 * 86_400_000) ? review.renewal : null;
+      const satisfaction = review.satisfaction.find((candidate) => candidate.declining);
+      const alerts: Array<{ id: string; type: "ONBOARDING_OVERDUE" | "RENEWAL_DUE" | "SATISFACTION_DROP" | "CHURN_RISK"; severity: "CRITICAL" | "HIGH" | "MEDIUM"; accountId: string; accountName: string; title: string; detail: string; occurredAt: string; href: string }> = [];
+      if (onboarding) alerts.push({ id: `onboarding:${onboarding.id}`, type: "ONBOARDING_OVERDUE" as const, severity: onboarding.status === "BLOCKED" ? "CRITICAL" as const : "HIGH" as const, accountId: account.id, accountName: account.name, title: "Onboarding atrasado", detail: `Prazo vencido em ${onboarding.targetAt.toISOString().slice(0, 10)}. Próxima ação: ${onboarding.nextActionDescription}.`, occurredAt: onboarding.targetAt.toISOString(), href: `/onboarding?caseId=${onboarding.id}` });
+      if (renewal) alerts.push({ id: `renewal:${renewal.id}`, type: "RENEWAL_DUE" as const, severity: ["HIGH", "CRITICAL"].includes(renewal.riskLevel) ? "CRITICAL" as const : "MEDIUM" as const, accountId: account.id, accountName: account.name, title: "Renovação próxima", detail: `Renovação prevista para ${renewal.targetDate.toISOString().slice(0, 10)}${renewal.nextActionAt ? `; próxima ação em ${renewal.nextActionAt.toISOString().slice(0, 10)}` : "; sem próxima ação"}.`, occurredAt: renewal.targetDate.toISOString(), href: `/farmer?renewalId=${renewal.id}` });
+      if (satisfaction) alerts.push({ id: `satisfaction:${account.id}:${satisfaction.type}`, type: "SATISFACTION_DROP" as const, severity: satisfaction.deltaPoints !== null && satisfaction.deltaPoints <= -20 ? "HIGH" as const : "MEDIUM" as const, accountId: account.id, accountName: account.name, title: `${satisfaction.type} em queda`, detail: `Índice normalizado caiu ${Math.abs(satisfaction.deltaPoints ?? 0)} ponto(s), de ${satisfaction.previousNormalized}% para ${satisfaction.latestNormalized}%.`, occurredAt: satisfaction.latestAt.toISOString(), href: `/customer-service?accountId=${account.id}` });
+      if (item.health?.status === "RISK" || review.risks.some((risk) => risk.code === "RENEWAL_AT_RISK")) alerts.push({ id: `churn:${account.id}`, type: "CHURN_RISK" as const, severity: review.risks.some((risk) => risk.severity === "CRITICAL") ? "CRITICAL" as const : "HIGH" as const, accountId: account.id, accountName: account.name, title: "Risco de churn", detail: item.health?.score === null || item.health?.score === undefined ? "Risco persistido sem pontuação completa; revise as evidências e a renovação." : `Saúde em risco com score ${item.health.score}/100; revise as evidências e a renovação.`, occurredAt: item.health?.cutoffAt.toISOString() ?? now.toISOString(), href: `/customer-success?health=RISK&accountId=${account.id}` });
+      return alerts;
+    }).sort((left, right) => ({ CRITICAL: 0, HIGH: 1, MEDIUM: 2 })[left.severity] - ({ CRITICAL: 0, HIGH: 1, MEDIUM: 2 })[right.severity] || left.occurredAt.localeCompare(right.occurredAt));
     return {
       generatedAt: now.toISOString(), timeZone: "America/Sao_Paulo", total: filtered.length, page: query.page, pageSize: query.pageSize,
       metrics: {
@@ -101,9 +114,10 @@ export function createCustomerSuccessService(options: Options) {
         risk: visible.filter((item) => latestHealth.get(item.accountId)?.status === "RISK").length,
         insufficient: visible.filter((item) => !latestHealth.has(item.accountId) || latestHealth.get(item.accountId)?.status === "INSUFFICIENT").length,
         overdue: visible.filter((item) => item.nextActionAt && item.nextActionAt < now && item.state === "ACTIVE").length,
+        postSaleAlerts: alerts.length,
       },
       formulas: { overdue: "state = ACTIVE e nextActionAt < instante de atualização", health: "pontuação ponderada da versão publicada; sinal obrigatório ausente ou vencido = dados insuficientes" },
-      items, members: members.map((item) => ({ id: item.id, name: item.user.displayName })), teams, queues,
+      alerts, items, members: members.map((item) => ({ id: item.id, name: item.user.displayName })), teams, queues,
       permissions: { managePortfolio: canManage.allowed, managePlan: canPlan.allowed, assessHealth: canAssess.allowed, correct: canCorrect.allowed },
     };
   }
