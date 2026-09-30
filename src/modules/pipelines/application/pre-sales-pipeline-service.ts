@@ -16,9 +16,6 @@ import {
   resolveLeadVisibilityScope,
 } from "@/modules/leads/application/lead-list-service";
 import {
-  stageRequiresConfirmation,
-  stageRequiresNextAction,
-  stageRequiresPacto,
   statusForLeadStage,
 } from "@/modules/pipelines/domain/lead-stage-transition-policy";
 import {
@@ -63,7 +60,7 @@ const transitionSchema = z.object({
   leadId: z.string().uuid(),
   targetStageId: z.string().uuid(),
   expectedUpdatedAt: z.coerce.date(),
-  reason: z.string().trim().min(3).max(1_000),
+  reason: z.string().trim().max(1_000).optional().transform((value) => value || "Movido manualmente no pipeline."),
   origin: z.enum(["PIPELINE_BOARD", "PIPELINE_LIST", "LEAD_CARD"]),
   managerCorrection: z.boolean().optional().default(false),
   confirmed: z.boolean().optional().default(false),
@@ -74,12 +71,6 @@ type PipelineStageRecord = Pick<
   PipelineStage,
   "id" | "name" | "position" | "type" | "leadStageCode"
 >;
-type PipelineTransitionRecord = Readonly<{
-  fromStageId: string;
-  toStageId: string;
-  active: boolean;
-}>;
-
 function invalidInput(error: z.ZodError | string): never {
   throw new ApplicationError(
     typeof error === "string" ? error : error.issues.map((issue) => issue.message).join(" "),
@@ -132,35 +123,21 @@ function resourceForLead(
 
 function transitionOptions(
   stages: readonly PipelineStageRecord[],
-  transitions: readonly PipelineTransitionRecord[],
   currentCode: LeadStageCode,
-  hasNextAction: boolean,
-  pactoReady: boolean,
 ): StageTransitionOption[] {
-  const currentStageId = stages.find((stage) => stage.leadStageCode === currentCode)?.id;
   return stages.flatMap((stage) => {
     if (!isLeadStageCode(stage.leadStageCode) || stage.leadStageCode === currentCode) return [];
     const target = stage.leadStageCode;
-    const missingPacto = stageRequiresPacto(target) && !pactoReady;
-    const missingNextAction = stageRequiresNextAction(target) && !hasNextAction;
-    const graphAllows = Boolean(currentStageId) && transitions.some((transition) =>
-      transition.active && transition.fromStageId === currentStageId && transition.toStageId === stage.id,
-    );
-    const prerequisiteReason = missingPacto
-      ? "PACTO validado e completo é obrigatório para esta etapa."
-      : missingNextAction
-        ? "Crie uma próxima ação antes de mover para uma etapa aberta."
-        : null;
     return [{
       stageId: stage.id,
       code: target,
       name: stage.name,
-      allowed: graphAllows && prerequisiteReason === null,
-      correctionAllowed: prerequisiteReason === null,
-      blockReason: !graphAllows ? "Transição direta não permitida pelo processo." : prerequisiteReason,
-      correctionBlockReason: prerequisiteReason,
-      requiresConfirmation: stageRequiresConfirmation(target),
-      requiresDisqualificationReason: target === "DISQUALIFIED",
+      allowed: true,
+      correctionAllowed: true,
+      blockReason: null,
+      correctionBlockReason: null,
+      requiresConfirmation: false,
+      requiresDisqualificationReason: false,
     }];
   });
 }
@@ -248,34 +225,8 @@ export async function transitionLeadStageInTransaction(
   });
   if (!target || !isLeadStageCode(target.leadStageCode)) notFound("Etapa de destino não encontrada.");
   if (target.id === lead.currentStageId) conflict("STAGE_UNCHANGED", "O lead já está nesta etapa.");
-  if (!input.managerCorrection) {
-    const allowed = await transaction.pipelineStageTransition.findFirst({
-      where: {
-        workspaceId: context.workspaceId,
-        pipelineId: lead.pipelineId,
-        fromStageId: lead.currentStageId,
-        toStageId: target.id,
-        active: true,
-      },
-      select: { id: true },
-    });
-    if (!allowed) conflict("INVALID_STAGE_TRANSITION", `Não é permitido mover de ${lead.currentStage.name} para ${target.name}.`);
-  }
-  const pactoReady = lead.pactoRevisions[0]?.isQualificationReady ?? false;
-  if (stageRequiresPacto(target.leadStageCode) && !pactoReady) {
-    conflict("PACTO_REQUIRED", "PACTO validado e completo é obrigatório para esta transição.");
-  }
-  if (stageRequiresNextAction(target.leadStageCode) && lead.tasks.length === 0) {
-    conflict("NEXT_ACTION_REQUIRED", "Crie uma próxima ação antes de mover para uma etapa aberta.");
-  }
-  if ((input.managerCorrection || stageRequiresConfirmation(target.leadStageCode)) && !input.confirmed) {
-    conflict("CONFIRMATION_REQUIRED", "Confirme explicitamente esta transição sensível.");
-  }
   let disqualificationReason: { id: string; name: string } | null = null;
-  if (target.leadStageCode === "DISQUALIFIED") {
-    if (!input.disqualificationReasonId) {
-      conflict("DISQUALIFICATION_REASON_REQUIRED", "Selecione um motivo para desqualificar o lead.");
-    }
+  if (target.leadStageCode === "DISQUALIFIED" && input.disqualificationReasonId) {
     disqualificationReason = await transaction.disqualificationReason.findFirst({
       where: {
         id: input.disqualificationReasonId,
@@ -425,10 +376,6 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
           where: { deletedAt: null },
           orderBy: [{ position: "asc" }, { id: "asc" }],
         },
-        transitions: {
-          orderBy: [{ fromStageId: "asc" }, { toStageId: "asc" }],
-          select: { fromStageId: true, toStageId: true, active: true },
-        },
       },
     });
     if (!pipeline) notFound(pipelineId ? "Pipeline de pré-vendas não encontrado." : "Pipeline padrão de pré-vendas não encontrado.");
@@ -518,7 +465,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       pactoReady,
       ...permission,
       disqualificationReasons: reasons,
-      transitions: transitionOptions(pipeline.stages, pipeline.transitions, lead.currentStage.leadStageCode, hasNextAction, pactoReady),
+      transitions: transitionOptions(pipeline.stages, lead.currentStage.leadStageCode),
     });
   }
 
@@ -676,7 +623,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       await options.authorization.assertAuthorized(context, PermissionKeys.LEADS_ASSIGN, resource);
     }
 
-    return options.database.$transaction(async (transaction) => {
+    const result = await options.database.$transaction(async (transaction) => {
       const result = await transitionLeadStageInTransaction(
         transaction,
         context,
@@ -694,21 +641,24 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         },
         options.now(),
       );
-      if (result.toStageCode === "QUALIFIED" && options.automationPublisher) {
-        await publishLeadQualifiedInTransaction(
-          transaction,
-          options.automationPublisher,
-          {
+      await options.beforeCommit?.();
+      return result;
+    });
+    if (result.toStageCode === "QUALIFIED" && options.automationPublisher) {
+      try {
+        await options.database.$transaction((transaction) =>
+          publishLeadQualifiedInTransaction(transaction, options.automationPublisher!, {
             workspaceId: context.workspaceId,
             leadId: result.leadId,
             occurredAt: new Date(result.occurredAt),
             actorId: context.actorId,
-          },
+          }),
         );
+      } catch {
+        // A automação é opcional e nunca desfaz uma movimentação concluída.
       }
-      await options.beforeCommit?.();
-      return result;
-    });
+    }
+    return result;
   }
 
   return Object.freeze({ getScreen, getLeadState, transition });

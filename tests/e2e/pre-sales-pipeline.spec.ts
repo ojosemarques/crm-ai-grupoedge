@@ -33,7 +33,7 @@ async function createManualLead(page: import("@playwright/test").Page, name: str
   await expect(page.getByText("Entrada processada", { exact: true })).toBeVisible();
 }
 
-test("opera o pipeline por quadro, lista e cartão sem contornar as regras", async ({ page }) => {
+test("opera o pipeline por quadro, lista e cartão sem exigir configurações auxiliares", async ({ page }) => {
   await login(page, DEMO_USERS[1].email);
   const leadName = `Lead pipeline E2E ${randomUUID().slice(0, 8)}`;
   await createManualLead(page, leadName);
@@ -67,18 +67,13 @@ test("opera o pipeline por quadro, lista e cartão sem contornar as regras", asy
     .getAttribute("value");
   expect(qualifiedStageId).toBeTruthy();
   await page.getByLabel("Etapa de destino").selectOption(qualifiedStageId!);
-  await page.getByLabel("Motivo", { exact: true }).fill("Tentativa direta que deve ser bloqueada.");
-  await page.getByLabel(/Confirmo esta transição/).check();
   await page.getByRole("button", { name: "Confirmar transição" }).click();
-  await expect(page.getByText(
-    "Não é permitido mover de Tentando contato para Qualificado.",
-    { exact: true },
-  )).toBeVisible();
-  await page.getByRole("button", { name: "Cancelar" }).click();
+  await expect(page.getByRole("status")).toContainText(`${leadName} foi movido para Qualificado.`);
+  await expect(page.getByRole("row").filter({ hasText: leadName })).toContainText("Qualificado");
 
   await page.getByRole("link", { name: leadName, exact: true }).click();
   await expect(page.getByRole("heading", { name: leadName })).toBeVisible();
-  await expect(page.getByRole("definition").filter({ hasText: /^Tentando contato$/ })).toBeVisible();
+  await expect(page.getByRole("definition").filter({ hasText: /^Qualificado$/ })).toBeVisible();
 });
 
 test("mantém o pipeline somente leitura para o visualizador", async ({ page }) => {

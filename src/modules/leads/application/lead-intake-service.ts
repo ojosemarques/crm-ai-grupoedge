@@ -877,7 +877,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       await validateAutomaticActor(options.database, context);
     }
 
-    return options.database.$transaction(async (transaction) => {
+    const result = await options.database.$transaction(async (transaction) => {
       await ensureGeneralQueue(
         transaction,
         context.workspaceId,
@@ -1185,18 +1185,6 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
           taskId: operations.taskId,
           idempotentReplay: false,
         } satisfies LeadIntakeAcceptedResult;
-        await publishAcceptedAutomationEvents(
-          transaction,
-          options.automationPublisher,
-          {
-            workspaceId: context.workspaceId,
-            actorId: context.actorId,
-            result,
-            receivedAt: parsed.receivedAt,
-            channel: parsed.channel,
-            doNotContact: contactPreference === "DO_NOT_CONTACT",
-          },
-        );
         return result;
       }
 
@@ -1502,20 +1490,30 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         taskId: operations.taskId,
         idempotentReplay: false,
       } satisfies LeadIntakeAcceptedResult;
-      await publishAcceptedAutomationEvents(
-        transaction,
-        options.automationPublisher,
-        {
-          workspaceId: context.workspaceId,
-          actorId: context.actorId,
-          result,
-          receivedAt: parsed.receivedAt,
-          channel: parsed.channel,
-          doNotContact: contactPreference === "DO_NOT_CONTACT",
-        },
-      );
       return result;
     });
+
+    if (result.outcome !== "REJECTED" && options.automationPublisher) {
+      try {
+        const persistedLead = await options.database.lead.findFirst({
+          where: { id: result.leadId, workspaceId: context.workspaceId, deletedAt: null },
+          select: { contactPreference: true },
+        });
+        await options.database.$transaction((transaction) =>
+          publishAcceptedAutomationEvents(transaction, options.automationPublisher, {
+            workspaceId: context.workspaceId,
+            actorId: context.actorId,
+            result,
+            receivedAt: parsed.receivedAt,
+            channel: parsed.channel,
+            doNotContact: persistedLead?.contactPreference === "DO_NOT_CONTACT",
+          }),
+        );
+      } catch {
+        // Automações complementam o cadastro e nunca impedem a persistência do lead.
+      }
+    }
+    return result;
   }
 
   return Object.freeze({ intake });

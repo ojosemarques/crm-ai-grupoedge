@@ -396,14 +396,12 @@ export function PreSalesPipelineWorkspace({
                 {selectedLeadState.transitions.map((option) => <option key={option.stageId} value={option.stageId}>{option.name}{option.allowed ? "" : ` — ${option.blockReason}`}</option>)}
               </select>
             </label>
-            <label className="mt-4 block text-sm">Motivo
-              <textarea className="mt-1 min-h-20 w-full rounded-md border bg-background px-3 py-2" name="reason" required />
+            <label className="mt-4 block text-sm">Motivo (opcional)
+              <textarea className="mt-1 min-h-20 w-full rounded-md border bg-background px-3 py-2" name="reason" />
             </label>
-            <label className="mt-4 block text-sm">Motivo de desqualificação
+            <label className="mt-4 block text-sm">Motivo de desqualificação (opcional)
               <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" name="disqualificationReasonId"><option value="">Não se aplica</option>{selectedLeadState.disqualificationReasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select>
             </label>
-            <label className="mt-4 flex items-start gap-2 text-sm"><input name="confirmed" type="checkbox" /><span>Confirmo esta transição quando ela for sensível ou uma correção gerencial.</span></label>
-            <ul className="mt-4 space-y-1 text-xs text-muted-foreground">{selectedLeadState.transitions.filter((option) => option.blockReason).map((option) => <li key={option.stageId}>{option.name}: {option.blockReason}</li>)}</ul>
             <div className="mt-6 flex justify-end gap-2"><Button disabled={pending} onClick={() => { setSelectedLeadId(null); setSelectedLeadState(null); setRequestedStageId(""); }} type="button" variant="secondary">Cancelar</Button><Button disabled={pending} type="submit">{pending ? "Salvando…" : "Confirmar transição"}</Button></div>
           </form>
         </AccessibleDialog>

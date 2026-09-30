@@ -317,13 +317,16 @@ function service(
   hooks: Readonly<{
     afterSubmissionPersisted?: () => Promise<void>;
     afterInitialOperationsPersisted?: () => Promise<void>;
+    automationPublisher?: Parameters<typeof createLeadIntakeService>[0]["automationPublisher"];
   }> = {},
 ) {
   return createLeadIntakeService({
     database,
     authorization,
     now: () => fixedNow,
-    ...hooks,
+    ...(hooks.afterSubmissionPersisted ? { afterSubmissionPersisted: hooks.afterSubmissionPersisted } : {}),
+    ...(hooks.afterInitialOperationsPersisted ? { afterInitialOperationsPersisted: hooks.afterInitialOperationsPersisted } : {}),
+    ...(hooks.automationPublisher ? { automationPublisher: hooks.automationPublisher } : {}),
   });
 }
 
@@ -419,6 +422,24 @@ describe("serviço único de entrada de leads", () => {
         }),
       ]),
     ).resolves.toEqual([1, 3, 1, 1, 1, 1, 1]);
+  });
+
+  it("mantém o cadastro quando a automação opcional está indisponível", async () => {
+    const fixture = await createFixture("optional-automation");
+    const intake = service({
+      automationPublisher: {
+        publishInTransaction: async () => {
+          throw new Error("automação indisponível");
+        },
+      },
+    });
+
+    await expect(
+      intake.intake(payload("11 98888-0001"), fixture.managerContext),
+    ).resolves.toMatchObject({ outcome: "CREATED" });
+    await expect(
+      database.lead.count({ where: { workspaceId: fixture.workspaceId } }),
+    ).resolves.toBe(1);
   });
 
   it("mantém pessoas separadas quando compartilham telefone e têm e-mails diferentes", async () => {

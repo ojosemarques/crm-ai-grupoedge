@@ -9,8 +9,6 @@ import { createLeadDistributionService } from "@/modules/leads/application/lead-
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { leadStageCodes, type LeadStageCode } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
-import { createPactoQualificationService } from "@/modules/qualification/application/pacto-qualification-service";
-import { pactoDimensions } from "@/modules/qualification/domain/pacto-contracts";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -60,12 +58,16 @@ async function humanContext(email: string): Promise<AuthenticatedContext> {
   });
 }
 
-function pipelineService(overrides: Readonly<{ beforeCommit?: () => Promise<void> }> = {}) {
+function pipelineService(overrides: Readonly<{
+  beforeCommit?: () => Promise<void>;
+  automationPublisher?: Parameters<typeof createPreSalesPipelineService>[0]["automationPublisher"];
+}> = {}) {
   return createPreSalesPipelineService({
     database,
     authorization,
     now: () => clock,
-    ...overrides,
+    ...(overrides.beforeCommit ? { beforeCommit: overrides.beforeCommit } : {}),
+    ...(overrides.automationPublisher ? { automationPublisher: overrides.automationPublisher } : {}),
   });
 }
 
@@ -133,19 +135,6 @@ async function transition(
   });
 }
 
-async function validatePacto(leadId: string) {
-  return createPactoQualificationService({ database, authorization, now: () => clock }).validate(managerContext, {
-    leadId,
-    expectedRevision: 0,
-    dimensions: pactoDimensions.map((dimension) => ({
-      dimension,
-      status: "POSITIVE" as const,
-      evidence: `Evidência validada para ${dimension}`,
-      origin: "SDR" as const,
-    })),
-  });
-}
-
 beforeAll(async () => {
   const seed = await seedDemoDatabase(database);
   workspaceId = seed.workspaceId;
@@ -182,7 +171,7 @@ describe("pipeline de pré-vendas e transições", () => {
     expect(managerState.transitions)
       .toEqual(expect.arrayContaining([
         expect.objectContaining({ code: "TRYING_CONTACT", allowed: true }),
-        expect.objectContaining({ code: "QUALIFIED", allowed: false }),
+        expect.objectContaining({ code: "QUALIFIED", allowed: true }),
       ]));
 
     const viewerState = await state(lead.leadId, viewerContext);
@@ -220,22 +209,25 @@ describe("pipeline de pré-vendas e transições", () => {
     })).rejects.toThrow(/immutable/);
   });
 
-  it("rejeita transição fora do grafo, PACTO incompleto e etapa aberta sem próxima ação", async () => {
-    const invalid = await createLead("CRM14 inválida");
-    await expect(transition(invalid.leadId, "QUALIFIED", { confirmed: true }))
-      .rejects.toMatchObject({ code: "INVALID_STAGE_TRANSITION" });
-
-    const pacto = await createLead("CRM14 pacto");
-    await transition(pacto.leadId, "CONNECTED");
-    await transition(pacto.leadId, "IN_QUALIFICATION");
-    await expect(transition(pacto.leadId, "QUALIFIED", { confirmed: true }))
-      .rejects.toMatchObject({ code: "PACTO_REQUIRED" });
-    await validatePacto(pacto.leadId);
-    const qualified = await transition(pacto.leadId, "QUALIFIED", { confirmed: true });
+  it("permite mover livremente sem fluxo, PACTO ou próxima ação obrigatórios", async () => {
+    const direct = await createLead("CRM14 movimento livre");
+    const initial = await state(direct.leadId);
+    const qualifiedStage = (await stages()).get("QUALIFIED")!;
+    const qualified = await pipelineService({
+      automationPublisher: {
+        publishInTransaction: async () => {
+          throw new Error("automação de qualificação indisponível");
+        },
+      },
+    }).transition(managerContext, {
+      leadId: direct.leadId,
+      targetStageId: qualifiedStage.id,
+      expectedUpdatedAt: initial.updatedAt,
+      origin: "PIPELINE_BOARD",
+    });
     expect(qualified).toMatchObject({ toStageCode: "QUALIFIED", status: "QUALIFIED" });
 
     const withoutAction = await createLead("CRM14 sem ação");
-    await transition(withoutAction.leadId, "TRYING_CONTACT");
     await database.task.updateMany({
       where: { workspaceId, leadId: withoutAction.leadId, status: { in: ["OPEN", "IN_PROGRESS"] } },
       data: { status: "CANCELLED", updatedByActorId: systemContext.actorId },
@@ -245,29 +237,17 @@ describe("pipeline de pré-vendas e transições", () => {
       data: { nextActionTaskId: null, nextActionAt: null, nextActionDescription: null },
     });
     await expect(transition(withoutAction.leadId, "NURTURING"))
-      .rejects.toMatchObject({ code: "NEXT_ACTION_REQUIRED" });
+      .resolves.toMatchObject({ toStageCode: "NURTURING" });
   });
 
-  it("exige motivo e confirmação ao desqualificar, encerra tarefas e mantém o lead explicável", async () => {
+  it("desqualifica sem campos auxiliares obrigatórios e encerra tarefas", async () => {
     const lead = await createLead("CRM14 desqualificação");
-    const reason = await database.disqualificationReason.findFirstOrThrow({
-      where: { workspaceId, active: true, deletedAt: null },
-      orderBy: { position: "asc" },
-    });
-    await expect(transition(lead.leadId, "DISQUALIFIED", { confirmed: true }))
-      .rejects.toMatchObject({ code: "DISQUALIFICATION_REASON_REQUIRED" });
-    await expect(transition(lead.leadId, "DISQUALIFIED", { disqualificationReasonId: reason.id }))
-      .rejects.toMatchObject({ code: "CONFIRMATION_REQUIRED" });
-    const result = await transition(lead.leadId, "DISQUALIFIED", {
-      confirmed: true,
-      disqualificationReasonId: reason.id,
-      reason: "Contato inválido confirmado pelo gestor.",
-    });
+    const result = await transition(lead.leadId, "DISQUALIFIED");
     const stored = await database.lead.findUniqueOrThrow({ where: { id: lead.leadId } });
     expect(result.cancelledTaskIds.length).toBeGreaterThan(0);
     expect(stored).toMatchObject({
       status: "DISQUALIFIED",
-      disqualificationReasonId: reason.id,
+      disqualificationReasonId: null,
       nextActionTaskId: null,
       nextActionAt: null,
       nextActionDescription: null,
