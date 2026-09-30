@@ -1126,6 +1126,41 @@ enum PaymentBackfillItemStatus {
   REVIEW_REQUIRED
 }
 
+enum CheckoutPaymentMethod {
+  PIX
+  BOLETO
+}
+
+enum CheckoutSessionStatus {
+  PRE_CHECKOUT
+  PAYMENT_PENDING
+  ABANDONED
+  EXPIRED
+  DECLINED
+  PURCHASED
+  REFUNDED
+}
+
+enum CheckoutSubscriptionStatus {
+  NOT_APPLICABLE
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+
+enum CheckoutEventType {
+  PRE_CHECKOUT_CREATED
+  CHECKOUT_ABANDONED
+  PAYMENT_PENDING
+  PAYMENT_EXPIRED
+  PAYMENT_DECLINED
+  PURCHASE_CONFIRMED
+  PURCHASE_REFUNDED
+  SUBSCRIPTION_ACTIVATED
+  SUBSCRIPTION_PAST_DUE
+  SUBSCRIPTION_CANCELLED
+}
+
 enum ContractBackfillStatus {
   RUNNING
   SUCCEEDED
@@ -2428,6 +2463,8 @@ model Workspace {
   webhookInboxItems            WebhookInbox[]
   outboxEvents                 OutboxEvent[]
   integrationDeliveryAttempts  IntegrationDeliveryAttempt[]
+  transactionalCheckouts       TransactionalCheckout[]
+  transactionalCheckoutEvents  TransactionalCheckoutEvent[]
   integrationSyncRuns          IntegrationSyncRun[]
   integrationSyncCursors       IntegrationSyncCursor[]
   externalObjectMappings       ExternalObjectMapping[]
@@ -2597,6 +2634,9 @@ model Actor {
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   user      User?     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  transactionalCheckoutsCreated TransactionalCheckout[]      @relation("TransactionalCheckoutCreatedBy")
+  transactionalCheckoutEvents   TransactionalCheckoutEvent[] @relation("TransactionalCheckoutEventActor")
 
   membershipsCreated               WorkspaceMember[]                    @relation("WorkspaceMemberCreatedBy")
   membershipsUpdated               WorkspaceMember[]                    @relation("WorkspaceMemberUpdatedBy")
@@ -2960,6 +3000,7 @@ model WorkspaceMember {
   ownershipTransferTargets     OwnershipTransfer[]             @relation("OwnershipTransferTargetMember")
   conversationAssignmentsFrom  ConversationAssignmentHistory[] @relation("ConversationAssignmentPreviousOwner")
   conversationAssignmentsTo    ConversationAssignmentHistory[] @relation("ConversationAssignmentNewOwner")
+  transactionalCheckoutsOwned  TransactionalCheckout[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, userId])
@@ -5011,6 +5052,7 @@ model Product {
   bundleLines                 CatalogBundleLine[]
   offerLines                  OfferLine[]
   requestedBySubmissions      LeadFormSubmission[]         @relation("SubmissionRequestedProduct")
+  transactionalCheckouts      TransactionalCheckout[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, catalogItemId, version])
@@ -5564,6 +5606,91 @@ model PaymentBackfillItem {
   @@unique([workspaceId, runId, subscriptionId])
   @@index([workspaceId, runId, status])
   @@map("payment_backfill_items")
+}
+
+model TransactionalCheckout {
+  id                            String                     @id @default(uuid()) @db.Uuid
+  workspaceId                   String                     @db.Uuid
+  productId                     String                     @db.Uuid
+  ownerMemberId                 String                     @db.Uuid
+  productCatalogItemIdSnapshot  String                     @db.Uuid
+  productVersionSnapshot        Int
+  productSkuSnapshot            String
+  productNameSnapshot           String
+  productKindSnapshot           CatalogItemKind
+  unitPriceCentsSnapshot        BigInt
+  currency                      Currency                   @default(BRL)
+  paymentMethod                 CheckoutPaymentMethod
+  status                        CheckoutSessionStatus      @default(PRE_CHECKOUT)
+  subscriptionStatus            CheckoutSubscriptionStatus @default(NOT_APPLICABLE)
+  providerKey                   String                     @default("POLITIZAI_SIGNED_CHECKOUT_V1")
+  externalCheckoutId            String
+  sourceType                    String
+  sourceId                      String?
+  sourceMetadata                Json?
+  idempotencyKey                String
+  revision                      Int                        @default(1)
+  lastAppliedProviderOccurredAt DateTime?                  @db.Timestamptz(3)
+  lastAppliedProviderEventId    String?
+  lastAppliedProviderSequence   Int                        @default(0)
+  abandonedAt                   DateTime?                  @db.Timestamptz(3)
+  expiresAt                     DateTime?                  @db.Timestamptz(3)
+  purchasedAt                   DateTime?                  @db.Timestamptz(3)
+  refundedAt                    DateTime?                  @db.Timestamptz(3)
+  createdByActorId              String                     @db.Uuid
+  createdAt                     DateTime                   @default(now()) @db.Timestamptz(3)
+  updatedAt                     DateTime                   @updatedAt @db.Timestamptz(3)
+
+  workspace Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  product   Product                      @relation(fields: [workspaceId, productId], references: [workspaceId, id], onDelete: Restrict)
+  owner     WorkspaceMember              @relation(fields: [workspaceId, ownerMemberId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy Actor                        @relation("TransactionalCheckoutCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  events    TransactionalCheckoutEvent[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@unique([workspaceId, providerKey, externalCheckoutId])
+  @@index([workspaceId, productId, createdAt])
+  @@index([workspaceId, ownerMemberId, status, updatedAt])
+  @@index([workspaceId, status, updatedAt])
+  @@index([workspaceId, subscriptionStatus, updatedAt])
+  @@map("transactional_checkouts")
+}
+
+model TransactionalCheckoutEvent {
+  id                         String                      @id @default(uuid()) @db.Uuid
+  workspaceId                String                      @db.Uuid
+  checkoutId                 String                      @db.Uuid
+  sequence                   Int
+  type                       CheckoutEventType
+  previousStatus             CheckoutSessionStatus?
+  newStatus                  CheckoutSessionStatus
+  previousSubscriptionStatus CheckoutSubscriptionStatus?
+  newSubscriptionStatus      CheckoutSubscriptionStatus
+  providerKey                String
+  providerEventId            String?
+  providerSequence           Int?
+  payloadHash                String
+  nonceHash                  String?
+  idempotencyKey             String
+  occurredAt                 DateTime                    @db.Timestamptz(3)
+  recordedAt                 DateTime                    @default(now()) @db.Timestamptz(3)
+  applied                    Boolean                     @default(true)
+  ignoredReason              String?
+  safeMetadata               Json?
+  actorId                    String                      @db.Uuid
+
+  workspace Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  checkout  TransactionalCheckout @relation(fields: [workspaceId, checkoutId], references: [workspaceId, id], onDelete: Restrict)
+  actor     Actor                 @relation("TransactionalCheckoutEventActor", fields: [workspaceId, actorId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, checkoutId, sequence])
+  @@unique([workspaceId, idempotencyKey])
+  @@unique([workspaceId, providerKey, providerEventId])
+  @@unique([workspaceId, providerKey, nonceHash])
+  @@index([workspaceId, checkoutId, occurredAt])
+  @@index([workspaceId, applied, occurredAt])
+  @@map("transactional_checkout_events")
 }
 
 model ContractVersion {

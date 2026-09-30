@@ -214,12 +214,12 @@ Cada etapa pode virar uma issue/épico. Dentro dela, `Txx.y` é a task e os iten
 
 ### Etapa 15 — Checkout, assinatura e pagamentos
 
-- [ ] **T15.1 — Aplicar checkout só a ofertas transacionais.**
-  - [ ] Escolher produto individual elegível; modelar pré-checkout, abandono, Pix/boleto pendente/expirado, recusa, compra, reembolso e assinatura atrasada/cancelada.
-  - [ ] Integrar provedor aprovado ao contrato atual, conciliando evento anterior e novo estado sem perder origem/histórico nem confundir produtos distintos.
-- [ ] **T15.2 — Preservar venda consultiva.**
-  - [ ] Mandato/serviço/Lab seguem proposta, aceite, contrato, implantação e cobrança; não fabricar carrinho para igualar o funil da Clint.
-  - [ ] Separar ganho, bookings, fatura, pagamento e reversão nos indicadores; testar chargeback, webhook repetido e divergência.
+- [x] **T15.1 — Aplicar checkout só a ofertas transacionais.**
+  - [x] Escolher produto individual elegível; modelar pré-checkout, abandono, Pix/boleto pendente/expirado, recusa, compra, reembolso e assinatura atrasada/cancelada.
+  - [x] Integrar provedor aprovado ao contrato atual, conciliando evento anterior e novo estado sem perder origem/histórico nem confundir produtos distintos.
+- [x] **T15.2 — Preservar venda consultiva.**
+  - [x] Mandato/serviço/Lab seguem proposta, aceite, contrato, implantação e cobrança; não fabricar carrinho para igualar o funil da Clint.
+  - [x] Separar ganho, bookings, fatura, pagamento e reversão nos indicadores; testar chargeback, webhook repetido e divergência.
 
 **Aceite:** compra transacional e contrato consultivo fecham corretamente por caminhos diferentes; caixa reconcilia e nenhum evento cria receita duas vezes. **Dependência:** 02, 14.
 
