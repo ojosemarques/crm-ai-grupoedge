@@ -7,6 +7,7 @@ export const sdrQueueBuckets = [
   "RETURN_TODAY",
   "OVERDUE",
   "MEETINGS_TODAY",
+  "STALE_CONTACT",
   "MISSING_NEXT_ACTION",
 ] as const;
 
@@ -82,11 +83,21 @@ export type SdrQueueScreen = Readonly<{
   }>[];
   dailyProduction: Readonly<{
     calls: number;
+    callsPending: number;
     messages: number;
+    messagesPending: number;
     emails: number;
     tasksDue: number;
+    overdueFollowUps: number;
     meetingsScheduled: number;
     meetingsCompleted: number;
+    staleLeads: number;
+    dailyGoal: Readonly<{
+      completed: number;
+      target: number;
+      remaining: number;
+      progressPercent: number;
+    }>;
   }>;
   sections: readonly SdrQueueSection[];
 }>;

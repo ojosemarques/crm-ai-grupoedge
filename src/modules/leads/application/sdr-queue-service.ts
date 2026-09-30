@@ -12,6 +12,7 @@ import {
   type SdrQueueItem,
   type SdrQueueSection,
 } from "@/modules/leads/domain/sdr-queue-contracts";
+import { staleContactCutoff } from "@/modules/leads/domain/lead-operational-policy";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -38,6 +39,7 @@ const sectionDefinitions: ReadonlyArray<Readonly<{
   { key: "RETURN_TODAY", title: "Retorno para hoje", description: "Próxima ação no dia do workspace.", limit: 8 },
   { key: "OVERDUE", title: "Atrasados", description: "Próxima ação com prazo vencido.", limit: 8 },
   { key: "MEETINGS_TODAY", title: "Reuniões de hoje", description: "Reuniões não canceladas no dia do workspace.", limit: 8 },
+  { key: "STALE_CONTACT", title: "Sem contato recente", description: "Leads abertos sem ligação, mensagem ou e-mail nas últimas 72 horas.", limit: 8 },
   { key: "MISSING_NEXT_ACTION", title: "Sem próxima ação", description: "Erro operacional em lead aberto.", limit: 8 },
 ];
 
@@ -111,6 +113,15 @@ function bucketSql(bucket: SdrQueueBucket, now: Date): Prisma.Sql {
       return Prisma.sql`l."nextActionAt" < ${now}`;
     case "MEETINGS_TODAY":
       return Prisma.sql`meeting_today."id" IS NOT NULL`;
+    case "STALE_CONTACT":
+      return Prisma.sql`NOT EXISTS (
+        SELECT 1 FROM "activities" recent_contact
+        WHERE recent_contact."workspaceId" = l."workspaceId"
+          AND recent_contact."leadId" = l."id"
+          AND recent_contact."occurredAt" >= ${staleContactCutoff(now)}
+          AND recent_contact."type"::text IN ('CALL', 'CALL_CONNECTED', 'CALL_UNANSWERED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED', 'EMAIL')
+          AND recent_contact."deletedAt" IS NULL
+      )`;
     case "MISSING_NEXT_ACTION":
       return Prisma.sql`l."nextActionAt" IS NULL`;
   }
@@ -358,7 +369,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       select: { id: true },
     })).map((actor) => actor.id);
     const today = workspaceDayRange(workspaceDateAt(now, workspace.timeZone), workspace.timeZone);
-    const [activityCounts, tasksDue, meetingsScheduled, meetingsCompleted] = await Promise.all([
+    const [activityCounts, taskCounts, meetingsScheduled, meetingsCompleted] = await Promise.all([
       options.database.activity.groupBy({
         by: ["type"],
         where: {
@@ -370,14 +381,17 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         },
         _count: { _all: true },
       }),
-      options.database.task.count({
+      options.database.task.groupBy({
+        by: ["kind", "status"],
         where: {
           workspaceId: context.workspaceId,
           assigneeMemberId: { in: productivityMemberIds },
           dueAt: { gte: today.start, lt: today.end },
-          status: { in: ["OPEN", "IN_PROGRESS"] },
+          status: { not: "CANCELLED" },
+          kind: { not: "MEETING" },
           deletedAt: null,
         },
+        _count: { _all: true },
       }),
       options.database.meeting.count({
         where: {
@@ -407,6 +421,15 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     const activityCount = (types: readonly string[]) => activityCounts
       .filter((item) => types.includes(item.type))
       .reduce((total, item) => total + item._count._all, 0);
+    const taskCount = (kinds: readonly string[], statuses: readonly string[]) => taskCounts
+      .filter((item) => kinds.includes(item.kind) && statuses.includes(item.status))
+      .reduce((total, item) => total + item._count._all, 0);
+    const openStatuses = ["OPEN", "IN_PROGRESS"];
+    const actionableKinds = ["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "EMAIL", "FOLLOW_UP"];
+    const tasksDue = taskCount(actionableKinds, openStatuses);
+    const completedTasks = taskCount(actionableKinds, ["COMPLETED"]);
+    const dailyTarget = tasksDue + completedTasks + meetingsScheduled;
+    const dailyCompleted = completedTasks + meetingsCompleted;
 
     const sections: SdrQueueSection[] = sectionDefinitions.map((definition, index) => {
       const rawRows = rowsBySection[index] ?? [];
@@ -477,11 +500,21 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       })),
       dailyProduction: {
         calls: activityCount(["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"]),
+        callsPending: taskCount(["IMMEDIATE_CALL", "CALL"], openStatuses),
         messages: activityCount(["MESSAGE_SENT"]),
+        messagesPending: taskCount(["MESSAGE"], openStatuses),
         emails: activityCount(["EMAIL"]),
         tasksDue,
+        overdueFollowUps: sections.find((section) => section.key === "OVERDUE")?.total ?? 0,
         meetingsScheduled,
         meetingsCompleted,
+        staleLeads: sections.find((section) => section.key === "STALE_CONTACT")?.total ?? 0,
+        dailyGoal: {
+          completed: dailyCompleted,
+          target: dailyTarget,
+          remaining: Math.max(0, dailyTarget - dailyCompleted),
+          progressPercent: dailyTarget === 0 ? 0 : Math.min(100, Math.round((dailyCompleted / dailyTarget) * 100)),
+        },
       },
       sections,
     };

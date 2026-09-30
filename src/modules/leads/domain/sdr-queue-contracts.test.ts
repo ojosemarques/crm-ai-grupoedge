@@ -5,6 +5,7 @@ import {
   getSdrQueueRecommendation,
   getSlaBand,
 } from "@/modules/leads/domain/sdr-queue-contracts";
+import { STALE_CONTACT_HOURS, staleContactCutoff } from "@/modules/leads/domain/lead-operational-policy";
 
 const now = new Date("2033-05-10T15:00:00.000Z");
 
@@ -25,6 +26,11 @@ function recommendationInput(
 }
 
 describe("fila determinística do SDR", () => {
+  it("considera sem contato recente após 72 horas completas", () => {
+    expect(STALE_CONTACT_HOURS).toBe(72);
+    expect(staleContactCutoff(now).toISOString()).toBe("2033-05-07T15:00:00.000Z");
+  });
+
   it("mantém os limites persistidos de SLA em 60 e 180 segundos", () => {
     expect(getSlaBand(60, 60, 180)).toBe("HEALTHY");
     expect(getSlaBand(61, 60, 180)).toBe("ATTENTION");

@@ -5,6 +5,7 @@ import type {
 import { Prisma } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { getLeadDistributionService } from "@/modules/leads/application/lead-distribution-service";
+import { staleContactCutoff } from "@/modules/leads/domain/lead-operational-policy";
 import {
   defaultLeadListColumns,
   leadListColumnKeys,
@@ -72,6 +73,7 @@ const operationalBuckets = [
   "RETURN_TODAY",
   "OVERDUE",
   "MEETINGS_TODAY",
+  "STALE_CONTACT",
   "MISSING_NEXT_ACTION",
 ] as const;
 const sortKeys = [
@@ -715,6 +717,15 @@ function filtersSql(
         AND bucket_meeting."deletedAt" IS NULL
         AND (bucket_meeting."startsAt" AT TIME ZONE bucket_workspace."timeZone")::date
           = (${now}::timestamptz AT TIME ZONE bucket_workspace."timeZone")::date
+    )`);
+  } else if (query.operationalBucket === "STALE_CONTACT") {
+    clauses.push(Prisma.sql`${openLead} AND NOT EXISTS (
+      SELECT 1 FROM "activities" bucket_contact
+      WHERE bucket_contact."workspaceId" = l."workspaceId"
+        AND bucket_contact."leadId" = l."id"
+        AND bucket_contact."occurredAt" >= ${staleContactCutoff(now)}
+        AND bucket_contact."type"::text IN ('CALL', 'CALL_CONNECTED', 'CALL_UNANSWERED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED', 'EMAIL')
+        AND bucket_contact."deletedAt" IS NULL
     )`);
   } else if (query.operationalBucket === "MISSING_NEXT_ACTION") {
     clauses.push(Prisma.sql`${openLead} AND l."nextActionAt" IS NULL`);

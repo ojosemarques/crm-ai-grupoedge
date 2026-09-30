@@ -82,6 +82,7 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
     "Retorno para hoje",
     "Atrasados",
     "Reuniões de hoje",
+    "Sem contato recente",
     "Sem próxima ação",
   ]) {
     await expect(page.getByRole("tab", { name: new RegExp(`^${section} \\d+$`) })).toBeVisible();
@@ -96,7 +97,13 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
   await expect(focus).toContainText("Por que está no topo:");
   await expect(focus.locator("[data-sla-band='CRITICAL']")).toBeVisible();
   await expect(focus.getByRole("link", { name: "Responder agora" })).toBeVisible();
-  await expect(focus.getByRole("link", { name: `Abrir Lead 360 de ${leadName}` })).toBeVisible();
+  await expect(focus.getByRole("link", { name: `Abrir próximo lead da fila: ${leadName}` })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Plano e produção de hoje" })).toBeVisible();
+  await expect(page.getByText("Ligações para fazer", { exact: true })).toBeVisible();
+  await expect(page.getByText("Mensagens para enviar", { exact: true })).toBeVisible();
+  await expect(page.getByText("Acompanhamentos atrasados", { exact: true })).toBeVisible();
+  await expect(page.getByText("Sem contato recente", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("progressbar", { name: /da meta diária concluída/ })).toBeVisible();
   await expect(page.locator(`[data-lead-id="${leadId}"]`)).toHaveCount(0);
 
   await page.getByRole("tab", { name: /^P1 \d+$/ }).click();
@@ -149,7 +156,7 @@ test("SDR usa uma fila por vez com teclado e o layout responde sem transbordar",
   await expect(missingTab).toHaveAttribute("aria-selected", "true");
   await expect(page).toHaveURL(/queue=MISSING_NEXT_ACTION/);
 
-  await page.getByRole("button", { name: /^Responderam \d+$/ }).click();
+  await page.getByRole("button", { name: /^Responderam \d+/ }).click();
   await expect(page.getByRole("tab", { name: /^Responderam \d+$/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "Responderam", exact: true })).toBeVisible();
 

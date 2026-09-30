@@ -34,6 +34,7 @@ const summaryBuckets: readonly Readonly<{
   { key: "RESPONDED", label: "Responderam", icon: "inbox" },
   { key: "OVERDUE", label: "Atrasados", icon: "relogio" },
   { key: "MEETINGS_TODAY", label: "Reuniões hoje", icon: "agenda" },
+  { key: "STALE_CONTACT", label: "Sem contato recente", icon: "relogio" },
   { key: "MISSING_NEXT_ACTION", label: "Sem próxima ação", icon: "alerta" },
 ];
 
@@ -221,11 +222,11 @@ function FocusLead({
             </Link>
           </Button>
           <Link
-            aria-label={`Abrir Lead 360 de ${item.fullName}`}
+            aria-label={`Abrir próximo lead da fila: ${item.fullName}`}
             className={styles.focusSecondary}
             href={`/leads/${item.id}/historico`}
           >
-            Abrir Lead 360
+            Abrir próximo lead da fila
           </Link>
           <p className={styles.afterAction}>{afterActionLabel(item)}</p>
         </div>
@@ -529,6 +530,13 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         items: criticalUnique,
       },
       {
+        key: "STALE_CONTACT",
+        title: "Sem contato recente",
+        total: sectionsByKey.get("STALE_CONTACT")?.total ?? 0,
+        tone: "warning",
+        items: takeUnique("STALE_CONTACT"),
+      },
+      {
         key: "MISSING_NEXT_ACTION",
         title: "Sem próxima ação",
         total: sectionsByKey.get("MISSING_NEXT_ACTION")?.total ?? 0,
@@ -659,17 +667,30 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         <div className={styles.productionHeading}>
           <div>
             <p className={styles.eyebrow}>Execução diária</p>
-            <h2 id="producao-hoje">Produção de hoje</h2>
+            <h2 id="producao-hoje">Plano e produção de hoje</h2>
           </div>
           <Link href="/metas">Ver metas e quotas</Link>
         </div>
+        <div className={styles.dailyGoal}>
+          <div>
+            <span>Meta diária operacional</span>
+            <strong>{screen.dailyProduction.dailyGoal.completed} de {screen.dailyProduction.dailyGoal.target} compromissos concluídos</strong>
+            <small>{screen.dailyProduction.dailyGoal.remaining} restantes no plano de hoje</small>
+          </div>
+          <div className={styles.progressSummary}>
+            <strong>{screen.dailyProduction.dailyGoal.progressPercent}%</strong>
+            <div aria-label={`${screen.dailyProduction.dailyGoal.progressPercent}% da meta diária concluída`} aria-valuemax={100} aria-valuemin={0} aria-valuenow={screen.dailyProduction.dailyGoal.progressPercent} className={styles.progressTrack} role="progressbar">
+              <span style={{ width: `${screen.dailyProduction.dailyGoal.progressPercent}%` }} />
+            </div>
+          </div>
+        </div>
         <div className={styles.productionGrid}>
-          <Link href="/atividades"><span>Ligações registradas</span><strong>{screen.dailyProduction.calls}</strong></Link>
-          <Link href="/atividades"><span>Mensagens enviadas</span><strong>{screen.dailyProduction.messages}</strong></Link>
-          <Link href="/atividades"><span>E-mails enviados</span><strong>{screen.dailyProduction.emails}</strong></Link>
-          <Link href="/atividades"><span>Tarefas para hoje</span><strong>{screen.dailyProduction.tasksDue}</strong></Link>
-          <Link href="/agenda"><span>Reuniões de hoje</span><strong>{screen.dailyProduction.meetingsScheduled}</strong></Link>
-          <Link href="/agenda"><span>Reuniões realizadas</span><strong>{screen.dailyProduction.meetingsCompleted}</strong></Link>
+          <Link href="/atividades"><span>Ligações para fazer</span><strong>{screen.dailyProduction.callsPending}</strong><small>{screen.dailyProduction.calls} registradas hoje</small></Link>
+          <Link href="/atividades"><span>Mensagens para enviar</span><strong>{screen.dailyProduction.messagesPending}</strong><small>{screen.dailyProduction.messages} enviadas hoje</small></Link>
+          <button onClick={() => selectSection("OVERDUE")} type="button"><span>Acompanhamentos atrasados</span><strong>{screen.dailyProduction.overdueFollowUps}</strong><small>Abrir fila de atrasados</small></button>
+          <Link href="/agenda"><span>Reuniões agendadas</span><strong>{screen.dailyProduction.meetingsScheduled}</strong><small>{screen.dailyProduction.meetingsCompleted} realizadas</small></Link>
+          <button onClick={() => selectSection("STALE_CONTACT")} type="button"><span>Sem contato recente</span><strong>{screen.dailyProduction.staleLeads}</strong><small>Há mais de 72 horas</small></button>
+          <Link href="/atividades"><span>Total de tarefas pendentes</span><strong>{screen.dailyProduction.tasksDue}</strong><small>{screen.dailyProduction.emails} e-mails enviados</small></Link>
         </div>
       </section>
 

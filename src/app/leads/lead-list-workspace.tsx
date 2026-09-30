@@ -100,6 +100,7 @@ const operationalLabels: Readonly<Record<string, string>> = {
   RETURN_TODAY: "Retorno para hoje",
   OVERDUE: "Atrasados",
   MEETINGS_TODAY: "Reuniões de hoje",
+  STALE_CONTACT: "Sem contato recente",
   MISSING_NEXT_ACTION: "Sem próxima ação",
 };
 

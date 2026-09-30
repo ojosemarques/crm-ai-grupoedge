@@ -222,7 +222,7 @@ afterAll(async () => {
 });
 
 describe("fila priorizada do SDR", () => {
-  it("mantém as nove filas honestamente vazias quando o SDR não possui leads", async () => {
+  it("mantém as dez filas honestamente vazias quando o SDR não possui leads", async () => {
     const screen = await queueService().getScreen(isolatedSdrContext, {});
     await database.workspaceMember.update({
       where: { id: isolatedSdrContext.memberId },
@@ -234,7 +234,7 @@ describe("fila priorizada do SDR", () => {
       },
     });
 
-    expect(screen.sections).toHaveLength(9);
+    expect(screen.sections).toHaveLength(10);
     expect(screen.sections.every((section) => section.total === 0)).toBe(true);
     expect(screen.sections.every((section) => section.items.length === 0)).toBe(true);
   });
@@ -303,6 +303,44 @@ describe("fila priorizada do SDR", () => {
       code: "CREATE_NEXT_ACTION",
       label: "Criar próxima ação",
     });
+  });
+
+  it("expõe leads sem contato recente e o mesmo recorte na lista", async () => {
+    const lead = await createLead(`CRM10 contato antigo ${randomUUID().slice(0, 8)}`, "P2");
+    const contacted = await createLead(`CRM10 contato recente ${randomUUID().slice(0, 8)}`, "P2");
+    await assignTo(lead.leadId, isolatedSdrContext.memberId);
+    await assignTo(contacted.leadId, isolatedSdrContext.memberId);
+    await database.lead.update({
+      where: { id: lead.leadId },
+      data: {
+        lastActivityAt: new Date(now.getTime() - 73 * 60 * 60 * 1_000),
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+    await createOperationalHistoryService({ database, authorization, now: () => now }).recordActivity(
+      managerContext,
+      { leadId: contacted.leadId, type: "MESSAGE_SENT", direction: "OUTBOUND", subject: "Contato recente para validar o recorte" },
+    );
+
+    const screen = await queueService().getScreen(isolatedSdrContext, {});
+    const staleIds = screen.sections.find((section) => section.key === "STALE_CONTACT")?.items.map((item) => item.id);
+    expect(staleIds).toContain(lead.leadId);
+    expect(staleIds).not.toContain(contacted.leadId);
+    expect(screen.dailyProduction.staleLeads).toBeGreaterThanOrEqual(1);
+    expect(screen.dailyProduction.dailyGoal).toMatchObject({
+      completed: expect.any(Number),
+      target: expect.any(Number),
+      remaining: expect.any(Number),
+      progressPercent: expect.any(Number),
+    });
+
+    const list = await createLeadListService({
+      database,
+      authorization,
+      distribution: distributionService(),
+      now: () => now,
+    }).getScreen(isolatedSdrContext, { operationalBucket: "STALE_CONTACT" });
+    expect(list.list.rows.map((item) => item.id)).toContain(lead.leadId);
   });
 
   it("recalcula a seção respondidos após uma atividade persistida", async () => {

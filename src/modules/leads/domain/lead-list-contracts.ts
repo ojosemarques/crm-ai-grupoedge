@@ -66,7 +66,7 @@ export type LeadListQuery = Readonly<{
   nextActionTo: string;
   disqualificationReasons: readonly string[];
   lossReasons: readonly string[];
-  operationalBucket: "ALL" | "NOW" | "NEW" | "P1" | "WAITING_CALL" | "RESPONDED" | "RETURN_TODAY" | "OVERDUE" | "MEETINGS_TODAY" | "MISSING_NEXT_ACTION";
+  operationalBucket: "ALL" | "NOW" | "NEW" | "P1" | "WAITING_CALL" | "RESPONDED" | "RETURN_TODAY" | "OVERDUE" | "MEETINGS_TODAY" | "STALE_CONTACT" | "MISSING_NEXT_ACTION";
   sort: "operational" | "name" | "priority" | "score" | "responsible" | "source" | "stage" | "sla" | "receivedAt" | "lastActivity" | "nextAction";
   direction: "asc" | "desc";
   columns: readonly LeadListColumnKey[];

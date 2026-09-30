@@ -103,6 +103,7 @@
   margin-top: 14px;
 }
 
+.productionGrid button,
 .productionGrid a {
   background: var(--surface-muted);
   border: 1px solid transparent;
@@ -113,9 +114,16 @@
   min-width: 0;
   padding: 12px;
   text-decoration: none;
+  text-align: left;
 }
 
-.productionGrid a:hover {
+.productionGrid button {
+  cursor: pointer;
+  font: inherit;
+}
+
+.productionGrid a:hover,
+.productionGrid button:hover {
   border-color: var(--primary);
 }
 
@@ -128,6 +136,57 @@
   color: var(--foreground);
   font-size: 1.35rem;
   line-height: 1;
+}
+
+.productionGrid small {
+  color: var(--muted-foreground);
+  font-size: 0.63rem;
+}
+
+.dailyGoal {
+  align-items: center;
+  background: color-mix(in oklab, var(--primary-soft) 70%, var(--surface));
+  border: 1px solid color-mix(in oklab, var(--primary) 16%, var(--border));
+  border-radius: 12px;
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, .45fr);
+  margin-top: 14px;
+  padding: 14px 16px;
+}
+
+.dailyGoal span,
+.dailyGoal small {
+  color: var(--muted-foreground);
+  display: block;
+  font-size: .68rem;
+}
+
+.dailyGoal strong {
+  color: var(--foreground);
+  display: block;
+  font-size: .9rem;
+  margin: 3px 0;
+}
+
+.progressSummary > strong {
+  color: var(--primary);
+  font-size: 1rem;
+  text-align: right;
+}
+
+.progressTrack {
+  background: var(--border);
+  border-radius: 999px;
+  height: 8px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.progressTrack span {
+  background: var(--primary);
+  border-radius: inherit;
+  height: 100%;
 }
 
 .focusCard {
@@ -327,7 +386,7 @@
 .summaryStrip {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .summaryButton {
@@ -757,6 +816,13 @@
 }
 
 @media (max-width: 1023px) {
+  .dailyGoal {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .progressSummary > strong {
+    text-align: left;
+  }
   .productionGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -830,10 +896,6 @@
 
   .summaryStrip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .summaryButton:last-child {
-    grid-column: 1 / -1;
   }
 
   .queueHeader {
