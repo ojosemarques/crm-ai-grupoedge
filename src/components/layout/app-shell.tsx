@@ -85,6 +85,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
       { href: "/privacidade", icon: "auditoria", label: "Privacidade", roles: managerRoles },
       { href: "/integracoes", icon: "configuracoes", label: "Integrações", roles: managerRoles },
       { href: "/aquisicao", icon: "dashboard", label: "Aquisição", roles: managerRoles },
+      { href: "/analises", icon: "dashboard", label: "Análises", roles: managerRoles },
       { href: "/inteligencia-geografica", icon: "dashboard", label: "Geografia", roles: managerRoles },
       { href: "/configuracoes", icon: "configuracoes", label: "Configurações", roles: ["administrator"] },
     ],
@@ -97,7 +98,7 @@ const sections = [
   { key: "activities", label: "Atividades", icon: "agenda", paths: ["/meu-dia", "/agenda", "/atividades", "/notificacoes"] },
   { key: "inbox", label: "Atendimento", icon: "inbox", paths: ["/inbox", "/customer-service"] },
   { key: "automation", label: "Automações", icon: "automacoes", paths: ["/automacoes", "/campanhas", "/integracoes", "/copilot", "/assistente", "/governanca-ia", "/agentes"] },
-  { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/metricas-receita", "/metas", "/forecast", "/aquisicao", "/inteligencia-geografica", "/receita", "/pagamentos"] },
+  { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/analises", "/metricas-receita", "/metas", "/forecast", "/aquisicao", "/inteligencia-geografica", "/receita", "/pagamentos"] },
   { key: "settings", label: "Configurações", icon: "configuracoes", paths: ["/configuracoes", "/administracao", "/auditoria", "/qualidade-dados", "/operacoes", "/privacidade"] },
 ] as const;
 
@@ -109,7 +110,7 @@ const labels: Record<string, string> = {
   "/campanhas": "Campanhas de envio",
   "/agentes": "Agentes de IA",
   "/assistente": "Assistente",
-  "/automacoes": "Fluxos de automação", "/dashboard": "Visão geral", "/metricas-receita": "Receita e retenção",
+  "/automacoes": "Fluxos de automação", "/dashboard": "Visão geral", "/analises": "Análises", "/metricas-receita": "Receita e retenção",
 };
 
 function isActive(pathname: string, href: string) {

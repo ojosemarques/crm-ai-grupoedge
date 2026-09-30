@@ -2465,6 +2465,8 @@ model Workspace {
   integrationDeliveryAttempts  IntegrationDeliveryAttempt[]
   transactionalCheckouts       TransactionalCheckout[]
   transactionalCheckoutEvents  TransactionalCheckoutEvent[]
+  analyticsDashboards          AnalyticsDashboard[]
+  analyticsMutationReceipts    AnalyticsMutationReceipt[]
   integrationSyncRuns          IntegrationSyncRun[]
   integrationSyncCursors       IntegrationSyncCursor[]
   externalObjectMappings       ExternalObjectMapping[]
@@ -2730,6 +2732,11 @@ model Actor {
   opportunityEvidenceSuperseded    OpportunityEvidence[]                @relation("OpportunityEvidenceSupersededBy")
   opportunityGateEvaluations       OpportunityGateEvaluation[]          @relation("OpportunityGateEvaluationBy")
   opportunityDeferralsCreated      OpportunityDeferral[]                @relation("OpportunityDeferralCreatedBy")
+  analyticsDashboardsCreated        AnalyticsDashboard[]                 @relation("AnalyticsDashboardCreatedBy")
+  analyticsDashboardsUpdated        AnalyticsDashboard[]                 @relation("AnalyticsDashboardUpdatedBy")
+  analyticsWidgetsCreated           AnalyticsWidget[]                    @relation("AnalyticsWidgetCreatedBy")
+  analyticsWidgetsUpdated           AnalyticsWidget[]                    @relation("AnalyticsWidgetUpdatedBy")
+  analyticsMutationReceipts         AnalyticsMutationReceipt[]
   opportunitiesCreated             Opportunity[]                        @relation("OpportunityCreatedBy")
   opportunitiesUpdated             Opportunity[]                        @relation("OpportunityUpdatedBy")
   productsCreated                  Product[]                            @relation("ProductCreatedBy")
@@ -13013,4 +13020,100 @@ model OutboundCampaignAttempt {
   @@unique([workspaceId, recipientId, attemptNumber])
   @@index([workspaceId, status, createdAt])
   @@map("outbound_campaign_attempts")
+}
+
+enum AnalyticsWidgetType {
+  LINE
+  AREA
+  BAR
+  PIE
+  DONUT
+  FUNNEL
+  TABLE
+  NUMBER
+  KPI
+}
+
+enum AnalyticsAggregation {
+  SUM
+  AVERAGE
+  COUNT
+  RATE
+  LATEST
+}
+
+model AnalyticsDashboard {
+  id               String    @id @default(uuid()) @db.Uuid
+  workspaceId      String    @db.Uuid
+  name             String
+  description      String    @default("")
+  revision         Int       @default(1)
+  creationKey      String
+  createdByActorId String    @db.Uuid
+  updatedByActorId String    @db.Uuid
+  archivedAt       DateTime? @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdBy Actor             @relation("AnalyticsDashboardCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy Actor             @relation("AnalyticsDashboardUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  widgets   AnalyticsWidget[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, creationKey])
+  @@index([workspaceId, archivedAt, updatedAt])
+  @@map("analytics_dashboards")
+}
+
+model AnalyticsWidget {
+  id               String               @id @default(uuid()) @db.Uuid
+  workspaceId      String               @db.Uuid
+  dashboardId      String               @db.Uuid
+  title            String
+  metricId         String
+  metricVersion    Int
+  visualization    AnalyticsWidgetType
+  aggregation      AnalyticsAggregation
+  periodPreset     String
+  fromDate         String?
+  toDate           String?
+  asOf             DateTime?            @db.Timestamptz(3)
+  dateField        String
+  dimension        String?
+  filters          Json                 @default("{}")
+  position         Json                 @default("{}")
+  revision         Int                  @default(1)
+  createdByActorId String               @db.Uuid
+  updatedByActorId String               @db.Uuid
+  deletedAt        DateTime?            @db.Timestamptz(3)
+  createdAt        DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime             @updatedAt @db.Timestamptz(3)
+
+  dashboard AnalyticsDashboard @relation(fields: [workspaceId, dashboardId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy Actor              @relation("AnalyticsWidgetCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy Actor              @relation("AnalyticsWidgetUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, dashboardId, deletedAt])
+  @@index([workspaceId, metricId])
+  @@map("analytics_widgets")
+}
+
+model AnalyticsMutationReceipt {
+  id             String   @id @default(uuid()) @db.Uuid
+  workspaceId    String   @db.Uuid
+  idempotencyKey String
+  operation      String
+  entityId       String   @db.Uuid
+  response       Json
+  actorId        String   @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  actor     Actor     @relation(fields: [workspaceId, actorId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, entityId, createdAt])
+  @@map("analytics_mutation_receipts")
 }

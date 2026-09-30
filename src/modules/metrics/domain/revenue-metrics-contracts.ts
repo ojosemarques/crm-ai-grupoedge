@@ -31,6 +31,7 @@ export type RevenueMetricDefinition = Readonly<{
   denominator: string | null;
   formula: string;
   factTimestamp: string;
+  supportedDateBases: readonly string[];
   periodRule: string;
   timeZoneRule: string;
   asOfRule: string;

@@ -225,12 +225,12 @@ Cada etapa pode virar uma issue/épico. Dentro dela, `Txx.y` é a task e os iten
 
 ### Etapa 16 — Dashboards, construtor de indicadores, metas e forecast
 
-- [ ] **T16.1 — Completar análise configurável.**
-  - [ ] Construir dashboards salvos e gráficos por métrica, período, data-base, dimensão, filtro e agregação; incluir linha, área, barra, pizza/donut, funil, tabela, número e KPI quando a métrica permitir.
-  - [ ] Exportar CSV e abrir drilldown autorizado; manter fórmulas no registro de métricas existente e indicar ausência/atraso de dados.
-- [ ] **T16.2 — Medir a cadência longa e resultado.**
-  - [ ] Acrescentar cobertura de decisor/patrocinador, diagnóstico, piloto, espera pactuada, compromisso, estágio e coorte por oferta/ICP.
-  - [ ] Reusar metas/forecast; separar contratado, MRR, serviço/projeto entregue e recebido; mostrar qualidade da amostra e custo de campanhas/IA.
+- [x] **T16.1 — Completar análise configurável.**
+  - [x] Construir dashboards salvos e gráficos por métrica, período, data-base, dimensão, filtro e agregação; incluir linha, área, barra, pizza/donut, funil, tabela, número e KPI quando a métrica permitir.
+  - [x] Exportar CSV e abrir drilldown autorizado; manter fórmulas no registro de métricas existente e indicar ausência/atraso de dados.
+- [x] **T16.2 — Medir a cadência longa e resultado.**
+  - [x] Acrescentar cobertura de decisor/patrocinador, diagnóstico, piloto, espera pactuada, compromisso, estágio e coorte por oferta/ICP.
+  - [x] Reusar metas/forecast; separar contratado, MRR, serviço/projeto entregue e recebido; mostrar qualidade da amostra e custo de campanhas/IA.
 
 **Aceite:** gráfico e CSV batem com registros do drilldown; mudar data de criação para ganho altera a leitura de forma explicável; forecast não inclui oferta futura ou negócio sem evidência. **Dependência:** 02, 05–06, 10, 14–15.
 

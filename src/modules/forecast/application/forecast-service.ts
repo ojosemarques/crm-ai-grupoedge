@@ -7,7 +7,7 @@ import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 type Options = { database: PrismaClient; authorization: ReturnType<typeof getAuthorizationService>; now: () => Date };
-type OpportunityRow = Prisma.OpportunityGetPayload<{ include: { currentStage: true; owner: { include: { user: true; teamMemberships: { include: { team: true } } } } } }>;
+type OpportunityRow = Prisma.OpportunityGetPayload<{ include: { currentStage: true; product: { select: { availability: true } }; consultativeEvidence: { select: { id: true } }; owner: { include: { user: true; teamMemberships: { include: { team: true } } } } } }>;
 const json = (value: unknown) => value as Prisma.InputJsonValue;
 const resource = (workspaceId: string, cycle?: Pick<ForecastCycle, "id" | "teamId">, memberId?: string | null) => ({ workspaceId, resourceType: "Forecast", ...(cycle ? { resourceId: cycle.id, teamId: cycle.teamId } : {}), ...(memberId !== undefined ? { memberId } : {}) });
 function invalid(message: string, code = "INVALID_FORECAST", statusCode = 400): never { throw new ApplicationError(message, { code, statusCode, expose: true }); }
@@ -79,7 +79,7 @@ export function createForecastService(options: Options) {
 
   async function opportunityRows(workspaceId: string, memberIds: readonly string[]) {
     if (memberIds.length === 0) return [];
-    return options.database.opportunity.findMany({ where: { workspaceId, ownerMemberId: { in: [...memberIds] }, deletedAt: null }, include: { currentStage: true, owner: { include: { user: true, teamMemberships: { where: { deletedAt: null }, include: { team: true } } } } }, orderBy: [{ expectedCloseAt: "asc" }, { id: "asc" }] });
+    return options.database.opportunity.findMany({ where: { workspaceId, ownerMemberId: { in: [...memberIds] }, deletedAt: null }, include: { currentStage: true, product: { select: { availability: true } }, consultativeEvidence: { where: { supersededAt: null }, select: { id: true } }, owner: { include: { user: true, teamMemberships: { where: { deletedAt: null }, include: { team: true } } } } }, orderBy: [{ expectedCloseAt: "asc" }, { id: "asc" }] });
   }
 
   async function createCycle(context: AuthenticatedContext, raw: unknown) {
@@ -118,7 +118,7 @@ export function createForecastService(options: Options) {
     if (selected.size !== input.opportunityIds.length) invalid("A mesma oportunidade não pode ser enviada duas vezes.", "FORECAST_DUPLICATE_OPPORTUNITY");
     const itemFacts = rows.map((row) => {
       const base = snapshotBase(row, cycle.teamId);
-      const eligibility = forecastEligibility({ id: row.id, ...base, category: null }, { ...cycle, memberIds });
+      const eligibility = forecastEligibility({ id: row.id, ...base, category: null, productAvailability: row.product?.availability ?? null, evidenceCount: row.consultativeEvidence.length }, { ...cycle, memberIds });
       const included = input.type === "INDIVIDUAL" && selected.has(row.id);
       if (included && !eligibility.eligible) invalid(`Oportunidade ${row.name} não é elegível: ${eligibility.reasonCode}.`, "FORECAST_OPPORTUNITY_INELIGIBLE");
       return { ...base, included, category: included ? input.category : null, exclusionReason: included ? null : eligibility.eligible ? "NOT_DECLARED_FOR_CATEGORY" : eligibility.reasonCode };
@@ -165,7 +165,7 @@ export function createForecastService(options: Options) {
     const override = latest.find((item) => item.type === "MANAGER_OVERRIDE" && item.category === "COMMIT" && item.targetTeamId === cycle.teamId) ?? null;
     const items = rows.map((row) => {
       const base = snapshotBase(row, cycle.teamId);
-      const eligibility = forecastEligibility({ id: row.id, ...base, category: null }, { ...cycle, memberIds });
+      const eligibility = forecastEligibility({ id: row.id, ...base, category: null, productAvailability: row.product?.availability ?? null, evidenceCount: row.consultativeEvidence.length }, { ...cycle, memberIds });
       const source = individual.find((submission) => submission.items.some((item) => item.opportunityId === row.id && item.included));
       const category: ForecastCategoryValue | null = eligibility.eligible ? source?.category ?? "PIPELINE" : null;
       return { ...base, eligible: eligibility.eligible, category, reasonCode: eligibility.reasonCode, sourceSubmissionId: source?.id ?? null };
@@ -211,7 +211,7 @@ export function createForecastService(options: Options) {
     const asOf = query.asOf ?? options.now();
     const memberIds = await cycleMemberIds(context, cycle, query.memberId);
     const rows = await opportunityRows(context.workspaceId, memberIds);
-    const candidates = rows.map((row) => { const base = snapshotBase(row, cycle.teamId); const eligibility = forecastEligibility({ id: row.id, ...base, category: null }, { ...cycle, memberIds }); return { ...base, amountCents: base.amountCents.toString(), expectedCloseAt: base.expectedCloseAt?.toISOString() ?? null, opportunityUpdatedAt: base.opportunityUpdatedAt.toISOString(), probabilityRecordedAt: base.probabilityRecordedAt?.toISOString() ?? null, eligible: eligibility.eligible, reasonCode: eligibility.reasonCode, drilldownHref: `/oportunidades?opportunityId=${row.id}` }; });
+    const candidates = rows.map((row) => { const base = snapshotBase(row, cycle.teamId); const eligibility = forecastEligibility({ id: row.id, ...base, category: null, productAvailability: row.product?.availability ?? null, evidenceCount: row.consultativeEvidence.length }, { ...cycle, memberIds }); return { ...base, amountCents: base.amountCents.toString(), expectedCloseAt: base.expectedCloseAt?.toISOString() ?? null, opportunityUpdatedAt: base.opportunityUpdatedAt.toISOString(), probabilityRecordedAt: base.probabilityRecordedAt?.toISOString() ?? null, eligible: eligibility.eligible, reasonCode: eligibility.reasonCode, drilldownHref: `/oportunidades?opportunityId=${row.id}` }; });
     const decision = await options.authorization.authorize(context, PermissionKeys.FORECAST_READ, resource(context.workspaceId, cycle, context.memberId));
     const canSeeAggregate = decision.allowed && decision.scope !== "OWN";
     const snapshots = canSeeAggregate

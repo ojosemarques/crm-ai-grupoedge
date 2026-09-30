@@ -78,10 +78,14 @@ export type ForecastOpportunityFact = Readonly<{
   probabilitySource: string | null;
   probabilityActorId: string | null;
   probabilityRecordedAt: Date | null;
+  productAvailability: "DRAFT" | "AVAILABLE" | "CAPACITY_LIMITED" | "FUTURE" | "RETIRED" | null;
+  evidenceCount: number;
 }>;
 
 export function forecastEligibility(fact: ForecastOpportunityFact, cycle: Readonly<{ periodStart: Date; periodEnd: Date; currency: string; scopeType: string; teamId: string | null; functionMemberIds?: readonly string[]; memberIds?: readonly string[] }>) {
   if (fact.status !== "OPEN") return { eligible: false, reasonCode: fact.status } as const;
+  if (fact.productAvailability === "FUTURE") return { eligible: false, reasonCode: "PRODUCT_NOT_AVAILABLE" } as const;
+  if (fact.evidenceCount < 1) return { eligible: false, reasonCode: "MISSING_EVIDENCE" } as const;
   if (fact.amountCents <= 0n) return { eligible: false, reasonCode: "MISSING_VALUE" } as const;
   if (fact.currency !== cycle.currency) return { eligible: false, reasonCode: "CURRENCY_MISMATCH" } as const;
   if (!fact.expectedCloseAt) return { eligible: false, reasonCode: "MISSING_EXPECTED_CLOSE" } as const;
@@ -92,7 +96,9 @@ export function forecastEligibility(fact: ForecastOpportunityFact, cycle: Readon
   return { eligible: true, reasonCode: "ELIGIBLE" } as const;
 }
 
-export function aggregateForecast(items: readonly ForecastOpportunityFact[]) {
+type ForecastAggregateFact = Pick<ForecastOpportunityFact, "amountCents" | "category" | "probabilityBps" | "probabilitySource" | "probabilityActorId" | "probabilityRecordedAt">;
+
+export function aggregateForecast<T extends ForecastAggregateFact>(items: readonly T[]) {
   const eligible = items.filter((item) => item.category !== null);
   const pipelineCents = eligible.reduce((total, item) => total + item.amountCents, 0n);
   const bestCaseCents = eligible.filter((item) => item.category === "BEST_CASE" || item.category === "COMMIT").reduce((total, item) => total + item.amountCents, 0n);

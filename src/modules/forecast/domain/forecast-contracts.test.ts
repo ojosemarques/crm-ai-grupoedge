@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { aggregateForecast, compareForecastItems, forecastEligibility, forecastFingerprint, percentageDelta } from "./forecast-contracts";
 
-const base = { id: "a", status: "OPEN" as const, amountCents: 100_00n, currency: "BRL", expectedCloseAt: new Date("2026-09-15T12:00:00Z"), ownerMemberId: "m1", teamId: "t1", category: "PIPELINE" as const, probabilityBps: 5000, probabilitySource: "OPPORTUNITY_MANUAL", probabilityActorId: "actor", probabilityRecordedAt: new Date("2026-09-01T12:00:00Z") };
+const base = { id: "a", status: "OPEN" as const, amountCents: 100_00n, currency: "BRL", expectedCloseAt: new Date("2026-09-15T12:00:00Z"), ownerMemberId: "m1", teamId: "t1", category: "PIPELINE" as const, probabilityBps: 5000, probabilitySource: "OPPORTUNITY_MANUAL", probabilityActorId: "actor", probabilityRecordedAt: new Date("2026-09-01T12:00:00Z"), productAvailability: "AVAILABLE" as const, evidenceCount: 1 };
 const cycle = { periodStart: new Date("2026-09-01T03:00:00Z"), periodEnd: new Date("2026-10-01T03:00:00Z"), currency: "BRL", scopeType: "TEAM", teamId: "t1" };
 
 describe("forecast determinístico", () => {
@@ -11,6 +11,8 @@ describe("forecast determinístico", () => {
     expect(forecastEligibility({ ...base, expectedCloseAt: null }, cycle).reasonCode).toBe("MISSING_EXPECTED_CLOSE");
     expect(forecastEligibility({ ...base, currency: "USD" }, cycle).reasonCode).toBe("CURRENCY_MISMATCH");
     expect(forecastEligibility({ ...base, status: "WON" }, cycle).reasonCode).toBe("WON");
+    expect(forecastEligibility({ ...base, productAvailability: "FUTURE" }, cycle).reasonCode).toBe("PRODUCT_NOT_AVAILABLE");
+    expect(forecastEligibility({ ...base, evidenceCount: 0 }, cycle).reasonCode).toBe("MISSING_EVIDENCE");
     expect(forecastEligibility({ ...base, teamId: "t2" }, cycle).reasonCode).toBe("OUTSIDE_SCOPE");
   });
 
