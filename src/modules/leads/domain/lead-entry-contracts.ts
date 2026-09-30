@@ -88,6 +88,7 @@ export const manualLeadEntryRequestSchema = z.preprocess(
   z
     .object({
       idempotencyKey: z.string().trim().min(8).max(160),
+      pipelineId: z.string().uuid().optional(),
       lead: leadEntryFieldsSchema,
     })
     .strict(),

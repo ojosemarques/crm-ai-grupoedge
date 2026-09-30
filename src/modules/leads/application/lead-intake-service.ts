@@ -75,6 +75,7 @@ const leadIntakeSchema = z
     interestSummary: optionalText(2_000),
     budgetCents: z.number().int().nonnegative().safe().optional(),
     sourceKey: z.string().trim().min(1).max(120),
+    pipelineId: z.string().uuid().optional(),
     campaignExternalRef: optionalText(200),
     creativeExternalRef: optionalText(200),
     consent: z.boolean().optional(),
@@ -315,7 +316,7 @@ async function findReferences(
     where: {
       workspaceId,
       entityType: "LEAD",
-      isDefault: true,
+      ...(input.pipelineId ? { id: input.pipelineId } : { isDefault: true }),
       deletedAt: null,
     },
     select: { id: true },
@@ -376,7 +377,7 @@ async function findReferences(
     return rejected(
       "CONFIGURATION_UNAVAILABLE",
       "pipeline",
-      "O pipeline padrão não possui etapa inicial aberta.",
+      "O pipeline selecionado não possui etapa inicial aberta.",
     );
   }
 

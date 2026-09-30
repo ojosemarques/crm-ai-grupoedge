@@ -144,6 +144,50 @@ describe("canais locais de entrada da CRM-07", () => {
     expect(invalid).toMatchObject({ outcome: "REJECTED", code: "INVALID_PAYLOAD" });
   });
 
+  it("cadastra o lead no pipeline selecionado pelo funil", async () => {
+    const pipeline = await database.pipeline.create({
+      data: {
+        workspaceId: managerContext.workspaceId,
+        name: `Pipeline rápido ${randomUUID()}`,
+        entityType: "LEAD",
+        isDefault: false,
+        createdByActorId: managerContext.actorId,
+        updatedByActorId: managerContext.actorId,
+      },
+    });
+    const stage = await database.pipelineStage.create({
+      data: {
+        workspaceId: managerContext.workspaceId,
+        pipelineId: pipeline.id,
+        name: "Entrada rápida",
+        position: 0,
+        type: "OPEN",
+        leadStageCode: "NEW",
+        createdByActorId: managerContext.actorId,
+        updatedByActorId: managerContext.actorId,
+      },
+    });
+    const intake = createLeadIntakeService({ database, authorization, now: () => fixedNow });
+    const service = createLeadEntryService({ database, authorization, intake });
+    const payload = { ...manualPayload(uniquePhone("pipeline-selected")), pipelineId: pipeline.id };
+
+    const created = await service.createManual(payload, managerContext);
+    if (created.outcome === "REJECTED") throw new Error("Entrada deveria ser aceita.");
+    const lead = await database.lead.findUniqueOrThrow({ where: { id: created.leadId } });
+
+    expect(lead.pipelineId).toBe(pipeline.id);
+    expect(lead.currentStageId).toBe(stage.id);
+
+    const invalidPipeline = await service.createManual(
+      { ...manualPayload(uniquePhone("pipeline-invalid")), pipelineId: randomUUID() },
+      managerContext,
+    );
+    expect(invalidPipeline).toMatchObject({
+      outcome: "REJECTED",
+      code: "CONFIGURATION_UNAVAILABLE",
+    });
+  });
+
   it("gera preview e importa arquivo completo usando a fronteira única", async () => {
     const firstPhone = uniquePhone("csv-complete-1");
     const secondPhone = uniquePhone("csv-complete-2");

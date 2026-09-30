@@ -166,6 +166,7 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
           channel: "MANUAL",
           idempotencyKey: `manual:${parsed.data.idempotencyKey}`,
           rawPayload: payload as Record<string, unknown>,
+          ...(parsed.data.pipelineId ? { pipelineId: parsed.data.pipelineId } : {}),
         }),
         context,
       );

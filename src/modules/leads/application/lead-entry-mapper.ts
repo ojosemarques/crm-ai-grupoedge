@@ -11,6 +11,7 @@ export function toLeadIntakeInput(
     idempotencyKey: string;
     rawPayload: Record<string, unknown>;
     formIdentifier?: string;
+    pipelineId?: string;
   }>,
 ): LeadIntakeInput {
   const { budgetBrl, ...leadFields } = fields;
@@ -20,6 +21,7 @@ export function toLeadIntakeInput(
     channel: options.channel,
     idempotencyKey: options.idempotencyKey,
     formIdentifier: options.formIdentifier,
+    pipelineId: options.pipelineId,
     budgetCents: parseBrlToCents(budgetBrl),
     rawPayload: options.rawPayload,
   } as LeadIntakeInput;

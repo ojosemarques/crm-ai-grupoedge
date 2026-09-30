@@ -64,6 +64,21 @@ describe("contratos dos canais de entrada", () => {
     expect(parsed.lead.sourceKey).toBe("manual");
   });
 
+  it("aceita o pipeline selecionado no cadastro manual", () => {
+    const pipelineId = "11111111-1111-4111-8111-111111111111";
+    const parsed = manualLeadEntryRequestSchema.parse({
+      idempotencyKey: "manual-com-pipeline",
+      pipelineId,
+      lead: {
+        fullName: "Pessoa Fictícia",
+        phone: "11987654321",
+        priorityBandCode: "P3",
+      },
+    });
+
+    expect(parsed.pipelineId).toBe(pipelineId);
+  });
+
   it("reporta orçamento inválido como erro de campo do canal", () => {
     const parsed = leadEntryFieldsSchema.safeParse({
       fullName: "Pessoa Fictícia",

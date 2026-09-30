@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -37,6 +37,131 @@ function allCards(stages: readonly LeadPipelineStageColumn[]) {
   return stages.flatMap((stage) => stage.leads);
 }
 
+type LeadEntryOptions = Readonly<{
+  sources: readonly Readonly<{ key: string; name: string }>[];
+  priorityBands: readonly Readonly<{ code: "P1" | "P2" | "P3"; name: string }>[];
+}>;
+
+const quickInputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring";
+
+function optionalFormValue(form: FormData, name: string): string | undefined {
+  const value = String(form.get(name) ?? "").trim();
+  return value || undefined;
+}
+
+function QuickLeadDialog({
+  pipelineId,
+  pipelineName,
+  onDismiss,
+  onCreated,
+}: Readonly<{
+  pipelineId: string;
+  pipelineName: string;
+  onDismiss: () => void;
+  onCreated: (message: string) => void;
+}>) {
+  const [options, setOptions] = useState<LeadEntryOptions | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/leads/entry-options", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const body = (await response.json().catch(() => ({}))) as {
+          options?: LeadEntryOptions;
+          error?: { message?: string };
+        };
+        if (!response.ok || !body.options) {
+          throw new Error(body.error?.message ?? "Não foi possível carregar as opções do cadastro.");
+        }
+        setOptions(body.options);
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(cause instanceof Error ? cause.message : "Não foi possível carregar as opções do cadastro.");
+        }
+      });
+    return () => controller.abort();
+  }, []);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setPending(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/leads/manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idempotencyKey,
+          pipelineId,
+          lead: {
+            fullName: optionalFormValue(form, "fullName"),
+            phone: optionalFormValue(form, "phone"),
+            email: optionalFormValue(form, "email"),
+            jobTitle: optionalFormValue(form, "jobTitle"),
+            organizationName: optionalFormValue(form, "organizationName"),
+            city: optionalFormValue(form, "city"),
+            stateCode: optionalFormValue(form, "stateCode"),
+            interestSummary: optionalFormValue(form, "interestSummary"),
+            budgetBrl: optionalFormValue(form, "budgetBrl"),
+            sourceKey: optionalFormValue(form, "sourceKey"),
+            priorityBandCode: optionalFormValue(form, "priorityBandCode") ?? "P3",
+          },
+        }),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        result?: { outcome?: "CREATED" | "ATTACHED"; issues?: readonly { message?: string }[] };
+        error?: { message?: string };
+      };
+      if (!response.ok) {
+        const issues = body.result?.issues?.flatMap((issue) => issue.message ? [issue.message] : []).join(" ");
+        throw new Error(issues || body.error?.message || "Não foi possível cadastrar o lead.");
+      }
+      onCreated(body.result?.outcome === "ATTACHED"
+        ? "O contato já existia e foi atualizado no CRM."
+        : `Lead criado no pipeline ${pipelineName}.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível cadastrar o lead.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <AccessibleDialog busy={pending} labelledBy="quick-lead-title" onDismiss={onDismiss} className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <form className="grid gap-4" onSubmit={submit}>
+        <header>
+          <h2 id="quick-lead-title">Adicionar lead</h2>
+          <p className="mt-1 text-sm text-muted-foreground">O lead entrará na primeira etapa do pipeline <strong>{pipelineName}</strong>.</p>
+        </header>
+        {error ? <p className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900" role="alert">{error}</p> : null}
+        {!options && !error ? <p className="py-6 text-center text-sm text-muted-foreground" role="status">Carregando opções…</p> : null}
+        {options ? <div className="grid gap-4 sm:grid-cols-2">
+          <label className="text-sm font-medium">Nome<input autoComplete="name" className={quickInputClass} name="fullName" required /></label>
+          <label className="text-sm font-medium">Telefone<input autoComplete="tel" className={quickInputClass} name="phone" placeholder="(11) 98765-4321" required /></label>
+          <label className="text-sm font-medium">E-mail<input autoComplete="email" className={quickInputClass} name="email" type="email" /></label>
+          <label className="text-sm font-medium">Cargo ou atuação<input className={quickInputClass} name="jobTitle" /></label>
+          <label className="text-sm font-medium">Organização<input autoComplete="organization" className={quickInputClass} name="organizationName" /></label>
+          <label className="text-sm font-medium">Orçamento (R$)<input className={quickInputClass} inputMode="decimal" name="budgetBrl" placeholder="6500,00" /></label>
+          <label className="text-sm font-medium">Cidade<input autoComplete="address-level2" className={quickInputClass} name="city" /></label>
+          <label className="text-sm font-medium">UF<input autoComplete="address-level1" className={quickInputClass} maxLength={2} name="stateCode" /></label>
+          <label className="text-sm font-medium">Origem (opcional)<select className={quickInputClass} defaultValue="" name="sourceKey"><option value="">Não informar</option>{options.sources.map((source) => <option key={source.key} value={source.key}>{source.name}</option>)}</select></label>
+          <label className="text-sm font-medium">Prioridade<select className={quickInputClass} defaultValue="P3" name="priorityBandCode">{options.priorityBands.map((band) => <option key={band.code} value={band.code}>{band.name}</option>)}</select></label>
+          <label className="text-sm font-medium sm:col-span-2">Dor ou interesse<textarea className={`${quickInputClass} min-h-24 py-2`} name="interestSummary" /></label>
+        </div> : null}
+        <div className="flex justify-end gap-2">
+          <Button disabled={pending} onClick={onDismiss} type="button" variant="secondary">Cancelar</Button>
+          <Button disabled={pending || !options} type="submit"><Icon name="mais" size={14} />{pending ? "Cadastrando…" : "Adicionar lead"}</Button>
+        </div>
+      </form>
+    </AccessibleDialog>
+  );
+}
+
 export function PreSalesPipelineWorkspace({
   screen,
   initialView,
@@ -45,6 +170,7 @@ export function PreSalesPipelineWorkspace({
   const [view, setView] = useState(initialView);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedLeadState, setSelectedLeadState] = useState<LeadPipelineState | null>(null);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
   const cards = useMemo(() => allCards(screen.stages), [screen.stages]);
@@ -158,6 +284,7 @@ export function PreSalesPipelineWorkspace({
         <label className={styles.filter}>Etapa<select aria-label="Etapa" defaultValue={screen.filters.stageCode} name="stageCode"><option value="ALL">Todas as etapas</option>{screen.stages.map((stage) => <option key={stage.id} value={stage.code}>{stage.name} ({stage.count})</option>)}</select></label>
         <input name="view" type="hidden" value={view} />
         <Button size="sm" type="submit" variant="secondary"><Icon name="filtro" size={14} />Aplicar</Button>
+        {screen.canWrite ? <Button onClick={() => setQuickCreateOpen(true)} size="sm" type="button"><Icon name="mais" size={14} />Adicionar</Button> : null}
         <Link className={styles.clear} href="/pipeline">Limpar filtros</Link>
       </form>
       <div className={styles.boardToolbar}>
@@ -245,6 +372,16 @@ export function PreSalesPipelineWorkspace({
           </form>
         </AccessibleDialog>
       ) : null}
+      {quickCreateOpen ? <QuickLeadDialog
+        onCreated={(message) => {
+          setQuickCreateOpen(false);
+          setNotice({ kind: "success", message });
+          router.refresh();
+        }}
+        onDismiss={() => setQuickCreateOpen(false)}
+        pipelineId={screen.pipelineId}
+        pipelineName={screen.pipelineName}
+      /> : null}
     </div>
   );
 }
