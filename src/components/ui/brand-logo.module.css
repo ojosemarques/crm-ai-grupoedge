@@ -1,0 +1,7 @@
+.logo { display: inline-block; flex-shrink: 0; height: 36px; overflow: hidden; position: relative; vertical-align: middle; width: 158px; }
+/* Frame the artwork inside the supplied transparent canvases, without changing the originals. */
+.logo img { height: auto; max-width: none; position: absolute; top: 50%; }
+.light { left: -14.92%; transform: translateY(-47.17%); width: 136.41%; }
+.dark { display: none; left: -18.71%; transform: translateY(-47.41%); width: 141.57%; }
+:global(:root[data-theme="dark"]) .logo[data-appearance="auto"] .light { display: none; }
+:global(:root[data-theme="dark"]) .logo[data-appearance="auto"] .dark { display: block; }

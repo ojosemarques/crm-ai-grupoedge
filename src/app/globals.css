@@ -506,7 +506,7 @@ details > summary {
   box-shadow: var(--shadow-card);
   display: grid;
   gap: 1.5rem;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   margin: auto;
   max-width: 42rem;
   overflow: hidden;
@@ -526,15 +526,8 @@ details > summary {
 }
 
 .public-state__brand {
-  align-items: center;
-  background: var(--brand-navy);
-  border-radius: 0.85rem;
-  color: white;
   display: flex;
-  font-weight: 700;
-  height: 2.75rem;
-  justify-content: center;
-  width: 2.75rem;
+  grid-column: 1 / -1;
 }
 
 .public-state h1 {
@@ -675,10 +668,9 @@ details > summary {
   letter-spacing: -0.035em;
 }
 
-.login-brand img {
-  border-radius: 50%;
-  height: clamp(19px, 2.85vw, 29px);
-  width: clamp(19px, 2.85vw, 29px);
+.login-brand > [role="img"] {
+  height: 44px;
+  width: 193px;
 }
 
 .login-panel__header h1 {
@@ -1132,7 +1124,6 @@ details > summary {
   .login-context p { font-size: 0.73rem; max-width: 36ch; }
   .login-panel { padding: 0.25rem 0.5rem 0.5rem; }
   .login-brand { font-size: 1.2rem; }
-  .login-brand img { height: 23px; width: 23px; }
   .login-panel__header h1 { font-size: 1rem; }
   .login-panel__header p { font-size: 0.75rem; }
   .login-form { gap: 0.9rem; margin-top: 1.5rem; }
@@ -1157,7 +1148,6 @@ details > summary {
   .empty-state { grid-template-columns: auto minmax(0, 1fr); }
   .empty-state__action { grid-column: 2; }
   .public-state__panel { grid-template-columns: 1fr; }
-  .public-state__brand { height: 2.4rem; width: 2.4rem; }
   :where(button, [role="button"], input, select) { min-height: 2.5rem; }
 }
 

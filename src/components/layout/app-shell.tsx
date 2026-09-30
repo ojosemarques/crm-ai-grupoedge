@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -10,7 +9,7 @@ import { GlobalSearch } from "@/components/layout/global-search";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { cn } from "@/shared/core/ui/class-names";
 import styles from "./app-shell.module.css";
-import politizaiMark from "../../../public/brand/politizai-mark.png";
+import { BrandLogo } from "@/components/ui/brand-logo";
 
 type SessionView = Readonly<{
   user: Readonly<{
@@ -216,8 +215,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
       <div className={cn("app-shell", styles.shell, collapsed && styles.collapsed)}>
         <header className={styles.topbar} onKeyDown={(event) => { if (event.key === "Escape" && event.target instanceof HTMLElement) { const details = event.target.closest("details"); details?.removeAttribute("open"); details?.querySelector("summary")?.focus(); } }}>
           <Link aria-label="Politizai, início" className={styles.brand} href="/">
-            <Image alt="" height={25} priority src={politizaiMark} width={25} />
-            <strong>politizai<span>crm</span></strong>
+            <BrandLogo />
           </Link>
           <nav aria-label="Módulos do CRM" className={styles.topnav}>
             {availableSections.filter((section) => section.key !== "settings").map((section) => (

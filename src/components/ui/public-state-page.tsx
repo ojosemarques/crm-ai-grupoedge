@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import { BrandLogo } from "@/components/ui/brand-logo";
 
 export function PublicStatePage({
   eyebrow,
@@ -16,7 +17,7 @@ export function PublicStatePage({
   return (
     <main className="public-state">
       <section className="public-state__panel">
-        <div aria-hidden="true" className="public-state__brand">P</div>
+        <div className="public-state__brand"><BrandLogo /></div>
         <div>
           <p className="eyebrow">{eyebrow}</p>
           <h1>{title}</h1>

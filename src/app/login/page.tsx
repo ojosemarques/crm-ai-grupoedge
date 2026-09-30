@@ -1,7 +1,5 @@
-import Image from "next/image";
-
 import { LoginForm } from "@/app/login/login-form";
-import politizaiMark from "../../../public/brand/politizai-mark.png";
+import { BrandLogo } from "@/components/ui/brand-logo";
 
 export default function LoginPage() {
   return (
@@ -17,8 +15,7 @@ export default function LoginPage() {
         <section className="login-panel" aria-labelledby="login-title">
           <header className="login-panel__header">
             <div className="login-brand">
-              <Image alt="" height={21} priority src={politizaiMark} width={21} />
-              <strong>Politizai</strong>
+              <BrandLogo appearance="light" />
             </div>
             <h1 id="login-title">Entre na sua conta</h1>
             <p>Bem-vindo de volta. Informe seus dados para continuar.</p>
