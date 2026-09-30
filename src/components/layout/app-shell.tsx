@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
-import { LogoutButton } from "@/components/auth/logout-button";
+import { CopilotDrawer } from "@/components/layout/copilot-drawer";
 import { GlobalSearch } from "@/components/layout/global-search";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -137,26 +137,18 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const pathname = usePathname();
   const [session, setSession] = useState<SessionView | null | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
   const isMobile = useSyncExternalStore(subscribeToMobileLayout, mobileLayoutSnapshot, serverLayoutSnapshot);
   const menuRef = useRef<HTMLElement>(null);
-  const [theme, setTheme] = useState<"dark" | "light">("light");
   const publicRoute = publicRoutes.has(pathname);
 
   useEffect(() => {
     const savedTheme = window.localStorage.getItem("politizai-crm-theme-v2");
     if (savedTheme === "dark") {
       document.documentElement.dataset.theme = "dark";
-      const frame = window.requestAnimationFrame(() => setTheme("dark"));
-      return () => window.cancelAnimationFrame(frame);
     }
   }, []);
-
-  function selectTheme(nextTheme: "dark" | "light") {
-    document.documentElement.dataset.theme = nextTheme;
-    window.localStorage.setItem("politizai-crm-theme-v2", nextTheme);
-    setTheme(nextTheme);
-  }
 
   useEffect(() => {
     if (publicRoute) return;
@@ -206,6 +198,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const roleKey = session?.user.role.key;
   const permissionKeys = new Set(session?.user.permissionKeys ?? []);
   const canCreateLead = roleKey ? operationalRoles.some((role) => role === roleKey) : false;
+  const canUseCopilot = permissionKeys.has("ai.manager.query");
   const allowedItems = navigationGroups.flatMap((group) => group.items).filter((item) =>
     (!item.permission || permissionKeys.has(item.permission)) &&
     (!item.roles || (roleKey && item.roles.includes(roleKey))),
@@ -214,11 +207,6 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const activeSection = availableSections.find((section) => section.items.some((item) => isActive(pathname, item.href))) ?? availableSections.find((section) => section.key === "work");
   const mobileCriticalItems = ["/meu-dia", "/pipeline", "/inbox", "/atividades", "/dashboard"]
     .flatMap((href) => allowedItems.filter((item) => item.href === href));
-  const closeMenus = (event: React.MouseEvent<HTMLElement>) => {
-    setMenuOpen(false);
-    event.currentTarget.closest("details")?.removeAttribute("open");
-  };
-
   return (
     <>
       <a className="skip-link" href="#conteudo-principal">Pular para o conteúdo</a>
@@ -236,21 +224,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             {session ? <GlobalSearch /> : null}
             {canCreateLead ? <Link aria-label="Novo lead" className={styles.newButton} href="/leads/entrada"><Icon name="mais" size={14} /><span>Novo</span></Link> : null}
             <Link aria-label="Notificações" className={styles.iconButton} href="/notificacoes"><Icon name="notificacoes" size={17} /></Link>
-            <details className={styles.profile}>
-              <summary aria-label="Menu da conta"><span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span><span className={styles.profileIdentity}><strong>{session?.user.displayName.split(" ")[0] ?? "Minha conta"}</strong><small>{session?.user.role.name ?? "Workspace"}</small></span><span className={styles.profileChevron}>⌄</span></summary>
-              <div className={styles.profilePanel}>
-                <strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small>
-                <Link href="/perfil" onClick={closeMenus}>Perfil e preferências</Link>
-                <div className={styles.profileTheme}>
-                  <span>Aparência</span>
-                  <div aria-label="Tema da interface" className={styles.themeOptions} role="group">
-                    <button aria-pressed={theme === "light"} onClick={() => selectTheme("light")} type="button"><Icon name="sol" size={16} />Modo claro</button>
-                    <button aria-pressed={theme === "dark"} onClick={() => selectTheme("dark")} type="button"><Icon name="lua" size={16} />Modo escuro</button>
-                  </div>
-                </div>
-                <LogoutButton />
-              </div>
-            </details>
+            {canUseCopilot ? <button aria-controls="copilot-drawer" aria-expanded={copilotOpen} className={styles.copilotButton} onClick={() => setCopilotOpen((current) => !current)} type="button"><Icon name="copilot" size={16} /><span>Copilot</span></button> : null}
           </div>
         </header>
         <button aria-label="Fechar navegação" className={cn(styles.backdrop, menuOpen && styles.visible)} onClick={() => setMenuOpen(false)} tabIndex={menuOpen ? 0 : -1} type="button" />
@@ -278,6 +252,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             </Link>
           ))}
         </nav>
+        {canUseCopilot ? <CopilotDrawer onClose={() => setCopilotOpen(false)} open={copilotOpen} /> : null}
         <div className={cn("app-content", styles.content)} id="conteudo-principal" tabIndex={-1}>{children}</div>
       </div>
     </>
