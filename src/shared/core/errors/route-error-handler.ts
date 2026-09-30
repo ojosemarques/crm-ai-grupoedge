@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ZodError } from "zod";
 
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { resolveCorrelationId } from "@/shared/core/http/correlation";
@@ -6,8 +7,11 @@ import { logger } from "@/shared/core/logging/logger";
 
 export function handleRouteError(error: unknown, request?: Request): NextResponse {
   const requestId = resolveCorrelationId(request?.headers ?? new Headers());
-  const applicationError =
-    error instanceof ApplicationError ? error : undefined;
+  const applicationError = error instanceof ApplicationError
+    ? error
+    : error instanceof ZodError
+      ? new ApplicationError("Entrada inválida.", { code: "INVALID_INPUT", statusCode: 400, expose: true })
+      : undefined;
 
   const statusCode = applicationError?.statusCode ?? 500;
   const log = statusCode >= 500 ? logger.error.bind(logger) : logger.warn.bind(logger);
