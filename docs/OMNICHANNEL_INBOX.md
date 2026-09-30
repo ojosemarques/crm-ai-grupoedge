@@ -62,7 +62,7 @@ provider e horário de ingestão separadamente.
 | E-mail | local validado na CRM-45 | simulador com headers | sink local | delivery/bounce/complaint/reply | provider, domínio e sandbox externos adiados; ver `EMAIL_CHANNEL.md` |
 | Telefonia | local validado na CRM-46 | callback local assinado | chamada simulada | fila/ringing/answer/terminal/revisão | provider, PSTN, gravação e transcrição adiados; ver `TELEPHONY_CHANNEL.md` |
 | SMS | futuro | sim | sim | delivery | nenhum provider configurado |
-| Instagram | futuro | sim | sim | delivery/read | nenhum provider configurado |
+| Instagram | simulador local | sim | sim | delivery/read | Direct, comentário, menção e resposta a story por fixtures; nenhum provider configurado |
 
 A matriz tipada vive em
 `src/modules/communications/domain/omnichannel-contracts.ts` e é exibida no

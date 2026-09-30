@@ -51,7 +51,7 @@ export const channelCapabilities: readonly ChannelCapability[] = Object.freeze([
   { channel: "EMAIL", label: "E-mail", support: "LOCAL_ONLY", inbound: true, outbound: true, text: true, template: true, mediaReference: true, callEvent: false, delivery: true, read: false, bounce: true, reply: true, threading: true, sendingWindow: "Sink local; provider e domínio externos adiados", consentRequired: true },
   { channel: "PHONE", label: "Telefonia", support: "EXTERNAL_DEFERRED", inbound: true, outbound: true, text: false, template: false, mediaReference: true, callEvent: true, delivery: false, read: false, bounce: false, reply: false, threading: false, sendingWindow: "Política local de horário", consentRequired: true },
   { channel: "SMS", label: "SMS", support: "FUTURE", inbound: true, outbound: true, text: true, template: true, mediaReference: false, callEvent: false, delivery: true, read: false, bounce: false, reply: true, threading: false, sendingWindow: "Provider futuro", consentRequired: true },
-  { channel: "INSTAGRAM_MESSAGING", label: "Instagram", support: "FUTURE", inbound: true, outbound: true, text: true, template: false, mediaReference: true, callEvent: false, delivery: true, read: true, bounce: false, reply: true, threading: true, sendingWindow: "Provider futuro", consentRequired: true },
+  { channel: "INSTAGRAM_MESSAGING", label: "Instagram", support: "LOCAL_ONLY", inbound: true, outbound: true, text: true, template: false, mediaReference: true, callEvent: false, delivery: true, read: true, bounce: false, reply: true, threading: true, sendingWindow: "Somente simulador local; política do provider não homologada", consentRequired: true },
 ]);
 
 export const inboxQuerySchema = z.object({
@@ -77,6 +77,7 @@ export const localInboundSchema = z.object({
   messageIdHeader: z.string().trim().max(255).optional(),
   inReplyToHeader: z.string().trim().max(255).nullable().optional(),
   referenceHeaders: z.array(z.string().trim().max(255)).max(20).default([]),
+  metadata: z.record(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,49}$/), z.string().trim().max(500)).refine((value) => Object.keys(value).length <= 10, "Metadados excedem o limite de 10 chaves.").default({}),
   occurredAt: z.string().datetime({ offset: true }),
   scenario: z.enum(["RECEIVED", "REPLY", "OPT_OUT"]).default("RECEIVED"),
 }).strict();

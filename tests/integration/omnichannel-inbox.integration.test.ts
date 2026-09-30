@@ -235,6 +235,12 @@ describe("CRM-43 inbox omnichannel canônico", () => {
     expect(afterDelayed.status).toBe(latestBeforeDelayed.status);
     expect(afterDelayed.lastMessageAt).toEqual(latestBeforeDelayed.lastMessageAt);
     expect(afterDelayed.waitingSince).toEqual(latestBeforeDelayed.waitingSince);
+    const body = "Corpo sigiloso que não deve ser copiado para a timeline";
+    const contextualInbound = await service.receiveLocal(manager, { externalEventId: `evt:${randomUUID()}`, channel: "INTERNAL_SIMULATOR", address: point.normalizedValue, body, occurredAt: new Date(now.getTime() + 1_000).toISOString(), scenario: "RECEIVED" });
+    const timeline = await database.activity.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, messageId: contextualInbound.messageId! } });
+    expect(timeline.opportunityId).toBe(opportunity.id);
+    expect(timeline.description).toBe("Fato canônico de comunicação; conteúdo disponível na conversa.");
+    expect(timeline.description).not.toContain(body);
   });
 
   it("mantém fatos append-only e executa backfill conservador com replay idempotente", async () => {

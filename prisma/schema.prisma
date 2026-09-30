@@ -2534,6 +2534,7 @@ model Workspace {
   whatsappProfiles             WhatsAppConnectionProfile[]
   whatsappPolicyDecisions      WhatsAppPolicyDecision[]
   whatsappEventReviews         WhatsAppEventReview[]
+  meetingTranscriptArtifacts   MeetingTranscriptArtifact[]
   emailProfiles                EmailConnectionProfile[]
   emailMessageProfiles         EmailMessageProfile[]
   emailRecipients              EmailRecipient[]
@@ -2720,6 +2721,7 @@ model Actor {
   whatsappProfilesUpdated          WhatsAppConnectionProfile[]          @relation("WhatsAppProfileUpdatedBy")
   whatsappPolicyDecisionsRecorded  WhatsAppConnectionProfile[]          @relation("WhatsAppPolicyDecisionBy")
   whatsappPolicyDecisionFacts      WhatsAppPolicyDecision[]             @relation("WhatsAppPolicyDecisionRecordedBy")
+  meetingTranscriptArtifactsCreated MeetingTranscriptArtifact[]          @relation("MeetingTranscriptArtifactCreatedBy")
   whatsappReviewsCreated           WhatsAppEventReview[]                @relation("WhatsAppReviewCreatedBy")
   whatsappReviewsResolved          WhatsAppEventReview[]                @relation("WhatsAppReviewResolvedBy")
   emailProfilesCreated             EmailConnectionProfile[]             @relation("EmailProfileCreatedBy")
@@ -5813,6 +5815,7 @@ model Meeting {
   calendarEvents    CalendarSyncEvent[]
   calendarConflicts CalendarSyncConflict[]
   calendarBackfills CalendarBackfillItem[]
+  transcriptArtifacts MeetingTranscriptArtifact[]
 
   @@unique([workspaceId, id])
   @@index([workspaceId, ownerMemberId, status, startsAt])
@@ -5820,6 +5823,31 @@ model Meeting {
   @@index([workspaceId, opportunityId, startsAt])
   @@index([workspaceId, createdAt])
   @@map("meetings")
+}
+
+model MeetingTranscriptArtifact {
+  id                 String   @id @default(uuid()) @db.Uuid
+  workspaceId        String   @db.Uuid
+  meetingId          String   @db.Uuid
+  version            Int
+  transcriptText     String?  @db.Text
+  summary            String?  @db.Text
+  policyVersion      String
+  consentEvidence    String
+  consentRecordedAt  DateTime @db.Timestamptz(3)
+  retentionUntil     DateTime @db.Timestamptz(3)
+  createdByActorId   String   @db.Uuid
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  meeting   Meeting   @relation(fields: [workspaceId, meetingId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy Actor     @relation("MeetingTranscriptArtifactCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, meetingId, version])
+  @@index([workspaceId, meetingId, createdAt])
+  @@index([workspaceId, retentionUntil])
+  @@map("meeting_transcript_artifacts")
 }
 
 model MeetingHistory {

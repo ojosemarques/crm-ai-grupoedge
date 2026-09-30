@@ -24,6 +24,7 @@ let clock = new Date("2035-02-10T15:00:00.000Z");
 let workspaceId: string;
 let managerContext: AuthenticatedContext;
 let viewerContext: AuthenticatedContext;
+let adminContext: AuthenticatedContext;
 let systemContext: ServiceActorContext;
 let closer1Id: string;
 let closer2Id: string;
@@ -153,9 +154,10 @@ beforeAll(async () => {
   workspaceId = seed.workspaceId;
   const system = await database.actor.findFirstOrThrow({ where: { workspaceId, key: "system" } });
   systemContext = { workspaceId, actorId: system.id, actorKey: "system", actorType: "SYSTEM" };
-  [managerContext, viewerContext] = await Promise.all([
+  [managerContext, viewerContext, adminContext] = await Promise.all([
     humanContext("gestor@demo.politizai.local"),
     humanContext("viewer@demo.politizai.local"),
+    humanContext("admin@demo.politizai.local"),
   ]);
   const closers = await database.workspaceMember.findMany({
     where: { workspaceId, teamMemberships: { some: { function: "CLOSER", deletedAt: null } } },
@@ -238,10 +240,44 @@ describe("agenda interna e reuniões", () => {
       previousStartsAt: new Date("2035-02-12T12:00:00.000Z"),
       newStartsAt: new Date("2035-02-12T13:00:00.000Z"),
     });
+    expect(await database.task.findFirstOrThrow({ where: { workspaceId, meetingId: scheduled.meetingId } })).toMatchObject({ dueAt: new Date("2035-02-12T13:00:00.000Z") });
     await expect(database.meetingHistory.update({
       where: { id: history[0]!.id },
       data: { reason: "Tentativa de apagar o fato" },
     })).rejects.toThrow(/append-only/);
+  });
+
+  it("liga reunião e próxima ação à oportunidade aberta", async () => {
+    const lead = await qualifyLead("CRM09 oportunidade");
+    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId, entityType: "OPPORTUNITY", isDefault: true, deletedAt: null }, include: { stages: { where: { deletedAt: null }, orderBy: { position: "asc" }, take: 1 } } });
+    const stage = pipeline.stages[0]!;
+    const opportunity = await database.opportunity.create({ data: { workspaceId, leadId: lead.leadId, pipelineId: pipeline.id, currentStageId: stage.id, ownerMemberId: closer1Id, name: "Oportunidade Stage09", interestDescription: "Diagnóstico comercial da Etapa 09", status: "OPEN", amountCents: 100_000n, probabilityBps: 1_000, createdByActorId: managerContext.actorId, updatedByActorId: managerContext.actorId } });
+    const result = await schedule(lead.leadId, managerContext, "2035-02-19T09:00");
+    const [meeting, task, activity, projected] = await Promise.all([
+      database.meeting.findUniqueOrThrow({ where: { id: result.meetingId } }),
+      database.task.findFirstOrThrow({ where: { workspaceId, meetingId: result.meetingId } }),
+      database.activity.findFirstOrThrow({ where: { workspaceId, meetingId: result.meetingId } }),
+      database.opportunity.findUniqueOrThrow({ where: { id: opportunity.id } }),
+    ]);
+    expect(meeting.opportunityId).toBe(opportunity.id);
+    expect(task.opportunityId).toBe(opportunity.id);
+    expect(activity.opportunityId).toBe(opportunity.id);
+    expect(projected).toMatchObject({ nextActionTaskId: task.id, nextActionAt: meeting.startsAt, nextActionDescription: task.title });
+  });
+
+  it("protege transcrição por consentimento, política, retenção e permissão própria", async () => {
+    const lead = await qualifyLead("CRM09 transcrição");
+    const scheduled = await schedule(lead.leadId, managerContext, "2035-02-21T09:00");
+    await expect(meetings().recordTranscript(adminContext, { meetingId: scheduled.meetingId, transcriptText: "Texto sensível da reunião sem consentimento válido.", summary: "Resumo sensível.", policyVersion: "meeting-transcript-policy/v1", consentConfirmed: false, consentEvidence: "Consentimento recusado pelo participante.", consentRecordedAt: clock.toISOString(), retentionUntil: "2036-02-20T15:00:00.000Z" })).rejects.toThrow();
+    const recorded = await meetings().recordTranscript(adminContext, { meetingId: scheduled.meetingId, transcriptText: "Texto sensível da reunião autorizado pelo participante.", summary: "Resumo autorizado da conversa.", policyVersion: "meeting-transcript-policy/v1", consentConfirmed: true, consentEvidence: "Consentimento verbal registrado no início da reunião.", consentRecordedAt: clock.toISOString(), retentionUntil: "2036-02-20T15:00:00.000Z" });
+    expect(recorded).toMatchObject({ version: 1, externalRecording: false });
+    const restricted = await meetings().getBriefing(viewerContext, { meetingId: scheduled.meetingId });
+    expect(restricted.transcript).toMatchObject({ status: "RESTRICTED", visible: false, canManage: false, transcriptText: null, summary: null });
+    const visible = await meetings().getBriefing(adminContext, { meetingId: scheduled.meetingId });
+    expect(visible.transcript).toMatchObject({ status: "AVAILABLE", visible: true, canManage: true, transcriptText: "Texto sensível da reunião autorizado pelo participante.", summary: "Resumo autorizado da conversa.", policyVersion: "meeting-transcript-policy/v1" });
+    expect(await database.auditLog.count({ where: { workspaceId, action: "meeting.transcript.read", entityId: recorded.artifactId } })).toBe(1);
+    await expect(database.meetingTranscriptArtifact.update({ where: { id: recorded.artifactId }, data: { summary: "Mutação indevida" } })).rejects.toThrow(/append-only/);
+    await expect(database.meetingTranscriptArtifact.delete({ where: { id: recorded.artifactId } })).rejects.toThrow(/append-only/);
   });
 
   it("registra comparecimento e cria a próxima ação explícita", async () => {

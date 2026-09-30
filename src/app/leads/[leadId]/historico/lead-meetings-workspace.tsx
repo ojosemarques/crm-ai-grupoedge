@@ -68,6 +68,7 @@ export function LeadMeetingsWorkspace({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           leadId: screen.leadId,
+          opportunityId: data.get("opportunityId") || null,
           closerId: data.get("closerId"),
           title: data.get("title"),
           startsAtLocal: data.get("startsAtLocal"),
@@ -93,6 +94,7 @@ export function LeadMeetingsWorkspace({
         {screen.canSchedule ? (
           <form className="mt-4 grid gap-4" onSubmit={schedule}>
             <label className="text-sm">Closer<select className={inputClass} name="closerId" required><option value="">Selecione</option>{screen.closerOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
+            <label className="text-sm">Oportunidade<select className={inputClass} defaultValue={screen.opportunityOptions.length === 1 ? screen.opportunityOptions[0]!.id : ""} name="opportunityId"><option value="">Sem vínculo explícito</option>{screen.opportunityOptions.map((opportunity) => <option key={opportunity.id} value={opportunity.id}>{opportunity.name}</option>)}</select></label>
             <label className="text-sm">Título<input className={inputClass} name="title" required /></label>
             <label className="text-sm">Data e horário<input className={inputClass} name="startsAtLocal" required type="datetime-local" /></label>
             <label className="text-sm">Duração<select className={inputClass} defaultValue={screen.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
@@ -114,7 +116,7 @@ export function LeadMeetingsWorkspace({
                 <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{meeting.title}</p><p className="mt-1 text-sm">{meeting.closerName} · {formatDate(meeting.startsAt, screen.timeZone)} · {meeting.durationMinutes} min</p><p className="mt-1 text-xs text-muted-foreground">Calendário: {meeting.calendarSync.state === "NOT_LINKED" ? "não ligado" : meeting.calendarSync.state.toLowerCase().replaceAll("_", " ")}</p></div><span className="rounded-full border px-2.5 py-1 text-xs">{statusLabels[meeting.operationalStatus]}</span></div>
                 {meeting.observation ? <p className="mt-3 whitespace-pre-wrap text-sm">{meeting.observation}</p> : null}
                 {meeting.outcome ? <p className="mt-3 text-sm"><strong>Resultado:</strong> {meeting.outcome}</p> : null}
-                <div className="mt-3 flex flex-wrap gap-3 text-sm font-medium"><Link className="underline" href={`/agenda/reunioes/${meeting.id}`}>Ver briefing</Link><Link className="underline" href={`/integracoes/calendario?meetingId=${meeting.id}`}>Abrir calendário</Link></div>
+                <div className="mt-3 flex flex-wrap gap-3 text-sm font-medium"><Link className="underline" href={`/agenda/reunioes/${meeting.id}`}>Ver briefing</Link><Link className="underline" href={`/integracoes/calendario?meetingId=${meeting.id}`}>Abrir calendário</Link>{meeting.opportunityId ? <Link className="underline" href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
                 <MeetingActions meeting={meeting} onCommitted={refresh} />
                 <details className="mt-4"><summary className="cursor-pointer text-sm font-medium">Ver histórico ({meeting.history.length})</summary><ol className="mt-3 space-y-2">{meeting.history.map((item) => <li className="border-l-2 pl-3 text-sm" key={item.id}><p>{historyLabels[item.action]} · {formatDate(item.occurredAt, screen.timeZone)}</p><p className="text-xs text-muted-foreground">{item.actorName}{item.reason ? ` · ${item.reason}` : ""}</p>{item.previousStartsAt && item.previousStartsAt !== item.newStartsAt ? <p className="text-xs text-muted-foreground">De {formatDate(item.previousStartsAt, screen.timeZone)} para {formatDate(item.newStartsAt, screen.timeZone)}</p> : null}</li>)}</ol></details>
               </li>

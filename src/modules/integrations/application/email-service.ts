@@ -46,7 +46,7 @@ export function createEmailService(options: Options) {
       options.database.message.groupBy({ by: ["status"], where: { workspaceId: context.workspaceId, conversation: { channel: "EMAIL" } }, _count: { _all: true } }),
       options.database.emailSuppression.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ effectiveAt: "desc" }, { id: "desc" }], take: 25 }),
       options.database.emailEventReview.findMany({ where: { workspaceId: context.workspaceId, status: "OPEN" }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 25 }),
-      options.database.message.findMany({ where: { workspaceId: context.workspaceId, conversation: { channel: "EMAIL" } }, orderBy: [{ occurredAt: "desc" }, { id: "desc" }], take: 25, select: { id: true, subject: true, status: true, direction: true, occurredAt: true, isSimulated: true, emailProfile: { select: { messageIdHeader: true, inReplyToHeader: true } } } }),
+      options.database.message.findMany({ where: { workspaceId: context.workspaceId, conversation: { channel: "EMAIL" } }, orderBy: [{ occurredAt: "desc" }, { id: "desc" }], take: 25, select: { id: true, subject: true, status: true, direction: true, occurredAt: true, isSimulated: true, conversation: { select: { opportunity: { select: { id: true, name: true } } } }, emailProfile: { select: { messageIdHeader: true, inReplyToHeader: true } } } }),
       authorization.authorize(context, PermissionKeys.INTEGRATIONS_EMAIL_CONFIGURE, resource(context)),
       authorization.authorize(context, PermissionKeys.INTEGRATIONS_EMAIL_PAUSE, resource(context)),
       authorization.authorize(context, PermissionKeys.INTEGRATIONS_EMAIL_TEST_LOCAL, resource(context)),
@@ -69,7 +69,7 @@ export function createEmailService(options: Options) {
       metrics: { queued: count("QUEUED"), accepted: count("PROVIDER_ACCEPTED"), sent: count("SENT"), delivered: count("DELIVERED"), deferred: count("DEFERRED"), softBounce: count("SOFT_BOUNCE"), hardBounce: count("HARD_BOUNCE"), complaint: count("COMPLAINT"), replies: count("REPLIED"), unsubscribed: count("UNSUBSCRIBED"), denominator: statusGroups.reduce((sum, item) => sum + item._count._all, 0) },
       suppressions: suppressions.map((item) => ({ ...item, normalizedEmail: item.normalizedEmail.replace(/^(.{1,2}).*(@.*)$/, "$1•••$2"), effectiveAt: item.effectiveAt.toISOString(), createdAt: item.createdAt.toISOString() })),
       reviews: reviews.map((item) => ({ ...item, createdAt: item.createdAt.toISOString(), resolvedAt: item.resolvedAt?.toISOString() ?? null })),
-      messages: messages.map((item) => ({ ...item, occurredAt: item.occurredAt.toISOString() })),
+      messages: messages.map(({ conversation, ...item }) => ({ ...item, opportunityId: conversation.opportunity?.id ?? null, opportunityName: conversation.opportunity?.name ?? null, occurredAt: item.occurredAt.toISOString() })),
       permissions: { configure: canConfigure.allowed, pause: canPause.allowed, testLocal: canTest.allowed, manageSuppression: canManageSuppression.allowed },
       checklist: ["Escolher e homologar provider", "Configurar domínio real", "Validar SPF, DKIM e DMARC externamente", "Adicionar secret refs no servidor", "Homologar webhook e replies reais"],
     };

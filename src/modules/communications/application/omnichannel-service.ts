@@ -386,7 +386,12 @@ export function createOmnichannelService(options: Options) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`omnichannel-inbound:${context.workspaceId}:${input.channel}:${threadIdentity}`}, 0))`;
       const existing = await tx.webhookInbox.findUnique({ where: { workspaceId_connectionId_providerEventId: { workspaceId: context.workspaceId, connectionId: foundation.connection.id, providerEventId: input.externalEventId } }, include: { message: true } });
       if (existing) return { outcome: "IDEMPOTENT" as const, webhookId: existing.id, messageId: existing.messageId, conversationId: existing.message?.conversationId ?? null };
-      const points = normalized.success ? await tx.contactPoint.findMany({ where: { workspaceId: context.workspaceId, normalizedValue: normalized.normalized, type: input.channel === "EMAIL" ? "EMAIL" : "PHONE", deletedAt: null }, take: 3, include: { contact: { include: { leads: { where: { deletedAt: null }, orderBy: [{ status: "asc" }, { createdAt: "desc" }], take: 2 } } } } }) : [];
+      const contactPointType = input.channel === "EMAIL"
+        ? "EMAIL" as const
+        : ["WHATSAPP", "PHONE", "SMS", "INTERNAL_SIMULATOR"].includes(input.channel)
+          ? "PHONE" as const
+          : null;
+      const points = normalized.success && contactPointType ? await tx.contactPoint.findMany({ where: { workspaceId: context.workspaceId, normalizedValue: normalized.normalized, type: contactPointType, deletedAt: null }, take: 3, include: { contact: { include: { leads: { where: { deletedAt: null }, orderBy: [{ status: "asc" }, { createdAt: "desc" }], take: 2 } } } } }) : [];
       const exact = points.length === 1 ? points[0] : null;
       const lead = exact?.contact.leads[0] ?? null;
       const ownerMemberId = lead?.ownerMemberId ?? null;
@@ -400,8 +405,12 @@ export function createOmnichannelService(options: Options) {
       const referencedEmail = input.channel === "EMAIL" && input.inReplyToHeader
         ? await tx.emailMessageProfile.findFirst({ where: { workspaceId: context.workspaceId, messageIdHeader: normalizeMessageId(input.inReplyToHeader) }, include: { message: { include: { conversation: true } } } })
         : null;
+      const externalThreadId = `local:${threadIdentity}`;
+      const threadConversation = await tx.conversation.findFirst({ where: { workspaceId: context.workspaceId, connectionId: foundation.connection.id, channel: input.channel, externalThreadId, status: { notIn: ["CLOSED", "ARCHIVED"] }, deletedAt: null }, orderBy: [{ lastMessageAt: "desc" }, { createdAt: "desc" }] });
       let conversation = referencedEmail?.message.conversation && !["CLOSED", "ARCHIVED"].includes(referencedEmail.message.conversation.status)
         ? referencedEmail.message.conversation
+        : threadConversation
+          ? threadConversation
         : exact && !(input.channel === "EMAIL" && input.inReplyToHeader)
           ? await tx.conversation.findFirst({ where: { workspaceId: context.workspaceId, contactPointId: exact.id, channel: input.channel, status: { notIn: ["CLOSED", "ARCHIVED"] }, deletedAt: null }, orderBy: [{ lastMessageAt: "desc" }, { createdAt: "desc" }] })
           : null;
@@ -423,7 +432,7 @@ export function createOmnichannelService(options: Options) {
           serviceType,
           slaTargetSeconds,
           slaDueAt: new Date(inboundOccurredAt.getTime() + slaTargetSeconds * 1_000),
-          externalThreadId: `local:${normalized.success ? normalized.hash : sha256(input.address)}`,
+          externalThreadId,
           firstInboundAt: inboundOccurredAt,
           waitingSince: inboundOccurredAt,
           openedAt: inboundOccurredAt,
@@ -446,7 +455,7 @@ export function createOmnichannelService(options: Options) {
       }
       await appendStatus(tx, { workspaceId: context.workspaceId, messageId: message.id, status: "RECEIVED", source: "LOCAL_SIMULATOR", actorId: foundation.actor.id, externalEventId: input.externalEventId, providerOccurredAt: new Date(input.occurredAt), providerReported: true, reasonCode: input.scenario, now });
       const payloadHash = sha256(JSON.stringify({ ...input, address: normalized.success ? normalized.hash : "invalid" }));
-      const inbox = await tx.webhookInbox.create({ data: { workspaceId: context.workspaceId, connectionId: foundation.connection.id, providerEventId: input.externalEventId, eventType: "communication.message.received", contractVersion: OMNICHANNEL_CONTRACT_VERSION, payloadHash, nonceHash: sha256(`nonce:${input.externalEventId}`), payloadSizeBytes: Buffer.byteLength(input.body, "utf8"), payload: json({ channel: input.channel, scenario: input.scenario, addressHash: normalized.success ? normalized.hash : null }), dataClass: "OPERATIONAL", signatureStatus: "VERIFIED", externalOccurredAt: new Date(input.occurredAt), receivedAt: now, status: "PROCESSED", attempts: 1, processedAt: now, correlationId: input.externalEventId, messageId: message.id } });
+      const inbox = await tx.webhookInbox.create({ data: { workspaceId: context.workspaceId, connectionId: foundation.connection.id, providerEventId: input.externalEventId, eventType: "communication.message.received", contractVersion: OMNICHANNEL_CONTRACT_VERSION, payloadHash, nonceHash: sha256(`nonce:${input.externalEventId}`), payloadSizeBytes: Buffer.byteLength(input.body, "utf8"), payload: json({ channel: input.channel, scenario: input.scenario, addressHash: normalized.success ? normalized.hash : null, metadata: input.metadata }), dataClass: "OPERATIONAL", signatureStatus: "VERIFIED", externalOccurredAt: new Date(input.occurredAt), receivedAt: now, status: "PROCESSED", attempts: 1, processedAt: now, correlationId: input.externalEventId, messageId: message.id } });
       await tx.job.create({ data: { workspaceId: context.workspaceId, type: "WEBHOOK", status: "SUCCEEDED", idempotencyKey: `omnichannel-webhook:${input.externalEventId}`, payload: json({ inboxId: inbox.id, messageId: message.id, externalEgress: false }), result: json({ processed: true }), createdByActorId: foundation.actor.id, updatedByActorId: foundation.actor.id, runAt: now, finishedAt: now, attempts: 1, lastAttemptAt: now } });
       const previous = { status: conversation.status, assigneeMemberId: conversation.assigneeMemberId, queueId: conversation.queueId };
       const projectsLatest = !conversation.lastMessageAt || inboundOccurredAt >= conversation.lastMessageAt;
@@ -464,7 +473,7 @@ export function createOmnichannelService(options: Options) {
         await tx.messageIdentityReview.create({ data: { workspaceId: context.workspaceId, conversationId: conversation.id, messageId: message.id, contactId: exact?.contactId ?? null, contactPointId: exact?.id ?? null, reason: !normalized.success ? "INVALID_ADDRESS" : points.length > 1 ? "MULTIPLE_CONTACT_MATCHES" : exact && !lead ? "CONTACT_WITHOUT_LEAD" : "CONTACT_NOT_FOUND", normalizedAddressHash: normalized.success ? normalized.hash : sha256(input.address), channel: input.channel, evidence: json({ exactMatches: points.length, leadCreated: false, intakeRequiredForCreation: true }), createdByActorId: foundation.actor.id } });
       }
       if (lead) {
-        await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: lead.id, messageId: message.id, type: "MESSAGE_RECEIVED", direction: "INBOUND", result: "RECEIVED", subject: "Mensagem recebida no inbox", description: "Fato canônico de comunicação; conteúdo disponível na conversa.", occurredAt: new Date(input.occurredAt), createdByActorId: foundation.actor.id, updatedByActorId: foundation.actor.id } });
+        await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: lead.id, opportunityId: conversation.opportunityId, messageId: message.id, type: "MESSAGE_RECEIVED", direction: "INBOUND", result: "RECEIVED", subject: "Mensagem recebida no inbox", description: "Fato canônico de comunicação; conteúdo disponível na conversa.", occurredAt: new Date(input.occurredAt), createdByActorId: foundation.actor.id, updatedByActorId: foundation.actor.id } });
         await tx.lead.update({ where: { id: lead.id }, data: { awaitingHumanResponse: true, lastInboundResponseAt: new Date(input.occurredAt), lastActivityAt: new Date(input.occurredAt), updatedByActorId: foundation.actor.id } });
         await cancelIncompatibleAccountPlanActionsForLeadInTransaction(tx, { workspaceId: context.workspaceId, leadId: lead.id, actorId: foundation.actor.id, at: now, event: input.scenario === "OPT_OUT" ? "OPT_OUT" : "RESPONSE" });
         if (input.scenario === "OPT_OUT") {

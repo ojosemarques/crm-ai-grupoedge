@@ -56,6 +56,7 @@ export function AgendaWorkspace({ initialScreen }: Readonly<{ initialScreen: Age
   const screen = updatedScreen ?? initialScreen;
   const [display, setDisplay] = useState<"calendar" | "list">("calendar");
   const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleLeadId, setScheduleLeadId] = useState("");
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
   const [hiddenStatuses, setHiddenStatuses] = useState<string[]>([]);
   const selectedMeeting = screen.meetings.find((meeting) => meeting.id === selectedMeetingId);
@@ -97,6 +98,7 @@ export function AgendaWorkspace({ initialScreen }: Readonly<{ initialScreen: Age
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           leadId: data.get("leadId"),
+          opportunityId: data.get("opportunityId") || null,
           closerId: data.get("closerId"),
           title: data.get("title"),
           startsAtLocal: data.get("startsAtLocal"),
@@ -106,6 +108,7 @@ export function AgendaWorkspace({ initialScreen }: Readonly<{ initialScreen: Age
       });
       await responseMessage(response);
       form.reset();
+      setScheduleLeadId("");
       setNotice("Reunião agendada, tarefa criada e pipeline atualizado.");
       await refresh();
       setShowSchedule(false);
@@ -123,7 +126,7 @@ export function AgendaWorkspace({ initialScreen }: Readonly<{ initialScreen: Age
       <p><Icon name="leads" size={16} />{meeting.leadName} · {meeting.closerName}</p>
       {meeting.observation ? <p className={styles.observation}>{meeting.observation}</p> : null}
       <StatusBadge tone={meeting.calendarSync.state === "SYNCED" ? "success" : meeting.calendarSync.state === "CONFLICT" || meeting.calendarSync.state === "FAILED" ? "danger" : "info"}>Calendário: {meeting.calendarSync.state === "NOT_LINKED" ? "não conectado" : meeting.calendarSync.state.toLowerCase().replaceAll("_", " ")}</StatusBadge>
-      <div className={styles.detailLinks}><Link href={`/agenda/reunioes/${meeting.id}`}>Abrir briefing do closer →</Link><Link href={`/integracoes/calendario?meetingId=${meeting.id}`}>Ver calendário</Link></div>
+      <div className={styles.detailLinks}><Link href={`/agenda/reunioes/${meeting.id}`}>Abrir briefing do closer →</Link><Link href={`/integracoes/calendario?meetingId=${meeting.id}`}>Ver calendário</Link>{meeting.opportunityId ? <Link href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
       <MeetingActions meeting={meeting} onCommitted={refresh} />
     </div>;
   }
@@ -138,7 +141,7 @@ export function AgendaWorkspace({ initialScreen }: Readonly<{ initialScreen: Age
         </section>
         {screen.canFilterCloser ? <label className={styles.closerLabel}>Agenda de<select className={inputClass} onChange={(event) => navigate(screen.selectedDate, screen.view, event.target.value)} value={screen.closerId}><option value="">Todos os closers</option>{screen.closerOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label> : null}
         <section className={styles.calendars}><h2>Minhas reuniões</h2>{Object.entries(statusLabels).map(([status, label]) => <label key={status}><input checked={!hiddenStatuses.includes(status)} onChange={(event) => setHiddenStatuses((current) => event.target.checked ? current.filter((item) => item !== status) : [...current, status])} type="checkbox" /><span>{label}</span></label>)}</section>
-        <Link className={styles.connectLink} href="/integracoes/calendario"><Icon name="mais" size={14} /> Conectar calendário</Link>
+        <Link className={styles.connectLink} href="/integracoes/calendario"><Icon name="mais" size={14} /> Abrir calendário local</Link>
         <p className={styles.timezone}>{screen.timeZone}</p>
       </aside>
       <section className={styles.main} aria-label="Compromissos">
@@ -152,8 +155,9 @@ export function AgendaWorkspace({ initialScreen }: Readonly<{ initialScreen: Age
       </section>
       {selectedMeeting ? <AccessibleDialog className={styles.dialog!} labelledBy="meeting-title" onDismiss={() => setSelectedMeetingId(null)}><div className={styles.dialogHeader}><div><span>Reunião</span><h2 id="meeting-title">{selectedMeeting.title}</h2></div><button aria-label="Fechar detalhes" onClick={() => setSelectedMeetingId(null)} type="button">×</button></div>{meetingDetail(selectedMeeting)}</AccessibleDialog> : null}
       {showSchedule ? <AccessibleDialog busy={pending} className={styles.dialog!} labelledBy="schedule-title" onDismiss={() => setShowSchedule(false)}><div className={styles.dialogHeader}><div><span>Agenda</span><h2 id="schedule-title">Agendar reunião</h2></div><button aria-label="Fechar agendamento" disabled={pending} onClick={() => setShowSchedule(false)} type="button">×</button></div>{screen.canSchedule ? <form className={styles.scheduleForm} onSubmit={schedule}>
-        <label>Lead qualificado<select className={inputClass} name="leadId" required><option value="">Selecione o lead</option>{screen.leadOptions.map((lead) => <option key={lead.id} value={lead.id}>{lead.name}</option>)}</select></label>
+        <label>Lead qualificado<select className={inputClass} name="leadId" onChange={(event) => setScheduleLeadId(event.target.value)} required value={scheduleLeadId}><option value="">Selecione o lead</option>{screen.leadOptions.map((lead) => <option key={lead.id} value={lead.id}>{lead.name}</option>)}</select></label>
         <label>Closer<select className={inputClass} name="closerId" required><option value="">Selecione o responsável</option>{screen.closerOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
+        <label className={styles.fullWidth}>Oportunidade<select className={inputClass} name="opportunityId"><option value="">Sem vínculo explícito</option>{screen.leadOptions.find((lead) => lead.id === scheduleLeadId)?.opportunities.map((opportunity) => <option key={opportunity.id} value={opportunity.id}>{opportunity.name}</option>)}</select></label>
         <label className={styles.fullWidth}>Título<input className={inputClass} name="title" required /></label>
         <label>Data e horário<input className={inputClass} defaultValue={`${screen.selectedDate}T09:00`} name="startsAtLocal" required type="datetime-local" /></label>
         <label>Duração<select className={inputClass} defaultValue={screen.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>

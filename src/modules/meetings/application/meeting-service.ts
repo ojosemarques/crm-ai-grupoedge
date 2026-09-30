@@ -85,6 +85,7 @@ const meetingQuerySchema = z.object({ meetingId: z.string().uuid() }).strict();
 
 const scheduleSchema = z.object({
   leadId: z.string().uuid(),
+  opportunityId: z.string().uuid().nullable().optional(),
   closerId: z.string().uuid(),
   title: z.string().trim().min(2).max(200),
   startsAtLocal: localDateTimeSchema,
@@ -128,6 +129,17 @@ const actionSchema = z.discriminatedUnion("action", [
     nextAction: nextActionSchema,
   }).strict(),
 ]);
+
+const transcriptSchema = z.object({
+  meetingId: z.string().uuid(),
+  transcriptText: z.string().trim().min(20).max(100_000).nullable().optional(),
+  summary: z.string().trim().min(10).max(10_000).nullable().optional(),
+  policyVersion: z.literal("meeting-transcript-policy/v1"),
+  consentConfirmed: z.literal(true),
+  consentEvidence: z.string().trim().min(10).max(2_000),
+  consentRecordedAt: z.string().datetime({ offset: true }),
+  retentionUntil: z.string().datetime({ offset: true }),
+}).strict().refine((value) => Boolean(value.transcriptText || value.summary), { message: "Informe transcrição ou resumo." });
 
 type MeetingRow = Prisma.MeetingGetPayload<{
   include: {
@@ -256,6 +268,7 @@ function serializeMeeting(row: MeetingRow, now: Date, canWrite: boolean): Meetin
   return Object.freeze({
     id: row.id,
     leadId: row.leadId,
+    opportunityId: row.opportunityId,
     leadName: row.lead.fullName,
     ownerMemberId: row.ownerMemberId,
     closerName: row.owner.user.displayName,
@@ -405,9 +418,9 @@ export function createMeetingService(options: MeetingServiceOptions) {
       },
       orderBy: [{ fullName: "asc" }, { id: "asc" }],
       take: 200,
-      select: { id: true, fullName: true },
+      select: { id: true, fullName: true, opportunities: { where: { status: "OPEN", deletedAt: null }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], select: { id: true, name: true } } },
     });
-    return rows.map((row) => ({ id: row.id, name: row.fullName }));
+    return rows.map((row) => ({ id: row.id, name: row.fullName, opportunities: row.opportunities }));
   }
 
   async function getAgenda(context: AuthenticatedContext, payload: unknown): Promise<AgendaScreen> {
@@ -510,6 +523,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         currentStage: { select: { leadStageCode: true } },
         routingQueue: { select: { teamId: true } },
         queue: { select: { teamId: true } },
+        opportunities: { where: { status: "OPEN", deletedAt: null }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], select: { id: true, name: true } },
       },
     });
     if (!lead) notFound("Lead não encontrado.");
@@ -547,6 +561,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         lead.currentStage.leadStageCode === "QUALIFIED" &&
         !rows.some((meeting) => meeting.status === "SCHEDULED" || meeting.status === "CONFIRMED"),
       closerOptions: closers,
+      opportunityOptions: lead.opportunities,
       meetings: rows.map((row) => ({
         ...serializeMeeting(row, options.now(), write.allowed),
         history: row.history.map((history): MeetingHistoryItem => ({
@@ -618,6 +633,12 @@ export function createMeetingService(options: MeetingServiceOptions) {
             take: 1,
             select: { id: true },
           },
+          opportunities: {
+            where: { status: "OPEN", deletedAt: null },
+            orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+            take: 2,
+            select: { id: true },
+          },
         },
       });
       if (!currentLead) notFound("Lead não encontrado.");
@@ -627,11 +648,18 @@ export function createMeetingService(options: MeetingServiceOptions) {
       if (currentLead.currentStage.leadStageCode !== "QUALIFIED" && currentLead.currentStage.leadStageCode !== "MEETING_SCHEDULED") {
         conflict("LEAD_NOT_QUALIFIED", "Agende somente depois que o lead estiver qualificado pelo fluxo de pré-vendas.");
       }
+      const opportunityId = parsed.data.opportunityId === null
+        ? null
+        : parsed.data.opportunityId ?? (currentLead.opportunities.length === 1 ? currentLead.opportunities[0]!.id : null);
+      if (parsed.data.opportunityId && !currentLead.opportunities.some((item) => item.id === parsed.data.opportunityId)) {
+        conflict("MEETING_OPPORTUNITY_INVALID", "A oportunidade não está aberta ou não pertence ao lead.");
+      }
       const occurredAt = options.now();
       const meeting = await transaction.meeting.create({
         data: {
           workspaceId: context.workspaceId,
           leadId: currentLead.id,
+          opportunityId,
           ownerMemberId: closer.id,
           title: parsed.data.title,
           status: "SCHEDULED",
@@ -650,6 +678,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         data: {
           workspaceId: context.workspaceId,
           leadId: currentLead.id,
+          opportunityId,
           meetingId: meeting.id,
           assigneeMemberId: closer.id,
           title: `Reunião: ${parsed.data.title}`,
@@ -684,6 +713,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         data: {
           workspaceId: context.workspaceId,
           leadId: currentLead.id,
+          opportunityId,
           meetingId: meeting.id,
           type: "MEETING",
           direction: "INTERNAL",
@@ -757,6 +787,9 @@ export function createMeetingService(options: MeetingServiceOptions) {
             updatedAt: occurredAt,
           },
         });
+      }
+      if (opportunityId) {
+        await transaction.opportunity.update({ where: { id: opportunityId }, data: { nextActionTaskId: task.id, nextActionAt: startsAt, nextActionDescription: task.title, updatedByActorId: context.actorId, updatedAt: occurredAt } });
       }
       if (options.automationPublisher) {
         await scheduleMeetingRemindersInTransaction(
@@ -924,6 +957,9 @@ export function createMeetingService(options: MeetingServiceOptions) {
         recoveryTaskId = recoveryTask.id;
       }
       const nextTask = await findNextTask(transaction, context.workspaceId, meeting.leadId);
+      const opportunityTask = meeting.opportunityId
+        ? await transaction.task.findFirst({ where: { workspaceId: context.workspaceId, opportunityId: meeting.opportunityId, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null }, orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }], select: { id: true, title: true, dueAt: true } })
+        : null;
       await transaction.lead.update({
         where: { id: meeting.leadId },
         data: {
@@ -933,6 +969,9 @@ export function createMeetingService(options: MeetingServiceOptions) {
           updatedAt: now,
         },
       });
+      if (meeting.opportunityId) {
+        await transaction.opportunity.update({ where: { id: meeting.opportunityId }, data: { nextActionTaskId: opportunityTask?.id ?? null, nextActionAt: opportunityTask?.dueAt ?? null, nextActionDescription: opportunityTask?.title ?? null, updatedByActorId: context.actorId, updatedAt: now } });
+      }
       const activityResult = ({
         CONFIRM: "INFORMATION",
         RESCHEDULE: "SCHEDULED",
@@ -944,6 +983,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         data: {
           workspaceId: context.workspaceId,
           leadId: meeting.leadId,
+          opportunityId: meeting.opportunityId,
           meetingId: meeting.id,
           type: "MEETING",
           direction: "INTERNAL",
@@ -1056,10 +1096,13 @@ export function createMeetingService(options: MeetingServiceOptions) {
     if (!parsed.success) invalidInput(parsed.error);
     const authorized = await getMeetingForAuthorization(parsed.data.meetingId, context.workspaceId);
     await authorizeMeetingOrLead(context, PermissionKeys.MEETINGS_READ, authorized);
+    const transcriptPermission = await options.authorization.authorize(context, PermissionKeys.MEETING_TRANSCRIPTS_READ, meetingResource(context.workspaceId, authorized));
+    const transcriptManagePermission = await options.authorization.authorize(context, PermissionKeys.MEETING_TRANSCRIPTS_MANAGE, meetingResource(context.workspaceId, authorized));
     const row = await options.database.meeting.findFirst({
       where: { id: authorized.id, workspaceId: context.workspaceId, deletedAt: null },
       include: {
         owner: { select: { user: { select: { displayName: true } } } },
+        opportunity: { select: { id: true, name: true, nextActionTaskId: true, nextActionAt: true, nextActionDescription: true } },
         calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
         lead: {
           include: {
@@ -1093,6 +1136,14 @@ export function createMeetingService(options: MeetingServiceOptions) {
     if (!row) notFound("Reunião não encontrada.");
     const permission = await options.authorization.authorize(context, PermissionKeys.MEETINGS_WRITE, meetingResource(context.workspaceId, row));
     const meeting = serializeMeeting(row, options.now(), permission.allowed);
+    const transcriptMetadata = await options.database.meetingTranscriptArtifact.findFirst({ where: { workspaceId: context.workspaceId, meetingId: row.id }, orderBy: { version: "desc" }, select: { id: true, version: true, consentRecordedAt: true, retentionUntil: true } });
+    const transcriptExpired = Boolean(transcriptMetadata && transcriptMetadata.retentionUntil <= options.now());
+    const transcriptArtifact = transcriptMetadata && transcriptPermission.allowed && !transcriptExpired
+      ? await options.database.meetingTranscriptArtifact.findUnique({ where: { id: transcriptMetadata.id }, select: { transcriptText: true, summary: true, policyVersion: true } })
+      : null;
+    if (transcriptMetadata && transcriptArtifact) {
+      await options.database.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "meeting.transcript.read", entityType: "MeetingTranscriptArtifact", entityId: transcriptMetadata.id, occurredAt: options.now(), metadata: { meetingId: row.id, version: transcriptMetadata.version } } });
+    }
     const submission = row.lead.submissions[0] ?? null;
     const revision = row.lead.pactoRevisions[0] ?? null;
     const dimensions = new Map(revision?.dimensions.map((dimension) => [dimension.dimension, dimension]) ?? []);
@@ -1149,10 +1200,43 @@ export function createMeetingService(options: MeetingServiceOptions) {
           : meeting.status === "CONFIRMED"
             ? "Revisar o briefing antes do horário agendado."
             : "Executar a próxima ação persistida no lead.",
+      businessContext: {
+        opportunityId: row.opportunity?.id ?? null,
+        opportunityName: row.opportunity?.name ?? null,
+        nextAction: row.opportunity?.nextActionTaskId && row.opportunity.nextActionAt && row.opportunity.nextActionDescription
+          ? { taskId: row.opportunity.nextActionTaskId, title: row.opportunity.nextActionDescription, dueAt: row.opportunity.nextActionAt.toISOString() }
+          : null,
+      },
+      transcript: !transcriptMetadata
+        ? { status: "ABSENT" as const, visible: false, canManage: transcriptManagePermission.allowed, version: null, transcriptText: null, summary: null, policyVersion: null, consentRecordedAt: null, retentionUntil: null }
+        : transcriptExpired
+          ? { status: "EXPIRED" as const, visible: false, canManage: transcriptManagePermission.allowed, version: transcriptMetadata.version, transcriptText: null, summary: null, policyVersion: null, consentRecordedAt: transcriptMetadata.consentRecordedAt.toISOString(), retentionUntil: transcriptMetadata.retentionUntil.toISOString() }
+          : !transcriptPermission.allowed
+            ? { status: "RESTRICTED" as const, visible: false, canManage: transcriptManagePermission.allowed, version: transcriptMetadata.version, transcriptText: null, summary: null, policyVersion: null, consentRecordedAt: transcriptMetadata.consentRecordedAt.toISOString(), retentionUntil: transcriptMetadata.retentionUntil.toISOString() }
+            : { status: "AVAILABLE" as const, visible: true, canManage: transcriptManagePermission.allowed, version: transcriptMetadata.version, transcriptText: transcriptArtifact?.transcriptText ?? null, summary: transcriptArtifact?.summary ?? null, policyVersion: transcriptArtifact?.policyVersion ?? null, consentRecordedAt: transcriptMetadata.consentRecordedAt.toISOString(), retentionUntil: transcriptMetadata.retentionUntil.toISOString() },
     });
   }
 
-  return Object.freeze({ getAgenda, getLeadMeetings, schedule, act, getBriefing });
+  async function recordTranscript(context: AuthenticatedContext, payload: unknown) {
+    const parsed = transcriptSchema.safeParse(payload);
+    if (!parsed.success) invalidInput(parsed.error);
+    const meeting = await getMeetingForAuthorization(parsed.data.meetingId, context.workspaceId);
+    await options.authorization.assertAuthorized(context, PermissionKeys.MEETING_TRANSCRIPTS_MANAGE, meetingResource(context.workspaceId, meeting));
+    const consentRecordedAt = new Date(parsed.data.consentRecordedAt);
+    const retentionUntil = new Date(parsed.data.retentionUntil);
+    const now = options.now();
+    if (consentRecordedAt > now) invalidInput("O consentimento não pode estar no futuro.");
+    if (retentionUntil <= now) invalidInput("A retenção aprovada deve terminar no futuro.");
+    return options.database.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`meeting-transcript:${context.workspaceId}:${meeting.id}`}, 0))`;
+      const latest = await transaction.meetingTranscriptArtifact.findFirst({ where: { workspaceId: context.workspaceId, meetingId: meeting.id }, orderBy: { version: "desc" }, select: { version: true } });
+      const artifact = await transaction.meetingTranscriptArtifact.create({ data: { workspaceId: context.workspaceId, meetingId: meeting.id, version: (latest?.version ?? 0) + 1, transcriptText: parsed.data.transcriptText ?? null, summary: parsed.data.summary ?? null, policyVersion: parsed.data.policyVersion, consentEvidence: parsed.data.consentEvidence, consentRecordedAt, retentionUntil, createdByActorId: context.actorId, createdAt: now } });
+      await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "meeting.transcript.recorded", entityType: "MeetingTranscriptArtifact", entityId: artifact.id, occurredAt: now, changes: { meetingId: meeting.id, version: artifact.version, policyVersion: artifact.policyVersion, consentRecordedAt: consentRecordedAt.toISOString(), retentionUntil: retentionUntil.toISOString(), hasTranscript: Boolean(artifact.transcriptText), hasSummary: Boolean(artifact.summary), externalRecording: false } } });
+      return { artifactId: artifact.id, meetingId: meeting.id, version: artifact.version, status: "AVAILABLE" as const, externalRecording: false as const };
+    });
+  }
+
+  return Object.freeze({ getAgenda, getLeadMeetings, schedule, act, getBriefing, recordTranscript });
 }
 
 let service: ReturnType<typeof createMeetingService> | undefined;

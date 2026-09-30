@@ -94,6 +94,8 @@ export const PermissionKeys = Object.freeze({
   TASKS_WRITE: "tasks.write",
   MEETINGS_READ: "meetings.read",
   MEETINGS_WRITE: "meetings.write",
+  MEETING_TRANSCRIPTS_READ: "meetings.transcripts.read",
+  MEETING_TRANSCRIPTS_MANAGE: "meetings.transcripts.manage",
   OPPORTUNITIES_READ: "opportunities.read",
   OPPORTUNITIES_WRITE: "opportunities.write",
   CONTRACTS_READ: "contracts.read",
@@ -299,6 +301,8 @@ export const permissionCatalog: ReadonlyArray<
   { key: PermissionKeys.TASKS_WRITE, description: "Alterar tarefas" },
   { key: PermissionKeys.MEETINGS_READ, description: "Consultar reuniões" },
   { key: PermissionKeys.MEETINGS_WRITE, description: "Alterar reuniões" },
+  { key: PermissionKeys.MEETING_TRANSCRIPTS_READ, description: "Consultar transcrições e resumos de reunião com consentimento" },
+  { key: PermissionKeys.MEETING_TRANSCRIPTS_MANAGE, description: "Registrar artefatos de transcrição com consentimento e retenção" },
   {
     key: PermissionKeys.OPPORTUNITIES_READ,
     description: "Consultar oportunidades",

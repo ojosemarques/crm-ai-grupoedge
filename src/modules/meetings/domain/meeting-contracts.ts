@@ -4,6 +4,7 @@ export type MeetingStatusValue = (typeof meetingStatuses)[number];
 export type MeetingListItem = Readonly<{
   id: string;
   leadId: string;
+  opportunityId: string | null;
   leadName: string;
   ownerMemberId: string;
   closerName: string;
@@ -38,7 +39,7 @@ export type MeetingHistoryItem = Readonly<{
 }>;
 
 export type CloserOption = Readonly<{ id: string; name: string }>;
-export type LeadOption = Readonly<{ id: string; name: string }>;
+export type LeadOption = Readonly<{ id: string; name: string; opportunities: readonly Readonly<{ id: string; name: string }>[] }>;
 
 export type AgendaScreen = Readonly<{
   generatedAt: string;
@@ -61,6 +62,7 @@ export type LeadMeetingsScreen = Readonly<{
   defaultDurationMinutes: 30 | 40;
   canSchedule: boolean;
   closerOptions: readonly CloserOption[];
+  opportunityOptions: readonly Readonly<{ id: string; name: string }>[];
   meetings: readonly (MeetingListItem & { history: readonly MeetingHistoryItem[] })[];
 }>;
 
@@ -88,4 +90,6 @@ export type MeetingBriefing = Readonly<{
   unansweredQuestions: readonly string[];
   recentHistory: readonly Readonly<{ subject: string; description: string | null; occurredAt: string }>[];
   recommendedNextAction: string;
+  businessContext: Readonly<{ opportunityId: string | null; opportunityName: string | null; nextAction: Readonly<{ taskId: string; title: string; dueAt: string }> | null }>;
+  transcript: Readonly<{ status: "ABSENT" | "AVAILABLE" | "RESTRICTED" | "EXPIRED"; visible: boolean; canManage: boolean; version: number | null; transcriptText: string | null; summary: string | null; policyVersion: string | null; consentRecordedAt: string | null; retentionUntil: string | null }>;
 }>;
