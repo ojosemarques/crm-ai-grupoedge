@@ -80,6 +80,7 @@ const nextActionSchema = z.object({
 }).strict();
 
 const pipelineQuerySchema = z.object({
+  pipelineId: z.union([z.literal(""), z.string().uuid()]).default(""),
   closerId: z.union([z.literal(""), z.string().uuid()]).default(""),
   productId: z.union([z.literal(""), z.string().uuid()]).default(""),
   sourceId: z.union([z.literal(""), z.string().uuid()]).default(""),
@@ -301,9 +302,14 @@ async function getWorkspaceTimeZone(database: PrismaClient, workspaceId: string)
   return workspace.timeZone;
 }
 
-async function getOpportunityPipeline(database: PrismaClient | Prisma.TransactionClient, workspaceId: string) {
+async function getOpportunityPipeline(database: PrismaClient | Prisma.TransactionClient, workspaceId: string, pipelineId = "") {
   const pipeline = await database.pipeline.findFirst({
-    where: { workspaceId, entityType: "OPPORTUNITY", isDefault: true, deletedAt: null },
+    where: {
+      workspaceId,
+      entityType: "OPPORTUNITY",
+      deletedAt: null,
+      ...(pipelineId ? { id: pipelineId } : { isDefault: true }),
+    },
     include: {
       stages: {
         where: { deletedAt: null },
@@ -315,7 +321,7 @@ async function getOpportunityPipeline(database: PrismaClient | Prisma.Transactio
       },
     },
   });
-  if (!pipeline) notFound("Pipeline padrão de vendas não encontrado.");
+  if (!pipeline) notFound(pipelineId ? "Pipeline de vendas não encontrado." : "Pipeline padrão de vendas não encontrado.");
   const codes = new Set(pipeline.stages.flatMap((stage) =>
     isOpportunityStageCode(stage.opportunityStageCode) ? [stage.opportunityStageCode] : [],
   ));
@@ -725,7 +731,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
     const [timeZone, readScope, pipeline] = await Promise.all([
       getWorkspaceTimeZone(options.database, context.workspaceId),
       resolveScope(options.database, options.authorization, context, PermissionKeys.OPPORTUNITIES_READ),
-      getOpportunityPipeline(options.database, context.workspaceId),
+      getOpportunityPipeline(options.database, context.workspaceId, parsed.data.pipelineId),
     ]);
     const writeScope = await options.authorization.authorize(context, PermissionKeys.OPPORTUNITIES_WRITE, {
       workspaceId: context.workspaceId,
@@ -763,6 +769,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
     }
     const where: Prisma.OpportunityWhereInput = {
       workspaceId: context.workspaceId,
+      pipelineId: pipeline.id,
       deletedAt: null,
       ...scopeWhere(readScope.scope, context, readScope.ownerIds),
       ...originVisibilityWhere(readScope.scope, visibility),
@@ -791,6 +798,8 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
     return {
       generatedAt: options.now().toISOString(),
       timeZone,
+      pipelineId: pipeline.id,
+      pipelineName: pipeline.name,
       filters: parsed.data,
       canWrite: writeScope.allowed,
       canFilterCloser: readScope.scope !== "OWN",

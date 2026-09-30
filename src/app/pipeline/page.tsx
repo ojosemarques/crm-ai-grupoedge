@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/layout/page-header";
+import { BusinessPipelineSwitcher } from "@/components/pipelines/business-pipeline-switcher";
 import { PreSalesPipelineWorkspace } from "@/app/pipeline/pre-sales-pipeline-workspace";
 import { requirePageAuthentication } from "@/modules/auth/http/authentication-guards";
 import { getPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
+import { listBusinessPipelines } from "@/modules/pipelines/application/business-pipeline-navigation";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +22,7 @@ export default async function PipelinePage({ searchParams }: Readonly<{ searchPa
   let screen;
   try {
     screen = await getPreSalesPipelineService().getScreen(context, {
+      pipelineId: first(params.pipelineId),
       q: first(params.q),
       responsible: first(params.responsible),
       priority: first(params.priority),
@@ -29,10 +32,12 @@ export default async function PipelinePage({ searchParams }: Readonly<{ searchPa
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     throw error;
   }
+  const pipelines = await listBusinessPipelines(context);
 
   return (
     <main className="page-canvas">
       <PageHeader description="Acompanhe os contatos e avance cada conversa até a próxima etapa." eyebrow="Negócios" title="Pré-vendas" />
+      <BusinessPipelineSwitcher pipelines={pipelines} selectedPipelineId={screen.pipelineId} />
       <PreSalesPipelineWorkspace initialView={first(params.view) === "list" ? "list" : "board"} screen={screen} />
     </main>
   );

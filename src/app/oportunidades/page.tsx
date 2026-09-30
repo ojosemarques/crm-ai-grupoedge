@@ -2,8 +2,10 @@ import { redirect } from "next/navigation";
 
 import { OpportunityPipelineWorkspace } from "@/app/oportunidades/opportunity-pipeline-workspace";
 import { PageHeader } from "@/components/layout/page-header";
+import { BusinessPipelineSwitcher } from "@/components/pipelines/business-pipeline-switcher";
 import { requirePageAuthentication } from "@/modules/auth/http/authentication-guards";
 import { getOpportunityService } from "@/modules/opportunities/application/opportunity-service";
+import { listBusinessPipelines } from "@/modules/pipelines/application/business-pipeline-navigation";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +19,7 @@ export default async function OpportunitiesPage({ searchParams }: Readonly<{ sea
   let screen;
   try {
     screen = await getOpportunityService().getPipelineScreen(context, {
+      pipelineId: first(params.pipelineId),
       closerId: first(params.closerId),
       productId: first(params.productId),
       sourceId: first(params.sourceId),
@@ -28,9 +31,11 @@ export default async function OpportunitiesPage({ searchParams }: Readonly<{ sea
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     throw error;
   }
+  const pipelines = await listBusinessPipelines(context);
   return (
     <main className="page-canvas page-canvas-wide">
       <PageHeader description="Acompanhe suas oportunidades, propostas e negociações." eyebrow="Negócios" title="Vendas" />
+      <BusinessPipelineSwitcher pipelines={pipelines} selectedPipelineId={screen.pipelineId} />
       <OpportunityPipelineWorkspace initialOpportunityId={first(params.opportunityId) ?? null} screen={screen} />
     </main>
   );

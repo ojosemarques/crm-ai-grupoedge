@@ -79,6 +79,7 @@ export type PreSalesPipelineScreen = Readonly<{
   pipelineName: string;
   cardLimitPerStage: number;
   filters: Readonly<{
+    pipelineId: string;
     q: string;
     responsible: string;
     priority: "ALL" | "P1" | "P2" | "P3";

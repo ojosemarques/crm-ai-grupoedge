@@ -16,6 +16,8 @@ import { SaleCompletionPanel } from "@/components/opportunities/sale-completion-
 import type {
   OpportunityListItem,
   OpportunityPipelineScreen,
+  OpportunityStageColumn,
+  OpportunityTransitionOption,
 } from "@/modules/opportunities/domain/opportunity-contracts";
 
 type BulkPreview = Readonly<{ operationId: string; selectedCount: number; eligibleCount: number; blocked: readonly Readonly<{ id: string; reason: string }>[] }>;
@@ -59,12 +61,24 @@ async function resultBody(response: Response) {
   return body.result;
 }
 
-function OpportunityRow({ opportunity, timeZone, onSelect, pending }: Readonly<{ opportunity: OpportunityListItem; timeZone: string; onSelect: () => void; pending: boolean }>) {
+function canCompleteWithTransitionForm(option: OpportunityTransitionOption) {
+  return option.allowed || option.blockReason === "Crie uma próxima ação antes da transição.";
+}
+
+function OpportunityRow({ opportunity, timeZone, onSelect, onDragStart, onDragEnd, pending, dragging }: Readonly<{
+  opportunity: OpportunityListItem;
+  timeZone: string;
+  onSelect: () => void;
+  onDragStart: (event: React.DragEvent<HTMLElement>) => void;
+  onDragEnd: () => void;
+  pending: boolean;
+  dragging: boolean;
+}>) {
   return (
-    <article className={styles.card}>
+    <article className={styles.card} data-dragging={dragging || undefined} draggable={opportunity.canWrite && opportunity.status === "OPEN" && !pending} onDragEnd={onDragEnd} onDragStart={onDragStart}>
       <div className={styles.cardBody}>
-        <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={opportunity.status === "WON" ? "green" : opportunity.status === "LOST" ? "red" : "purple"}>{opportunity.status === "WON" ? "Ganho" : opportunity.status === "LOST" ? "Perdido" : opportunity.status === "CANCELLED" ? "Cancelado" : "Em aberto"}</span>{opportunity.productName ? <span className={styles.tag} data-tone="blue" title={opportunity.productName}>{opportunity.productName}</span> : null}</div><span aria-label={`Responsável: ${opportunity.ownerName}`} className={styles.avatarSquare} title={opportunity.ownerName}>{opportunity.ownerName.slice(0, 2).toUpperCase()}</span></div>
-        <div className={styles.cardTitle}><Link href={`/leads/${opportunity.leadId}/historico`} title={opportunity.name}>{opportunity.name}</Link><span>{money(opportunity.amountCents)}</span></div>
+        <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={opportunity.status === "WON" ? "green" : opportunity.status === "LOST" ? "red" : "purple"}>{opportunity.status === "WON" ? "Ganho" : opportunity.status === "LOST" ? "Perdido" : opportunity.status === "CANCELLED" ? "Cancelado" : "Em aberto"}</span>{opportunity.productName ? <span className={styles.tag} data-tone="blue" title={opportunity.productName}>{opportunity.productName}</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${opportunity.name}`} className={styles.dragHandle} disabled={!opportunity.canWrite || opportunity.status !== "OPEN" || pending} draggable={opportunity.canWrite && opportunity.status === "OPEN" && !pending} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${opportunity.ownerName}`} className={styles.avatarSquare} title={opportunity.ownerName}>{opportunity.ownerName.slice(0, 2).toUpperCase()}</span></div></div>
+        <div className={styles.cardTitle}><Link draggable={false} href={`/leads/${opportunity.leadId}/historico`} title={opportunity.name}>{opportunity.name}</Link><span>{money(opportunity.amountCents)}</span></div>
         <p className={styles.subtitle}>{opportunity.leadName}{opportunity.accountName ? ` · ${opportunity.accountName}` : ""}</p>
       </div>
       <footer className={styles.cardFooter}>
@@ -82,6 +96,9 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
   const router = useRouter();
   const [view, setView] = useState<"board" | "list" | "summary">("board");
   const [selectedId, setSelectedId] = useState<string | null>(initialOpportunityId);
+  const [requestedStageId, setRequestedStageId] = useState("");
+  const [draggedOpportunityId, setDraggedOpportunityId] = useState<string | null>(null);
+  const [dropStageId, setDropStageId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -103,6 +120,67 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
 
   function toggleSelected(opportunityId: string) {
     setSelectedIds((current) => { const next = new Set(current); if (next.has(opportunityId)) next.delete(opportunityId); else next.add(opportunityId); return next; });
+  }
+
+  function startDrag(event: React.DragEvent<HTMLElement>, opportunity: OpportunityListItem) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-politizai-opportunity", opportunity.id);
+    event.dataTransfer.setData("text/plain", opportunity.id);
+    setDraggedOpportunityId(opportunity.id);
+  }
+
+  async function moveOpportunity(opportunity: OpportunityListItem, option: OpportunityTransitionOption) {
+    setPending(true);
+    setNotice(null);
+    try {
+      await readResult(await fetch(`/api/opportunities/${opportunity.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "TRANSITION",
+          targetStageId: option.stageId,
+          expectedRevision: opportunity.revision,
+          reason: "Movido pelo quadro de vendas.",
+          origin: "OPPORTUNITY_BOARD",
+          confirmed: false,
+          lossReasonId: null,
+        }),
+      }));
+      setNotice({ kind: "success", message: `${opportunity.name} foi movida para ${option.name}.` });
+      router.refresh();
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function dropOpportunity(event: React.DragEvent<HTMLElement>, stage: OpportunityStageColumn) {
+    event.preventDefault();
+    setDropStageId(null);
+    setDraggedOpportunityId(null);
+    const opportunityId = event.dataTransfer.getData("application/x-politizai-opportunity") || event.dataTransfer.getData("text/plain") || draggedOpportunityId;
+    const opportunity = opportunities.find((item) => item.id === opportunityId);
+    if (!opportunity) return;
+    if (opportunity.stageId === stage.id) {
+      setNotice({ kind: "error", message: `${opportunity.name} já está em ${stage.name}.` });
+      return;
+    }
+    const option = opportunity.transitions.find((item) => item.stageId === stage.id);
+    if (!option) {
+      setNotice({ kind: "error", message: "Esta etapa não está disponível para a oportunidade selecionada." });
+      return;
+    }
+    if (!option.allowed || option.requiresConfirmation || option.requiresLossReason || option.code === "PROPOSAL") {
+      setRequestedStageId(stage.id);
+      setSelectedId(opportunity.id);
+      setNotice({
+        kind: canCompleteWithTransitionForm(option) ? "success" : "error",
+        message: option.blockReason ?? "Complete os dados obrigatórios para concluir a movimentação.",
+      });
+      return;
+    }
+    await moveOpportunity(opportunity, option);
   }
 
   async function previewBulk(event: FormEvent<HTMLFormElement>) {
@@ -152,6 +230,7 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
       }));
       setNotice({ kind: "success", message: "Etapa comercial atualizada." });
       setSelectedId(null);
+      setRequestedStageId("");
       router.refresh();
     } catch (error) {
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." });
@@ -202,25 +281,26 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
   return (
     <div className={styles.workspace}>
       <form className={styles.filters} method="get">
+        <input name="pipelineId" type="hidden" value={screen.pipelineId} />
         {screen.canFilterCloser ? <label className={styles.filter}>Dono do negócio<select aria-label="Dono do negócio" defaultValue={screen.filters.closerId} name="closerId"><option value="">Todos</option>{screen.closerOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
         <label className={styles.filter}>Produto<select aria-label="Produto" defaultValue={screen.filters.productId} name="productId"><option value="">Todos</option>{screen.productOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <label className={styles.filter}>Etapa<select aria-label="Etapa" defaultValue={screen.filters.stageCode} name="stageCode"><option value="ALL">Todas</option>{screen.stages.map((stage) => <option key={stage.id} value={stage.code}>{stage.name}</option>)}</select></label>
         {screen.sourceOptions.length ? <label className={styles.filter}>Origem<select aria-label="Origem" defaultValue={screen.filters.sourceId} name="sourceId"><option value="">Todas</option>{screen.sourceOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
         <label className={styles.filter}>De<input defaultValue={screen.filters.from} name="from" type="date" /></label>
         <label className={styles.filter}>Até<input defaultValue={screen.filters.to} name="to" type="date" /></label>
-        <Button size="sm" type="submit" variant="secondary"><Icon name="filtro" size={14} />Aplicar</Button><Link className={styles.clear} href="/oportunidades">Limpar filtros</Link>
+        <Button size="sm" type="submit" variant="secondary"><Icon name="filtro" size={14} />Aplicar</Button><Link className={styles.clear} href={`/oportunidades?pipelineId=${screen.pipelineId}`}>Limpar filtros</Link>
       </form>
       <div className={styles.boardToolbar}>
-        <p><strong>{screen.stages.reduce((total, stage) => total + stage.count, 0)}</strong> oportunidades de negócios <span className={styles.pipelineName}>{money(opportunities.reduce((total, item) => total + BigInt(item.amountCents), BigInt(0)).toString())} no pipeline</span></p>
+        <p><strong>{screen.stages.reduce((total, stage) => total + stage.count, 0)}</strong> oportunidades de negócios <span className={styles.pipelineName}>{screen.pipelineName} · {money(opportunities.reduce((total, item) => total + BigInt(item.amountCents), BigInt(0)).toString())}</span></p>
         <div className={styles.tools}><div className={styles.viewSwitch} aria-label="Alternar visualização"><button aria-pressed={view === "board"} onClick={() => setView("board")} type="button"><Icon name="dashboard" size={14} />Quadro</button><button aria-pressed={view === "list"} onClick={() => setView("list")} type="button"><Icon name="auditoria" size={14} />Lista</button><button aria-pressed={view === "summary"} onClick={() => setView("summary")} type="button"><Icon name="tendencia" size={14} />Consolidado</button></div><button aria-label="Atualizar oportunidades" className={styles.iconButton} onClick={() => router.refresh()} type="button"><Icon name="meu-dia" size={16} /></button></div>
       </div>
       {notice ? <p className="feedback-banner rounded-md border p-3 text-sm" data-tone={notice.kind === "error" ? "danger" : "success"} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
       {view === "board" ? (
         <section aria-label="Pipeline de vendas" className={styles.board}>
           {screen.stages.map((stage) => (
-            <section aria-label={`Etapa ${stage.name}`} className={styles.lane} key={stage.id}>
+            <section aria-label={`Etapa ${stage.name}`} className={styles.lane} data-drop-active={dropStageId === stage.id || undefined} key={stage.id} onDragEnter={() => setDropStageId(stage.id)} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropStageId(null); }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => void dropOpportunity(event, stage)}>
               <header className={styles.laneHeader}><div><h2>{stage.name}</h2><span>{money(stage.opportunities.reduce((total, item) => total + BigInt(item.amountCents), BigInt(0)).toString())}</span></div><span aria-label={`${stage.count} oportunidades nesta etapa`} className={styles.count}>{stage.count}</span></header>
-              <div className={styles.cards}>{stage.opportunities.map((opportunity) => <OpportunityRow key={opportunity.id} opportunity={opportunity} timeZone={screen.timeZone} pending={pending} onSelect={() => setSelectedId(opportunity.id)} />)}{stage.count === 0 ? <div className={styles.emptyLane}><Icon name="vendas" size={20} /><p>Nenhuma oportunidade</p><span>Os negócios aparecerão aqui ao entrar nesta fase.</span></div> : null}</div>
+              <div className={styles.cards}>{stage.opportunities.map((opportunity) => <OpportunityRow dragging={draggedOpportunityId === opportunity.id} key={opportunity.id} opportunity={opportunity} timeZone={screen.timeZone} pending={pending} onDragEnd={() => { setDraggedOpportunityId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, opportunity)} onSelect={() => { setRequestedStageId(""); setSelectedId(opportunity.id); }} />)}{stage.count === 0 ? <div className={styles.emptyLane}><Icon name="vendas" size={20} /><p>Nenhuma oportunidade</p><span>Os negócios aparecerão aqui ao entrar nesta fase.</span></div> : null}</div>
             </section>
           ))}
         </section>
@@ -235,7 +315,7 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
           busy={pending}
           className="max-w-5xl space-y-5"
           labelledBy="opportunity-transition-title"
-          onDismiss={() => setSelectedId(null)}
+          onDismiss={() => { setSelectedId(null); setRequestedStageId(""); }}
         >
           <div>
             <h2 className="text-xl font-bold" id="opportunity-transition-title">Trabalhar {selected.name}</h2>
@@ -264,7 +344,7 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
           <SaleCompletionPanel key={selected.id} opportunity={selected} sellers={screen.closerOptions} onBusyChange={setPending} onCommitted={() => router.refresh()} />
           <form className="grid gap-3 rounded-md border p-4" onSubmit={transition}>
             <h3 className="font-semibold">Alterar etapa</h3>
-            <label className="text-sm">Destino<select className={inputClass} name="targetStageId" required><option value="">Selecione</option>{selected.transitions.filter((item) => item.code !== "PROPOSAL").map((item) => <option disabled={!item.allowed} key={item.stageId} value={item.stageId}>{item.name}{item.blockReason ? ` — ${item.blockReason}` : ""}</option>)}</select></label>
+            <label className="text-sm">Destino<select className={inputClass} defaultValue={requestedStageId} name="targetStageId" required><option value="">Selecione</option>{selected.transitions.filter((item) => item.code !== "PROPOSAL").map((item) => <option disabled={!canCompleteWithTransitionForm(item)} key={item.stageId} value={item.stageId}>{item.name}{item.blockReason ? ` — ${item.blockReason}` : ""}</option>)}</select></label>
             <label className="text-sm">Motivo<textarea className={inputClass} name="reason" required /></label>
             <label className="text-sm">Motivo de perda<select className={inputClass} name="lossReasonId"><option value="">Não se aplica</option>{screen.lossReasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select></label>
             <label className="text-sm">Nova próxima ação opcional<input className={inputClass} name="nextActionTitle" /></label>
@@ -272,7 +352,7 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
             <label className="flex gap-2 text-sm"><input name="confirmed" type="checkbox" /> Confirmo quando a transição for sensível.</label>
             <Button disabled={pending} type="submit">Confirmar transição</Button>
           </form>
-          <div className="flex justify-end"><Button disabled={pending} onClick={() => setSelectedId(null)} type="button" variant="secondary">Fechar</Button></div>
+          <div className="flex justify-end"><Button disabled={pending} onClick={() => { setSelectedId(null); setRequestedStageId(""); }} type="button" variant="secondary">Fechar</Button></div>
         </AccessibleDialog>
       ) : null}
     </div>

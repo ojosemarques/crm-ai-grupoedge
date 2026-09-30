@@ -72,7 +72,10 @@ export type OpportunityReference = Readonly<{ id: string; name: string }>;
 export type OpportunityPipelineScreen = Readonly<{
   generatedAt: string;
   timeZone: string;
+  pipelineId: string;
+  pipelineName: string;
   filters: Readonly<{
+    pipelineId: string;
     closerId: string;
     productId: string;
     sourceId: string;

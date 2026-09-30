@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
   try {
     const context = await requireApiAuthentication(request);
     const result = await getOpportunityService().getPipelineScreen(context, {
+      pipelineId: request.nextUrl.searchParams.get("pipelineId") || undefined,
       closerId: request.nextUrl.searchParams.get("closerId") || undefined,
       productId: request.nextUrl.searchParams.get("productId") || undefined,
       stageCode: request.nextUrl.searchParams.get("stageCode") || undefined,

@@ -170,6 +170,9 @@ export function PreSalesPipelineWorkspace({
   const [view, setView] = useState(initialView);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedLeadState, setSelectedLeadState] = useState<LeadPipelineState | null>(null);
+  const [requestedStageId, setRequestedStageId] = useState<string>("");
+  const [draggedLeadId, setDraggedLeadId] = useState<string | null>(null);
+  const [dropStageId, setDropStageId] = useState<string | null>(null);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
@@ -207,6 +210,7 @@ export function PreSalesPipelineWorkspace({
       setNotice({ kind: "success", message: `${lead.fullName} foi movido para ${option.name}.` });
       setSelectedLeadId(null);
       setSelectedLeadState(null);
+      setRequestedStageId("");
       router.refresh();
     } catch (error) {
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." });
@@ -233,7 +237,9 @@ export function PreSalesPipelineWorkspace({
 
   function startDrag(event: React.DragEvent<HTMLElement>, lead: LeadPipelineCard) {
     event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-politizai-lead", lead.id);
     event.dataTransfer.setData("text/plain", lead.id);
+    setDraggedLeadId(lead.id);
   }
 
   async function loadLeadState(lead: LeadPipelineCard): Promise<LeadPipelineState | null> {
@@ -255,16 +261,35 @@ export function PreSalesPipelineWorkspace({
     if (!state) return;
     setSelectedLeadState(state);
     setSelectedLeadId(lead.id);
+    setRequestedStageId("");
   }
 
   async function dropOnStage(event: React.DragEvent<HTMLElement>, stage: LeadPipelineStageColumn) {
     event.preventDefault();
-    const lead = cards.find((item) => item.id === event.dataTransfer.getData("text/plain"));
+    setDropStageId(null);
+    setDraggedLeadId(null);
+    const leadId = event.dataTransfer.getData("application/x-politizai-lead") || event.dataTransfer.getData("text/plain") || draggedLeadId;
+    const lead = cards.find((item) => item.id === leadId);
     if (!lead) return;
     const state = await loadLeadState(lead);
     const option = state?.transitions.find((item) => item.stageId === stage.id);
-    if (!state || !option || !option.allowed || option.requiresConfirmation || option.requiresDisqualificationReason) {
-      setNotice({ kind: "error", message: option?.blockReason ?? "Use Alterar etapa para concluir esta transição com os dados obrigatórios." });
+    if (!state) return;
+    if (state.currentStageId === stage.id) {
+      setNotice({ kind: "error", message: `${lead.fullName} já está em ${stage.name}.` });
+      return;
+    }
+    if (!option) {
+      setNotice({ kind: "error", message: "Esta etapa não está disponível para o lead selecionado." });
+      return;
+    }
+    if (!option.allowed || option.requiresConfirmation || option.requiresDisqualificationReason) {
+      setSelectedLeadState(state);
+      setSelectedLeadId(lead.id);
+      setRequestedStageId(stage.id);
+      setNotice({
+        kind: option.blockReason ? "error" : "success",
+        message: option.blockReason ?? "Complete os dados obrigatórios para concluir a movimentação.",
+      });
       return;
     }
     await transition(lead, state, option, {
@@ -278,6 +303,7 @@ export function PreSalesPipelineWorkspace({
   return (
     <div className={styles.workspace}>
       <form className={styles.filters} method="get">
+        <input name="pipelineId" type="hidden" value={screen.pipelineId} />
         <label className={styles.search}><span className="sr-only">Pesquisar negócios</span><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg><input defaultValue={screen.filters.q} name="q" placeholder="Buscar negócio..." /></label>
         <label className={styles.filter}>Dono do negócio<select aria-label="Dono do negócio" defaultValue={screen.filters.responsible} name="responsible"><option value="">Todos</option>{screen.responsibleOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
         <label className={styles.filter}>Prioridade<select aria-label="Prioridade" defaultValue={screen.filters.priority} name="priority"><option value="ALL">Todas</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option></select></label>
@@ -285,7 +311,7 @@ export function PreSalesPipelineWorkspace({
         <input name="view" type="hidden" value={view} />
         <Button size="sm" type="submit" variant="secondary"><Icon name="filtro" size={14} />Aplicar</Button>
         {screen.canWrite ? <Button onClick={() => setQuickCreateOpen(true)} size="sm" type="button"><Icon name="mais" size={14} />Adicionar</Button> : null}
-        <Link className={styles.clear} href="/pipeline">Limpar filtros</Link>
+        <Link className={styles.clear} href={`/pipeline?pipelineId=${screen.pipelineId}`}>Limpar filtros</Link>
       </form>
       <div className={styles.boardToolbar}>
         <p><strong>{visibleStages.reduce((total, stage) => total + stage.count, 0)}</strong> negócios no pipeline <span className={styles.pipelineName}>{screen.pipelineName}</span></p>
@@ -304,21 +330,30 @@ export function PreSalesPipelineWorkspace({
       {view === "board" ? (
         <section aria-label="Quadro do pipeline" className={styles.board}>
           {visibleStages.map((stage) => (
-            <section aria-label={`Etapa ${stage.name}`} className={styles.lane} key={stage.id} onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropOnStage(event, stage)}>
+            <section
+              aria-label={`Etapa ${stage.name}`}
+              className={styles.lane}
+              data-drop-active={dropStageId === stage.id || undefined}
+              key={stage.id}
+              onDragEnter={() => setDropStageId(stage.id)}
+              onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropStageId(null); }}
+              onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
+              onDrop={(event) => void dropOnStage(event, stage)}
+            >
               <header className={styles.laneHeader}><div><h2>{stage.name}</h2><span>{stage.leads.filter((lead) => lead.nextActionAt).length} atividades agendadas</span></div><span aria-label={`${stage.count} leads nesta etapa`} className={styles.count}>{stage.count}</span></header>
               <div className={styles.cards}>
                 {stage.leads.map((lead) => (
-                  <article className={styles.card} draggable={screen.canWrite && !pending} key={lead.id} onDragStart={(event) => startDrag(event, lead)}>
+                  <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={screen.canWrite && !pending} key={lead.id} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)}>
                     <div className={styles.cardBody}>
-                      <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div>
-                      <div className={styles.cardTitle}><Link href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link><span title="Pontuação de qualificação">{lead.score === null ? "—" : `${lead.score}/100`}</span></div>
+                      <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${lead.fullName}`} className={styles.dragHandle} disabled={!screen.canWrite || pending} draggable={screen.canWrite && !pending} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div></div>
+                      <div className={styles.cardTitle}><Link draggable={false} href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link><span title="Pontuação de qualificação">{lead.score === null ? "—" : `${lead.score}/100`}</span></div>
                       {lead.jobTitle ? <p className={styles.subtitle}>{lead.jobTitle}</p> : null}
                     </div>
                     <footer className={styles.cardFooter}>
                       <span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatar} title={lead.responsibleName}>{lead.responsibleName.slice(0, 1).toUpperCase()}</span>
-                      <Link aria-label={`Adicionar atividade para ${lead.fullName}`} href={`/leads/${lead.id}/historico#registrar-atividade`} title="Adicionar atividade"><Icon name="meu-dia" size={13} /></Link>
-                      <Link aria-label={`Criar lembrete para ${lead.fullName}`} href={`/leads/${lead.id}/historico#criar-tarefa`} title="Criar lembrete"><Icon name="agenda" size={13} /></Link>
-                      <Link aria-label={`Agendar reunião com ${lead.fullName}`} href={`/leads/${lead.id}/historico#reunioes`} title="Agendar reunião"><Icon name="mais" size={13} /></Link>
+                      <Link aria-label={`Adicionar atividade para ${lead.fullName}`} draggable={false} href={`/leads/${lead.id}/historico#registrar-atividade`} title="Adicionar atividade"><Icon name="meu-dia" size={13} /></Link>
+                      <Link aria-label={`Criar lembrete para ${lead.fullName}`} draggable={false} href={`/leads/${lead.id}/historico#criar-tarefa`} title="Criar lembrete"><Icon name="agenda" size={13} /></Link>
+                      <Link aria-label={`Agendar reunião com ${lead.fullName}`} draggable={false} href={`/leads/${lead.id}/historico#reunioes`} title="Agendar reunião"><Icon name="mais" size={13} /></Link>
                       <span className={styles.activity} title={`${lead.nextActionDescription ?? "Sem próxima atividade"} · ${formatDate(lead.nextActionAt, screen.timeZone)}`}><Icon name="relogio" size={12} />{lead.nextActionAt ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: screen.timeZone }).format(new Date(lead.nextActionAt)) : "Sem prazo"}</span>
                       <button aria-label={`Alterar etapa de ${lead.fullName}`} className={styles.moveButton} disabled={!screen.canWrite || pending} onClick={() => void openTransition(lead)} title="Alterar etapa" type="button"><Icon name="seta-direita" size={13} /></button>
                     </footer>
@@ -350,13 +385,13 @@ export function PreSalesPipelineWorkspace({
       )}
 
       {selectedLead && selectedLeadState ? (
-        <AccessibleDialog busy={pending} labelledBy="transition-title" onDismiss={() => { setSelectedLeadId(null); setSelectedLeadState(null); }} className="max-w-xl">
+        <AccessibleDialog busy={pending} labelledBy="transition-title" onDismiss={() => { setSelectedLeadId(null); setSelectedLeadState(null); setRequestedStageId(""); }} className="max-w-xl">
           <form onSubmit={submitTransition}>
             <h2 className="text-xl font-bold" id="transition-title">Alterar etapa de {selectedLead.fullName}</h2>
             <p className="mt-1 text-sm text-muted-foreground">Etapa atual: {selectedLead.currentStageName}</p>
             {screen.canCorrect ? <label className="mt-4 flex items-center gap-2 text-sm"><input name="managerCorrection" type="checkbox" /> Registrar como correção gerencial</label> : null}
             <label className="mt-4 block text-sm">Etapa de destino
-              <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" name="targetStageId" required>
+              <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" defaultValue={requestedStageId} name="targetStageId" required>
                 <option value="">Selecione</option>
                 {selectedLeadState.transitions.map((option) => <option key={option.stageId} value={option.stageId}>{option.name}{option.allowed ? "" : ` — ${option.blockReason}`}</option>)}
               </select>
@@ -369,7 +404,7 @@ export function PreSalesPipelineWorkspace({
             </label>
             <label className="mt-4 flex items-start gap-2 text-sm"><input name="confirmed" type="checkbox" /><span>Confirmo esta transição quando ela for sensível ou uma correção gerencial.</span></label>
             <ul className="mt-4 space-y-1 text-xs text-muted-foreground">{selectedLeadState.transitions.filter((option) => option.blockReason).map((option) => <li key={option.stageId}>{option.name}: {option.blockReason}</li>)}</ul>
-            <div className="mt-6 flex justify-end gap-2"><Button disabled={pending} onClick={() => { setSelectedLeadId(null); setSelectedLeadState(null); }} type="button" variant="secondary">Cancelar</Button><Button disabled={pending} type="submit">{pending ? "Salvando…" : "Confirmar transição"}</Button></div>
+            <div className="mt-6 flex justify-end gap-2"><Button disabled={pending} onClick={() => { setSelectedLeadId(null); setSelectedLeadState(null); setRequestedStageId(""); }} type="button" variant="secondary">Cancelar</Button><Button disabled={pending} type="submit">{pending ? "Salvando…" : "Confirmar transição"}</Button></div>
           </form>
         </AccessibleDialog>
       ) : null}

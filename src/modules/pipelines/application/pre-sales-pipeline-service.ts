@@ -50,6 +50,7 @@ type PreSalesPipelineServiceOptions = Readonly<{
 }>;
 
 const screenQuerySchema = z.object({
+  pipelineId: z.union([z.literal(""), z.string().uuid()]).optional().default(""),
   q: z.string().trim().max(200).optional().default(""),
   responsible: z.string().trim().max(100).optional().default(""),
   priority: z.enum(["ALL", "P1", "P2", "P3"]).optional().default("ALL"),
@@ -411,9 +412,14 @@ export async function transitionLeadStageInTransaction(
 }
 
 export function createPreSalesPipelineService(options: PreSalesPipelineServiceOptions) {
-  async function getPipeline(workspaceId: string) {
+  async function getPipeline(workspaceId: string, pipelineId = "") {
     const pipeline = await options.database.pipeline.findFirst({
-      where: { workspaceId, entityType: "LEAD", isDefault: true, deletedAt: null },
+      where: {
+        workspaceId,
+        entityType: "LEAD",
+        deletedAt: null,
+        ...(pipelineId ? { id: pipelineId } : { isDefault: true }),
+      },
       include: {
         stages: {
           where: { deletedAt: null },
@@ -425,7 +431,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         },
       },
     });
-    if (!pipeline) notFound("Pipeline padrão de pré-vendas não encontrado.");
+    if (!pipeline) notFound(pipelineId ? "Pipeline de pré-vendas não encontrado." : "Pipeline padrão de pré-vendas não encontrado.");
     assertCompleteLeadStages(pipeline.stages);
     return pipeline;
   }
@@ -435,6 +441,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       where: { id: leadId, workspaceId, deletedAt: null },
       select: {
         id: true,
+        pipelineId: true,
         ownerMemberId: true,
         queueId: true,
         routingQueue: { select: { teamId: true } },
@@ -463,7 +470,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
     const resource = resourceForLead(context.workspaceId, leadForAuth);
     await options.authorization.assertAuthorized(context, PermissionKeys.LEADS_READ, resource);
     const [pipeline, lead, permission, reasons] = await Promise.all([
-      getPipeline(context.workspaceId),
+      getPipeline(context.workspaceId, leadForAuth.pipelineId),
       options.database.lead.findUniqueOrThrow({
         where: { id: leadForAuth.id },
         include: {
@@ -533,7 +540,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       context,
       PermissionKeys.LEADS_READ,
     );
-    const pipeline = await getPipeline(context.workspaceId);
+    const pipeline = await getPipeline(context.workspaceId, parsed.data.pipelineId);
     const visibility = leadVisibilityWhere(context, scope);
     const responsibleFilter: Prisma.LeadWhereInput = parsed.data.responsible.startsWith("member:")
       ? { ownerMemberId: parsed.data.responsible.slice(7) }

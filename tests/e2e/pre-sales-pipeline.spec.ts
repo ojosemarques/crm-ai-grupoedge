@@ -42,9 +42,19 @@ test("opera o pipeline por quadro, lista e cartão sem contornar as regras", asy
   await expect(page.getByRole("heading", { name: "Pipeline de pré-vendas" })).toBeVisible();
   const card = page.locator("article").filter({ hasText: leadName });
   await expect(card).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Contagens por etapa" }).getByRole("link", { name: /Novo 1/ })).toBeVisible();
+  const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
+  await expect(pipelineNavigation.getByRole("link", { name: "Pré-vendasPré-vendas" })).toHaveAttribute("aria-current", "page");
+  await expect(pipelineNavigation.getByRole("link", { name: "VendasVendas" })).toBeVisible();
+  await expect(page.getByLabel("Etapa").getByRole("option", { name: "Novo (1)" })).toHaveCount(1);
 
-  await card.dragTo(page.getByRole("region", { name: "Etapa Tentando contato" }));
+  const dragHandle = page.getByRole("button", { name: `Arrastar ${leadName}` });
+  const destination = page.getByRole("region", { name: "Etapa Tentando contato" });
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  await dragHandle.dispatchEvent("dragstart", { dataTransfer });
+  await destination.dispatchEvent("dragenter", { dataTransfer });
+  await destination.dispatchEvent("dragover", { dataTransfer });
+  await destination.dispatchEvent("drop", { dataTransfer });
+  await dragHandle.dispatchEvent("dragend", { dataTransfer });
   await expect(page.getByRole("status")).toContainText(`${leadName} foi movido para Tentando contato.`);
 
   await page.getByRole("button", { name: "Lista" }).click();
@@ -67,8 +77,8 @@ test("opera o pipeline por quadro, lista e cartão sem contornar as regras", asy
   await page.getByRole("button", { name: "Cancelar" }).click();
 
   await page.getByRole("link", { name: leadName, exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Etapa de pré-vendas" })).toBeVisible();
-  await expect(page.getByText("Atual:")).toContainText("Tentando contato");
+  await expect(page.getByRole("heading", { name: leadName })).toBeVisible();
+  await expect(page.getByRole("definition").filter({ hasText: /^Tentando contato$/ })).toBeVisible();
 });
 
 test("mantém o pipeline somente leitura para o visualizador", async ({ page }) => {
