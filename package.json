@@ -15,7 +15,7 @@
     "worker:staging:homologate": "tsx scripts/run-staging-worker-homologation.ts",
     "admin:bootstrap": "tsx scripts/run-administrative-bootstrap.ts",
     "lint": "eslint .",
-    "typecheck": "next typegen && tsc --noEmit",
+    "typecheck": "pnpm db:generate && next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:ai:evals": "tsx scripts/run-ai-evals.ts",
     "test:integration": "tsx scripts/run-integration-tests.ts",
