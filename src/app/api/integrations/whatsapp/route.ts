@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const commandSchema = z.object({
-  action: z.enum(["CONFIGURE_LOCAL", "PAUSE", "RESUME", "SIMULATE_INBOUND", "SIMULATE_STATUS", "REPLAY_WEBHOOK"]),
+  action: z.enum(["CONFIGURE_LOCAL", "RECORD_POLICY_DECISION", "PAUSE", "RESUME", "SIMULATE_INBOUND", "SIMULATE_STATUS", "REPLAY_WEBHOOK"]),
   data: z.unknown(),
 }).strict();
 
@@ -31,6 +31,8 @@ export async function POST(request: NextRequest) {
     const service = getWhatsAppService();
     const result = command.action === "CONFIGURE_LOCAL"
       ? await service.configureLocal(context, command.data)
+      : command.action === "RECORD_POLICY_DECISION"
+        ? await service.recordPolicyDecision(context, command.data)
       : command.action === "SIMULATE_INBOUND"
         ? await service.simulateInbound(context, command.data)
         : command.action === "SIMULATE_STATUS"

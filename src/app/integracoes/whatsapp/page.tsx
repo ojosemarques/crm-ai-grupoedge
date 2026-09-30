@@ -14,7 +14,7 @@ export default async function WhatsAppPage() {
   try { initial = await getWhatsAppService().screen(context); }
   catch (error) { if (error instanceof AccessDeniedError) redirect("/acesso-negado"); throw error; }
   return <main className="page-canvas page-canvas-wide">
-    <PageHeader eyebrow="Integrações · comunicação" title="WhatsApp" description="Contratos oficiais preparados com simulador local determinístico. Ativação externa bloqueada até elegibilidade, credenciais e sandbox serem validados." />
+    <PageHeader eyebrow="Integrações · comunicação" title="WhatsApp" description="Canal externo bloqueado pelo gate de elegibilidade. Contratos, controles e simulador permanecem locais, sem tráfego para a Meta." />
     <WhatsAppWorkspace initial={initial} />
   </main>;
 }

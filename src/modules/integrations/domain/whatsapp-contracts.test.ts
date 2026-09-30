@@ -10,6 +10,7 @@ import {
   normalizeWhatsAppWebhook,
   verifyWhatsAppChallengeToken,
   verifyWhatsAppSignature,
+  whatsAppPolicyDecisionSchema,
 } from "@/modules/integrations/domain/whatsapp-contracts";
 
 function payload(messages: unknown[] = [], statuses: unknown[] = []) {
@@ -64,5 +65,19 @@ describe("CRM-44 contratos WhatsApp Cloud API", () => {
     expect(mapWhatsAppProviderStatus("delivered")).toMatchObject({ status: "DELIVERED", reviewReason: null });
     expect(mapWhatsAppProviderStatus("failed", false)).toMatchObject({ status: "FAILED_TRANSIENT", transient: true });
     expect(mapWhatsAppProviderStatus("future_status")).toMatchObject({ status: null, reviewReason: "STATUS_UNKNOWN:future_status" });
+  });
+
+  it("não permite declarar elegibilidade externa sem o fluxo de homologação", () => {
+    expect(() => whatsAppPolicyDecisionSchema.parse({
+      decision: "ELIGIBLE",
+      scope: "Escopo comercial da Politizai relacionado ao ecossistema político.",
+      rationale: "Alegação sem evidência externa não pode liberar o canal.",
+      sourceUrl: "https://business.whatsapp.com/policy/preview?lang=pt_BR",
+      sourceObservedAt: "2026-09-30T03:00:00.000Z",
+      reviewTrigger: "Reavaliar apenas diante de mudança oficial ou confirmação escrita do provider.",
+      alternativeChannel: "PHONE",
+      alternativeStatus: "AUTHORIZED",
+      alternativeDetail: "Contato humano manual por telefone, registrado no CRM e sem automação externa.",
+    })).toThrow();
   });
 });

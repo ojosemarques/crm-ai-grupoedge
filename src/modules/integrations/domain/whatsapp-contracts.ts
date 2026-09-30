@@ -12,6 +12,11 @@ export const WHATSAPP_DEFAULT_GRAPH_API_VERSION = "v26.0";
 export const WHATSAPP_GRAPH_API_VERSION_ALLOWLIST = ["v26.0", "v25.0"] as const;
 export const WHATSAPP_CUSTOMER_SERVICE_WINDOW_SECONDS = 24 * 60 * 60;
 export const WHATSAPP_MAX_WEBHOOK_BYTES = 256 * 1024;
+export const WHATSAPP_POLICY_SOURCE_URL = "https://business.whatsapp.com/policy/preview?lang=pt_BR";
+export const WHATSAPP_POLICY_SOURCE_OBSERVED_AT = "2026-09-30T00:00:00.000-03:00";
+export const WHATSAPP_POLITIZAI_POLICY_SCOPE = "CRM comercial e serviços da Politizai para gabinetes, mandatos, campanhas e outros participantes do ecossistema político.";
+export const WHATSAPP_POLITIZAI_INELIGIBILITY_RATIONALE = "A política vigente proíbe a Plataforma do WhatsApp Business para entidades não governamentais que prestam serviços relacionados a política, candidatos, estratégia ou serviços de campanha e soluções eleitorais; o escopo comercial documentado da Politizai está dentro dessa fronteira.";
+export const WHATSAPP_POLICY_REVIEW_TRIGGER = "Reavaliar somente após mudança publicada da política ou confirmação escrita da Meta/provedor que autorize explicitamente o escopo da Politizai.";
 
 export const WHATSAPP_SECRET_REFERENCES = Object.freeze({
   accessToken: { alias: "access-token", referenceKey: "WHATSAPP_ACCESS_TOKEN" },
@@ -38,6 +43,22 @@ export const whatsAppConfigureLocalSchema = z.object({
   revision: z.number().int().positive().optional(),
   graphApiVersion: z.enum(WHATSAPP_GRAPH_API_VERSION_ALLOWLIST).default(WHATSAPP_DEFAULT_GRAPH_API_VERSION),
 }).strict();
+
+export const whatsAppPolicyDecisionSchema = z.object({
+  decision: z.enum(["PENDING_POLICY_REVIEW", "INELIGIBLE"]),
+  scope: z.string().trim().min(20).max(1_000),
+  rationale: z.string().trim().min(20).max(2_000),
+  sourceUrl: z.literal(WHATSAPP_POLICY_SOURCE_URL),
+  sourceObservedAt: z.string().datetime({ offset: true }),
+  reviewTrigger: z.string().trim().min(20).max(1_000),
+  alternativeChannel: z.enum(["EMAIL", "PHONE"]).nullable(),
+  alternativeStatus: z.enum(["NOT_DEFINED", "PENDING_HOMOLOGATION", "AUTHORIZED"]),
+  alternativeDetail: z.string().trim().min(20).max(1_000).nullable(),
+}).strict().superRefine((value, context) => {
+  if (value.decision === "INELIGIBLE" && !value.alternativeChannel) context.addIssue({ code: "custom", path: ["alternativeChannel"], message: "Registre um canal alternativo para uma decisão de inelegibilidade." });
+  if (value.alternativeChannel && value.alternativeStatus === "NOT_DEFINED") context.addIssue({ code: "custom", path: ["alternativeStatus"], message: "Informe o estado de homologação do canal alternativo." });
+  if (value.alternativeStatus === "AUTHORIZED" && !value.alternativeDetail) context.addIssue({ code: "custom", path: ["alternativeDetail"], message: "Descreva o escopo autorizado do canal alternativo." });
+});
 
 export const whatsAppLocalInboundSchema = z.object({
   externalEventId: eventIdSchema,

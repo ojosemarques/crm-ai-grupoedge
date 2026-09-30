@@ -22,6 +22,11 @@ import {
   WHATSAPP_ADAPTER_KEY,
   WHATSAPP_CONTRACT_VERSION,
   WHATSAPP_DEFAULT_GRAPH_API_VERSION,
+  WHATSAPP_POLICY_REVIEW_TRIGGER,
+  WHATSAPP_POLICY_SOURCE_OBSERVED_AT,
+  WHATSAPP_POLICY_SOURCE_URL,
+  WHATSAPP_POLITIZAI_INELIGIBILITY_RATIONALE,
+  WHATSAPP_POLITIZAI_POLICY_SCOPE,
   WHATSAPP_PROVIDER_KEY,
   WHATSAPP_SECRET_REFERENCES,
   whatsAppWebhookKey,
@@ -885,11 +890,31 @@ async function ensureWhatsAppLocalFoundation(
       update: {},
     });
   }
-  await transaction.whatsAppConnectionProfile.upsert({
+  const profile = await transaction.whatsAppConnectionProfile.upsert({
     where: { workspaceId_connectionId: { workspaceId, connectionId: connection.id } },
-    create: { id: stableSeedId(`whatsapp-profile:${key}`), workspaceId, connectionId: connection.id, webhookKey: whatsAppWebhookKey(workspaceId), graphApiVersion: WHATSAPP_DEFAULT_GRAPH_API_VERSION, operatingMode: "LOCAL_SIMULATOR", policyEligibility: "PENDING_POLICY_REVIEW", createdByActorId: actorId, updatedByActorId: actorId },
+    create: {
+      id: stableSeedId(`whatsapp-profile:${key}`), workspaceId, connectionId: connection.id, webhookKey: whatsAppWebhookKey(workspaceId), graphApiVersion: WHATSAPP_DEFAULT_GRAPH_API_VERSION,
+      operatingMode: "LOCAL_SIMULATOR", policyEligibility: "INELIGIBLE", policyDecisionScope: WHATSAPP_POLITIZAI_POLICY_SCOPE,
+      policyDecisionRationale: WHATSAPP_POLITIZAI_INELIGIBILITY_RATIONALE, policySourceUrl: WHATSAPP_POLICY_SOURCE_URL,
+      policySourceObservedAt: new Date(WHATSAPP_POLICY_SOURCE_OBSERVED_AT), policyDecidedAt: new Date(WHATSAPP_POLICY_SOURCE_OBSERVED_AT), policyDecidedByActorId: actorId,
+      policyReviewTrigger: WHATSAPP_POLICY_REVIEW_TRIGGER, alternativeChannel: "PHONE", alternativeChannelStatus: "AUTHORIZED",
+      alternativeChannelDetail: "Contato humano manual por telefone, com registro da atividade no CRM; sem envio automatizado ou provider externo implícito.",
+      createdByActorId: actorId, updatedByActorId: actorId,
+    },
     update: {},
   });
+  const policyDecisionId = stableSeedId(`whatsapp-policy-decision:${key}:2026-09-30`);
+  const existingPolicyDecision = await transaction.whatsAppPolicyDecision.findUnique({ where: { id: policyDecisionId }, select: { id: true } });
+  if (!existingPolicyDecision) {
+    await transaction.whatsAppPolicyDecision.create({ data: {
+      id: policyDecisionId, workspaceId, profileId: profile.id,
+      eligibility: "INELIGIBLE", scope: WHATSAPP_POLITIZAI_POLICY_SCOPE, rationale: WHATSAPP_POLITIZAI_INELIGIBILITY_RATIONALE,
+      sourceUrl: WHATSAPP_POLICY_SOURCE_URL, sourceObservedAt: new Date(WHATSAPP_POLICY_SOURCE_OBSERVED_AT),
+      reviewTrigger: WHATSAPP_POLICY_REVIEW_TRIGGER, alternativeChannel: "PHONE", alternativeChannelStatus: "AUTHORIZED",
+      alternativeChannelDetail: "Contato humano manual por telefone, com registro da atividade no CRM; sem envio automatizado ou provider externo implícito.",
+      decidedByActorId: actorId, decidedAt: new Date(WHATSAPP_POLICY_SOURCE_OBSERVED_AT),
+    } });
+  }
 }
 
 async function ensureEmailLocalFoundation(

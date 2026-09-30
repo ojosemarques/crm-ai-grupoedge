@@ -10,6 +10,11 @@ import {
   WHATSAPP_CONTRACT_VERSION,
   WHATSAPP_LOCAL_PROVIDER_KEY,
   WHATSAPP_MAX_WEBHOOK_BYTES,
+  WHATSAPP_POLICY_REVIEW_TRIGGER,
+  WHATSAPP_POLICY_SOURCE_OBSERVED_AT,
+  WHATSAPP_POLICY_SOURCE_URL,
+  WHATSAPP_POLITIZAI_INELIGIBILITY_RATIONALE,
+  WHATSAPP_POLITIZAI_POLICY_SCOPE,
   WHATSAPP_PROVIDER_KEY,
   WHATSAPP_SECRET_REFERENCES,
   evaluateWhatsAppServiceWindow,
@@ -20,6 +25,7 @@ import {
   whatsAppConfigureLocalSchema,
   whatsAppConfigurationSchema,
   whatsAppLocalInboundSchema,
+  whatsAppPolicyDecisionSchema,
   whatsAppStatusSimulationSchema,
   whatsAppWebhookKey,
   type NormalizedWhatsAppEvent,
@@ -60,7 +66,10 @@ async function systemFoundation(tx: Tx, workspaceId: string) {
 async function currentProfile(database: PrismaClient, workspaceId: string) {
   return database.whatsAppConnectionProfile.findFirst({
     where: { workspaceId },
-    include: { connection: { include: { secrets: { where: { disabledAt: null }, orderBy: { version: "desc" } }, configVersions: { orderBy: { version: "desc" }, take: 1 } } } },
+    include: {
+      connection: { include: { secrets: { where: { disabledAt: null }, orderBy: { version: "desc" } }, configVersions: { orderBy: { version: "desc" }, take: 1 } } },
+      policyDecidedBy: { select: { key: true, user: { select: { displayName: true } } } },
+    },
     orderBy: { createdAt: "asc" },
   });
 }
@@ -76,7 +85,8 @@ export function createWhatsAppService(options: Options) {
   async function screen(context: AuthenticatedContext) {
     await authorize(context, PermissionKeys.INTEGRATIONS_READ);
     const profile = await currentProfile(options.database, context.workspaceId);
-    const [conversations, inbound, outbound, pendingWebhooks, openReviews, templates, webhookIssues] = await Promise.all([
+    const now = options.now();
+    const [conversations, inbound, outbound, pendingWebhooks, openReviews, templates, webhookIssues, reviews, openWindows, expiredWindows, withoutInbound] = await Promise.all([
       options.database.conversation.count({ where: { workspaceId: context.workspaceId, channel: "WHATSAPP", deletedAt: null } }),
       options.database.message.count({ where: { workspaceId: context.workspaceId, direction: "INBOUND", conversation: { channel: "WHATSAPP" } } }),
       options.database.message.count({ where: { workspaceId: context.workspaceId, direction: "OUTBOUND", conversation: { channel: "WHATSAPP" } } }),
@@ -84,26 +94,71 @@ export function createWhatsAppService(options: Options) {
       options.database.whatsAppEventReview.count({ where: { workspaceId: context.workspaceId, status: "OPEN" } }),
       options.database.messageTemplate.findMany({ where: { workspaceId: context.workspaceId, channel: "WHATSAPP" }, orderBy: [{ updatedAt: "desc" }, { id: "asc" }], select: { id: true, name: true, key: true, locale: true, category: true, status: true, providerStatus: true, providerTemplateId: true, providerStatusObservedAt: true, currentVersion: true } }),
       profile ? options.database.webhookInbox.findMany({ where: { workspaceId: context.workspaceId, connectionId: profile.connectionId, status: { in: ["RETRY_PENDING", "DEAD_LETTER", "REJECTED"] } }, orderBy: [{ receivedAt: "desc" }, { id: "asc" }], take: 20, select: { id: true, providerEventId: true, eventType: true, status: true, attempts: true, maxAttempts: true, errorCode: true, errorMessage: true, receivedAt: true, nextRetryAt: true } }) : Promise.resolve([]),
+      options.database.whatsAppEventReview.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 20, select: { id: true, kind: true, reasonCode: true, status: true, createdAt: true } }),
+      options.database.conversation.count({ where: { workspaceId: context.workspaceId, channel: "WHATSAPP", serviceWindowExpiresAt: { gte: now }, deletedAt: null } }),
+      options.database.conversation.count({ where: { workspaceId: context.workspaceId, channel: "WHATSAPP", serviceWindowExpiresAt: { lt: now }, deletedAt: null } }),
+      options.database.conversation.count({ where: { workspaceId: context.workspaceId, channel: "WHATSAPP", lastCustomerInboundAt: null, deletedAt: null } }),
     ]);
     const secrets = profile?.connection.secrets ?? [];
+    const secretPresence = Object.fromEntries(Object.entries(WHATSAPP_SECRET_REFERENCES).map(([key, reference]) => [key, secrets.some((item) => item.alias === reference.alias && item.present)]));
+    const approvedTemplates = templates.filter((template) => template.providerStatus === "APPROVED" && Boolean(template.providerTemplateId)).length;
+    const decisionStatus = profile?.policyEligibility ?? "PENDING_POLICY_REVIEW" as const;
+    const readiness = [
+      { key: "POLICY_ELIGIBILITY", label: "Elegibilidade da Politizai", status: decisionStatus === "INELIGIBLE" ? "FAIL" : "BLOCKED", detail: decisionStatus === "INELIGIBLE" ? "A política oficial vigente veda o escopo documentado da Politizai." : "Decisão formal ainda não registrada." },
+      { key: "WABA_TEST_NUMBER", label: "WABA e número de teste", status: profile?.businessAccountId && profile.phoneNumberId ? "NOT_TESTED" : "BLOCKED", detail: profile?.businessAccountId && profile.phoneNumberId ? "IDs configurados sem evidência externa ponta a ponta." : "Nenhum WABA/número externo foi fornecido." },
+      { key: "SIGNED_WEBHOOK", label: "Webhook assinado real", status: profile?.lastInboundAt && profile.operatingMode === "EXTERNAL_DISABLED" ? "NOT_TESTED" : "VALIDATED_LOCALLY", detail: "Challenge, HMAC, tenant e replay foram validados somente por fixtures locais." },
+      { key: "OPT_IN_OUT", label: "Opt-in e opt-out", status: "VALIDATED_LOCALLY", detail: "Opt-out e supressão são executáveis localmente; opt-in externo não foi homologado." },
+      { key: "PROVIDER_TEMPLATES", label: "Templates aprovados", status: approvedTemplates > 0 ? "NOT_TESTED" : "BLOCKED", detail: approvedTemplates > 0 ? "Há estado cadastrado, sem sincronização comprovada com o provider." : "Nenhum template aprovado pelo provider foi comprovado." },
+      { key: "RATE_LIMIT_COST", label: "Rate limit e custo", status: "BLOCKED", detail: "Sem conta elegível não existe observação de throughput, Retry-After ou cobrança do provider." },
+      { key: "STATUS_RECONCILIATION", label: "Reconciliação de status", status: "VALIDATED_LOCALLY", detail: "Precedência, evento fora de ordem e replay foram validados localmente; falta evidência real." },
+      { key: "COEXISTENCE", label: "Coexistência", status: "BLOCKED", detail: "Nenhum modo de coexistência foi contratado ou documentado para esta conta." },
+    ] as const;
     return {
-      generatedAt: options.now().toISOString(),
+      generatedAt: now.toISOString(),
       externalEgress: false as const,
       externalValidation: false as const,
-      policyEligibility: profile?.policyEligibility ?? "PENDING_POLICY_REVIEW" as const,
+      policyEligibility: decisionStatus,
       activationBlocked: true as const,
-      activationBlockReasons: ["Revisão de elegibilidade da Política de Mensagens do WhatsApp pendente para serviços relacionados a política.", "Credenciais, WABA sandbox, número e templates aprovados não foram fornecidos nem testados."],
+      activationBlockReasons: decisionStatus === "INELIGIBLE"
+        ? ["A política oficial vigente proíbe a Plataforma do WhatsApp Business para o escopo documentado da Politizai.", "WABA, número, templates, rate limit, custo e coexistência não podem ser homologados enquanto o gate de elegibilidade estiver reprovado."]
+        : ["Revisão de elegibilidade da Política de Mensagens do WhatsApp pendente para serviços relacionados a política.", "Credenciais, WABA sandbox, número e templates aprovados não foram fornecidos nem testados."],
+      decision: {
+        status: decisionStatus,
+        scope: profile?.policyDecisionScope ?? null,
+        decidedAt: profile?.policyDecidedAt?.toISOString() ?? null,
+        decidedBy: profile?.policyDecidedBy?.user?.displayName ?? profile?.policyDecidedBy?.key ?? null,
+        sourceUrl: profile?.policySourceUrl ?? null,
+        sourceObservedAt: profile?.policySourceObservedAt?.toISOString() ?? null,
+        rationale: profile?.policyDecisionRationale ?? null,
+        reviewTrigger: profile?.policyReviewTrigger ?? null,
+        alternativeChannel: profile?.alternativeChannel ?? null,
+        alternativeStatus: profile?.alternativeChannelStatus ?? "NOT_DEFINED",
+        alternativeDetail: profile?.alternativeChannelDetail ?? null,
+        paritySeal: false as const,
+      },
+      readiness,
+      economics: {
+        rateLimit: { status: "EXTERNAL_BLOCKED" as const, valuePerMinute: null, sourceObservedAt: null },
+        cost: { status: "EXTERNAL_BLOCKED" as const, currency: null, amountMicros: null, sourceObservedAt: null },
+      },
+      windowMetrics: { open: openWindows, expired: expiredWindows, withoutInbound },
+      killSwitch: {
+        engaged: decisionStatus === "INELIGIBLE" || !profile?.connection.enabled || profile?.operatingMode === "PAUSED",
+        mode: profile?.operatingMode ?? "EXTERNAL_DISABLED",
+        label: profile?.operatingMode === "PAUSED" ? "Pausado" : "Egress externo bloqueado",
+      },
       profile: profile ? {
         id: profile.id, connectionId: profile.connectionId, displayName: profile.connection.displayName,
         status: profile.connection.status, capabilityLevel: profile.connection.capabilityLevel, revision: profile.connection.revision,
         operatingMode: profile.operatingMode, graphApiVersion: profile.graphApiVersion, webhookKey: profile.webhookKey,
         phoneNumberConfigured: Boolean(profile.phoneNumberId), businessAccountConfigured: Boolean(profile.businessAccountId),
         displayPhoneMasked: profile.displayPhoneMasked, lastInboundAt: profile.lastInboundAt?.toISOString() ?? null, lastStatusAt: profile.lastStatusAt?.toISOString() ?? null,
-        secretReferences: Object.fromEntries(Object.entries(WHATSAPP_SECRET_REFERENCES).map(([key, reference]) => [key, secrets.some((item) => item.alias === reference.alias && item.present)])),
+        secretReferences: secretPresence,
       } : null,
       metrics: { conversations, inbound, outbound, pendingWebhooks, openReviews },
       templates: templates.map((template) => ({ ...template, providerStatusObservedAt: template.providerStatusObservedAt?.toISOString() ?? null })),
       webhookIssues: webhookIssues.map((item) => ({ ...item, receivedAt: item.receivedAt.toISOString(), nextRetryAt: item.nextRetryAt?.toISOString() ?? null })),
+      reviews: reviews.map((item) => ({ ...item, createdAt: item.createdAt.toISOString() })),
     };
   }
 
@@ -126,11 +181,88 @@ export function createWhatsAppService(options: Options) {
       }
       const profile = await tx.whatsAppConnectionProfile.upsert({
         where: { workspaceId_connectionId: { workspaceId: context.workspaceId, connectionId: connection.id } },
-        create: { workspaceId: context.workspaceId, connectionId: connection.id, webhookKey: whatsAppWebhookKey(context.workspaceId), graphApiVersion: input.graphApiVersion, operatingMode: "LOCAL_SIMULATOR", policyEligibility: "PENDING_POLICY_REVIEW", createdByActorId: context.actorId, updatedByActorId: context.actorId },
-        update: { graphApiVersion: input.graphApiVersion, operatingMode: "LOCAL_SIMULATOR", policyEligibility: "PENDING_POLICY_REVIEW", updatedByActorId: context.actorId },
+        create: {
+          workspaceId: context.workspaceId, connectionId: connection.id, webhookKey: whatsAppWebhookKey(context.workspaceId), graphApiVersion: input.graphApiVersion,
+          operatingMode: "LOCAL_SIMULATOR", policyEligibility: "INELIGIBLE", policyDecisionScope: WHATSAPP_POLITIZAI_POLICY_SCOPE,
+          policyDecisionRationale: WHATSAPP_POLITIZAI_INELIGIBILITY_RATIONALE, policySourceUrl: WHATSAPP_POLICY_SOURCE_URL,
+          policySourceObservedAt: new Date(WHATSAPP_POLICY_SOURCE_OBSERVED_AT), policyDecidedAt: options.now(), policyDecidedByActorId: context.actorId,
+          policyReviewTrigger: WHATSAPP_POLICY_REVIEW_TRIGGER, alternativeChannel: "PHONE", alternativeChannelStatus: "AUTHORIZED",
+          alternativeChannelDetail: "Contato humano manual por telefone, com registro da atividade no CRM; sem envio automatizado ou provider externo implícito.",
+          createdByActorId: context.actorId, updatedByActorId: context.actorId,
+        },
+        update: { graphApiVersion: input.graphApiVersion, operatingMode: "LOCAL_SIMULATOR", updatedByActorId: context.actorId },
       });
+      const existingDecision = await tx.whatsAppPolicyDecision.findFirst({
+        where: { workspaceId: context.workspaceId, profileId: profile.id },
+        select: { id: true },
+      });
+      if (!existingDecision) {
+        await tx.whatsAppPolicyDecision.create({ data: {
+          workspaceId: context.workspaceId,
+          profileId: profile.id,
+          eligibility: "INELIGIBLE",
+          scope: WHATSAPP_POLITIZAI_POLICY_SCOPE,
+          rationale: WHATSAPP_POLITIZAI_INELIGIBILITY_RATIONALE,
+          sourceUrl: WHATSAPP_POLICY_SOURCE_URL,
+          sourceObservedAt: new Date(WHATSAPP_POLICY_SOURCE_OBSERVED_AT),
+          reviewTrigger: WHATSAPP_POLICY_REVIEW_TRIGGER,
+          alternativeChannel: "PHONE",
+          alternativeChannelStatus: "AUTHORIZED",
+          alternativeChannelDetail: "Contato humano manual por telefone, com registro da atividade no CRM; sem envio automatizado ou provider externo implícito.",
+          decidedByActorId: context.actorId,
+          decidedAt: profile.policyDecidedAt ?? options.now(),
+        } });
+      }
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "integration.whatsapp.local_configured", entityType: "IntegrationConnection", entityId: connection.id, changes: json({ configVersion: version, graphApiVersion: profile.graphApiVersion, operatingMode: profile.operatingMode, policyEligibility: profile.policyEligibility, externalEgress: false, secretsPersisted: false }) } });
       return { connectionId: connection.id, profileId: profile.id, revision: connection.revision, mode: profile.operatingMode, externalEgress: false as const };
+    }, { isolationLevel: "Serializable" });
+  }
+
+  async function recordPolicyDecision(context: AuthenticatedContext, raw: unknown) {
+    await authorize(context, PermissionKeys.INTEGRATIONS_MANAGE);
+    const input = whatsAppPolicyDecisionSchema.parse(raw);
+    const observedAt = new Date(input.sourceObservedAt);
+    if (observedAt > options.now()) fail("A observação da fonte não pode estar no futuro.", "WHATSAPP_POLICY_SOURCE_DATE_INVALID", 422);
+    const profile = await currentProfile(options.database, context.workspaceId);
+    if (!profile) fail("Configure a fundação local do WhatsApp antes de registrar a decisão.", "WHATSAPP_NOT_CONFIGURED", 404);
+    return options.database.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`whatsapp-policy:${context.workspaceId}`}, 0))`;
+      const lockedProfile = await tx.whatsAppConnectionProfile.findUniqueOrThrow({ where: { id: profile.id } });
+      if (lockedProfile.policyEligibility === "INELIGIBLE" && input.decision !== "INELIGIBLE") {
+        fail("A decisão formal de inelegibilidade é imutável neste fluxo; reavaliação exige novo processo e evidência externa.", "WHATSAPP_POLICY_DECISION_IMMUTABLE", 409);
+      }
+      const decidedAt = options.now();
+      await tx.whatsAppPolicyDecision.create({ data: {
+        workspaceId: context.workspaceId,
+        profileId: profile.id,
+        eligibility: input.decision,
+        scope: input.scope,
+        rationale: input.rationale,
+        sourceUrl: input.sourceUrl,
+        sourceObservedAt: observedAt,
+        reviewTrigger: input.reviewTrigger,
+        alternativeChannel: input.alternativeChannel,
+        alternativeChannelStatus: input.alternativeStatus,
+        alternativeChannelDetail: input.alternativeDetail,
+        decidedByActorId: context.actorId,
+        decidedAt,
+      } });
+      const updated = await tx.whatsAppConnectionProfile.update({ where: { id: profile.id }, data: {
+        policyEligibility: input.decision,
+        policyDecisionScope: input.scope,
+        policyDecisionRationale: input.rationale,
+        policySourceUrl: input.sourceUrl,
+        policySourceObservedAt: observedAt,
+        policyDecidedAt: decidedAt,
+        policyDecidedByActorId: context.actorId,
+        policyReviewTrigger: input.reviewTrigger,
+        alternativeChannel: input.alternativeChannel,
+        alternativeChannelStatus: input.alternativeStatus,
+        alternativeChannelDetail: input.alternativeDetail,
+        updatedByActorId: context.actorId,
+      } });
+      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "integration.whatsapp.policy_decided", entityType: "WhatsAppConnectionProfile", entityId: profile.id, origin: "DOMAIN", reason: input.rationale, changes: json({ previousDecision: lockedProfile.policyEligibility, decision: input.decision, scope: input.scope, sourceUrl: input.sourceUrl, sourceObservedAt: input.sourceObservedAt, alternativeChannel: input.alternativeChannel, alternativeStatus: input.alternativeStatus, alternativeDetail: input.alternativeDetail, externalEgress: false }) } });
+      return { profileId: updated.id, decision: updated.policyEligibility, decidedAt: updated.policyDecidedAt!.toISOString(), operatingMode: updated.operatingMode, externalEgress: false as const, paritySeal: false as const };
     }, { isolationLevel: "Serializable" });
   }
 
@@ -293,7 +425,7 @@ export function createWhatsAppService(options: Options) {
     return { open: window.open, expiresAt: window.expiresAt?.toISOString() ?? null, remainingSeconds: window.remainingSeconds };
   }
 
-  return Object.freeze({ screen, configureLocal, setPaused, simulateInbound, simulateStatus, verifyWebhookChallenge, acceptWebhook, replayWebhook, inspectServiceWindow });
+  return Object.freeze({ screen, configureLocal, recordPolicyDecision, setPaused, simulateInbound, simulateStatus, verifyWebhookChallenge, acceptWebhook, replayWebhook, inspectServiceWindow });
 }
 
 let service: ReturnType<typeof createWhatsAppService> | undefined;

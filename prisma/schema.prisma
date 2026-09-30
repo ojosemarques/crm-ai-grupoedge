@@ -1777,6 +1777,12 @@ enum WhatsAppPolicyEligibility {
   INELIGIBLE
 }
 
+enum WhatsAppAlternativeChannelStatus {
+  NOT_DEFINED
+  PENDING_HOMOLOGATION
+  AUTHORIZED
+}
+
 enum WhatsAppTemplateProviderStatus {
   LOCAL_ONLY
   PENDING
@@ -2526,6 +2532,7 @@ model Workspace {
   omnichannelBackfillRuns      OmnichannelBackfillRun[]
   omnichannelBackfillItems     OmnichannelBackfillItem[]
   whatsappProfiles             WhatsAppConnectionProfile[]
+  whatsappPolicyDecisions      WhatsAppPolicyDecision[]
   whatsappEventReviews         WhatsAppEventReview[]
   emailProfiles                EmailConnectionProfile[]
   emailMessageProfiles         EmailMessageProfile[]
@@ -2711,6 +2718,8 @@ model Actor {
   omnichannelBackfillRunsRequested OmnichannelBackfillRun[]             @relation("OmnichannelBackfillRunRequestedBy")
   whatsappProfilesCreated          WhatsAppConnectionProfile[]          @relation("WhatsAppProfileCreatedBy")
   whatsappProfilesUpdated          WhatsAppConnectionProfile[]          @relation("WhatsAppProfileUpdatedBy")
+  whatsappPolicyDecisionsRecorded  WhatsAppConnectionProfile[]          @relation("WhatsAppPolicyDecisionBy")
+  whatsappPolicyDecisionFacts      WhatsAppPolicyDecision[]             @relation("WhatsAppPolicyDecisionRecordedBy")
   whatsappReviewsCreated           WhatsAppEventReview[]                @relation("WhatsAppReviewCreatedBy")
   whatsappReviewsResolved          WhatsAppEventReview[]                @relation("WhatsAppReviewResolvedBy")
   emailProfilesCreated             EmailConnectionProfile[]             @relation("EmailProfileCreatedBy")
@@ -6557,6 +6566,16 @@ model WhatsAppConnectionProfile {
   graphApiVersion           String                    @default("v26.0")
   operatingMode             WhatsAppOperatingMode     @default(EXTERNAL_DISABLED)
   policyEligibility         WhatsAppPolicyEligibility @default(PENDING_POLICY_REVIEW)
+  policyDecisionScope       String?
+  policyDecisionRationale   String?
+  policySourceUrl           String?
+  policySourceObservedAt    DateTime?                 @db.Timestamptz(3)
+  policyDecidedAt           DateTime?                 @db.Timestamptz(3)
+  policyDecidedByActorId    String?                   @db.Uuid
+  policyReviewTrigger       String?
+  alternativeChannel       ConversationChannel?
+  alternativeChannelStatus WhatsAppAlternativeChannelStatus @default(NOT_DEFINED)
+  alternativeChannelDetail String?
   timeZone                  String                    @default("America/Sao_Paulo")
   locale                    String                    @default("pt-BR")
   capabilitySnapshotVersion String                    @default("whatsapp-cloud-api/1.0")
@@ -6571,14 +6590,44 @@ model WhatsAppConnectionProfile {
   connection IntegrationConnection @relation(fields: [workspaceId, connectionId], references: [workspaceId, id], onDelete: Restrict)
   createdBy  Actor                 @relation("WhatsAppProfileCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
   updatedBy  Actor                 @relation("WhatsAppProfileUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  policyDecidedBy Actor?           @relation("WhatsAppPolicyDecisionBy", fields: [workspaceId, policyDecidedByActorId], references: [workspaceId, id], onDelete: Restrict)
   reviews    WhatsAppEventReview[]
+  policyDecisions WhatsAppPolicyDecision[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, connectionId])
   @@unique([workspaceId, phoneNumberId])
   @@index([workspaceId, operatingMode, policyEligibility])
+  @@index([workspaceId, policyEligibility, alternativeChannelStatus])
   @@index([workspaceId, businessAccountId, phoneNumberId])
   @@map("whatsapp_connection_profiles")
+}
+
+model WhatsAppPolicyDecision {
+  id                       String                           @id @default(uuid()) @db.Uuid
+  workspaceId              String                           @db.Uuid
+  profileId                String                           @db.Uuid
+  eligibility              WhatsAppPolicyEligibility
+  scope                    String
+  rationale                String
+  sourceUrl                String
+  sourceObservedAt         DateTime                         @db.Timestamptz(3)
+  reviewTrigger            String
+  alternativeChannel       ConversationChannel?
+  alternativeChannelStatus WhatsAppAlternativeChannelStatus
+  alternativeChannelDetail String?
+  decidedByActorId         String                           @db.Uuid
+  decidedAt                DateTime                         @db.Timestamptz(3)
+  createdAt                DateTime                         @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  profile   WhatsAppConnectionProfile    @relation(fields: [workspaceId, profileId], references: [workspaceId, id], onDelete: Restrict)
+  decidedBy Actor                        @relation("WhatsAppPolicyDecisionRecordedBy", fields: [workspaceId, decidedByActorId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, profileId, decidedAt])
+  @@index([workspaceId, eligibility, decidedAt])
+  @@map("whatsapp_policy_decisions")
 }
 
 model WhatsAppEventReview {

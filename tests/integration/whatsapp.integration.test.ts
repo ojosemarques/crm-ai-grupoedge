@@ -9,7 +9,7 @@ import { createWhatsAppBackfillService } from "@/modules/integrations/applicatio
 import { createWhatsAppService } from "@/modules/integrations/application/whatsapp-service";
 import { createWhatsAppWebhookWorkerService } from "@/modules/integrations/application/whatsapp-webhook-worker-service";
 import { EphemeralSecretResolver } from "@/modules/integrations/application/secret-resolver";
-import { WHATSAPP_LOCAL_PROVIDER_KEY, WHATSAPP_PROVIDER_KEY } from "@/modules/integrations/domain/whatsapp-contracts";
+import { WHATSAPP_LOCAL_PROVIDER_KEY, WHATSAPP_POLICY_SOURCE_URL, WHATSAPP_PROVIDER_KEY } from "@/modules/integrations/domain/whatsapp-contracts";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
@@ -57,7 +57,57 @@ describe("CRM-44 WhatsApp local e fronteira Cloud API", () => {
   it("isola RBAC e expõe somente prontidão local sem credenciais", async () => {
     const service = createWhatsAppService({ database, secrets: new EphemeralSecretResolver(), now: () => now });
     await expect(service.screen(viewer)).rejects.toBeInstanceOf(AccessDeniedError);
-    await expect(service.screen(admin)).resolves.toMatchObject({ externalEgress: false, externalValidation: false, activationBlocked: true, policyEligibility: "PENDING_POLICY_REVIEW", profile: { operatingMode: "LOCAL_SIMULATOR", secretReferences: { accessToken: false, appSecret: false, verifyToken: false } } });
+    await expect(service.screen(admin)).resolves.toMatchObject({
+      externalEgress: false, externalValidation: false, activationBlocked: true, policyEligibility: "INELIGIBLE",
+      decision: { status: "INELIGIBLE", sourceUrl: WHATSAPP_POLICY_SOURCE_URL, alternativeChannel: "PHONE", alternativeStatus: "AUTHORIZED", paritySeal: false },
+      economics: { rateLimit: { status: "EXTERNAL_BLOCKED", valuePerMinute: null }, cost: { status: "EXTERNAL_BLOCKED", amountMicros: null } },
+      windowMetrics: { open: 0, expired: 0, withoutInbound: 0 },
+      killSwitch: { engaged: true, mode: "LOCAL_SIMULATOR", label: "Egress externo bloqueado" },
+      profile: { operatingMode: "LOCAL_SIMULATOR", secretReferences: { accessToken: false, appSecret: false, verifyToken: false } },
+    });
+  });
+
+  it("registra decisão de inelegibilidade com fonte, alternativa e auditoria sem liberar egress", async () => {
+    const service = createWhatsAppService({ database, secrets: new EphemeralSecretResolver(), now: () => now });
+    await expect(service.recordPolicyDecision(admin, {
+      decision: "ELIGIBLE",
+      scope: "Escopo comercial da Politizai relacionado ao ecossistema político.",
+      rationale: "Não existe evidência externa que autorize esta decisão.",
+      sourceUrl: WHATSAPP_POLICY_SOURCE_URL,
+      sourceObservedAt: "2026-09-30T03:00:00.000Z",
+      reviewTrigger: "Reavaliar somente após confirmação escrita da Meta ou mudança oficial da política.",
+      alternativeChannel: "PHONE",
+      alternativeStatus: "AUTHORIZED",
+      alternativeDetail: "Contato humano manual por telefone, registrado no CRM e sem automação externa.",
+    })).rejects.toThrow();
+    const result = await service.recordPolicyDecision(admin, {
+      decision: "INELIGIBLE",
+      scope: "CRM comercial e serviços da Politizai para gabinetes, mandatos, campanhas e ecossistema político.",
+      rationale: "A política oficial vigente veda entidades não governamentais que prestam serviços relacionados a política, candidatos, campanhas e soluções eleitorais.",
+      sourceUrl: WHATSAPP_POLICY_SOURCE_URL,
+      sourceObservedAt: "2026-09-30T03:00:00.000Z",
+      reviewTrigger: "Reavaliar somente após confirmação escrita da Meta ou mudança oficial da política.",
+      alternativeChannel: "PHONE",
+      alternativeStatus: "AUTHORIZED",
+      alternativeDetail: "Contato humano manual por telefone, registrado no CRM e sem automação ou provider externo implícito.",
+    });
+    expect(result).toMatchObject({ decision: "INELIGIBLE", externalEgress: false, paritySeal: false, operatingMode: "LOCAL_SIMULATOR" });
+    expect(await database.auditLog.count({ where: { workspaceId, action: "integration.whatsapp.policy_decided", entityId: result.profileId } })).toBe(1);
+    expect(await database.whatsAppPolicyDecision.count({ where: { workspaceId, profileId: result.profileId } })).toBe(2);
+    const decision = await database.whatsAppPolicyDecision.findFirstOrThrow({ where: { workspaceId, profileId: result.profileId }, orderBy: { createdAt: "desc" } });
+    await expect(database.whatsAppPolicyDecision.update({ where: { id: decision.id }, data: { rationale: "mutação indevida" } })).rejects.toThrow(/append-only/);
+    await expect(database.whatsAppPolicyDecision.delete({ where: { id: decision.id } })).rejects.toThrow(/append-only/);
+    await expect(service.recordPolicyDecision(admin, {
+      decision: "PENDING_POLICY_REVIEW",
+      scope: decision.scope,
+      rationale: "Tentativa de rebaixar a decisão formal.",
+      sourceUrl: WHATSAPP_POLICY_SOURCE_URL,
+      sourceObservedAt: "2026-09-30T03:00:00.000Z",
+      reviewTrigger: decision.reviewTrigger,
+      alternativeChannel: "PHONE",
+      alternativeStatus: "AUTHORIZED",
+      alternativeDetail: decision.alternativeChannelDetail,
+    })).rejects.toMatchObject({ code: "WHATSAPP_POLICY_DECISION_IMMUTABLE" });
   });
 
   it("registra inbound atomicamente, preserva owner/fila, abre janela e é idempotente", async () => {
