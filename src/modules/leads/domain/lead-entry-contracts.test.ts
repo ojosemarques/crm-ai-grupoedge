@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   leadEntryFieldsSchema,
+  manualLeadEntryRequestSchema,
   parseBrlToCents,
   parseCsvBoolean,
 } from "@/modules/leads/domain/lead-entry-contracts";
@@ -48,6 +49,19 @@ describe("contratos dos canais de entrada", () => {
     expect(parsed.email).toBeUndefined();
     expect(parsed.stateCode).toBeUndefined();
     expect(parsed.doNotContact).toBeUndefined();
+  });
+
+  it("aceita cadastro manual sem origem e usa a origem técnica manual", () => {
+    const parsed = manualLeadEntryRequestSchema.parse({
+      idempotencyKey: "manual-sem-origem",
+      lead: {
+        fullName: "Pessoa Fictícia",
+        phone: "11987654321",
+        priorityBandCode: "P3",
+      },
+    });
+
+    expect(parsed.lead.sourceKey).toBe("manual");
   });
 
   it("reporta orçamento inválido como erro de campo do canal", () => {

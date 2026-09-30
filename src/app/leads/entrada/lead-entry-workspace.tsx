@@ -167,12 +167,13 @@ function findLeadId(value: unknown): string | null {
   return null;
 }
 
-function SourceFields({ options, prefix = "" }: { options: EntryOptions; prefix?: string }) {
+function SourceFields({ options, optional = false, prefix = "" }: { options: EntryOptions; optional?: boolean; prefix?: string }) {
   return (
     <>
       <label className="text-sm font-medium">
-        Origem
-        <select className={inputClass} defaultValue={options.sources[0]?.key} name={`${prefix}sourceKey`} required>
+        Origem{optional ? " (opcional)" : ""}
+        <select className={inputClass} defaultValue={optional ? "" : options.sources[0]?.key} name={`${prefix}sourceKey`} required={!optional}>
+          {optional ? <option value="">Não informar</option> : null}
           {options.sources.map((source) => (
             <option key={source.key} value={source.key}>{source.name}</option>
           ))}
@@ -248,7 +249,7 @@ function ManualEntry({ options }: { options: EntryOptions }) {
         <p className="self-end text-xs text-muted-foreground">
           A seleção é apenas um fallback técnico. Quando há regra de scoring ativa, a prioridade é calculada pelos dados informados e explicada no cartão do lead.
         </p>
-        <SourceFields options={options} />
+        <SourceFields options={options} optional />
         <label className="text-sm font-medium md:col-span-2 xl:col-span-3">Dor ou interesse<textarea className={textareaClass} name="interestSummary" /></label>
         <label className="text-sm font-medium">Consentimento
           <select className={inputClass} defaultValue="unknown" name="consent">

@@ -76,12 +76,22 @@ export const leadEntryFieldsSchema = z
     }
   });
 
-export const manualLeadEntryRequestSchema = z
-  .object({
-    idempotencyKey: z.string().trim().min(8).max(160),
-    lead: leadEntryFieldsSchema,
-  })
-  .strict();
+export const manualLeadEntryRequestSchema = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const request = value as Record<string, unknown>;
+    if (!request.lead || typeof request.lead !== "object" || Array.isArray(request.lead)) return value;
+    const lead = request.lead as Record<string, unknown>;
+    if (typeof lead.sourceKey === "string" && lead.sourceKey.trim()) return value;
+    return { ...request, lead: { ...lead, sourceKey: "manual" } };
+  },
+  z
+    .object({
+      idempotencyKey: z.string().trim().min(8).max(160),
+      lead: leadEntryFieldsSchema,
+    })
+    .strict(),
+);
 
 export const localWebhookRequestSchema = z
   .object({
