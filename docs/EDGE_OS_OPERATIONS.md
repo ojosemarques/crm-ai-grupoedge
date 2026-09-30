@@ -5,6 +5,12 @@ financeiro, pós-venda, marketing e Copilot usam os serviços e permissões dess
 empresa. O login permite informar outra empresa já provisionada; cadastrar uma
 conta de cliente não cria um novo workspace.
 
+No deploy, valide os grants com a identidade real do servidor. As tabelas podem
+existir sem que `crm_politizai_runtime` tenha acesso. O arquivo
+[`edge-os-runtime-grants.sql`](../supabase/edge-os-runtime-grants.sql) contém o
+escopo mínimo dos fluxos financeiro, confirmação do Copilot e handoff desta
+entrega. Ele não concede DELETE nem altera papéis públicos, schema ou RLS.
+
 ## Fechamento comercial
 
 Em **Trabalho → Vendas e propostas**, abra uma oportunidade e escolha
