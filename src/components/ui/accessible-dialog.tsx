@@ -18,6 +18,7 @@ export function AccessibleDialog({
   describedBy,
   onDismiss,
   busy = false,
+  backdropClassName,
   className,
   children,
 }: Readonly<{
@@ -25,6 +26,7 @@ export function AccessibleDialog({
   describedBy?: string;
   onDismiss: () => void;
   busy?: boolean;
+  backdropClassName?: string;
   className?: string;
   children: ReactNode;
 }>) {
@@ -73,7 +75,7 @@ export function AccessibleDialog({
 
   return (
     <div
-      className="dialog-backdrop"
+      className={cn("dialog-backdrop", backdropClassName)}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) onDismiss();
       }}

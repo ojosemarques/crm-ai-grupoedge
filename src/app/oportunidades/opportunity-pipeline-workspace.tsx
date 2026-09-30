@@ -75,18 +75,18 @@ function OpportunityRow({ opportunity, timeZone, onSelect, onDragStart, onDragEn
   dragging: boolean;
 }>) {
   return (
-    <article className={styles.card} data-dragging={dragging || undefined} draggable={opportunity.canWrite && opportunity.status === "OPEN" && !pending} onDragEnd={onDragEnd} onDragStart={onDragStart}>
+    <article className={styles.card} data-dragging={dragging || undefined} draggable={opportunity.canWrite && opportunity.status === "OPEN" && !pending} onClick={() => { if (!pending) onSelect(); }} onDragEnd={onDragEnd} onDragStart={onDragStart}>
       <div className={styles.cardBody}>
-        <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={opportunity.status === "WON" ? "green" : opportunity.status === "LOST" ? "red" : "purple"}>{opportunity.status === "WON" ? "Ganho" : opportunity.status === "LOST" ? "Perdido" : opportunity.status === "CANCELLED" ? "Cancelado" : "Em aberto"}</span>{opportunity.productName ? <span className={styles.tag} data-tone="blue" title={opportunity.productName}>{opportunity.productName}</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${opportunity.name}`} className={styles.dragHandle} disabled={!opportunity.canWrite || opportunity.status !== "OPEN" || pending} draggable={opportunity.canWrite && opportunity.status === "OPEN" && !pending} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${opportunity.ownerName}`} className={styles.avatarSquare} title={opportunity.ownerName}>{opportunity.ownerName.slice(0, 2).toUpperCase()}</span></div></div>
-        <div className={styles.cardTitle}><Link draggable={false} href={`/leads/${opportunity.leadId}/historico`} title={opportunity.name}>{opportunity.name}</Link><span>{money(opportunity.amountCents)}</span></div>
+        <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={opportunity.status === "WON" ? "green" : opportunity.status === "LOST" ? "red" : "purple"}>{opportunity.status === "WON" ? "Ganho" : opportunity.status === "LOST" ? "Perdido" : opportunity.status === "CANCELLED" ? "Cancelado" : "Em aberto"}</span>{opportunity.productName ? <span className={styles.tag} data-tone="blue" title={opportunity.productName}>{opportunity.productName}</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${opportunity.name}`} className={styles.dragHandle} disabled={!opportunity.canWrite || opportunity.status !== "OPEN" || pending} draggable={opportunity.canWrite && opportunity.status === "OPEN" && !pending} onClick={(event) => event.stopPropagation()} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${opportunity.ownerName}`} className={styles.avatarSquare} title={opportunity.ownerName}>{opportunity.ownerName.slice(0, 2).toUpperCase()}</span></div></div>
+        <div className={styles.cardTitle}><button aria-label={`Abrir detalhes de ${opportunity.leadName}`} disabled={pending} draggable={false} onClick={(event) => { event.stopPropagation(); onSelect(); }} title={opportunity.name} type="button">{opportunity.name}</button><span>{money(opportunity.amountCents)}</span></div>
         <p className={styles.subtitle}>{opportunity.leadName}{opportunity.accountName ? ` · ${opportunity.accountName}` : ""}</p>
       </div>
       <footer className={styles.cardFooter}>
         <span aria-label={`Responsável: ${opportunity.ownerName}`} className={styles.avatar} title={opportunity.ownerName}>{opportunity.ownerName.slice(0, 1).toUpperCase()}</span>
-        <Link aria-label={`Abrir histórico de ${opportunity.leadName}`} href={`/leads/${opportunity.leadId}/historico`} title="Atividades e histórico"><Icon name="meu-dia" size={13} /></Link>
-        <Link aria-label={`Abrir contato de ${opportunity.leadName}`} href={`/leads/${opportunity.leadId}`} title="Contato"><Icon name="leads" size={13} /></Link>
+        <button aria-label={`Abrir atividades de ${opportunity.leadName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); onSelect(); }} title="Atividades e histórico" type="button"><Icon name="meu-dia" size={13} /></button>
+        <button aria-label={`Abrir contato de ${opportunity.leadName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); onSelect(); }} title="Contato" type="button"><Icon name="leads" size={13} /></button>
         <span className={styles.activity} title={`${opportunity.nextActionDescription ?? "Sem próxima atividade"} · ${date(opportunity.nextActionAt, timeZone)} · MRR ${money(opportunity.mrrCents)} / TCV ${money(opportunity.tcvCents)}`}><Icon name="relogio" size={12} />{opportunity.nextActionAt ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone }).format(new Date(opportunity.nextActionAt)) : "Sem prazo"}</span>
-        {opportunity.canWrite && opportunity.status === "OPEN" ? <button aria-label={`Trabalhar oportunidade ${opportunity.name}`} className={styles.moveButton} disabled={pending} onClick={onSelect} title="Alterar etapa / proposta" type="button"><Icon name="seta-direita" size={13} /></button> : null}
+        {opportunity.canWrite && opportunity.status === "OPEN" ? <button aria-label={`Trabalhar oportunidade ${opportunity.name}`} className={styles.moveButton} disabled={pending} onClick={(event) => { event.stopPropagation(); onSelect(); }} title="Alterar etapa / proposta" type="button"><Icon name="seta-direita" size={13} /></button> : null}
       </footer>
     </article>
   );
@@ -312,14 +312,18 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
 
       {selected ? (
         <AccessibleDialog
+          backdropClassName={styles.drawerBackdrop ?? ""}
           busy={pending}
-          className="max-w-5xl space-y-5"
+          className={styles.opportunityDrawer ?? ""}
           labelledBy="opportunity-transition-title"
           onDismiss={() => { setSelectedId(null); setRequestedStageId(""); }}
         >
-          <div>
-            <h2 className="text-xl font-bold" id="opportunity-transition-title">Trabalhar {selected.name}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Lead: {selected.leadName} · etapa atual: {selected.stageName}</p>
+          <div className={styles.drawerHeader}>
+            <div>
+              <h2 className="text-xl font-bold" id="opportunity-transition-title">Trabalhar {selected.name}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Lead: {selected.leadName} · etapa atual: {selected.stageName}</p>
+            </div>
+            <button aria-label="Fechar painel" className={styles.drawerClose} disabled={pending} onClick={() => { setSelectedId(null); setRequestedStageId(""); }} title="Fechar" type="button">×</button>
           </div>
           <SalesGatesPanel opportunityId={selected.id} onCommitted={() => router.refresh()} />
           <AccountPlanPanel canWrite={selected.canWrite} memberOptions={screen.closerOptions} opportunityId={selected.id} timeZone={screen.timeZone} />

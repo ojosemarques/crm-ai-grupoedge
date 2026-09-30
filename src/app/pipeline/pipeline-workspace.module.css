@@ -25,7 +25,7 @@
 .laneHeader div > span { display: block; color: var(--text-muted); font-size: 9px; }
 .count { display: grid; place-items: center; flex: 0 0 auto; min-width: 25px; height: 25px; padding: 0 5px; border-radius: 50%; background: var(--pipeline-count, #e4e7df); color: var(--text); font-size: 10px; font-weight: 650; }
 .cards { display: grid; align-content: start; gap: 9px; }
-.card { overflow: hidden; border: 1px solid transparent; border-radius: 6px; background: var(--surface); transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease; }
+.card { overflow: hidden; border: 1px solid transparent; border-radius: 6px; background: var(--surface); cursor: pointer; transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease; }
 .card[draggable="true"] { cursor: grab; }
 .card[draggable="true"]:active { cursor: grabbing; }
 .card[data-dragging="true"] { opacity: .55; transform: scale(.98); }
@@ -45,18 +45,24 @@
 .tag[data-tone="red"] { background: #ffdade; color: #a34250; }
 .avatarSquare { display: grid; flex: 0 0 auto; place-items: center; width: 25px; height: 25px; border-radius: 5px; background: #d8cbf4; color: #583b89; font-size: 9px; font-weight: 700; }
 .cardTitle { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 3px; }
-.cardTitle a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 11px; font-weight: 550; text-decoration: none; }
-.cardTitle a:hover { color: var(--primary); }
+.cardTitle button { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; padding: 0; background: transparent; color: var(--text); cursor: pointer; font-size: 11px; font-weight: 550; text-align: left; }
+.cardTitle button:hover { color: var(--primary); }
 .cardTitle > span { flex: 0 0 auto; font-size: 9px; font-weight: 650; }
 .subtitle { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; color: var(--text-muted); }
 .cardFooter { display: flex; align-items: center; gap: 7px; min-height: 33px; padding: 5px 9px; border-top: 1px solid var(--border); color: var(--text-muted); }
-.cardFooter > a { display: inline-flex; color: inherit; }
-.cardFooter > a:hover { color: var(--primary); }
+.cardFooter > button:not(.moveButton) { display: inline-flex; border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; }
+.cardFooter > button:not(.moveButton):hover { color: var(--primary); }
 .avatar { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #e5d7ca; color: #725848; font-size: 8px; font-weight: 700; }
 .activity { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; font-size: 8px; white-space: nowrap; }
 .moveButton { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: 0; border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; }
 .moveButton:hover { background: var(--primary-soft); color: var(--primary); }
 .moveButton:disabled { opacity: .35; cursor: not-allowed; }
+.drawerBackdrop { align-items: stretch; justify-content: flex-end; padding: 12px; background: color-mix(in oklab, var(--foreground) 24%, transparent); backdrop-filter: blur(1px); }
+.opportunityDrawer { display: grid; align-content: start; gap: 20px; width: min(720px, calc(100vw - 48px)); max-height: calc(100vh - 24px); margin: 0; border-radius: 18px; padding: 22px; }
+.drawerHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; position: sticky; top: -22px; z-index: 3; margin: -22px -22px 0; padding: 22px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.drawerClose { display: grid; flex: 0 0 auto; place-items: center; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-muted); color: var(--text); cursor: pointer; font-size: 22px; line-height: 1; }
+.drawerClose:hover { border-color: var(--border-strong); background: var(--primary-soft); color: var(--primary); }
+.drawerClose:disabled { cursor: not-allowed; opacity: .5; }
 .emptyLane { display: grid; justify-items: center; gap: 8px; padding: 34px 14px; color: var(--text-muted); text-align: center; border: 1px dashed var(--border); border-radius: 6px; }
 .emptyLane p { margin: 0; font-size: 10px; font-weight: 550; }
 .emptyLane span { font-size: 9px; line-height: 1.6; opacity: .8; }
@@ -68,8 +74,11 @@
   .pipelineName { display: none; }
   .lane { flex-basis: min(82vw, 300px); }
   .board { min-height: 65vh; overscroll-behavior-inline: contain; scroll-padding-inline: 10px; scroll-snap-type: x mandatory; }
-  .cardFooter > a, .moveButton { align-items: center; display: inline-flex; height: 36px; justify-content: center; min-width: 36px; }
+  .cardFooter > button, .moveButton { align-items: center; display: inline-flex; height: 36px; justify-content: center; min-width: 36px; }
   .cardFooter { gap: 4px; }
   .filter :is(select, input), .search input { font-size: 16px; min-height: 42px; }
+  .drawerBackdrop { padding: 0; }
+  .opportunityDrawer { width: 100%; max-height: 100vh; border-radius: 0; padding: 18px; }
+  .drawerHeader { top: -18px; margin: -18px -18px 0; padding: 18px; }
 }
 @media (prefers-reduced-motion: reduce) { .card { transition: none; } }

@@ -236,13 +236,19 @@ test("fluxo crítico percorre entrada, SLA, IA local, PACTO, reunião, venda, da
   expect(response.ok()).toBe(true);
 
   await page.goto("/oportunidades");
-  await expect(page.getByRole("heading", { name: "Pipeline de vendas" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Pipeline de vendas" })).toBeVisible();
   const card = page
     .getByRole("article")
     .filter({ hasText: "Contrato anual E2E" })
     .filter({ hasText: leadName });
   await expect(card).toContainText(leadName);
   await expect(card).toContainText("R$ 6.500,00");
+  await card.getByRole("button", { name: `Abrir detalhes de ${leadName}` }).click();
+  await expect(page).toHaveURL(/\/oportunidades(?:\?|$)/);
+  await expect(page.getByRole("region", { name: "Pipeline de vendas" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Trabalhar Contrato anual E2E" })).toBeVisible();
+  await page.getByRole("button", { name: "Fechar painel" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await card.locator("..").getByRole("button", { name: "Alterar etapa" }).click();
   const dialog = page.getByRole("dialog");
   const proposalForm = dialog;
