@@ -449,7 +449,7 @@ export function LeadListWorkspace({ screen }: Readonly<{ screen: LeadListScreen 
             </label>
             <Button disabled={navigating} type="submit">Aplicar</Button>
             <Button aria-expanded={advancedOpen} aria-haspopup="dialog" onClick={() => setAdvancedOpen(true)} type="button" variant="secondary">Mais filtros{chips.length > 0 && <span className={styles.countBadge}>{chips.length}</span>}</Button>
-            {chips.length > 0 && <Button disabled={navigating} onClick={resetFilters} type="button" variant="ghost">Limpar tudo</Button>}
+            {chips.length > 0 && <Button className={styles.resetButton} disabled={navigating} onClick={resetFilters} type="button" variant="ghost">Limpar tudo</Button>}
           </div>
         </form>
 

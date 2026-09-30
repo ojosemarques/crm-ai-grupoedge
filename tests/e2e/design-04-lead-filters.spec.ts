@@ -3,7 +3,6 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import {
   DEMO_SEED_PASSWORD,
   DEMO_USERS,
-  DEMO_WORKSPACE_SLUG,
 } from "@/modules/settings/application/demo-seed-service";
 
 const VIEWPORTS = [
@@ -15,7 +14,6 @@ const VIEWPORTS = [
 
 async function login(page: Page) {
   await page.goto("/login");
-  await page.getByLabel("Workspace").fill(DEMO_WORKSPACE_SLUG);
   await page.getByLabel("E-mail").fill(DEMO_USERS[1].email);
   await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
   await page.getByRole("button", { name: "Entrar" }).click();
@@ -30,6 +28,33 @@ async function expectNoOverflow(page: Page, label: string) {
   expect(dimensions.scrollWidth, label).toBeLessThanOrEqual(dimensions.clientWidth);
 }
 
+async function expectFilterContainment(page: Page, label: string) {
+  const result = await page.getByRole("region", { name: "Todos os contatos" }).evaluate((surface) => {
+    const surfaceBox = surface.getBoundingClientRect();
+    const style = getComputedStyle(surface);
+    const visible = (element: Element) => {
+      const childStyle = getComputedStyle(element);
+      const childBox = element.getBoundingClientRect();
+      return childStyle.display !== "none" && childStyle.visibility !== "hidden" && childBox.width > 0 && childBox.height > 0;
+    };
+    const overflow = [...surface.children]
+      .filter(visible)
+      .map((child) => {
+        const box = child.getBoundingClientRect();
+        return { left: box.left - surfaceBox.left, right: surfaceBox.right - box.right };
+      })
+      .filter(({ left, right }) => left < -1 || right < -1);
+    return {
+      borderWidth: Number.parseFloat(style.borderLeftWidth),
+      overflow,
+      paddingInline: Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight),
+    };
+  });
+  expect(result.overflow, `${label}: filhos fora do painel`).toEqual([]);
+  expect(result.borderWidth, `${label}: painel sem borda`).toBeGreaterThan(0);
+  expect(result.paddingInline, `${label}: painel sem margem interna`).toBeGreaterThanOrEqual(24);
+}
+
 async function capture(page: Page, testInfo: TestInfo, name: string) {
   await page.screenshot({ animations: "disabled", fullPage: false, path: testInfo.outputPath(`${name}.png`) });
 }
@@ -41,10 +66,11 @@ test("filtros de Leads preservam densidade e acessibilidade nas quatro resoluÃ§Ã
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto("/leads?priorities=P1&sla=CRITICAL", { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "Encontre o lead certo" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Todos os contatos" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Remover filtro P1" })).toBeVisible();
     await expect(page.locator("select[multiple]")).toHaveCount(0);
     await expectNoOverflow(page, `lista ${viewport.label}`);
+    await expectFilterContainment(page, `lista ${viewport.label}`);
     await capture(page, testInfo, `design-04-${viewport.label}`);
   }
 });

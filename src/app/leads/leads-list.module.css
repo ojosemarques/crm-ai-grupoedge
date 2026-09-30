@@ -24,7 +24,9 @@
   min-width: 0;
 }
 
-.filterSurface { padding: 0; border: 0; border-radius: 0; }
+.filterSurface {
+  padding: clamp(0.85rem, 1.25vw, 1.1rem);
+}
 
 .filterHeading,
 .resultHeader,
@@ -69,6 +71,8 @@
   flex-wrap: wrap;
   gap: 0.55rem;
 }
+
+.primaryBar > * { max-width: 100%; min-width: 0; }
 
 .searchField,
 .slaControl { display: block; min-width: 0; }
@@ -121,7 +125,7 @@
 
 .filterFooter { border-top: 1px solid var(--border); gap: 0.75rem; margin-top: 0.85rem; padding-top: 0.75rem; }
 .viewTools,
-.savedViews { align-items: center; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.savedViews { align-items: center; display: flex; flex-wrap: wrap; gap: 0.4rem; min-width: 0; }
 .viewTools button,
 .savedViews button { min-height: 2.25rem; }
 .toolSummary { margin-left: 0.45rem; max-width: 10rem; overflow: hidden; padding: 0.15rem 0.45rem; text-overflow: ellipsis; }
@@ -229,7 +233,18 @@
 .filterFooter button, .filterFooter select { font-size: 10px; min-height: 30px; height: 30px; }
 
 @media (max-width: 1100px) {
+  .primaryBar {
+    align-items: stretch;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .searchField { grid-column: 1 / -1; }
+  .primaryBar button,
+  .primaryBar input,
+  .primaryBar select { width: 100%; }
+  .resetButton { grid-column: 1 / -1; }
   .filterFooter { align-items: flex-start; flex-direction: column; }
+  .viewTools,
   .savedViews { width: 100%; }
   .bulkBar { grid-template-columns: auto minmax(10rem, 0.7fr) minmax(12rem, 1fr); }
   .bulkBar button { grid-column: 3; }
@@ -238,9 +253,8 @@
 @media (max-width: 760px) {
   .filterSurface { padding: 0.8rem; }
   .filterHeading p { display: none; }
-  .searchField { flex-basis: 100%; }
-  .filterTrigger,
-  .slaControl { flex-basis: calc(50% - 0.3rem); }
+  .primaryBar { grid-template-columns: minmax(0, 1fr); }
+  .searchField { grid-column: auto; }
   .activeFilters { align-items: flex-start; flex-direction: column; }
   .chipList { width: 100%; }
   .filterChip { max-width: 100%; }
@@ -260,9 +274,6 @@
 }
 
 @media (max-width: 470px) {
-  .primaryBar > * { width: 100%; }
-  .filterTrigger,
-  .slaControl { flex-basis: 100%; }
   .viewTools,
   .savedViews { align-items: stretch; display: grid; grid-template-columns: 1fr 1fr; }
   .viewTools button:first-child,

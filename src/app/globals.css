@@ -286,6 +286,13 @@ details > summary {
 
 .page-canvas {
   container-type: inline-size;
+  min-width: 0;
+}
+
+.page-canvas > *,
+.page-header > *,
+.section-header > * {
+  min-width: 0;
 }
 
 .payment-create-form,
@@ -908,6 +915,8 @@ details > summary {
   flex-direction: column;
   font-size: 0.72rem;
   gap: 0.5rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .page-state {
