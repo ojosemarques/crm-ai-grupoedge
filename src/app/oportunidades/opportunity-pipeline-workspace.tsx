@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/ui/icon";
 import styles from "../pipeline/pipeline-workspace.module.css";
 import { DataTableShell } from "@/components/ui/surface";
+import { SalesGatesPanel } from "@/components/opportunities/sales-gates-panel";
 import type {
   OpportunityListItem,
   OpportunityPipelineScreen,
@@ -75,10 +76,10 @@ function OpportunityRow({ opportunity, timeZone, onSelect, pending }: Readonly<{
   );
 }
 
-export function OpportunityPipelineWorkspace({ screen }: Readonly<{ screen: OpportunityPipelineScreen }>) {
+export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = null }: Readonly<{ screen: OpportunityPipelineScreen; initialOpportunityId?: string | null }>) {
   const router = useRouter();
   const [view, setView] = useState<"board" | "list" | "summary">("board");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialOpportunityId);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -238,6 +239,7 @@ export function OpportunityPipelineWorkspace({ screen }: Readonly<{ screen: Oppo
             <h2 className="text-xl font-bold" id="opportunity-transition-title">Trabalhar {selected.name}</h2>
             <p className="mt-1 text-sm text-muted-foreground">Lead: {selected.leadName} · etapa atual: {selected.stageName}</p>
           </div>
+          <SalesGatesPanel opportunityId={selected.id} onCommitted={() => router.refresh()} />
           {selected.stageCode === "OPPORTUNITY_CONFIRMED" || selected.stageCode === "PROPOSAL" ? (
             <form className="grid gap-3 rounded-md border p-4" onSubmit={registerProposal}>
               <h3 className="font-semibold">Registrar proposta</h3>

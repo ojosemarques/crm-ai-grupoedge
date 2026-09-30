@@ -24,7 +24,7 @@ type OpportunityForBulk = Awaited<ReturnType<typeof loadOpportunities>>[number];
 async function loadOpportunities(database: PrismaClient | Prisma.TransactionClient, workspaceId: string, ids: string[]) {
   return database.opportunity.findMany({
     where: { workspaceId, id: { in: ids }, deletedAt: null },
-    include: { lead: { select: { sourceId: true, routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } }, currentStage: true },
+    include: { lead: { select: { sourceId: true, routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } }, currentStage: true, product: { select: { salesGateProfile: true } } },
     orderBy: { id: "asc" },
   });
 }
@@ -54,6 +54,7 @@ export function createOpportunityBulkService(options: Options) {
     const target = stages[0];
     if (!target || opportunities.some((opportunity) => opportunity.pipelineId !== target.pipelineId)) fail("TARGET_STAGE_INVALID", "Etapa de destino inválida para uma ou mais oportunidades.", 400);
     if (target.type !== "OPEN" || !target.opportunityStageCode || target.opportunityStageCode === "PROPOSAL") fail("BULK_TRANSITION_REQUIRES_INDIVIDUAL_FLOW", "Etapas de proposta, ganho e perda exigem o fluxo individual com seus gates.", 400);
+    if (opportunities.some((opportunity) => opportunity.product?.salesGateProfile === "MANDATO")) fail("MANDATO_TRANSITION_REQUIRES_INDIVIDUAL_FLOW", "Mandato exige validação individual de PACTO, evidências e atividades de etapa.", 400);
     const allowed = await options.database.pipelineStageTransition.count({ where: { workspaceId: context.workspaceId, toStageId: targetId, fromStageId: { in: [...new Set(opportunities.map((item) => item.currentStageId))] }, active: true } });
     if (allowed !== new Set(opportunities.map((item) => item.currentStageId)).size) fail("TRANSITION_NOT_ALLOWED", "Há oportunidades sem transição permitida para a etapa de destino.", 400);
   }

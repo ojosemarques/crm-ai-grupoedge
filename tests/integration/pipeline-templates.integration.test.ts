@@ -7,6 +7,7 @@ import type { AuthenticatedContext } from "@/modules/auth/application/authentica
 import { createOpportunityBulkService } from "@/modules/pipeline-templates/application/opportunity-bulk-service";
 import { createPipelineTemplateService } from "@/modules/pipeline-templates/application/pipeline-template-service";
 import { createOpportunityService } from "@/modules/opportunities/application/opportunity-service";
+import { createSalesGateService } from "@/modules/opportunities/application/sales-gate-service";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
@@ -138,7 +139,9 @@ describe("modelos e pipelines configuráveis", () => {
     const definition = await database.customFieldDefinition.create({ data: { workspaceId, entityType: "OPPORTUNITY", key: "committee", name: "Comitê decisor", dataType: "TEXT", createdByActorId: manager.actorId, updatedByActorId: manager.actorId } });
     await database.customFieldValue.create({ data: { workspaceId, definitionId: definition.id, entityType: "OPPORTUNITY", entityId: opportunityA, value: "Secretariado", updatedByActorId: manager.actorId } });
     await database.opportunity.update({ where: { id: opportunityA }, data: { expectedCloseAt: new Date("2038-04-01T12:00:00.000Z") } });
-    await expect(service.transition(manager, { action: "TRANSITION", opportunityId: opportunityA, targetStageId: secondStageId, expectedRevision: current.revision, reason: "Validar gates do modelo", origin: "OPPORTUNITY_CARD", confirmed: false })).resolves.toMatchObject({ opportunityId: opportunityA, revision: current.revision + 1 });
+    const stageActivity = await database.opportunityStageActivityInstance.findFirstOrThrow({ where: { workspaceId, opportunityId: opportunityA, status: "ACTIVE", definition: { required: true } } });
+    const completed = await createSalesGateService({ database, authorization, now: () => new Date(now.getTime() + 30_000) }).command(manager, opportunityA, { action: "COMPLETE_STAGE_ACTIVITY", instanceId: stageActivity.id, result: "Preparação concluída.", expectedRevision: current.revision }) as { revision: number };
+    await expect(service.transition(manager, { action: "TRANSITION", opportunityId: opportunityA, targetStageId: secondStageId, expectedRevision: completed.revision, reason: "Validar gates do modelo", origin: "OPPORTUNITY_CARD", confirmed: false })).resolves.toMatchObject({ opportunityId: opportunityA, revision: completed.revision + 1 });
   });
 
   it("oculta do vendedor cards e filtros de origem reservados a outra equipe", async () => {

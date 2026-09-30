@@ -101,14 +101,14 @@ Cada etapa pode virar uma issue/épico. Dentro dela, `Txx.y` é a task e os iten
 
 ### Etapa 05 — Atividades e gates de venda consultiva
 
-- [ ] **T05.1 — Fazer a etapa representar evidência.**
-  - [ ] Anexar diagnóstico, comprador/patrocinador, caso de uso, critério de piloto, proposta e decisão às transições relevantes de Mandato.
-  - [ ] Criar atividades de etapa com tipo, script, prazo relativo e reentrada definida; manter tarefas avulsas e fila diária.
-- [ ] **T05.2 — Proteger avanço e fechamento.**
-  - [ ] Reusar validação humana de PACTO e oportunidade; exigir próximo compromisso, responsável e motivo de perda/adiamento.
-  - [ ] Criar revisão de cards sem ação, tempo excessivo ou valor/decisor incerto sem avanço automático por IA.
+- [x] **T05.1 — Fazer a etapa representar evidência.**
+  - [x] Anexar diagnóstico, comprador/patrocinador, caso de uso, critério de piloto, proposta e decisão às transições relevantes de Mandato.
+  - [x] Criar atividades de etapa com tipo, script, prazo relativo e reentrada definida; manter tarefas avulsas e fila diária.
+- [x] **T05.2 — Proteger avanço e fechamento.**
+  - [x] Reusar validação humana de PACTO e oportunidade; exigir próximo compromisso, responsável e motivo de perda/adiamento.
+  - [x] Criar revisão de cards sem ação, tempo excessivo ou valor/decisor incerto sem avanço automático por IA.
 
-**Aceite:** card não chega a proposta sem escopo/decisor/evidência exigidos; tarefa de etapa vence corretamente após reentrada; ganho não equivale a pagamento. **Dependência:** 04.
+**Aceite:** card não chega a proposta sem escopo/decisor/evidência exigidos; tarefa de etapa vence corretamente após reentrada; ganho não equivale a pagamento. [Contrato, matriz e cenários de aceite](./CONSULTATIVE_SALES_GATES.md). **Dependência:** 04.
 
 ### Etapa 06 — Cadência longa e plano de conta
 

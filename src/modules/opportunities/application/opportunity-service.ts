@@ -7,6 +7,7 @@ import type { AuthenticatedContext } from "@/modules/auth/application/authentica
 import { isCatalogItemSellable } from "@/modules/catalog/domain/catalog-sellability-policy";
 import { projectOpportunityOwnership } from "@/modules/lifecycle/application/lifecycle-projection-writer";
 import { assertPipelineRequiredFields } from "@/modules/pipeline-templates/application/opportunity-required-fields";
+import { assertConsultativeSalesGates, assertRequiredStageActivitiesComplete, instantiateStageActivities, recordGateEvaluation, supersedeOpenStageActivities } from "@/modules/opportunities/application/sales-gate-service";
 import { getAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
 import {
   publishOpportunityClosedInTransaction,
@@ -618,11 +619,14 @@ export async function recordOpportunityMeetingHeldInTransaction(
   const nextTask = await activeOpportunityTask(transaction, context.workspaceId, opportunity.id);
   if (!nextTask) conflict("NEXT_ACTION_REQUIRED", "A oportunidade precisa de próxima ação após a reunião.");
   const effectiveAt = occurredAt > history.enteredAt ? occurredAt : new Date(history.enteredAt.getTime() + 1);
+  await assertRequiredStageActivitiesComplete(transaction, context.workspaceId, opportunity.id);
+  const gateSnapshot = await assertConsultativeSalesGates(transaction, opportunity.id, "MEETING_HELD");
+  await supersedeOpenStageActivities(transaction, context.workspaceId, opportunity.id, context.actorId, effectiveAt);
   await transaction.stageHistory.update({
     where: { id: history.id },
     data: { exitedAt: effectiveAt, exitedByActorId: context.actorId },
   });
-  await transaction.stageHistory.create({
+  const enteredHistory = await transaction.stageHistory.create({
     data: {
       workspaceId: context.workspaceId,
       pipelineId: opportunity.pipelineId,
@@ -634,6 +638,8 @@ export async function recordOpportunityMeetingHeldInTransaction(
       transitionReason: "Comparecimento registrado na reunião vinculada.",
     },
   });
+  await recordGateEvaluation(transaction, { workspaceId: context.workspaceId, opportunityId: opportunity.id, stageHistoryId: enteredHistory.id, targetStageCode: "MEETING_HELD", actorId: context.actorId, evaluatedAt: effectiveAt, snapshot: gateSnapshot });
+  await instantiateStageActivities(transaction, { workspaceId: context.workspaceId, opportunityId: opportunity.id, leadId: opportunity.leadId, ownerMemberId: opportunity.ownerMemberId, pipelineId: opportunity.pipelineId, stageId: target.id, stageHistoryId: enteredHistory.id, actorId: context.actorId, enteredAt: effectiveAt });
   await transaction.opportunity.update({
     where: { id: opportunity.id },
     data: {
@@ -1061,7 +1067,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
         where: { id: opportunity.id },
         data: { ...opportunityTaskProjection(task), updatedByActorId: context.actorId, updatedAt: now },
       });
-      await transaction.stageHistory.create({
+      const initialHistory = await transaction.stageHistory.create({
         data: {
           workspaceId: context.workspaceId,
           pipelineId: pipeline.id,
@@ -1073,6 +1079,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
           transitionReason: "Oportunidade criada a partir da reunião vinculada.",
         },
       });
+      await instantiateStageActivities(transaction, { workspaceId: context.workspaceId, opportunityId: opportunity.id, leadId: lead.id, ownerMemberId: closer.id, pipelineId: pipeline.id, stageId: initialStage.id, stageHistoryId: initialHistory.id, actorId: context.actorId, enteredAt: now });
       const activity = await transaction.activity.create({
         data: {
           workspaceId: context.workspaceId,
@@ -1171,6 +1178,8 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
       await assertPipelineRequiredFields(transaction, opportunity.id, target.id);
       const currentCode = opportunity.currentStage.opportunityStageCode;
       const targetCode = target.opportunityStageCode;
+      await assertRequiredStageActivitiesComplete(transaction, context.workspaceId, opportunity.id);
+      const gateSnapshot = await assertConsultativeSalesGates(transaction, opportunity.id, targetCode);
       const allowedTransition = await transaction.pipelineStageTransition.findFirst({
         where: {
           workspaceId: context.workspaceId,
@@ -1245,6 +1254,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
         conflict("STAGE_HISTORY_INCONSISTENT", "O histórico aberto não corresponde à etapa atual.");
       }
       const effectiveAt = now > history.enteredAt ? now : new Date(history.enteredAt.getTime() + 1);
+      await supersedeOpenStageActivities(transaction, context.workspaceId, opportunity.id, context.actorId, effectiveAt);
       await transaction.stageHistory.update({
         where: { id: history.id },
         data: { exitedAt: effectiveAt, exitedByActorId: context.actorId },
@@ -1262,6 +1272,8 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
         },
         select: { id: true },
       });
+      await recordGateEvaluation(transaction, { workspaceId: context.workspaceId, opportunityId: opportunity.id, stageHistoryId: enteredHistory.id, targetStageCode: targetCode, actorId: context.actorId, evaluatedAt: effectiveAt, snapshot: gateSnapshot });
+      await instantiateStageActivities(transaction, { workspaceId: context.workspaceId, opportunityId: opportunity.id, leadId: opportunity.leadId, ownerMemberId: opportunity.ownerMemberId, pipelineId: opportunity.pipelineId, stageId: target.id, stageHistoryId: enteredHistory.id, actorId: context.actorId, enteredAt: effectiveAt });
       const status = opportunityStatusForStage(targetCode);
       const updated = await transaction.opportunity.update({
         where: { id: opportunity.id },
@@ -1464,6 +1476,8 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
       const history = opportunity.stageHistory[0];
       if (!history || history.stageId !== opportunity.currentStageId) conflict("STAGE_HISTORY_INCONSISTENT", "O histórico aberto não corresponde à etapa atual.");
       const changesStage = opportunity.currentStage.opportunityStageCode === "OPPORTUNITY_CONFIRMED";
+      await assertRequiredStageActivitiesComplete(transaction, context.workspaceId, opportunity.id);
+      const gateSnapshot = await assertConsultativeSalesGates(transaction, opportunity.id, "PROPOSAL", product.id);
       if (changesStage) {
         const configuredTransition = await transaction.pipelineStageTransition.findFirst({
           where: {
@@ -1479,8 +1493,9 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
       }
       const effectiveAt = now > history.enteredAt ? now : new Date(history.enteredAt.getTime() + 1);
       if (changesStage) {
+        await supersedeOpenStageActivities(transaction, context.workspaceId, opportunity.id, context.actorId, effectiveAt);
         await transaction.stageHistory.update({ where: { id: history.id }, data: { exitedAt: effectiveAt, exitedByActorId: context.actorId } });
-        await transaction.stageHistory.create({
+        const enteredHistory = await transaction.stageHistory.create({
           data: {
             workspaceId: context.workspaceId,
             pipelineId: opportunity.pipelineId,
@@ -1492,6 +1507,8 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
             transitionReason: `Proposta ${offer.id} registrada.`,
           },
         });
+        await recordGateEvaluation(transaction, { workspaceId: context.workspaceId, opportunityId: opportunity.id, stageHistoryId: enteredHistory.id, targetStageCode: "PROPOSAL", actorId: context.actorId, evaluatedAt: effectiveAt, snapshot: gateSnapshot });
+        await instantiateStageActivities(transaction, { workspaceId: context.workspaceId, opportunityId: opportunity.id, leadId: opportunity.leadId, ownerMemberId: opportunity.ownerMemberId, pipelineId: opportunity.pipelineId, stageId: proposalStage.id, stageHistoryId: enteredHistory.id, actorId: context.actorId, enteredAt: effectiveAt });
       }
       const updated = await transaction.opportunity.update({
         where: { id: opportunity.id },
@@ -1591,8 +1608,10 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
         now,
       });
       const effectiveAt = now > history.enteredAt ? now : new Date(history.enteredAt.getTime() + 1);
+      const gateSnapshot = await assertConsultativeSalesGates(transaction, opportunity.id, "NEGOTIATION");
+      await supersedeOpenStageActivities(transaction, context.workspaceId, opportunity.id, context.actorId, effectiveAt);
       await transaction.stageHistory.update({ where: { id: history.id }, data: { exitedAt: effectiveAt, exitedByActorId: context.actorId } });
-      await transaction.stageHistory.create({
+      const enteredHistory = await transaction.stageHistory.create({
         data: {
           workspaceId: context.workspaceId,
           pipelineId: opportunity.pipelineId,
@@ -1605,6 +1624,8 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
           managerCorrection: true,
         },
       });
+      await recordGateEvaluation(transaction, { workspaceId: context.workspaceId, opportunityId: opportunity.id, stageHistoryId: enteredHistory.id, targetStageCode: "NEGOTIATION", actorId: context.actorId, evaluatedAt: effectiveAt, snapshot: gateSnapshot });
+      await instantiateStageActivities(transaction, { workspaceId: context.workspaceId, opportunityId: opportunity.id, leadId: opportunity.leadId, ownerMemberId: opportunity.ownerMemberId, pipelineId: opportunity.pipelineId, stageId: target.id, stageHistoryId: enteredHistory.id, actorId: context.actorId, enteredAt: effectiveAt });
       const updated = await transaction.opportunity.update({
         where: { id: opportunity.id },
         data: {

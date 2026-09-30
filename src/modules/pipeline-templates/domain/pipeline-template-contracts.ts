@@ -7,6 +7,7 @@ const activitySchema = z.object({
   dueOffsetDays: z.number().int().min(0).max(365),
   position: z.number().int().min(0),
   required: z.boolean().default(false),
+  reentryPolicy: z.enum(["RECREATE_ON_REENTRY", "ONCE_PER_OPPORTUNITY"]).default("RECREATE_ON_REENTRY"),
 }).strict();
 
 const requiredFieldSchema = z.object({

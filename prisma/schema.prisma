@@ -791,6 +791,32 @@ enum OpportunityBulkStatus {
   EXPIRED
 }
 
+enum SalesGateProfile {
+  STANDARD
+  MANDATO
+}
+
+enum ConsultativeEvidenceType {
+  DIAGNOSIS
+  ECONOMIC_BUYER
+  SPONSOR
+  USE_CASE
+  PILOT_CRITERIA
+  PROPOSAL_SCOPE
+  DECISION
+}
+
+enum StageActivityReentryPolicy {
+  RECREATE_ON_REENTRY
+  ONCE_PER_OPPORTUNITY
+}
+
+enum StageActivityInstanceStatus {
+  ACTIVE
+  COMPLETED
+  SUPERSEDED
+}
+
 enum QualificationStatus {
   NOT_STARTED
   IN_PROGRESS
@@ -1237,6 +1263,10 @@ enum ProcessViolationType {
   LEAD_STAGNANT
   INCOHERENT_STAGE_CHANGE
   LOST_OPPORTUNITY_WITHOUT_REASON
+  OPPORTUNITY_STAGNANT
+  OPPORTUNITY_STAGE_OVERDUE
+  OPPORTUNITY_VALUE_UNCERTAIN
+  OPPORTUNITY_DECISION_MAKER_UNCERTAIN
 }
 
 enum ProcessViolationSeverity {
@@ -2432,6 +2462,10 @@ model Workspace {
   pipelineTemplateApplications PipelineTemplateApplication[]
   pipelineTemplateMigrations   PipelineTemplateMigration[]
   opportunityBulkOperations    OpportunityBulkOperation[]
+  opportunityEvidence          OpportunityEvidence[]
+  opportunityStageActivities   OpportunityStageActivityInstance[]
+  opportunityGateEvaluations   OpportunityGateEvaluation[]
+  opportunityDeferrals         OpportunityDeferral[]
   geographicLocations          GeographicLocation[]
   geographicObservations       GeographicObservation[]
   geographicProfiles           GeographicProfile[]
@@ -2598,6 +2632,10 @@ model Actor {
   stagesEntered                    StageHistory[]                       @relation("StageHistoryEnteredBy")
   stagesExited                     StageHistory[]                       @relation("StageHistoryExitedBy")
   opportunityOutcomeSnapshots      OpportunityOutcomeSnapshot[]         @relation("OpportunityOutcomeSnapshotCreatedBy")
+  opportunityEvidenceRecorded      OpportunityEvidence[]                @relation("OpportunityEvidenceRecordedBy")
+  opportunityEvidenceSuperseded    OpportunityEvidence[]                @relation("OpportunityEvidenceSupersededBy")
+  opportunityGateEvaluations       OpportunityGateEvaluation[]          @relation("OpportunityGateEvaluationBy")
+  opportunityDeferralsCreated      OpportunityDeferral[]                @relation("OpportunityDeferralCreatedBy")
   opportunitiesCreated             Opportunity[]                        @relation("OpportunityCreatedBy")
   opportunitiesUpdated             Opportunity[]                        @relation("OpportunityUpdatedBy")
   productsCreated                  Product[]                            @relation("ProductCreatedBy")
@@ -2840,6 +2878,7 @@ model WorkspaceMember {
   leadsOwned                  Lead[]
   opportunitiesOwned          Opportunity[]
   opportunityOutcomesOwned    OpportunityOutcomeSnapshot[]
+  opportunityDeferrals        OpportunityDeferral[]
   meetingsOwned               Meeting[]
   meetingHistoryOwned         MeetingHistory[]
   tasksAssigned               Task[]
@@ -4069,12 +4108,13 @@ model PactoRevision {
   createdByActorId          String                    @db.Uuid
   createdAt                 DateTime                  @default(now()) @db.Timestamptz(3)
 
-  workspace     Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  qualification LeadQualification        @relation(fields: [workspaceId, leadId, qualificationId], references: [workspaceId, leadId, id], onDelete: Restrict)
-  lead          Lead                     @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
-  createdBy     Actor                    @relation("PactoRevisionCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
-  dimensions    PactoRevisionDimension[]
-  scores        LeadScore[]
+  workspace       Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  qualification   LeadQualification           @relation(fields: [workspaceId, leadId, qualificationId], references: [workspaceId, leadId, id], onDelete: Restrict)
+  lead            Lead                        @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy       Actor                       @relation("PactoRevisionCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  dimensions      PactoRevisionDimension[]
+  scores          LeadScore[]
+  gateEvaluations OpportunityGateEvaluation[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, qualificationId, revisionNumber])
@@ -4402,20 +4442,22 @@ model PipelineTemplateStage {
 }
 
 model PipelineTemplateActivityDefinition {
-  id                String  @id @default(uuid()) @db.Uuid
-  workspaceId       String  @db.Uuid
-  templateVersionId String  @db.Uuid
-  stageId           String  @db.Uuid
+  id                String                     @id @default(uuid()) @db.Uuid
+  workspaceId       String                     @db.Uuid
+  templateVersionId String                     @db.Uuid
+  stageId           String                     @db.Uuid
   activityType      String
   title             String
   script            String?
   dueOffsetDays     Int
   position          Int
-  required          Boolean @default(false)
+  required          Boolean                    @default(false)
+  reentryPolicy     StageActivityReentryPolicy @default(RECREATE_ON_REENTRY)
 
-  workspace       Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  templateVersion PipelineTemplateVersion @relation(fields: [workspaceId, templateVersionId], references: [workspaceId, id], onDelete: Restrict)
-  stage           PipelineTemplateStage   @relation(fields: [workspaceId, stageId], references: [workspaceId, id], onDelete: Restrict)
+  workspace       Workspace                          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  templateVersion PipelineTemplateVersion            @relation(fields: [workspaceId, templateVersionId], references: [workspaceId, id], onDelete: Restrict)
+  stage           PipelineTemplateStage              @relation(fields: [workspaceId, stageId], references: [workspaceId, id], onDelete: Restrict)
+  instances       OpportunityStageActivityInstance[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, stageId, position])
@@ -4613,15 +4655,17 @@ model StageHistory {
   managerCorrection Boolean               @default(false)
   createdAt         DateTime              @default(now()) @db.Timestamptz(3)
 
-  workspace         Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  pipeline          Pipeline                    @relation(fields: [workspaceId, pipelineId], references: [workspaceId, id], onDelete: Restrict)
-  stage             PipelineStage               @relation(fields: [workspaceId, pipelineId, stageId], references: [workspaceId, pipelineId, id], onDelete: Restrict)
-  lead              Lead?                       @relation(fields: [workspaceId, pipelineId, leadId], references: [workspaceId, pipelineId, id], onDelete: Restrict)
-  opportunity       Opportunity?                @relation(fields: [workspaceId, pipelineId, opportunityId], references: [workspaceId, pipelineId, id], onDelete: Restrict)
-  enteredBy         Actor                       @relation("StageHistoryEnteredBy", fields: [workspaceId, enteredByActorId], references: [workspaceId, id], onDelete: Restrict)
-  exitedBy          Actor?                      @relation("StageHistoryExitedBy", fields: [workspaceId, exitedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  workspace         Workspace                          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  pipeline          Pipeline                           @relation(fields: [workspaceId, pipelineId], references: [workspaceId, id], onDelete: Restrict)
+  stage             PipelineStage                      @relation(fields: [workspaceId, pipelineId, stageId], references: [workspaceId, pipelineId, id], onDelete: Restrict)
+  lead              Lead?                              @relation(fields: [workspaceId, pipelineId, leadId], references: [workspaceId, pipelineId, id], onDelete: Restrict)
+  opportunity       Opportunity?                       @relation(fields: [workspaceId, pipelineId, opportunityId], references: [workspaceId, pipelineId, id], onDelete: Restrict)
+  enteredBy         Actor                              @relation("StageHistoryEnteredBy", fields: [workspaceId, enteredByActorId], references: [workspaceId, id], onDelete: Restrict)
+  exitedBy          Actor?                             @relation("StageHistoryExitedBy", fields: [workspaceId, exitedByActorId], references: [workspaceId, id], onDelete: Restrict)
   outcomeSnapshot   OpportunityOutcomeSnapshot?
   processViolations ProcessViolation[]
+  stageActivities   OpportunityStageActivityInstance[]
+  gateEvaluation    OpportunityGateEvaluation?
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, opportunityId, id])
@@ -4667,17 +4711,17 @@ model Opportunity {
   updatedAt               DateTime          @updatedAt @db.Timestamptz(3)
   deletedAt               DateTime?         @db.Timestamptz(3)
 
-  workspace              Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  lead                   Lead                         @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
-  account                Account?                     @relation(fields: [workspaceId, accountId], references: [workspaceId, id], onDelete: Restrict)
-  pipeline               Pipeline                     @relation(fields: [workspaceId, pipelineId], references: [workspaceId, id], onDelete: Restrict)
-  currentStage           PipelineStage                @relation("OpportunityCurrentStage", fields: [workspaceId, pipelineId, currentStageId], references: [workspaceId, pipelineId, id], onDelete: Restrict)
-  owner                  WorkspaceMember              @relation(fields: [workspaceId, ownerMemberId], references: [workspaceId, id], onDelete: Restrict)
-  product                Product?                     @relation(fields: [workspaceId, productId], references: [workspaceId, id], onDelete: Restrict)
-  lossReason             LossReason?                  @relation(fields: [workspaceId, lossReasonId], references: [workspaceId, id], onDelete: Restrict)
-  nextActionTask         Task?                        @relation("OpportunityNextAction", fields: [workspaceId, id, nextActionTaskId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
-  createdBy              Actor                        @relation("OpportunityCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
-  updatedBy              Actor                        @relation("OpportunityUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  workspace              Workspace                          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  lead                   Lead                               @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
+  account                Account?                           @relation(fields: [workspaceId, accountId], references: [workspaceId, id], onDelete: Restrict)
+  pipeline               Pipeline                           @relation(fields: [workspaceId, pipelineId], references: [workspaceId, id], onDelete: Restrict)
+  currentStage           PipelineStage                      @relation("OpportunityCurrentStage", fields: [workspaceId, pipelineId, currentStageId], references: [workspaceId, pipelineId, id], onDelete: Restrict)
+  owner                  WorkspaceMember                    @relation(fields: [workspaceId, ownerMemberId], references: [workspaceId, id], onDelete: Restrict)
+  product                Product?                           @relation(fields: [workspaceId, productId], references: [workspaceId, id], onDelete: Restrict)
+  lossReason             LossReason?                        @relation(fields: [workspaceId, lossReasonId], references: [workspaceId, id], onDelete: Restrict)
+  nextActionTask         Task?                              @relation("OpportunityNextAction", fields: [workspaceId, id, nextActionTaskId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
+  createdBy              Actor                              @relation("OpportunityCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy              Actor                              @relation("OpportunityUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
   stageHistory           StageHistory[]
   outcomeSnapshots       OpportunityOutcomeSnapshot[]
   offers                 Offer[]
@@ -4696,6 +4740,10 @@ model Opportunity {
   lifecycleBackfillItems LifecycleBackfillItem[]
   conversations          Conversation[]
   phoneCalls             PhoneCall[]
+  consultativeEvidence   OpportunityEvidence[]
+  stageActivities        OpportunityStageActivityInstance[]
+  gateEvaluations        OpportunityGateEvaluation[]
+  deferrals              OpportunityDeferral[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, pipelineId, id])
@@ -4751,6 +4799,117 @@ model OpportunityOutcomeSnapshot {
   @@map("opportunity_outcome_snapshots")
 }
 
+model OpportunityEvidence {
+  id                  String                   @id @default(uuid()) @db.Uuid
+  workspaceId         String                   @db.Uuid
+  opportunityId       String                   @db.Uuid
+  type                ConsultativeEvidenceType
+  version             Int
+  summary             String
+  stakeholderName     String?
+  sourceUrl           String?
+  idempotencyKey      String
+  confirmedAt         DateTime                 @db.Timestamptz(3)
+  recordedByActorId   String                   @db.Uuid
+  supersededAt        DateTime?                @db.Timestamptz(3)
+  supersededByActorId String?                  @db.Uuid
+  createdAt           DateTime                 @default(now()) @db.Timestamptz(3)
+
+  workspace    Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  opportunity  Opportunity @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: Restrict)
+  recordedBy   Actor       @relation("OpportunityEvidenceRecordedBy", fields: [workspaceId, recordedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  supersededBy Actor?      @relation("OpportunityEvidenceSupersededBy", fields: [workspaceId, supersededByActorId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, opportunityId, type, version])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, opportunityId, type, supersededAt])
+  @@map("opportunity_evidence")
+}
+
+model OpportunityStageActivityInstance {
+  id             String                      @id @default(uuid()) @db.Uuid
+  workspaceId    String                      @db.Uuid
+  opportunityId  String                      @db.Uuid
+  stageHistoryId String                      @db.Uuid
+  definitionId   String                      @db.Uuid
+  taskId         String                      @unique @db.Uuid
+  entrySequence  Int
+  title          String
+  script         String?
+  activityType   String
+  dueAt          DateTime                    @db.Timestamptz(3)
+  reentryPolicy  StageActivityReentryPolicy
+  status         StageActivityInstanceStatus @default(ACTIVE)
+  completedAt    DateTime?                   @db.Timestamptz(3)
+  supersededAt   DateTime?                   @db.Timestamptz(3)
+  createdAt      DateTime                    @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime                    @updatedAt @db.Timestamptz(3)
+
+  workspace    Workspace                          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  opportunity  Opportunity                        @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: Restrict, map: "stage_activity_opportunity_fkey")
+  stageHistory StageHistory                       @relation(fields: [workspaceId, stageHistoryId], references: [workspaceId, id], onDelete: Restrict)
+  definition   PipelineTemplateActivityDefinition @relation(fields: [workspaceId, definitionId], references: [workspaceId, id], onDelete: Restrict)
+  task         Task                               @relation(fields: [workspaceId, opportunityId, taskId], references: [workspaceId, opportunityId, id], onDelete: Restrict, map: "stage_activity_task_fkey")
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, stageHistoryId, definitionId])
+  @@unique([workspaceId, opportunityId, definitionId, entrySequence], map: "stage_activity_entry_sequence_key")
+  @@unique([workspaceId, opportunityId, taskId], map: "stage_activity_task_key")
+  @@index([workspaceId, opportunityId, status, dueAt])
+  @@index([workspaceId, taskId])
+  @@map("opportunity_stage_activity_instances")
+}
+
+model OpportunityGateEvaluation {
+  id                 String                       @id @default(uuid()) @db.Uuid
+  workspaceId        String                       @db.Uuid
+  opportunityId      String                       @db.Uuid
+  stageHistoryId     String                       @unique @db.Uuid
+  pactoRevisionId    String?                      @db.Uuid
+  salesGateProfile   SalesGateProfile
+  targetStageCode    OpportunityPipelineStageCode
+  evidenceSnapshot   Json
+  evaluatedByActorId String                       @db.Uuid
+  evaluatedAt        DateTime                     @db.Timestamptz(3)
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  opportunity   Opportunity    @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: Restrict)
+  stageHistory  StageHistory   @relation(fields: [workspaceId, stageHistoryId], references: [workspaceId, id], onDelete: Restrict)
+  pactoRevision PactoRevision? @relation(fields: [workspaceId, pactoRevisionId], references: [workspaceId, id], onDelete: Restrict)
+  evaluatedBy   Actor          @relation("OpportunityGateEvaluationBy", fields: [workspaceId, evaluatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, stageHistoryId])
+  @@index([workspaceId, opportunityId, evaluatedAt])
+  @@index([workspaceId, pactoRevisionId])
+  @@map("opportunity_gate_evaluations")
+}
+
+model OpportunityDeferral {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @db.Uuid
+  opportunityId    String   @db.Uuid
+  ownerMemberId    String   @db.Uuid
+  reason           String
+  reviewAt         DateTime @db.Timestamptz(3)
+  taskId           String   @unique @db.Uuid
+  createdByActorId String   @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  opportunity Opportunity     @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: Restrict)
+  owner       WorkspaceMember @relation(fields: [workspaceId, ownerMemberId], references: [workspaceId, id], onDelete: Restrict)
+  task        Task            @relation(fields: [workspaceId, opportunityId, taskId], references: [workspaceId, opportunityId, id], onDelete: Restrict)
+  createdBy   Actor           @relation("OpportunityDeferralCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, opportunityId, taskId])
+  @@index([workspaceId, opportunityId, reviewAt])
+  @@index([workspaceId, ownerMemberId, reviewAt])
+  @@map("opportunity_deferrals")
+}
+
 model Product {
   id                 String                 @id @default(uuid()) @db.Uuid
   workspaceId        String                 @db.Uuid
@@ -4770,6 +4929,7 @@ model Product {
   listPriceCents     BigInt
   currency           Currency               @default(BRL)
   active             Boolean                @default(true)
+  salesGateProfile   SalesGateProfile       @default(STANDARD)
   createdByActorId   String                 @db.Uuid
   updatedByActorId   String                 @db.Uuid
   createdAt          DateTime               @default(now()) @db.Timestamptz(3)
@@ -5715,18 +5875,20 @@ model Task {
   updatedAt        DateTime     @updatedAt @db.Timestamptz(3)
   deletedAt        DateTime?    @db.Timestamptz(3)
 
-  workspace                Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  lead                     Lead             @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
-  opportunity              Opportunity?     @relation(fields: [workspaceId, leadId, opportunityId], references: [workspaceId, leadId, id], onDelete: Restrict)
-  meeting                  Meeting?         @relation(fields: [workspaceId, meetingId], references: [workspaceId, id], onDelete: Restrict)
-  assignee                 WorkspaceMember? @relation(fields: [workspaceId, assigneeMemberId], references: [workspaceId, id], onDelete: Restrict)
-  queue                    Queue?           @relation(fields: [workspaceId, queueId], references: [workspaceId, id], onDelete: Restrict)
-  automationRun            AutomationRun?   @relation(fields: [workspaceId, automationRunId], references: [workspaceId, id], onDelete: Restrict)
-  slaCycle                 LeadSlaCycle?    @relation(fields: [workspaceId, slaCycleId], references: [workspaceId, id], onDelete: Restrict)
-  createdBy                Actor            @relation("TaskCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
-  updatedBy                Actor            @relation("TaskUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
-  nextActionFor            Lead[]           @relation("LeadNextAction")
-  nextActionForOpportunity Opportunity?     @relation("OpportunityNextAction")
+  workspace                Workspace                         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  lead                     Lead                              @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
+  opportunity              Opportunity?                      @relation(fields: [workspaceId, leadId, opportunityId], references: [workspaceId, leadId, id], onDelete: Restrict)
+  meeting                  Meeting?                          @relation(fields: [workspaceId, meetingId], references: [workspaceId, id], onDelete: Restrict)
+  assignee                 WorkspaceMember?                  @relation(fields: [workspaceId, assigneeMemberId], references: [workspaceId, id], onDelete: Restrict)
+  queue                    Queue?                            @relation(fields: [workspaceId, queueId], references: [workspaceId, id], onDelete: Restrict)
+  automationRun            AutomationRun?                    @relation(fields: [workspaceId, automationRunId], references: [workspaceId, id], onDelete: Restrict)
+  slaCycle                 LeadSlaCycle?                     @relation(fields: [workspaceId, slaCycleId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy                Actor                             @relation("TaskCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy                Actor                             @relation("TaskUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  nextActionFor            Lead[]                            @relation("LeadNextAction")
+  nextActionForOpportunity Opportunity?                      @relation("OpportunityNextAction")
+  stageActivityInstance    OpportunityStageActivityInstance?
+  opportunityDeferral      OpportunityDeferral?
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, leadId, id])

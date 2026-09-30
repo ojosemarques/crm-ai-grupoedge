@@ -50,6 +50,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
       { href: "/contas", icon: "equipe", label: "Contas", roles: commercialRoles },
       { href: "/pipeline", icon: "pipeline", label: "Pipeline", roles: leadRoles },
       { href: "/agenda", icon: "agenda", label: "Agenda" },
+      { href: "/atividades", icon: "meu-dia", label: "Atividades", roles: commercialRoles },
       { href: "/oportunidades", icon: "vendas", label: "Vendas", roles: commercialRoles },
       { href: "/contratos", icon: "receita", label: "Contratos", roles: commercialRoles },
       { href: "/onboarding", icon: "pipeline", label: "Onboarding", roles: commercialRoles },
@@ -90,7 +91,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
 const sections = [
   { key: "deals", label: "Negócios", icon: "vendas", paths: ["/pipeline", "/oportunidades", "/contratos", "/onboarding", "/customer-success", "/farmer"] },
   { key: "contacts", label: "Contatos", icon: "leads", paths: ["/leads", "/contas", "/leads/entrada", "/portabilidade"] },
-  { key: "activities", label: "Atividades", icon: "agenda", paths: ["/meu-dia", "/agenda", "/notificacoes"] },
+  { key: "activities", label: "Atividades", icon: "agenda", paths: ["/meu-dia", "/agenda", "/atividades", "/notificacoes"] },
   { key: "inbox", label: "Atendimento", icon: "inbox", paths: ["/inbox", "/customer-service"] },
   { key: "automation", label: "Automações", icon: "automacoes", paths: ["/automacoes", "/integracoes", "/copilot", "/governanca-ia"] },
   { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/metricas-receita", "/metas", "/forecast", "/aquisicao", "/inteligencia-geografica", "/receita", "/pagamentos"] },
@@ -101,6 +102,7 @@ const labels: Record<string, string> = {
   "/pipeline": "Pré-vendas", "/oportunidades": "Vendas", "/leads": "Todos os contatos",
   "/contas": "Empresas", "/inbox": "Conversas", "/customer-service": "Tickets de atendimento",
   "/portabilidade": "Portabilidade comercial",
+  "/atividades": "Fila de atividades",
   "/automacoes": "Fluxos de automação", "/dashboard": "Visão geral", "/metricas-receita": "Receita e retenção",
 };
 

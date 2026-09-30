@@ -80,6 +80,7 @@ export type CommercialSettingsScreen = Readonly<{
     availability: "DRAFT" | "AVAILABLE" | "CAPACITY_LIMITED" | "FUTURE" | "RETIRED";
     capacityUnits: number | null;
     approvedConditions: string;
+    salesGateProfile: "STANDARD" | "MANDATO";
     active: boolean;
     updatedAt: string;
     opportunitiesInUse: number;

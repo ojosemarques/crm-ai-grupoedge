@@ -5,6 +5,7 @@ import { FormEvent, useState } from "react";
 import styles from "./lead-detail.module.css";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
+import { SalesGatesPanel } from "@/components/opportunities/sales-gates-panel";
 import type {
   LeadOpportunityScreen,
   OpportunityListItem,
@@ -265,6 +266,7 @@ export function LeadOpportunitiesWorkspace({
           <article className={styles.dealCard} key={opportunity.id}>
             <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-semibold">{opportunity.name}</h3><p className="text-sm text-muted-foreground">{opportunity.stageName} · {opportunity.ownerName}{opportunity.accountName ? ` · ${opportunity.accountName}` : " · conta não vinculada"}</p></div><span className="rounded-full border px-3 py-1 text-xs">{opportunity.status}</span></div>
             <dl className={styles.dealStats}><div><dt className="text-muted-foreground">Produto/interesse</dt><dd>{opportunity.productName ?? opportunity.interestDescription ?? "Ausente"}</dd></div><div><dt className="text-muted-foreground">Valor estimado</dt><dd>{formatMoney(opportunity.amountCents)}</dd></div><div><dt className="text-muted-foreground">MRR / TCV</dt><dd>{formatMoney(opportunity.mrrCents)} / {formatMoney(opportunity.tcvCents)}</dd></div><div><dt className="text-muted-foreground">Probabilidade</dt><dd>{opportunity.probabilityPercent}% manual</dd></div><div><dt className="text-muted-foreground">Próxima ação</dt><dd>{opportunity.nextActionDescription ?? "Encerrada"} · {formatDate(opportunity.nextActionAt, screen.timeZone)}</dd></div><div><dt className="text-muted-foreground">Fechamento previsto</dt><dd>{formatDate(opportunity.expectedCloseAt, screen.timeZone)}</dd></div><div><dt className="text-muted-foreground">Motivo de perda</dt><dd>{opportunity.lossReasonName ?? "Não se aplica"}</dd></div></dl>
+            <SalesGatesPanel opportunityId={opportunity.id} onCommitted={onCommitted} />
             {opportunity.offers.length > 0 ? <div className="mt-4"><h4 className="text-sm font-semibold">Propostas</h4><ul className="mt-2 space-y-2">{opportunity.offers.map((offer) => <li className="rounded border p-3 text-sm" key={offer.id}><strong>{offer.name}</strong> · {formatMoney(offer.totalCents)}{offer.acceptedAt ? " · aceita no ganho" : ""}{offer.lines.length ? <ul className="mt-2 list-disc pl-5 text-xs text-muted-foreground">{offer.lines.map((line) => <li key={`${offer.id}:${line.revenueCategory}:${line.productName}`}>{line.revenueCategory} · {line.productName} v{line.productVersion} · {formatMoney(line.totalCents)}</li>)}</ul> : <span> · {offer.productName}</span>}</li>)}</ul></div> : null}
             <OpportunityActions opportunity={opportunity} pending={pending} run={(body, success) => runOpportunity(opportunity.id, body, success)} screen={screen} />
           </article>

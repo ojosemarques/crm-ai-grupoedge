@@ -31,7 +31,7 @@ export default async function OpportunitiesPage({ searchParams }: Readonly<{ sea
   return (
     <main className="page-canvas page-canvas-wide">
       <PageHeader description="Acompanhe suas oportunidades, propostas e negociações." eyebrow="Negócios" title="Vendas" />
-      <OpportunityPipelineWorkspace screen={screen} />
+      <OpportunityPipelineWorkspace initialOpportunityId={first(params.opportunityId) ?? null} screen={screen} />
     </main>
   );
 }

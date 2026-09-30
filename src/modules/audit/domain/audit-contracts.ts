@@ -13,6 +13,10 @@ export const processViolationTypes = [
   "LEAD_STAGNANT",
   "INCOHERENT_STAGE_CHANGE",
   "LOST_OPPORTUNITY_WITHOUT_REASON",
+  "OPPORTUNITY_STAGNANT",
+  "OPPORTUNITY_STAGE_OVERDUE",
+  "OPPORTUNITY_VALUE_UNCERTAIN",
+  "OPPORTUNITY_DECISION_MAKER_UNCERTAIN",
 ] as const;
 export const processViolationSeverities = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 export const processViolationStatuses = ["OPEN", "ACKNOWLEDGED", "RESOLVED"] as const;
@@ -63,6 +67,10 @@ export const processViolationLabels: Readonly<Record<ProcessViolationTypeValue, 
   LEAD_STAGNANT: "Lead parado",
   INCOHERENT_STAGE_CHANGE: "Mudança incoerente de etapa",
   LOST_OPPORTUNITY_WITHOUT_REASON: "Oportunidade perdida sem motivo válido",
+  OPPORTUNITY_STAGNANT: "Oportunidade sem compromisso válido",
+  OPPORTUNITY_STAGE_OVERDUE: "Oportunidade há tempo excessivo na etapa",
+  OPPORTUNITY_VALUE_UNCERTAIN: "Oportunidade com valor incerto",
+  OPPORTUNITY_DECISION_MAKER_UNCERTAIN: "Oportunidade sem decisor ou patrocinador confirmado",
 });
 
 export function slaViolationSeverity(seconds: number): ProcessViolationSeverityValue {
