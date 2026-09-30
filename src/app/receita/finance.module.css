@@ -1,0 +1,68 @@
+.workspace { display: grid; gap: 22px; color: var(--text); width: 100%; min-width: 0; }
+.metrics { display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); gap: 13px; }
+.metric { position: relative; padding: 20px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); display: grid; gap: 9px; }
+.metric > span { color: var(--text-muted); font-size: 11px; }
+.metric > strong { font-size: 28px; font-weight: 550; letter-spacing: -.04em; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.metric > small { color: var(--text-muted); font-size: 10px; line-height: 1.6; }
+.metric > svg { position: absolute; right: 18px; top: 18px; color: var(--primary); }
+.metric:first-child { background: var(--primary-soft); border-color: transparent; }
+.metric:first-child > strong { color: var(--primary); }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 9px; overflow: hidden; min-width: 0; }
+.panelHeader { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 20px; border-bottom: 1px solid var(--border); }
+.panelHeader h2 { font-size: 14px; font-weight: 600; }
+.panelHeader p { color: var(--text-muted); font-size: 10px; margin-top: 5px; }
+.panelHeader > div { min-width: 0; }
+.counter { background: var(--primary-soft); color: var(--primary); font-size: 10px; min-width: 25px; padding: 5px 8px; border-radius: 5px; }
+.table { width: 100%; overflow-x: auto; }
+.table table { width: 100%; text-align: left; border-collapse: collapse; white-space: nowrap; }
+.table th { padding: 12px 18px; font-size: 10px; color: var(--text-muted); font-weight: 500; background: var(--surface-muted); border-bottom: 1px solid var(--border); }
+.table td { padding: 17px 18px; font-size: 11px; border-bottom: 1px solid var(--border); }
+.table tbody tr:last-child td { border-bottom: 0; }
+.table tbody tr:hover { background: var(--surface-muted); }
+.table td a { color: var(--primary); font-weight: 600; }
+.table td:nth-last-child(2) { font-variant-numeric: tabular-nums; }
+.workspace :global(.status-badge) { font-size: 9px; padding: 4px 7px; border-radius: 5px; }
+.workspace :global(.empty-state) { padding: 45px 25px; border: 0; border-radius: 0; background: transparent; }
+.workspace :global(.empty-state) strong { font-size: 14px; }
+.workspace :global(.empty-state) p { font-size: 11px; line-height: 1.8; max-width: 390px; margin: 9px auto 0; }
+.note { font-size: 10px; line-height: 1.8; color: var(--text-muted); }
+.toolbar { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+.toolbar input, .toolbar select { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; min-height: 34px; font-size: 11px; min-width: 0; }
+.toolbar label { display: grid; gap: 5px; color: var(--text-muted); font-size: 10px; }
+.toolbar button, .toolbar > a { font-size: 11px; height: 34px; }
+.action { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; }
+.action > summary { display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 600; color: var(--primary); cursor: pointer; }
+.action > summary::after { content: "+"; margin-left: auto; font-size: 17px; font-weight: 400; }
+.action[open] > summary::after { content: "−"; }
+.action :global(.surface-panel) { background: transparent; border: 0; padding: 16px 0 0; box-shadow: none; }
+.action :global(.section-heading) { display: none; }
+.action label { color: var(--text-muted); font-size: 11px; }
+.action input, .action select, .action textarea { font-size: 12px; }
+.detailLayout { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 20px; align-items: start; }
+.detailMain { display: grid; gap: 20px; min-width: 0; }
+.detailAside { display: grid; gap: 16px; min-width: 0; }
+.detailAside > :global(.surface-panel) { display: grid; gap: 13px; border: 1px solid var(--border); border-radius: 8px; padding: 20px; background: var(--surface); }
+.detailAside h2, .detailAside h3 { font-size: 13px; font-weight: 600; }
+.detailAside p, .detailAside label { font-size: 11px; line-height: 1.7; }
+.detailAside :global(.form-grid) { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.detailAside input, .detailAside select { font-size: 11px; min-width: 0; width: 100%; }
+.detailAside button { height: auto; min-height: 34px; white-space: normal; font-size: 11px; }
+.history { padding: 7px 20px 17px; }
+.history > li { position: relative; border-left: 1px solid var(--border); padding: 15px 0 15px 18px; }
+.history > li::before { content: ""; position: absolute; left: -4px; top: 22px; width: 7px; height: 7px; background: #bda1eb; border-radius: 50%; outline: 3px solid var(--surface); }
+.history strong { font-size: 11px; font-weight: 600; }
+.history p { font-size: 11px; color: var(--text-muted); line-height: 1.7; margin-top: 5px; }
+.history time { display: block; font-size: 9px; color: var(--text-muted); margin-top: 8px; }
+.cards { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.contract { background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 20px; min-width: 0; }
+.contract header { padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.contract header h2 { font-size: 17px; font-weight: 600; margin: 7px 0; }
+.contract header p { font-size: 10px; color: var(--text-muted); line-height: 1.8; }
+.contract dl { padding: 16px 0; margin: 0; gap: 16px; }
+.contract dt { font-size: 9px; color: var(--text-muted); }
+.contract dd { font-size: 12px; margin-top: 5px; }
+.contract dl > div:nth-child(2) dd { font-size: 20px; font-weight: 500; color: var(--primary); letter-spacing: -.02em; }
+.contract button, .contract a { font-size: 10px; height: 32px; }
+.contract details { font-size: 11px; }
+@media (max-width: 1000px) { .detailLayout { grid-template-columns: 1fr; } .detailAside { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .cards { grid-template-columns: 1fr; } .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; } .metric { padding: 16px; } .metric strong { font-size: 23px; } .metric > svg { display: none; } .panelHeader { padding: 16px; flex-wrap: wrap; } .toolbar { width: 100%; } .toolbar input { width: 100%; } .toolbar > label { width: 100%; } }

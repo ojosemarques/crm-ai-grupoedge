@@ -3,12 +3,13 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { LogoutButton } from "@/components/auth/logout-button";
 import { GlobalSearch } from "@/components/layout/global-search";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { cn } from "@/shared/core/ui/class-names";
+import styles from "./app-shell.module.css";
 import politizaiMark from "../../../public/brand/politizai-mark.png";
 
 type SessionView = Readonly<{
@@ -86,47 +87,21 @@ const navigationGroups: ReadonlyArray<Readonly<{
   },
 ];
 
-const routeTitles: readonly Readonly<{ prefix: string; title: string }>[] = [
-  { prefix: "/leads/entrada", title: "Entrada de leads" },
-  { prefix: "/leads/", title: "Lead 360" },
-  { prefix: "/meu-dia", title: "Meu Dia" },
-  { prefix: "/metas", title: "Metas e quotas" },
-  { prefix: "/forecast", title: "Forecast comercial" },
-  { prefix: "/metricas-receita", title: "Métricas de receita" },
-  { prefix: "/inbox", title: "Inbox" },
-  { prefix: "/leads", title: "Leads" },
-  { prefix: "/contas", title: "Contas" },
-  { prefix: "/pipeline", title: "Pré-vendas" },
-  { prefix: "/agenda", title: "Agenda" },
-  { prefix: "/oportunidades", title: "Vendas" },
-  { prefix: "/contratos", title: "Contratos comerciais" },
-  { prefix: "/onboarding", title: "Handoff e onboarding" },
-  { prefix: "/customer-success", title: "Customer Success" },
-  { prefix: "/customer-service", title: "Atendimento ao cliente" },
-  { prefix: "/farmer", title: "Farmer" },
-  { prefix: "/receita", title: "Assinaturas e receita" },
-  { prefix: "/pagamentos", title: "Cobranças e pagamentos" },
-  { prefix: "/dashboard", title: "Dashboard" },
-  { prefix: "/copilot", title: "Copilot gerencial" },
-  { prefix: "/governanca-ia", title: "Governança de IA" },
-  { prefix: "/notificacoes", title: "Notificações" },
-  { prefix: "/administracao", title: "Pessoas e equipes" },
-  { prefix: "/automacoes", title: "Automações" },
-  { prefix: "/auditoria", title: "Auditoria e saúde" },
-  { prefix: "/qualidade-dados", title: "Qualidade de dados" },
-  { prefix: "/operacoes", title: "Operações, segurança e privacidade" },
-  { prefix: "/privacidade", title: "Privacidade e retenção" },
-  { prefix: "/integracoes/whatsapp", title: "WhatsApp" },
-  { prefix: "/integracoes/email", title: "E-mail" },
-  { prefix: "/integracoes/telefonia", title: "Telefonia" },
-  { prefix: "/integracoes", title: "Integrações" },
-  { prefix: "/aquisicao", title: "Aquisição e atribuição" },
-  { prefix: "/inteligencia-geografica", title: "Inteligência geográfica" },
-  { prefix: "/configuracoes", title: "Configurações" },
-  { prefix: "/perfil", title: "Minha conta" },
-  { prefix: "/contatos/", title: "Contact 360" },
-  { prefix: "/", title: "Início" },
-];
+const sections = [
+  { key: "deals", label: "Negócios", icon: "vendas", paths: ["/pipeline", "/oportunidades", "/contratos", "/onboarding", "/customer-success", "/farmer"] },
+  { key: "contacts", label: "Contatos", icon: "leads", paths: ["/leads", "/contas", "/leads/entrada"] },
+  { key: "activities", label: "Atividades", icon: "agenda", paths: ["/meu-dia", "/agenda", "/notificacoes"] },
+  { key: "inbox", label: "Atendimento", icon: "inbox", paths: ["/inbox", "/customer-service"] },
+  { key: "automation", label: "Automações", icon: "automacoes", paths: ["/automacoes", "/integracoes", "/copilot", "/governanca-ia"] },
+  { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/metricas-receita", "/metas", "/forecast", "/aquisicao", "/inteligencia-geografica", "/receita", "/pagamentos"] },
+  { key: "settings", label: "Configurações", icon: "configuracoes", paths: ["/configuracoes", "/administracao", "/auditoria", "/qualidade-dados", "/operacoes", "/privacidade"] },
+] as const;
+
+const labels: Record<string, string> = {
+  "/pipeline": "Pré-vendas", "/oportunidades": "Vendas", "/leads": "Todos os contatos",
+  "/contas": "Empresas", "/inbox": "Conversas", "/customer-service": "Tickets de atendimento",
+  "/automacoes": "Fluxos de automação", "/dashboard": "Visão geral", "/metricas-receita": "Receita e retenção",
+};
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
@@ -149,14 +124,16 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const pathname = usePathname();
   const [session, setSession] = useState<SessionView | null | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [collapsed, setCollapsed] = useState(false);
+  const menuRef = useRef<HTMLElement>(null);
+  const [theme, setTheme] = useState<"dark" | "light">("light");
   const publicRoute = publicRoutes.has(pathname);
 
   useEffect(() => {
-    const savedTheme = window.localStorage.getItem("politizai-crm-theme");
-    if (savedTheme === "light") {
-      document.documentElement.dataset.theme = "light";
-      const frame = window.requestAnimationFrame(() => setTheme("light"));
+    const savedTheme = window.localStorage.getItem("politizai-crm-theme-v2");
+    if (savedTheme === "dark") {
+      document.documentElement.dataset.theme = "dark";
+      const frame = window.requestAnimationFrame(() => setTheme("dark"));
       return () => window.cancelAnimationFrame(frame);
     }
   }, []);
@@ -164,7 +141,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   function toggleTheme() {
     const nextTheme = theme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = nextTheme;
-    window.localStorage.setItem("politizai-crm-theme", nextTheme);
+    window.localStorage.setItem("politizai-crm-theme-v2", nextTheme);
     setTheme(nextTheme);
   }
 
@@ -190,117 +167,92 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
 
   useEffect(() => {
     if (!menuOpen) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
+    menuRef.current?.querySelector<HTMLElement>("a, button")?.focus();
     document.body.style.overflow = "hidden";
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setMenuOpen(false);
+      if (event.key === "Tab") {
+        const links = [...(menuRef.current?.querySelectorAll<HTMLElement>("a, button") ?? [])].filter((element) => element.getClientRects().length > 0);
+        const first = links[0]; const last = links.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => {
       document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [menuOpen]);
 
   if (publicRoute) return children;
 
-  const currentTitle = routeTitles.find((route) => pathname.startsWith(route.prefix))?.title ?? "Politizai CRM";
   const roleKey = session?.user.role.key;
   const canCreateLead = roleKey ? operationalRoles.some((role) => role === roleKey) : false;
+  const allowedItems = navigationGroups.flatMap((group) => group.items).filter((item) => !item.roles || (roleKey && item.roles.includes(roleKey)));
+  const availableSections = sections.map((section) => ({ ...section, items: section.paths.flatMap((href) => allowedItems.filter((item) => item.href === href)) })).filter((section) => section.items.length > 0);
+  const activeSection = availableSections.find((section) => section.items.some((item) => isActive(pathname, item.href))) ?? availableSections.find((section) => section.key === (pathname.startsWith("/contatos/") ? "contacts" : "analytics"));
+  const closeMenus = (event: React.MouseEvent<HTMLElement>) => {
+    setMenuOpen(false);
+    event.currentTarget.closest("details")?.removeAttribute("open");
+  };
 
   return (
     <>
       <a className="skip-link" href="#conteudo-principal">Pular para o conteúdo</a>
-      <div className="app-shell">
-        <button
-          aria-label="Fechar menu de navegação"
-          className={cn("app-shell__backdrop", menuOpen && "is-visible")}
-          onClick={() => setMenuOpen(false)}
-          tabIndex={menuOpen ? 0 : -1}
-          type="button"
-        />
-        <aside className={cn("app-sidebar", menuOpen && "is-open")} id="menu-principal">
-          <div className="app-brand">
-            <span aria-hidden="true" className="app-brand__mark">
-              <Image alt="" priority src={politizaiMark} />
-            </span>
-            <span><strong>POLITIZAI</strong><small>CRM comercial</small></span>
-          </div>
-
-          {session === undefined ? (
-            <div aria-label="Carregando navegação" className="app-nav-skeleton" role="status">
-              {Array.from({ length: 8 }, (_, index) => <span key={index} />)}
-            </div>
-          ) : (
-            <nav aria-label="Navegação principal" className="app-nav">
-              {navigationGroups.map((group) => {
-                const items = group.items.filter((item) => !item.roles || (roleKey && item.roles.includes(roleKey)));
-                if (items.length === 0) return null;
-                return (
-                  <section key={group.label}>
-                    <p className="app-nav__label">{group.label}</p>
-                    <div className="app-nav__items">
-                      {items.map((item) => (
-                        <Link
-                          aria-current={isActive(pathname, item.href) ? "page" : undefined}
-                          className="app-nav__link"
-                          href={item.href}
-                          key={item.href}
-                          onClick={() => setMenuOpen(false)}
-                        >
-                          <span aria-hidden="true" className="app-nav__icon"><Icon name={item.icon} size={18} /></span>
-                          <span>{item.label}</span>
-                        </Link>
-                      ))}
-                    </div>
-                  </section>
-                );
-              })}
-            </nav>
-          )}
-
-          <Link aria-label="Abrir minha conta" className="app-sidebar__account" href="/perfil" onClick={() => setMenuOpen(false)}>
-            <span aria-hidden="true" className="app-avatar">{initials(session?.user.displayName ?? "Usuário")}</span>
-            <span><strong>{session?.user.displayName ?? "Sessão local"}</strong><small>{session?.user.role.name ?? "Carregando perfil…"}</small></span>
+      <div className={cn("app-shell", styles.shell, collapsed && styles.collapsed)}>
+        <header className={styles.topbar} onKeyDown={(event) => { if (event.key === "Escape" && event.target instanceof HTMLElement) { const details = event.target.closest("details"); details?.removeAttribute("open"); details?.querySelector("summary")?.focus(); } }}>
+          <Link aria-label="Politizai, início" className={styles.brand} href="/">
+            <Image alt="" height={25} priority src={politizaiMark} width={25} />
+            <strong>politizai<span>crm</span></strong>
           </Link>
+          <nav aria-label="Módulos do CRM" className={styles.topnav}>
+            {availableSections.filter((section) => section.key !== "settings").map((section) => (
+              <Link aria-current={activeSection?.key === section.key ? "true" : undefined} href={section.items[0]!.href} key={section.key} onClick={() => setMenuOpen(false)}>{section.label}</Link>
+            ))}
+            <details className={styles.more}>
+              <summary><Icon name="dashboard" size={13} /> Mais</summary>
+              <div className={styles.morePanel}>
+                {availableSections.map((section) => <section key={section.key}><h2>{section.label}</h2>{section.items.map((item) => <Link href={item.href} key={item.href} onClick={closeMenus}><Icon name={item.icon} size={15} />{labels[item.href] ?? item.label}</Link>)}</section>)}
+              </div>
+            </details>
+          </nav>
+          <div className={styles.actions}>
+            {session ? <GlobalSearch /> : null}
+            {canCreateLead ? <Link className={styles.newButton} href="/leads/entrada"><Icon name="mais" size={14} /><span>Novo</span></Link> : null}
+            <Link aria-label="Notificações" className={styles.iconButton} href="/notificacoes"><Icon name="notificacoes" size={17} /></Link>
+            <details className={styles.profile}>
+              <summary aria-label="Menu da conta"><span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span></summary>
+              <div className={styles.profilePanel}>
+                <strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small>
+                <Link href="/perfil" onClick={closeMenus}>Perfil e preferências</Link>
+                <button onClick={toggleTheme} type="button"><Icon name={theme === "dark" ? "sol" : "lua"} size={16} />Tema {theme === "dark" ? "claro" : "escuro"}</button>
+                <LogoutButton />
+              </div>
+            </details>
+          </div>
+        </header>
+        <button aria-label="Fechar navegação" className={cn(styles.backdrop, menuOpen && styles.visible)} onClick={() => setMenuOpen(false)} tabIndex={menuOpen ? 0 : -1} type="button" />
+        <aside className={cn(styles.sidebar, menuOpen && styles.open)} id="menu-principal" ref={menuRef}>
+          <div className={styles.sidebarHeading}><Icon name={activeSection?.icon ?? "dashboard"} size={15} /><span>{activeSection?.label ?? "Workspace"}</span><button aria-label={collapsed ? "Expandir menu" : "Recolher menu"} className={styles.collapseButton} onClick={() => setCollapsed(!collapsed)} type="button">{collapsed ? "›" : "‹"}</button></div>
+          <nav aria-label="Navegação da área" className={styles.contextNav}>
+            {session === undefined ? <div aria-label="Carregando navegação" className={styles.skeleton} role="status">{Array.from({ length: 5 }, (_, index) => <span key={index} />)}</div> : activeSection?.items.map((item, index) => (
+              <Link aria-current={isActive(pathname, item.href) ? "page" : undefined} className={styles.contextLink} href={item.href} key={item.href} onClick={() => setMenuOpen(false)} title={labels[item.href] ?? item.label}>
+                <span className={styles.navIcon} data-color={index % 5}><Icon name={item.icon} size={15} /></span><span>{labels[item.href] ?? item.label}</span>
+              </Link>
+            ))}
+          </nav>
+          <div className={styles.sidebarBottom}>
+            <Link href="/" onClick={() => setMenuOpen(false)} title="Meu workspace"><Icon name="meu-dia" size={16} /><span>Meu workspace</span></Link>
+            {availableSections.find((section) => section.key === "settings") ? <Link href={availableSections.find((section) => section.key === "settings")!.items[0]!.href} onClick={() => setMenuOpen(false)} title="Configurações"><Icon name="configuracoes" size={16} /><span>Configurações</span></Link> : null}
+            <Link className={styles.account} href="/perfil" onClick={() => setMenuOpen(false)} title="Minha conta"><span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span><span><strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small></span></Link>
+          </div>
         </aside>
-
-        <div className="app-shell__main">
-          <header className="app-topbar">
-            <div className="flex min-w-0 items-center gap-3">
-              <button
-                aria-controls="menu-principal"
-                aria-expanded={menuOpen}
-                aria-label="Abrir menu de navegação"
-                className="app-topbar__menu"
-                onClick={() => setMenuOpen(true)}
-                type="button"
-              >
-                <span aria-hidden="true">☰</span>
-              </button>
-              <div className="min-w-0"><p className="app-topbar__context">Politizai CRM</p><p className="app-topbar__title">{currentTitle}</p></div>
-            </div>
-            <div className="app-topbar__actions">
-              {session ? <GlobalSearch /> : null}
-              {canCreateLead ? (
-                <Link className="app-topbar__primary-action" href="/leads/entrada">
-                  <Icon name="mais" size={16} />
-                  <span>Novo lead</span>
-                </Link>
-              ) : null}
-              {session ? (
-                <Link aria-label="Abrir notificações" className="app-topbar__icon-action" href="/notificacoes">
-                  <Icon name="notificacoes" size={18} />
-                </Link>
-              ) : null}
-              <button aria-label={`Ativar tema ${theme === "dark" ? "claro" : "escuro"}`} className="app-topbar__theme" onClick={toggleTheme} title={`Ativar tema ${theme === "dark" ? "claro" : "escuro"}`} type="button">
-                <Icon name={theme === "dark" ? "sol" : "lua"} size={17} />
-              </button>
-              <LogoutButton />
-            </div>
-          </header>
-          <div className="app-content" id="conteudo-principal" tabIndex={-1}>{children}</div>
-        </div>
+        <div className={styles.mobileBar}><button aria-controls="menu-principal" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)} type="button"><Icon name="dashboard" size={17} />{activeSection?.label ?? "Navegação"}<span>⌄</span></button></div>
+        <div className={cn("app-content", styles.content)} id="conteudo-principal" tabIndex={-1}>{children}</div>
       </div>
     </>
   );

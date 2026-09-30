@@ -1,5 +1,7 @@
 "use client";
 
+import styles from "@/app/administracao/administration.module.css";
+
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -32,7 +34,7 @@ export function OperationsWorkspace({ initial, initialTab }: Readonly<{ initial:
   const overdueDsr = initial.privacy?.overdue ?? 0;
   const failedSecurity = initial.security?.events.find((item) => item.action === "auth.login.failed")?._count._all ?? 0;
 
-  return <div className="space-y-5">
+  return <div className={styles.workspace}>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard label="Alertas abertos" value={openAlerts} hint="Deduplicados por regra e workspace" />
       <StatCard label="Incidentes ativos" value={openIncidents} hint="Timeline append-only" />

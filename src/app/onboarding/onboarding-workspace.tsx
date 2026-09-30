@@ -6,6 +6,8 @@ import { FormEvent, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { usePostSalesActionDialog } from "@/app/onboarding/post-sales-action-dialog";
+import styles from "@/app/onboarding/post-sales.module.css";
 
 type HandoffView = Readonly<{
   id: string;
@@ -100,7 +102,8 @@ function formatDate(value: string, timeZone: string) {
 }
 
 export function OnboardingWorkspace({ screen }: Readonly<{ screen: OnboardingScreenView }>) {
-  const router = useRouter();
+  const actionDialog = usePostSalesActionDialog();
+ const router = useRouter();
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
 
@@ -132,7 +135,7 @@ export function OnboardingWorkspace({ screen }: Readonly<{ screen: OnboardingScr
     }), "Handoff criado em rascunho; nenhuma ativação foi inferida.");
   }
   async function actHandoff(handoff: HandoffView, action: string) {
-    const reason = window.prompt("Informe o motivo desta mudança (mínimo de 8 caracteres).");
+    const reason = (await actionDialog.prompt("Motivo da alteração", "", { minLength: 8 }));
     if (!reason || reason.trim().length < 8) return;
     await run(() => fetch(`/api/onboarding/handoffs/${handoff.id}`, {
       method: "PATCH",
@@ -146,7 +149,7 @@ export function OnboardingWorkspace({ screen }: Readonly<{ screen: OnboardingScr
     }), "Handoff atualizado com histórico e auditoria.");
   }
   async function actCase(item: CaseView, action: string, extra: Record<string, unknown> = {}) {
-    const reason = window.prompt("Informe o motivo desta ação (mínimo de 8 caracteres).");
+    const reason = (await actionDialog.prompt("Motivo da alteração", "", { minLength: 8 }));
     if (!reason || reason.trim().length < 8) return;
     await run(() => fetch(`/api/onboarding/cases/${item.id}`, {
       method: "PATCH",
@@ -161,7 +164,7 @@ export function OnboardingWorkspace({ screen }: Readonly<{ screen: OnboardingScr
     }), "Onboarding atualizado com evidência persistida.");
   }
   async function completeMilestone(item: CaseView, milestone: MilestoneView) {
-    const evidence = window.prompt("Registre a evidência observada para concluir este marco.");
+    const evidence = (await actionDialog.prompt("Registre a evidência observada para concluir este marco."));
     if (!evidence || evidence.trim().length < 3) return;
     await run(() => fetch(`/api/onboarding/cases/${item.id}`, {
       method: "PATCH",
@@ -185,12 +188,12 @@ export function OnboardingWorkspace({ screen }: Readonly<{ screen: OnboardingScr
     ["Atrasados", screen.metrics.overdue],
     ["Prontos para ativar", screen.metrics.readyToActivate],
   ] as const;
-  return <div className="space-y-5">
-    <section aria-label="Indicadores de onboarding" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-      {metrics.map(([label, value]) => <article className="surface-panel p-4" key={label}><p className="text-sm text-muted-foreground">{label}</p><p className="mt-1 text-2xl font-bold tabular-nums">{value}</p></article>)}
+  return <div className={styles.workspace}>
+    <section aria-label="Indicadores de onboarding" className={styles.metrics}>
+      {metrics.map(([label, value]) => <article className={styles.metric} key={label}><p className="text-sm text-muted-foreground">{label}</p><p className="mt-1 text-2xl font-bold tabular-nums">{value}</p></article>)}
     </section>
     {notice ? <p className={notice.kind === "error" ? "feedback feedback-error" : "feedback feedback-success"} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
-    {screen.permissions.manage ? <details className="surface-panel p-5">
+    {screen.permissions.manage ? <details className={styles.create}>
       <summary className="cursor-pointer font-semibold">Criar handoff comercial</summary>
       {screen.eligibleOpportunities.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">Nenhuma oportunidade ganha possui, simultaneamente, conta, contrato aceito e ausência de handoff.</p> : <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={create}>
         <label className="text-sm">Oportunidade<select className={inputClass} name="opportunityId" required><option value="">Selecione</option>{screen.eligibleOpportunities.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.accountName} · {item.contractNumber}</option>)}</select></label>
@@ -199,12 +202,13 @@ export function OnboardingWorkspace({ screen }: Readonly<{ screen: OnboardingScr
         <div className="md:col-span-2"><Button disabled={pending} type="submit">Criar handoff</Button></div>
       </form>}
     </details> : null}
-    <section className="surface-panel p-5"><h2 className="text-lg font-semibold">Passagens comerciais</h2><p className="mt-1 text-sm text-muted-foreground">Ganho, envio e aceite são fatos diferentes; cada avanço exige ação explícita.</p>
+    <section className={styles.section}><h2 className="text-lg font-semibold">Passagens comerciais</h2><p className="mt-1 text-sm text-muted-foreground">Organize o envio e o aceite de cada cliente pela equipe de implantação.</p>
       {screen.handoffs.length === 0 ? <div className="mt-4"><EmptyState title="Nenhum handoff registrado" description="O histórico permanecerá vazio até uma oportunidade elegível ser enviada ao onboarding." /></div> : <div className="mt-4 table-scroll"><table><thead><tr><th>Status</th><th>Origem</th><th>Motivo</th><th>Solicitado em</th><th>Ações</th></tr></thead><tbody>{screen.handoffs.map((handoff) => <tr key={handoff.id}><td><StatusBadge tone={handoff.status === "ACCEPTED" || handoff.status === "COMPLETED" ? "success" : handoff.status === "REJECTED" || handoff.status === "CANCELLED" ? "danger" : "info"}>{handoffLabels[handoff.status]}</StatusBadge></td><td className="font-mono text-xs">{handoff.opportunityId?.slice(0, 8) ?? "Legado"}</td><td>{handoff.reason}</td><td>{formatDate(handoff.requestedAt, screen.timeZone)}</td><td><div className="flex flex-wrap gap-2">{handoff.status === "DRAFT" && screen.permissions.manage ? <Button disabled={pending} onClick={() => actHandoff(handoff, "MARK_READY")} size="sm">Marcar pronto</Button> : null}{handoff.status === "READY" && screen.permissions.manage ? <Button disabled={pending} onClick={() => actHandoff(handoff, "SEND")} size="sm">Enviar</Button> : null}{["SENT", "REQUESTED"].includes(handoff.status) && screen.permissions.accept ? <><Button disabled={pending} onClick={() => actHandoff(handoff, "ACCEPT")} size="sm">Aceitar</Button><Button disabled={pending} onClick={() => actHandoff(handoff, "REJECT")} size="sm" variant="secondary">Rejeitar</Button></> : null}</div></td></tr>)}</tbody></table></div>}
     </section>
-    <section><h2 className="text-lg font-semibold">Onboardings ativos</h2><p className="mt-1 text-sm text-muted-foreground">Marcos obrigatórios precisam de evidência antes da ativação.</p>
-      {screen.cases.length === 0 ? <div className="mt-4"><EmptyState title="Nenhum onboarding iniciado" description="Aceitar um handoff elegível cria o caso e copia os marcos da versão publicada." /></div> : <div className="mt-4 grid gap-4 xl:grid-cols-2">{screen.cases.map((item) => <article className="surface-panel p-5" key={item.id}><header className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm text-muted-foreground">Próxima ação</p><h3 className="font-semibold">{item.nextActionDescription}</h3><p className="text-xs text-muted-foreground">Prazo {formatDate(item.targetAt, screen.timeZone)}</p></div><StatusBadge tone={item.status === "BLOCKED" ? "danger" : item.status === "ACTIVATED" || item.status === "COMPLETED" ? "success" : "info"}>{caseLabels[item.status]}</StatusBadge></header>{item.blockingComment ? <p className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-900">Bloqueio: {item.blockingComment}</p> : null}<ol className="mt-4 space-y-2">{item.milestones.map((milestone) => <li className="flex items-center justify-between gap-3 rounded-[var(--radius-control)] bg-[var(--surface-subtle)] p-3" key={milestone.id}><div><p className="text-sm font-medium">{milestone.nameSnapshot}{milestone.required ? " · obrigatório" : ""}</p><p className="text-xs text-muted-foreground">{milestone.status === "COMPLETED" ? `Evidência: ${milestone.evidence}` : `Prazo ${formatDate(milestone.dueAt, screen.timeZone)}`}</p></div>{milestone.status !== "COMPLETED" && screen.permissions.execute ? <Button disabled={pending} onClick={() => completeMilestone(item, milestone)} size="sm" variant="secondary">Concluir</Button> : <StatusBadge tone="success">Concluído</StatusBadge>}</li>)}</ol><div className="mt-4 flex flex-wrap gap-2">{item.status === "PENDING" && screen.permissions.execute ? <Button disabled={pending} onClick={() => actCase(item, "START")} size="sm">Iniciar</Button> : null}{item.status === "IN_PROGRESS" && screen.permissions.execute ? <><Button disabled={pending} onClick={() => actCase(item, "ACTIVATE")} size="sm">Registrar ativação</Button><Button disabled={pending} onClick={() => actCase(item, "BLOCK", { reasonCode: "OPERATIONAL_BLOCK" })} size="sm" variant="secondary">Bloquear</Button></> : null}{item.status === "BLOCKED" && screen.permissions.execute ? <Button disabled={pending} onClick={() => actCase(item, "UNBLOCK")} size="sm">Retomar</Button> : null}{item.status === "ACTIVATED" && screen.permissions.execute ? <Button disabled={pending} onClick={() => actCase(item, "COMPLETE")} size="sm">Concluir onboarding</Button> : null}</div></article>)}</div>}
+    <section><div className={styles.toolbar}><div><h2>Onboardings ativos <span>{screen.cases.length}</span></h2><p>Acompanhe os marcos e prepare cada cliente para a ativação.</p></div></div>
+      {screen.cases.length === 0 ? <div className="mt-4"><EmptyState title="Nenhum onboarding iniciado" description="Os clientes aparecerão aqui após o aceite da passagem comercial." /></div> : <div className={`${styles.cardGrid} mt-4`}>{screen.cases.map((item) => <article className={styles.card} key={item.id}><header className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm text-muted-foreground">Próxima ação</p><h3 className="font-semibold">{item.nextActionDescription}</h3><p className="text-xs text-muted-foreground">Prazo {formatDate(item.targetAt, screen.timeZone)}</p></div><StatusBadge tone={item.status === "BLOCKED" ? "danger" : item.status === "ACTIVATED" || item.status === "COMPLETED" ? "success" : "info"}>{caseLabels[item.status]}</StatusBadge></header>{item.blockingComment ? <p className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-900">Bloqueio: {item.blockingComment}</p> : null}<progress aria-label="Progresso da implantação" className={styles.progress} max={item.milestones.length || 1} value={item.milestones.filter((milestone) => milestone.status === "COMPLETED").length} /><div className={styles.progressLabel}><span>Progresso da implantação</span><span>{item.milestones.filter((milestone) => milestone.status === "COMPLETED").length}/{item.milestones.length} marcos</span></div><ol className={styles.milestones}>{item.milestones.map((milestone) => <li data-completed={milestone.status === "COMPLETED"} key={milestone.id}><div><p className="text-sm font-medium">{milestone.nameSnapshot}{milestone.required ? " · obrigatório" : ""}</p><p className="text-xs text-muted-foreground">{milestone.status === "COMPLETED" ? `Evidência: ${milestone.evidence}` : `Prazo ${formatDate(milestone.dueAt, screen.timeZone)}`}</p></div>{milestone.status !== "COMPLETED" && screen.permissions.execute ? <Button disabled={pending} onClick={() => completeMilestone(item, milestone)} size="sm" variant="secondary">Concluir</Button> : <StatusBadge tone={milestone.status === "COMPLETED" ? "success" : "neutral"}>{milestone.status === "COMPLETED" ? "Concluído" : milestone.status === "BLOCKED" ? "Bloqueado" : milestone.status === "IN_PROGRESS" ? "Em andamento" : milestone.status === "SKIPPED" ? "Dispensado" : "Pendente"}</StatusBadge>}</li>)}</ol><div className={styles.actions}>{item.status === "PENDING" && screen.permissions.execute ? <Button disabled={pending} onClick={() => actCase(item, "START")} size="sm">Iniciar</Button> : null}{item.status === "IN_PROGRESS" && screen.permissions.execute ? <><Button disabled={pending} onClick={() => actCase(item, "ACTIVATE")} size="sm">Registrar ativação</Button><Button disabled={pending} onClick={() => actCase(item, "BLOCK", { reasonCode: "OPERATIONAL_BLOCK" })} size="sm" variant="secondary">Bloquear</Button></> : null}{item.status === "BLOCKED" && screen.permissions.execute ? <Button disabled={pending} onClick={() => actCase(item, "UNBLOCK")} size="sm">Retomar</Button> : null}{item.status === "ACTIVATED" && screen.permissions.execute ? <Button disabled={pending} onClick={() => actCase(item, "COMPLETE")} size="sm">Concluir onboarding</Button> : null}</div></article>)}</div>}
     </section>
-    <p className="helper-text">Atualizado em {formatDate(screen.generatedAt, screen.timeZone)}. Atraso: {screen.formulas.overdue}. Pronto para ativar: {screen.formulas.readyToActivate}.</p>
-  </div>;
+    <details className={styles.definitions}><summary>Atualização e critérios dos indicadores</summary><p>Atualizado em {formatDate(screen.generatedAt, screen.timeZone)}. Atraso: {screen.formulas.overdue}. Pronto para ativar: {screen.formulas.readyToActivate}.</p></details>
+  {actionDialog.dialog}
+ </div>;
 }

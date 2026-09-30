@@ -4,6 +4,8 @@ import { FormEvent, useMemo, useState } from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import styles from "./lead-entry.module.css";
+import { Icon, type IconName } from "@/components/ui/icon";
 import { SectionHeader, Surface } from "@/components/ui/surface";
 import { parseCsv } from "@/modules/leads/domain/csv-parser";
 
@@ -419,16 +421,25 @@ function Simulator({ options }: { options: EntryOptions }) {
   );
 }
 
+const entryModes: ReadonlyArray<{ key: string; label: string; description: string; icon: IconName }> = [
+  { key: "manual", label: "Novo contato", description: "Cadastre um contato individual", icon: "leads" },
+  { key: "csv", label: "Importar planilha", description: "Traga seus contatos em lote", icon: "entrada" },
+  { key: "webhook", label: "Webhook local", description: "Valide uma entrada de integração", icon: "automacoes" },
+  { key: "simulator", label: "Simulador", description: "Teste os canais de aquisição", icon: "copilot" },
+];
+
 export function LeadEntryWorkspace({ options, initialWebhookEventId }: { options: EntryOptions; initialWebhookEventId: string }) {
+  const [mode, setMode] = useState("manual");
   return (
-    <div className="space-y-6">
-      <Surface className="p-4 text-sm" tone="accent">
-        <strong>Política ativa:</strong> {options.priorityBands[0]?.slaPolicy.name ?? "não configurada"}. Saudável até {options.priorityBands[0]?.slaPolicy.healthyMaxSeconds ?? "—"}s; atenção até {options.priorityBands[0]?.slaPolicy.attentionMaxSeconds ?? "—"}s; acima disso, crítico.
-      </Surface>
-      <ManualEntry options={options} />
-      <CsvImport options={options} />
-      <WebhookLocal initialEventId={initialWebhookEventId} options={options} />
-      <Simulator options={options} />
+    <div className={styles.workspace}>
+      <nav aria-label="Forma de cadastro" className={styles.navigation}>{entryModes.map((item) => <button aria-current={mode === item.key ? "page" : undefined} key={item.key} onClick={() => setMode(item.key)} type="button"><Icon name={item.icon} size={20} /><span>{item.label}<small>{item.description}</small></span></button>)}</nav>
+      <div className={styles.content}>
+        <p className={styles.policy}><Icon name="relogio" size={14} /><span><strong>{options.priorityBands[0]?.slaPolicy.name ?? "Política de atendimento não configurada"}</strong> · Saudável até {options.priorityBands[0]?.slaPolicy.healthyMaxSeconds ?? "—"}s · Atenção até {options.priorityBands[0]?.slaPolicy.attentionMaxSeconds ?? "—"}s</span></p>
+        <div hidden={mode !== "manual"}><ManualEntry options={options} /></div>
+        <div hidden={mode !== "csv"}><CsvImport options={options} /></div>
+        <div hidden={mode !== "webhook"}><WebhookLocal initialEventId={initialWebhookEventId} options={options} /></div>
+        <div hidden={mode !== "simulator"}><Simulator options={options} /></div>
+      </div>
     </div>
   );
 }

@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState, type KeyboardEvent } from "react";
 
+import styles from "./lead-detail.module.css";
+import { Icon } from "@/components/ui/icon";
+import { leadStageCodes, leadStageLabels } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import { Button } from "@/components/ui/button";
 import { PactoWorkspace } from "@/app/leads/[leadId]/historico/pacto-workspace";
 import { ScoringWorkspace } from "@/app/leads/[leadId]/historico/scoring-workspace";
@@ -77,12 +80,12 @@ const actorLabels: Readonly<Record<string, string>> = {
 };
 
 const tabs: readonly Readonly<{ key: TabKey; label: string }>[] = [
+  { key: "timeline", label: "Atividades" },
   { key: "summary", label: "Resumo" },
-  { key: "identity", label: "Identidade" },
+  { key: "identity", label: "Contato" },
   { key: "pacto", label: "PACTO" },
-  { key: "timeline", label: "Timeline" },
   { key: "meetings", label: "Reuniões" },
-  { key: "opportunity", label: "Oportunidade" },
+  { key: "opportunity", label: "Negócios" },
   { key: "intelligence", label: "Inteligência" },
 ];
 
@@ -251,7 +254,7 @@ export function OperationalHistoryWorkspace({
   const [pacto, setPacto] = useState(initialPacto);
   const [pipeline, setPipeline] = useState(initialPipeline);
   const [score, setScore] = useState(initialScore);
-  const [activeTab, setActiveTab] = useState<TabKey>("summary");
+  const [activeTab, setActiveTab] = useState<TabKey>("timeline");
   const [activityType, setActivityType] = useState("CALL_UNANSWERED");
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
@@ -268,6 +271,11 @@ export function OperationalHistoryWorkspace({
     const openLinkedPanel = () => {
       if (["#registrar-atividade", "#criar-tarefa", "#tarefas"].includes(window.location.hash)) {
         setActiveTab("timeline");
+        window.setTimeout(() => {
+          const target = document.getElementById(window.location.hash.slice(1));
+          if (target instanceof HTMLDetailsElement) target.open = true;
+          target?.scrollIntoView({ block: "start" });
+        }, 0);
       } else if (window.location.hash === "#oportunidade") {
         setActiveTab("opportunity");
       }
@@ -357,7 +365,9 @@ export function OperationalHistoryWorkspace({
     setActivityType(type);
     setActiveTab("timeline");
     window.setTimeout(() => {
-      document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const target = document.getElementById(targetId);
+      if (target instanceof HTMLDetailsElement) target.open = true;
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 0);
   }
 
@@ -539,12 +549,12 @@ export function OperationalHistoryWorkspace({
   }
 
   return (
-    <div className="space-y-6">
-      <section className="surface-panel surface-panel--accent p-5">
+    <div className={styles.workspace}>
+      <section className={styles.header}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-2xl font-semibold">{operations.lead.fullName}</h2>
+              <span className={styles.avatar} aria-hidden="true">{operations.lead.fullName.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("")}</span><h1>{operations.lead.fullName}</h1>
               {operations.lead.priorityCode ? (
                 <span className="priority-badge" data-priority={operations.lead.priorityCode}>
                   {operations.lead.priorityCode}
@@ -569,18 +579,6 @@ export function OperationalHistoryWorkspace({
           </div>
         </div>
 
-        <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div><dt className="text-xs text-muted-foreground">Telefone</dt><dd className="mt-1 font-medium">{operations.lead.normalizedPhone ?? "Não informado"}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">E-mail</dt><dd className="mt-1 break-all font-medium">{operations.lead.normalizedEmail ?? "Não informado"}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">Cidade / estado</dt><dd className="mt-1 font-medium">{[operations.lead.city, operations.lead.stateCode].filter(Boolean).join(" / ") || "Não informado"}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">Etapa</dt><dd className="mt-1 font-medium"><span className="stage-badge">{operations.lead.stageName}</span></dd></div>
-          <div><dt className="text-xs text-muted-foreground">Pontuação</dt><dd className="mt-1 font-medium">{operations.lead.score ?? "Não calculada"}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">Responsável</dt><dd className="mt-1 font-medium">{operations.lead.operationalOwner}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">Origem</dt><dd className="mt-1 font-medium">{operations.lead.sourceName}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">Tempo desde a entrada</dt><dd className="mt-1 font-medium">{formatElapsed(timeSinceEntry)}</dd></div>
-          <div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">Última atividade</dt><dd className="mt-1 font-medium">{operations.lead.lastActivity ? `${operations.lead.lastActivity.subject} · ${formatDate(operations.lead.lastActivity.occurredAt, operations.timeZone)}` : "Nenhuma atividade"}</dd></div>
-          <div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">Próxima atividade</dt><dd className="mt-1 font-medium">{operations.lead.nextAction ? `${operations.lead.nextAction.title} · ${formatDate(operations.lead.nextAction.dueAt, operations.timeZone)}` : "Nenhuma próxima ação ativa"}</dd></div>
-        </dl>
 
         {operations.lead.nextActionIssue ? (
           <p className="mt-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900" role="alert">
@@ -594,9 +592,9 @@ export function OperationalHistoryWorkspace({
         ) : null}
       </section>
 
-      <section aria-label="Ações rápidas" className="surface-panel p-4">
-        <h2 className="text-sm font-semibold">Ações rápidas</h2>
+      <details className={styles.quickActions}><summary><Icon name="mais" size={14} /> Ações do contato</summary>
         <div className="mt-3 flex flex-wrap gap-2">
+          <Button asChild size="sm" variant="secondary"><Link href={`/integracoes/telefonia?leadId=${operations.lead.id}`}>Abrir telefonia</Link></Button>
           <Button disabled={!operations.permissions.canWrite} onClick={() => openOperationalAction("CALL_UNANSWERED")} size="sm" type="button">Registrar ligação</Button>
           <Button disabled={!operations.permissions.canWrite} onClick={() => openOperationalAction("MESSAGE_SENT")} size="sm" type="button" variant="secondary">Registrar mensagem</Button>
           <Button disabled={!operations.permissions.canWrite} onClick={() => openOperationalAction("NOTE")} size="sm" type="button" variant="secondary">Adicionar nota</Button>
@@ -613,7 +611,7 @@ export function OperationalHistoryWorkspace({
         {!operations.permissions.canWrite ? (
           <p className="mt-3 text-sm text-muted-foreground">Seu perfil possui acesso somente para leitura neste lead.</p>
         ) : null}
-      </section>
+      </details>
 
       {notice ? (
         <div className={`flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm ${notice.kind === "error" ? "border-red-300 bg-red-50 text-red-900" : "border-emerald-300 bg-emerald-50 text-emerald-950"}`} role={notice.kind === "error" ? "alert" : "status"}>
@@ -622,7 +620,7 @@ export function OperationalHistoryWorkspace({
         </div>
       ) : null}
 
-      <div aria-label="Seções do cartão do lead" className="lead-tabs" role="tablist">
+      <div aria-label="Seções do cartão do lead" className={`${styles.tabs} lead-tabs`} role="tablist">
         {visibleTabs.map((tab, index) => (
           <button
             aria-controls={`panel-${tab.key}`}
@@ -641,6 +639,28 @@ export function OperationalHistoryWorkspace({
         ))}
       </div>
 
+      <ol className={styles.stages} aria-label="Etapas de pré-vendas">
+        {leadStageCodes.map((code, index) => <li key={code} aria-current={pipeline.currentStageCode === code ? "step" : undefined}><span>{index + 1}</span><strong>{code === pipeline.currentStageCode ? pipeline.currentStageName : pipeline.transitions.find((stage) => stage.code === code)?.name ?? leadStageLabels[code]}</strong></li>)}
+      </ol>
+      <div className={styles.layout}>
+        <aside className={styles.profile}>
+          <h2>Informações do contato</h2>
+        <dl className={styles.facts}>
+          <div><dt className="text-xs text-muted-foreground">Telefone</dt><dd className="mt-1 font-medium">{operations.lead.normalizedPhone ?? "Não informado"}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">E-mail</dt><dd className="mt-1 break-all font-medium">{operations.lead.normalizedEmail ?? "Não informado"}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Cidade / estado</dt><dd className="mt-1 font-medium">{[operations.lead.city, operations.lead.stateCode].filter(Boolean).join(" / ") || "Não informado"}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Etapa</dt><dd className="mt-1 font-medium"><span className="stage-badge">{operations.lead.stageName}</span></dd></div>
+          <div><dt className="text-xs text-muted-foreground">Pontuação</dt><dd className="mt-1 font-medium">{operations.lead.score ?? "Não calculada"}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Responsável</dt><dd className="mt-1 font-medium">{operations.lead.operationalOwner}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Origem</dt><dd className="mt-1 font-medium">{operations.lead.sourceName}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Tempo desde a entrada</dt><dd className="mt-1 font-medium">{formatElapsed(timeSinceEntry)}</dd></div>
+          <div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">Última atividade</dt><dd className="mt-1 font-medium">{operations.lead.lastActivity ? `${operations.lead.lastActivity.subject} · ${formatDate(operations.lead.lastActivity.occurredAt, operations.timeZone)}` : "Nenhuma atividade"}</dd></div>
+          <div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">Próxima atividade</dt><dd className="mt-1 font-medium">{operations.lead.nextAction ? `${operations.lead.nextAction.title} · ${formatDate(operations.lead.nextAction.dueAt, operations.timeZone)}` : "Nenhuma próxima ação ativa"}</dd></div>
+        </dl>
+
+          <Button onClick={() => setActiveTab("summary")} size="sm" type="button" variant="secondary">Editar informações</Button>
+        </aside>
+        <div className={styles.content}>
       {activeTab === "summary" ? (
         <div aria-labelledby="tab-summary" className="grid gap-6 xl:grid-cols-2" id="panel-summary" role="tabpanel">
           <section className="surface-panel surface-panel--soft p-5 xl:col-span-2" aria-label="Resumo de comunicações">
@@ -838,8 +858,7 @@ export function OperationalHistoryWorkspace({
         <div aria-labelledby="tab-timeline" className="grid gap-6 xl:grid-cols-[minmax(360px,0.8fr)_minmax(0,1.2fr)]" id="panel-timeline" role="tabpanel">
           <section className="space-y-6">
             {operations.permissions.canWrite ? (
-              <article className="surface-panel scroll-mt-4 p-5" id="registrar-atividade">
-                <h2 className="text-lg font-semibold">Registrar atividade</h2>
+              <details className={styles.actionForm} id="registrar-atividade"><summary><Icon name="mais" size={15} />Registrar atividade</summary>
                 <form className="mt-4 grid gap-4" onSubmit={submitActivity}>
                   <div className="grid gap-4 sm:grid-cols-3">
                     <label className="text-sm">Tipo<select className={inputClass} name="type" onChange={(event) => setActivityType(event.target.value)} value={activityType}>{activityOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -852,12 +871,11 @@ export function OperationalHistoryWorkspace({
                   <NextActionFields />
                   <Button disabled={pending} type="submit">{pending ? "Salvando…" : "Registrar atividade"}</Button>
                 </form>
-              </article>
+              </details>
             ) : <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">Sem permissão para registrar atividades.</p>}
 
             {operations.permissions.canManageTasks ? (
-              <article className="surface-panel scroll-mt-4 p-5" id="criar-tarefa">
-                <h2 className="text-lg font-semibold">Criar tarefa</h2>
+              <details className={styles.actionForm} id="criar-tarefa"><summary><Icon name="agenda" size={15} />Criar tarefa</summary>
                 <form className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={submitTask}>
                   <label className="text-sm sm:col-span-2">Título<input className={inputClass} name="title" required /></label>
                   <label className="text-sm sm:col-span-2">Descrição<textarea className={textareaClass} name="description" /></label>
@@ -866,7 +884,7 @@ export function OperationalHistoryWorkspace({
                   <label className="text-sm sm:col-span-2">Prazo<input className={inputClass} name="dueAt" required type="datetime-local" /></label>
                   <Button className="sm:col-span-2" disabled={pending} type="submit">{pending ? "Salvando…" : "Criar tarefa"}</Button>
                 </form>
-              </article>
+              </details>
             ) : null}
           </section>
 
@@ -905,6 +923,15 @@ export function OperationalHistoryWorkspace({
       ) : null}
       {activeTab === "intelligence" ? <LeadIntelligencePanel initialForbidden={intelligenceForbidden} initialScreen={initialIntelligence} leadId={operations.lead.id} onCommitted={refresh} /> : null}
       {activeTab === "audit" && operations.permissions.canReadAudit ? <EmptyIntegration description="Seu perfil pode consultar auditoria. A visualização detalhada e pesquisável será implementada na CRM-24; os logs já continuam sendo gravados pelas operações suportadas." title="Visualização de auditoria ainda não implementada" /> : null}
+        </div>
+        <aside className={styles.context}>
+          <section><h2>Empresa</h2>{operations.lead.account ? <Link href={`/contas/${operations.lead.account.id}`}><Icon name="vendas" size={17} /><strong>{operations.lead.account.name}</strong></Link> : <p>{operations.lead.organizationName ?? "Sem empresa vinculada"}</p>}</section>
+          <section><h2>Próxima atividade</h2>{operations.lead.nextAction ? <><strong>{operations.lead.nextAction.title}</strong><p>{formatDate(operations.lead.nextAction.dueAt, operations.timeZone)}</p><Button variant="secondary" size="sm" onClick={() => openOperationalAction("NOTE", "tarefas")}>Ver atividade</Button></> : <p>Nenhuma atividade agendada.</p>}</section>
+          <section><h2>Negócios</h2>{initialOpportunities.canRead ? <Button onClick={() => setActiveTab("opportunity")} size="sm" variant="secondary">Ver negócios do contato</Button> : <p>Acesso restrito ao seu perfil.</p>}</section>
+          <section><h2>Conversas</h2>{communicationsForbidden ? <p>Acesso restrito ao seu perfil.</p> : <><p>{initialCommunications?.conversationCount ?? 0} conversas vinculadas</p><Link href={initialCommunications?.recent[0] ? `/inbox?conversationId=${initialCommunications.recent[0].id}` : "/inbox"}>Abrir atendimento <Icon name="seta-direita" size={14} /></Link></>}</section>
+          <section><h2>Privacidade</h2><span className="status-badge" data-tone={initialPrivacy?.outcome === "ALLOW" ? "success" : initialPrivacy?.outcome === "DENY" ? "danger" : "warning"}>{privacyForbidden ? "Acesso restrito" : initialPrivacy?.outcome === "ALLOW" ? "Autorizado" : initialPrivacy?.outcome === "DENY" ? "Contato bloqueado" : "Revisão necessária"}</span></section>
+        </aside>
+      </div>
     </div>
   );
 }

@@ -2,12 +2,22 @@
 
 import { useState, type FormEvent } from "react";
 
+import { AccessibleDialog } from "@/components/ui/accessible-dialog";
+import { Icon, type IconName } from "@/components/ui/icon";
+import styles from "./settings-workspace.module.css";
+
 import { Button } from "@/components/ui/button";
 import type { CommercialSettingsScreen, SettingsPreview } from "@/modules/settings/domain/commercial-settings-contracts";
 
 type PendingChange = Readonly<{ command: Record<string, unknown>; preview: SettingsPreview }>;
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
-const sectionClass = "surface-panel p-5";
+const sectionClass = `surface-panel ${styles.panel}`;
+const settingSections: ReadonlyArray<{ key: string; label: string; detail: string; icon: IconName }> = [
+  { key: "operation", label: "Operação", detail: "Qualificação e distribuição", icon: "equipe" },
+  { key: "scoring", label: "Scoring e SLA", detail: "Prioridade e atendimento", icon: "tendencia" },
+  { key: "catalog", label: "Catálogo comercial", detail: "Produtos, ofertas e motivos", icon: "vendas" },
+  { key: "pipeline", label: "Pipelines e etapas", detail: "Jornada dos seus negócios", icon: "pipeline" },
+];
 
 function centsToReais(value: string) { return (Number(value) / 100).toFixed(2).replace(".", ","); }
 function reaisToCents(value: FormDataEntryValue | null) {
@@ -23,6 +33,7 @@ function apiError(body: unknown, fallback: string) {
 
 export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initialScreen: CommercialSettingsScreen }>) {
   const [screen, setScreen] = useState(initialScreen);
+  const [section, setSection] = useState("operation");
   const [pending, setPending] = useState<PendingChange | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -70,17 +81,19 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
   }
 
   const band = screen.slaBands[0];
-  return <div className="space-y-6">
+  return <div className={styles.workspace}>
+    <nav aria-label="Seções de configuração" className={styles.navigation}><p>Workspace</p>{settingSections.map((item) => <button aria-current={section === item.key ? "page" : undefined} key={item.key} onClick={() => setSection(item.key)} type="button"><Icon name={item.icon} size={17} /><span>{item.label}<small>{item.detail}</small></span></button>)}</nav>
+    <div className={styles.content}>
     {notice ? <div role="status" className="rounded-md border bg-muted px-4 py-3 text-sm">{notice}</div> : null}
-    {pending ? <section className="surface-panel surface-panel--accent p-5" aria-label="Confirmar alteração">
-      <h2 className="text-lg font-semibold">{pending.preview.title}</h2><p className="mt-2 text-sm text-muted-foreground">{pending.preview.summary}</p>
+    {pending ? <AccessibleDialog labelledBy="settings-confirm-title" busy={busy} onDismiss={() => setPending(null)}>
+      <h2 id="settings-confirm-title" className="text-lg font-semibold">{pending.preview.title}</h2><p className="mt-2 text-sm text-muted-foreground">{pending.preview.summary}</p>
       {pending.preview.warnings.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm">{pending.preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
       {pending.preview.impacts.length ? <dl className="mt-4 grid gap-2 sm:grid-cols-2">{pending.preview.impacts.map((impact) => <div className="rounded border p-3" key={impact.key}><dt className="text-xs text-muted-foreground">{impact.label}</dt><dd className="mt-1 text-xl font-semibold">{impact.count}</dd></div>)}</dl> : <p className="mt-3 text-sm text-muted-foreground">Nenhum registro histórico será reescrito.</p>}
       <div className="mt-5 flex gap-3"><Button disabled={busy} onClick={() => void confirm()}>{busy ? "Salvando…" : "Confirmar alteração"}</Button><Button disabled={busy} variant="secondary" onClick={() => setPending(null)}>Cancelar</Button></div>
-    </section> : null}
+    </AccessibleDialog> : null}
 
-    <div className="grid gap-6 xl:grid-cols-2">
-      <section className={sectionClass}><h2 className="text-xl font-semibold">Operação e qualificação</h2><p className="mt-1 text-sm text-muted-foreground">Revisão vigente {screen.workspace.revision}. Alterações criam nova versão.</p>
+    <div>
+      <section className={sectionClass} hidden={section !== "operation"}><h2 className="text-xl font-semibold">Operação e qualificação</h2><p className="mt-1 text-sm text-muted-foreground">Revisão vigente {screen.workspace.revision}. Alterações criam nova versão.</p>
         <form key={screen.workspace.revision} className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={operationalSubmit}>
           <label className="text-sm">Mínimo PACTO<select className={inputClass} defaultValue={screen.workspace.pactoMinimumInvestigatedDimensions} name="pactoMinimum">{[1,2,3,4,5].map((n) => <option key={n} value={n}>{n} dimensões</option>)}</select></label>
           <label className="text-sm">Duração de reunião<select className={inputClass} defaultValue={screen.workspace.defaultMeetingDurationMinutes} name="meetingDuration"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
@@ -92,7 +105,7 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
         </form>
       </section>
 
-      <section className={sectionClass}><h2 className="text-xl font-semibold">Scoring e SLA</h2>{screen.scoring && band ? <form key={screen.scoring.version} className="mt-4 grid gap-3 sm:grid-cols-3" onSubmit={scoringSubmit}>
+      <section className={sectionClass} hidden={section !== "scoring"}><h2 className="text-xl font-semibold">Scoring e SLA</h2>{screen.scoring && band ? <form key={screen.scoring.version} className="mt-4 grid gap-3 sm:grid-cols-3" onSubmit={scoringSubmit}>
         {[["pain","Dor",screen.scoring.painMaxPoints],["capacity","Capacidade",screen.scoring.capacityMaxPoints],["decision","Decisor",screen.scoring.decisionMaxPoints],["intent","Intenção",screen.scoring.intentMaxPoints],["context","Contexto",screen.scoring.contextMaxPoints]].map(([name,label,value]) => <label className="text-sm" key={String(name)}>{label}<input className={inputClass} defaultValue={Number(value)} min="0" name={String(name)} type="number" /></label>)}
         <label className="text-sm">Fator parcial (basis points)<input className={inputClass} defaultValue={screen.scoring.partialFactorBasisPoints} name="partial" type="number" /></label>
         {[["noCapacity","Penalidade sem capacidade",screen.scoring.noCapacityPenalty],["noPain","Penalidade sem dor",screen.scoring.noPainPenalty],["curiosity","Penalidade curiosidade",screen.scoring.curiosityPenalty],["invalidContact","Contato inválido",screen.scoring.invalidContactPenalty],["noDecision","Sem acesso ao decisor",screen.scoring.noDecisionAccessPenalty]].map(([name,label,value]) => <label className="text-sm" key={String(name)}>{label}<input className={inputClass} defaultValue={Number(value)} min="0" name={String(name)} type="number" /></label>)}
@@ -103,9 +116,9 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
       </form> : <p className="mt-4 text-sm text-muted-foreground">Nenhuma regra vigente. Execute o seed estrutural.</p>}</section>
     </div>
 
-    <CatalogEditor busy={busy} prepare={prepare} screen={screen} />
-    <PipelineEditor busy={busy} prepare={prepare} screen={screen} />
-  </div>;
+    <div hidden={section !== "catalog"}><CatalogEditor busy={busy} prepare={prepare} screen={screen} /></div>
+    <div hidden={section !== "pipeline"}><PipelineEditor busy={busy} prepare={prepare} screen={screen} /></div>
+  </div></div>;
 }
 
 function CatalogEditor({ busy, prepare, screen }: Readonly<{ busy: boolean; prepare: (command: Record<string, unknown>) => Promise<void>; screen: CommercialSettingsScreen }>) {

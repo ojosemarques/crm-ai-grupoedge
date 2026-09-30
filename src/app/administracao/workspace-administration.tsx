@@ -1,5 +1,7 @@
 "use client";
 
+import styles from "@/app/administracao/administration.module.css";
+
 import { FormEvent, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -16,7 +18,7 @@ type PendingChange = Readonly<{
   preview: WorkspaceAdministrationPreview;
 }>;
 
-const sectionClass = "surface-panel p-5";
+const sectionClass = styles.panel;
 const inputClass =
   "mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60";
 const textareaClass =
@@ -155,7 +157,7 @@ export function WorkspaceAdministration({
   ] as const;
 
   return (
-    <div className="space-y-6">
+    <div className={styles.workspace}>
       {notice ? (
         <div className="rounded-md border bg-muted px-4 py-3 text-sm" role="status">
           {notice}
@@ -207,6 +209,7 @@ export function WorkspaceAdministration({
         </section>
       ) : null}
 
+      <nav className={styles.sectionNav} aria-label="Seções administrativas"><a href="#admin-members">Usuários e permissões</a><a href="#admin-teams">Equipes e funções</a></nav>
       <section aria-label="Indicadores operacionais" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         {summaryItems.map(([label, value], index) => <StatCard key={label} label={label} tone={index === 2 || index === 5 ? "warning" : index === 1 ? "success" : "info"} value={value} />)}
       </section>
@@ -220,7 +223,7 @@ export function WorkspaceAdministration({
         <CreateMemberForm busy={busy} prepare={prepare} screen={screen} />
       ) : null}
 
-      <section className={sectionClass}>
+      <section id="admin-members" className={sectionClass}>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold">Usuários</h2>
@@ -343,8 +346,8 @@ function CreateMemberForm({
   }
 
   return (
-    <section aria-label="Criar usuário" className={sectionClass}>
-      <h2 className="text-xl font-semibold">Criar usuário local</h2>
+    <details aria-label="Criar usuário" className={styles.action}>
+      <summary>Novo usuário</summary>
       <p className="mt-1 text-sm text-muted-foreground">
         A senha inicial é recebida apenas para gerar o hash e nunca volta na resposta.
       </p>
@@ -391,7 +394,7 @@ function CreateMemberForm({
           <Button disabled={busy} type="submit">Revisar criação</Button>
         </div>
       </form>
-    </section>
+    </details>
   );
 }
 
@@ -695,7 +698,7 @@ function OperationalActions({
 
 function TeamOverview({ screen }: Readonly<{ screen: WorkspaceAdministrationScreen }>) {
   return (
-    <section className={sectionClass}>
+    <section id="admin-teams" className={sectionClass}>
       <h2 className="text-xl font-semibold">Equipes</h2>
       {screen.teams.length ? (
         <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -730,8 +733,8 @@ function TeamEditor({
   const [teamId, setTeamId] = useState("");
   const team = screen.teams.find(({ id }) => id === teamId) ?? null;
   return (
-    <section aria-label="Gerenciar equipes" className={sectionClass}>
-      <h2 className="text-xl font-semibold">Gerenciar equipes</h2>
+    <details aria-label="Gerenciar equipes" className={styles.action}>
+      <summary>Gerenciar equipes</summary>
       <label className="mt-4 block max-w-md text-sm">Editar equipe<select className={inputClass} onChange={(event) => setTeamId(event.target.value)} value={teamId}><option value="">Nova equipe</option>{screen.teams.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
       <form
         className="mt-4 grid gap-4 md:grid-cols-[1fr_2fr_auto]"
@@ -752,6 +755,6 @@ function TeamEditor({
         <label className="text-sm">Descrição<input className={inputClass} defaultValue={team?.description ?? ""} name="description" /></label>
         <div className="self-end"><Button disabled={busy} type="submit">Revisar {team ? "edição" : "criação"}</Button></div>
       </form>
-    </section>
+    </details>
   );
 }

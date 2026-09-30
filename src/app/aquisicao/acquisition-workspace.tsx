@@ -3,45 +3,50 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { Button } from "@/components/ui/button";
-import { DataTableShell, SectionHeader, StatCard, Surface } from "@/components/ui/surface";
+import { Icon } from "@/components/ui/icon";
+import { DataTableShell, SectionHeader, Surface } from "@/components/ui/surface";
 import type { getMarketingAttributionService } from "@/modules/marketing/application/marketing-attribution-service";
+import styles from "./acquisition-workspace.module.css";
 
 type Screen = Awaited<ReturnType<ReturnType<typeof getMarketingAttributionService>["getScreen"]>>;
 const date = (value: Date | string) => new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+const colors = ["#f29b5f", "#61b9e8", "#9366e4", "#ed87bc", "#58c3a0", "#e6c164"];
 
 export function AcquisitionWorkspace({ initial }: Readonly<{ initial: Screen }>) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const sources = initial.sourceBreakdown.map((source) => ({ id: source.sourceId ?? "unknown", name: source.sourceName, value: source._count._all }));
+  const sourceTotal = sources.reduce((total, source) => total + source.value, 0);
 
   async function run(modelKey: string) {
     setPending(true); setFeedback(null);
-    const response = await fetch("/api/marketing/attribution", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "RUN", data: { modelKey, periodStart: initial.period.start, periodEnd: initial.period.end, idempotencyKey: `ui-${modelKey}-${initial.period.start}-${initial.period.end}` } }) });
-    const body = await response.json(); setPending(false);
-    if (!response.ok) { setFeedback(body.error?.message ?? "Não foi possível calcular a atribuição."); return; }
-    setFeedback(`Modelo ${modelKey} calculado com rastreabilidade.`); router.refresh();
+    try {
+      const response = await fetch("/api/marketing/attribution", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "RUN", data: { modelKey, periodStart: initial.period.start, periodEnd: initial.period.end, idempotencyKey: `ui-${modelKey}-${initial.period.start}-${initial.period.end}` } }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message ?? "Não foi possível calcular a atribuição.");
+      setFeedback("Atribuição calculada. Os indicadores foram atualizados.");
+      router.refresh();
+    } catch (error) { setFeedback(error instanceof Error ? error.message : "Não foi possível calcular a atribuição."); }
+    finally { setPending(false); }
   }
 
-  return <div className="space-y-5">
-    <Surface tone="accent"><SectionHeader title="Fundação local e conservadora" description="Touchpoints em revisão jurídica não recebem crédito elegível. Ausência permanece explícita como não atribuída." /><Link className="mt-3 inline-flex text-sm font-semibold text-primary underline-offset-4 hover:underline" href="/aquisicao/midia">Abrir mídia paga e performance</Link></Surface>
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <StatCard label="Touchpoints" value={initial.summary.touchpoints} hint="Fatos persistidos no período" />
-      <StatCard label="Conversões" value={initial.summary.conversions} hint="Eventos canônicos ativos" />
-      <StatCard label="Cobertura" value={initial.summary.latestCoverageBps === null ? "Sem cálculo" : `${(initial.summary.latestCoverageBps / 100).toFixed(1)}%`} hint="Última execução versionada" />
-      <StatCard label="Revisões abertas" value={initial.summary.openReviews} hint="Evidência ou privacidade pendente" />
+  return <div className={styles.workspace}>
+    <div className={styles.toolbar}><div><Icon name="agenda" size={15} /><span>{date(initial.period.start)} — {date(initial.period.end)}</span></div><Button asChild size="sm" variant="secondary"><Link href="/aquisicao/midia">Mídia e performance <Icon name="seta-direita" size={14} /></Link></Button></div>
+    <section aria-label="Resumo de aquisição" className={styles.kpis}>{[
+      { label: "Pontos de contato", value: initial.summary.touchpoints.toLocaleString("pt-BR"), hint: "Interações registradas no período", icon: "leads" as const },
+      { label: "Conversões", value: initial.summary.conversions.toLocaleString("pt-BR"), hint: "Eventos de conversão ativos", icon: "tendencia" as const },
+      { label: "Cobertura de atribuição", value: initial.summary.latestCoverageBps === null ? "—" : `${(initial.summary.latestCoverageBps / 100).toFixed(1)}%`, hint: initial.summary.latestCoverageBps === null ? "Execute um modelo para calcular" : "Conversões com atribuição calculada", icon: "pipeline" as const },
+      { label: "Revisões abertas", value: initial.summary.openReviews.toLocaleString("pt-BR"), hint: "Pendências de evidência ou privacidade", icon: "alerta" as const },
+    ].map((metric) => <article className={styles.stat} key={metric.label}><div><span>{metric.label}</span><Icon name={metric.icon} size={16} /></div><strong>{metric.value}</strong><small>{metric.hint}</small></article>)}</section>
+
+    <div className={styles.primaryGrid}>
+      <Surface className={styles.panel}><SectionHeader title="De onde vêm os contatos" description="Participação de cada origem nas interações registradas." />{sourceTotal > 0 ? <div className={styles.sourceOverview}><div className={styles.donut} role="img" aria-label={`Distribuição de ${sourceTotal} pontos de contato por origem`}><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sources} dataKey="value" nameKey="name" innerRadius="68%" outerRadius="90%" paddingAngle={2} stroke="none" isAnimationActive={false}>{sources.map((source, index) => <Cell fill={colors[index % colors.length]!} key={source.id} />)}</Pie><Tooltip contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 9 }} /></PieChart></ResponsiveContainer><div className={styles.donutCenter}><span>Total</span><strong>{sourceTotal.toLocaleString("pt-BR")}</strong><small>interações</small></div></div><div className={styles.sourceList}>{sources.slice(0, 6).map((source, index) => <div className={styles.sourceRow} key={source.id}><div><i aria-hidden="true" data-palette={index % colors.length} /><span>{source.name}</span><strong>{(source.value / sourceTotal * 100).toFixed(1)}%</strong></div><progress aria-label={`${source.name}: ${source.value} interações`} max={sourceTotal} value={source.value} /><small>{source.value.toLocaleString("pt-BR")} interações</small></div>)}</div></div> : <div className={styles.chartEmpty}><Icon name="pipeline" size={28} /><strong>Suas origens aparecerão aqui</strong><span>As interações registradas no CRM preenchem a distribuição automaticamente.</span></div>}<details className={styles.dataDetails}><summary>Ver todas as origens</summary><DataTableShell className="mt-3"><table><thead><tr><th>Origem</th><th>Interações</th></tr></thead><tbody>{sources.map((source) => <tr key={source.id}><td>{source.name}</td><td>{source.value.toLocaleString("pt-BR")}</td></tr>)}</tbody></table></DataTableShell></details></Surface>
+      <Surface className={styles.panel}><SectionHeader title="Modelos de atribuição" description="Escolha como distribuir o crédito das conversões." /><div className={styles.modelList}>{initial.models.map((model, index) => <article className={styles.model} key={model.id}><span className={styles.modelIcon}><Icon name={index % 2 === 0 ? "pipeline" : "tendencia"} size={17} /></span><div><strong>{model.name}</strong><small>Versão {model.currentVersion} · {model.status}</small></div>{initial.permissions.canExecute ? <Button disabled={pending} onClick={() => run(model.key)} size="sm" variant="secondary">Calcular</Button> : null}</article>)}</div><p className={styles.footnote}>Conversões sem evidência elegível permanecem sem atribuição.</p>{feedback ? <p className={styles.feedback} role="status">{feedback}</p> : null}</Surface>
     </div>
 
-    <Surface>
-      <SectionHeader title="Modelos de atribuição" description={`Período ${date(initial.period.start)} a ${date(initial.period.end)} · ${initial.period.timeZone}`} />
-      <div className="mt-4 grid gap-3 md:grid-cols-3">{initial.models.map((model) => <article className="rounded-[var(--radius-panel)] border border-border bg-[var(--surface-subtle)] p-4" key={model.id}><strong>{model.name}</strong><p className="mt-1 text-sm text-muted-foreground">Versão {model.currentVersion} · {model.status}</p>{initial.permissions.canExecute ? <Button className="mt-3" disabled={pending} onClick={() => run(model.key)} size="sm">Calcular</Button> : null}</article>)}</div>
-      {feedback ? <p className="mt-3 text-sm" role="status">{feedback}</p> : null}
-    </Surface>
-
-    <div className="grid gap-5 xl:grid-cols-[1.2fr_.8fr]">
-      <Surface><SectionHeader title="Execuções recentes" description="Cada execução registra modelo, versão, período, cobertura e ausência." />{initial.runs.length ? <DataTableShell className="mt-4"><table><thead><tr><th>Status</th><th>Conversões</th><th>Cobertura</th><th>Não atribuídas</th><th>Início</th></tr></thead><tbody>{initial.runs.map((run) => <tr key={run.id}><td>{run.status}</td><td>{run.conversionCount}</td><td>{(run.coverageBps / 100).toFixed(1)}%</td><td>{run.unattributedCount}</td><td>{date(run.startedAt)}</td></tr>)}</tbody></table></DataTableShell> : <p className="mt-4 text-sm text-muted-foreground">Nenhuma execução no workspace.</p>}</Surface>
-      <Surface tone="subtle"><SectionHeader title="Qualidade e revisão" description="Pendências exigem evidência; não são corrigidas automaticamente." />{initial.issues.length ? <div className="mt-4 space-y-2">{initial.issues.slice(0, 12).map((issue) => <article className="rounded-[var(--radius-control)] border border-border bg-card p-3 text-sm" key={issue.id}><div className="flex justify-between gap-2"><strong>{issue.issueCode}</strong><span>{issue.status}</span></div><p className="mt-1 text-muted-foreground">{issue.entityType} · {issue.severity}</p></article>)}</div> : <p className="mt-4 text-sm text-muted-foreground">Nenhuma divergência detectada.</p>}</Surface>
-    </div>
-    <Surface><SectionHeader title="Volume por origem" description="Contagem factual de touchpoints; não representa causalidade nem custo de mídia." /><DataTableShell className="mt-4"><table><thead><tr><th>Origem</th><th>Touchpoints</th></tr></thead><tbody>{initial.sourceBreakdown.map((row) => <tr key={row.sourceId ?? "unknown"}><td>{row.sourceName}</td><td>{row._count._all}</td></tr>)}</tbody></table></DataTableShell></Surface>
+    <div className={styles.secondaryGrid}><Surface className={styles.panel}><SectionHeader title="Cálculos recentes" description="Acompanhe a cobertura e as conversões não atribuídas." />{initial.runs.length ? <DataTableShell className="mt-4"><table><thead><tr><th>Status</th><th>Conversões</th><th>Cobertura</th><th>Sem atribuição</th><th>Calculado em</th></tr></thead><tbody>{initial.runs.map((run) => <tr key={run.id}><td>{run.status}</td><td>{run.conversionCount}</td><td>{(run.coverageBps / 100).toFixed(1)}%</td><td>{run.unattributedCount}</td><td>{date(run.startedAt)}</td></tr>)}</tbody></table></DataTableShell> : <p className={styles.emptyNote}>Calcule um modelo para acompanhar os resultados.</p>}</Surface><Surface className={styles.panel}><SectionHeader title="Qualidade dos dados" description="Pendências que precisam da sua atenção." />{initial.issues.length ? <div className={styles.issueList}>{initial.issues.slice(0, 12).map((issue) => <article key={issue.id}><Icon name="alerta" size={16} /><div><strong>{issue.issueCode}</strong><small>{issue.entityType} · {issue.severity}</small></div><span>{issue.status}</span></article>)}</div> : <div className={styles.healthy}><Icon name="auditoria" size={22} /><strong>Nenhuma divergência detectada</strong><span>As revisões abertas aparecerão neste painel.</span></div>}</Surface></div>
   </div>;
 }

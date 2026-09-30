@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import styles from "./copilot.module.css";
+import { Icon } from "@/components/ui/icon";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { SectionHeader, Surface } from "@/components/ui/surface";
@@ -135,7 +137,9 @@ export function CopilotView({ shell }: Readonly<{ shell: ManagerAnalyticsShell }
   const activeFilterCount = Object.values(shell.query.filters).reduce((total, values) => total + values.length, 0);
 
   return (
-    <div className="space-y-6">
+    <div className={styles.workspace}>
+      <header className={styles.intro}><span><Icon name="copilot" size={25} /></span><div><h2>O que vamos analisar hoje?</h2><p>Explore os resultados e encontre o próximo passo para sua equipe.</p></div></header>
+      <details className={styles.filters} open={activeFilterCount > 0}><summary><Icon name="filtro" size={14} />Período e filtros<span>{shell.query.fromDate} → {shell.query.toDate} · {activeFilterCount} filtros</span></summary>
       <Surface className="p-5" aria-labelledby="copilot-filters" tone="subtle">
         <SectionHeader action={<StatusBadge tone={activeFilterCount > 0 ? "info" : "neutral"}>{activeFilterCount} filtros dimensionais</StatusBadge>} description={`Intervalo civil em ${shell.timeZone}; início incluso e fim exclusivo.`} eyebrow="Universo da análise" title="Período e filtros" titleId="copilot-filters" />
         <nav className="mt-4 flex flex-wrap gap-2" aria-label="Atalhos de período">
@@ -176,10 +180,10 @@ export function CopilotView({ shell }: Readonly<{ shell: ManagerAnalyticsShell }
             </div>
           </details>
         </form>
-      </Surface>
+      </Surface></details>
 
-      <section aria-labelledby="manager-questions">
-        <SectionHeader description="As respostas usam a mesma camada do dashboard e nunca executam alterações automaticamente." eyebrow="Atalhos confiáveis" title="Perguntas gerenciais" titleId="manager-questions" />
+      <section aria-labelledby="manager-questions" className={styles.questions}>
+        <SectionHeader description="Selecione uma pergunta para analisar os dados do período." eyebrow="Seu copiloto de negócios" title="Comece por uma pergunta" titleId="manager-questions" />
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {shell.questions.map((question) => (
             <button
@@ -189,7 +193,7 @@ export function CopilotView({ shell }: Readonly<{ shell: ManagerAnalyticsShell }
               onClick={() => void runQuestion(question.id)}
               type="button"
             >
-              {runningQuestionId === question.id ? "Calculando com registros persistidos…" : question.label}
+              {runningQuestionId === question.id ? "Analisando…" : question.label}
             </button>
           ))}
         </div>

@@ -13,6 +13,7 @@ import {
 
 import styles from "@/app/meu-dia/meu-dia.module.css";
 import { Button } from "@/components/ui/button";
+import { Icon, type IconName } from "@/components/ui/icon";
 import {
   getSlaBand,
   sdrQueueBuckets,
@@ -27,12 +28,13 @@ const AUTO_REFRESH_SECONDS = 30;
 const summaryBuckets: readonly Readonly<{
   key: SdrQueueBucket;
   label: string;
+  icon: IconName;
 }>[] = [
-  { key: "NEW", label: "Novos" },
-  { key: "RESPONDED", label: "Responderam" },
-  { key: "OVERDUE", label: "Atrasados" },
-  { key: "MEETINGS_TODAY", label: "Reuniões hoje" },
-  { key: "MISSING_NEXT_ACTION", label: "Sem próxima ação" },
+  { key: "NEW", label: "Novos", icon: "leads" },
+  { key: "RESPONDED", label: "Responderam", icon: "inbox" },
+  { key: "OVERDUE", label: "Atrasados", icon: "relogio" },
+  { key: "MEETINGS_TODAY", label: "Reuniões hoje", icon: "agenda" },
+  { key: "MISSING_NEXT_ACTION", label: "Sem próxima ação", icon: "alerta" },
 ];
 
 function formatDate(value: string, timeZone: string): string {
@@ -177,6 +179,7 @@ function FocusLead({
       <div className={styles.focusBody}>
         <div className={styles.focusIdentity}>
           <h2 id="focus-title">
+            <span aria-hidden="true" className={styles.leadAvatar}>{item.fullName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("")}</span>
             <Link href={`/leads/${item.id}/historico`}>{item.fullName}</Link>
           </h2>
           <p className={styles.focusMeta}>
@@ -259,7 +262,7 @@ function QueueRow({
           className={styles.identityLink}
           href={`/leads/${item.id}/historico`}
         >
-          {item.fullName}
+          <span aria-hidden="true" className={styles.rowAvatar}>{item.fullName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("")}</span>{item.fullName}
         </Link>
         <p className={styles.rowMeta}>
           {item.jobTitle ?? "Atuação não informada"} · {item.stageName}
@@ -652,24 +655,26 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         </div>
       </header>
 
-      <FocusLead item={focusLead} nowMs={nowMs} screen={screen} />
-
       <nav aria-label="Resumo operacional" className={styles.summaryStrip}>
         {summaryBuckets.map((summary) => {
           const section = sectionsByKey.get(summary.key);
           return (
             <button
+              aria-pressed={summary.key === activeSection.key}
               className={styles.summaryButton}
               key={summary.key}
               onClick={() => selectSection(summary.key)}
               type="button"
             >
-              <span>{summary.label}</span>
+              <span className={styles.summaryLabel}>{summary.label}<Icon name={summary.icon} size={17} /></span>
               <strong>{section?.total ?? 0}</strong>
+              <small>Abrir fila <Icon name="seta-direita" size={12} /></small>
             </button>
           );
         })}
       </nav>
+
+      <FocusLead item={focusLead} nowMs={nowMs} screen={screen} />
 
       <div className={styles.contentGrid}>
         <section aria-label="Navegador de filas" className={styles.queuePanel}>

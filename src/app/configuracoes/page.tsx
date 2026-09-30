@@ -19,7 +19,7 @@ export default async function SettingsPage() {
   }
   return (
     <main className="page-canvas">
-      <PageHeader description="Catálogos e políticas do workspace, com impacto prévio, histórico e auditoria." eyebrow="Administração" meta={context.displayName} title="Configurações comerciais" />
+      <PageHeader description="Personalize sua operação, seus produtos e a jornada comercial." eyebrow="Administração" meta={context.displayName} title="Configurações" />
       <CommercialSettingsWorkspace initialScreen={screen} />
     </main>
   );

@@ -106,7 +106,7 @@ export function RevenueMetricsWorkspace({ screen, section, drilldown }: Readonly
   const query = persistedQuery(screen);
   const filterCount = Object.values(screen.query.filters).reduce((total, values) => total + values.length, 0);
   return <div className={`analytics-canvas ${styles.workspace}`}>
-    <section className={styles.hero}><div><span>Indicadores auditáveis · {screen.scope === "WORKSPACE" ? "Visão geral" : screen.scope === "TEAM" ? "Equipe" : "Meus registros"}</span><h1>Resultado, recorrência e previsão.</h1><p>Indicadores comerciais e financeiros com origem e estado explícitos.</p></div><div className={styles.heroMeta}><span>Período selecionado</span><strong>{screen.query.period.fromDate} a {screen.query.period.toDate}</strong><small>{filterCount} filtro(s) dimensional(is) · atualizado em {new Date(screen.generatedAt).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</small></div></section>
+    <section className={styles.hero}><div><span>Indicadores · {screen.scope === "WORKSPACE" ? "Visão geral" : screen.scope === "TEAM" ? "Equipe" : "Meus registros"}</span><h1>Receita e retenção</h1><p>Acompanhe vendas, recorrência e previsão de receita.</p></div><div className={styles.heroMeta}><span>Atualizado</span><strong>{new Date(screen.generatedAt).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</strong>{filterCount > 0 ? <small>{filterCount} filtros aplicados</small> : null}</div></section>
     <Surface className={styles.filterPanel} tone="subtle">
       <form className={styles.filterForm} method="get">
         <label className="grid gap-1 text-sm font-medium">Período<select name="preset" defaultValue={screen.query.preset}><option value="TODAY">Hoje</option><option value="YESTERDAY">Ontem</option><option value="WEEK">Semana</option><option value="MONTH">Mês</option><option value="CUSTOM">Personalizado</option></select></label>
@@ -114,20 +114,22 @@ export function RevenueMetricsWorkspace({ screen, section, drilldown }: Readonly
         <label className="grid gap-1 text-sm font-medium">Data final<input name="toDate" type="date" defaultValue={screen.query.period.toDate} /></label>
         <input name="section" type="hidden" value={section === "drilldown" ? "summary" : section} />
         {Object.entries(filterNames).flatMap(([filter, parameter]) => screen.query.filters[filter as keyof typeof filterNames].map((value) => <input key={`${parameter}:${value}`} name={parameter} type="hidden" value={value} />))}
-        <Button type="submit">Aplicar período</Button>
+        <Button size="sm" type="submit">Aplicar período</Button>
+        <details className={styles.periodDetails}><summary>Comparação e atualização</summary><div><p>Atual: {screen.query.period.fromDate} a {screen.query.period.toDate}</p><p>Anterior: {screen.query.comparisonPeriod.fromDate} a {screen.query.comparisonPeriod.toDate}</p><p>Corte: {new Date(screen.query.asOf).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</p></div></details>
       </form>
-      <p className="mt-3 text-xs text-muted-foreground">Atual: {screen.query.period.fromDate} a {screen.query.period.toDate} · comparação: {screen.query.comparisonPeriod.fromDate} a {screen.query.comparisonPeriod.toDate} · corte {new Date(screen.query.asOf).toLocaleString("pt-BR", { timeZone: screen.query.period.timeZone })}</p>
     </Surface>
     <nav aria-label="Seções das métricas" className={styles.tabs}>{sections.map((item) => <Link aria-current={section === item.id ? "page" : undefined} href={sectionHref(query, item.id)} key={item.id}>{item.label}</Link>)}</nav>
     {!screen.hasData && section !== "catalog" && section !== "drilldown" ? <div className={styles.noData} role="status">Ainda não há fatos financeiros neste recorte. Os indicadores exibem seus estados reais, sem séries fictícias.</div> : null}
     {section === "summary" ? <>
-      <MetricCards screen={screen} ids={["sales.bookings", "revenue.closing_mrr", "cash.received", "sales.win_rate", "revenue.net_new_mrr", "retention.grr", "retention.nrr", "forecast.commit"]} />
-      <div className={styles.chartGrid}><SeriesPanel description="Valor contratado aceito em cada bucket." metricId="sales.bookings" screen={screen} title="Bookings" variant="bar" /><SeriesPanel description="Pagamentos confirmados líquidos de reversões." metricId="cash.received" screen={screen} title="Caixa recebido" /></div>
+      <MetricCards screen={screen} ids={["sales.bookings", "revenue.closing_mrr", "cash.received", "sales.win_rate"]} />
+      <div className={styles.chartGrid}><SeriesPanel description="Valor contratado em cada período." metricId="sales.bookings" screen={screen} title="Bookings" variant="bar" /><SeriesPanel description="Pagamentos confirmados líquidos de reversões." metricId="cash.received" screen={screen} title="Caixa recebido" /></div>
+      <MetricCards screen={screen} ids={["revenue.net_new_mrr", "retention.grr", "retention.nrr", "forecast.commit"]} />
       <BridgePanel screen={screen} />
     </> : null}
     {section === "mrr" ? <>
-      <MetricCards screen={screen} ids={["revenue.opening_mrr", "revenue.new_mrr", "revenue.expansion_mrr", "revenue.reactivation_mrr", "revenue.contraction_mrr", "revenue.churned_mrr", "revenue.net_new_mrr", "revenue.closing_mrr", "revenue.arr"]} />
-      <div className={styles.chartGrid}><SeriesPanel description="Saldo recorrente no fechamento de cada bucket." metricId="revenue.closing_mrr" screen={screen} title="MRR final" /><SeriesPanel description="Movimento líquido de recorrência em cada bucket." metricId="revenue.net_new_mrr" screen={screen} title="Net New MRR" variant="bar" /></div>
+      <MetricCards screen={screen} ids={["revenue.opening_mrr", "revenue.closing_mrr", "revenue.net_new_mrr", "revenue.arr"]} />
+      <div className={styles.chartGrid}><SeriesPanel description="Saldo recorrente no fechamento de cada período." metricId="revenue.closing_mrr" screen={screen} title="MRR final" /><SeriesPanel description="Variação da receita recorrente em cada período." metricId="revenue.net_new_mrr" screen={screen} title="Net New MRR" variant="bar" /></div>
+      <MetricCards screen={screen} ids={["revenue.new_mrr", "revenue.expansion_mrr", "revenue.reactivation_mrr", "revenue.contraction_mrr", "revenue.churned_mrr"]} />
       <BridgePanel screen={screen} />
     </> : null}
     {section === "retention" ? <><MetricCards screen={screen} ids={["retention.grr", "retention.nrr", "retention.logo_churn", "retention.renewal_rate"]} /><Surface className="p-5"><SectionHeader title="Coortes de ativação" description="A coorte do mês em curso aparece como parcial/censurada." />{screen.cohorts.length ? <DataTableShell className="mt-4"><table><thead><tr><th>Coorte</th><th>Assinaturas</th><th>MRR inicial</th><th>MRR no corte</th><th>Retenção</th><th>Estado</th></tr></thead><tbody>{screen.cohorts.map((row) => <tr key={row.cohort}><td><Link className="link" href={sectionHref(query, "drilldown", row.drilldownId)}>{row.cohort}</Link></td><td>{row.subscriptionCount}</td><td>{formatMetric("revenue.opening_mrr", row.initialMrrCents)}</td><td>{formatMetric("revenue.closing_mrr", row.currentMrrCents)}</td><td>{row.retentionBasisPoints === null ? "—" : `${row.retentionBasisPoints / 100}%`}</td><td><State state={row.state} /></td></tr>)}</tbody></table></DataTableShell> : <EmptyState compact title="Sem coortes" description="Não há assinaturas com ativação no universo autorizado." />}</Surface></> : null}

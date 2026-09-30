@@ -32,12 +32,7 @@ export default async function PipelinePage({ searchParams }: Readonly<{ searchPa
 
   return (
     <main className="page-canvas">
-      <PageHeader
-        description="Etapas operacionais com regras de transição, PACTO, próxima ação e histórico verificadas no servidor."
-        eyebrow="Processo comercial"
-        meta={`Dados exibidos em ${screen.timeZone}`}
-        title="Pipeline de pré-vendas"
-      />
+      <PageHeader description="Acompanhe os contatos e avance cada conversa até a próxima etapa." eyebrow="Negócios" title="Pré-vendas" />
       <PreSalesPipelineWorkspace initialView={first(params.view) === "list" ? "list" : "board"} screen={screen} />
     </main>
   );

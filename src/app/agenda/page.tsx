@@ -28,10 +28,10 @@ export default async function AgendaPage({ searchParams }: Readonly<{ searchPara
   return (
     <main className="page-canvas">
       <PageHeader
-        description="Reuniões persistidas, conflitos controlados e passagem de contexto ao closer."
+        description="Suas reuniões e atividades, em um só calendário."
         eyebrow="Agenda do closer"
         meta={`Dados exibidos em ${screen.timeZone}`}
-        title="Agenda interna"
+        title="Agenda"
       />
       <AgendaWorkspace initialScreen={screen} />
     </main>

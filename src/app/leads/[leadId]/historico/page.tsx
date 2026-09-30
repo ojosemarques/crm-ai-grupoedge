@@ -2,8 +2,6 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
 import { OperationalHistoryWorkspace } from "@/app/leads/[leadId]/historico/operational-history-workspace";
-import { PageHeader } from "@/components/layout/page-header";
-import { Button } from "@/components/ui/button";
 import { getOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
 import { requirePageAuthentication } from "@/modules/auth/http/authentication-guards";
 import { getPactoQualificationService } from "@/modules/qualification/application/pacto-qualification-service";
@@ -96,14 +94,7 @@ export default async function LeadHistoryPage({
 
   return (
     <main className="page-canvas">
-      <PageHeader
-        actions={<Button asChild><Link href={`/integracoes/telefonia?leadId=${leadId}`}>Abrir telefonia local</Link></Button>}
-        back={{ href: "/leads", label: "Voltar à lista de leads" }}
-        description="Contexto centralizado, ações operacionais, tarefas e timeline imutável."
-        eyebrow="Lead 360"
-        meta={`Dados exibidos em ${operations.timeZone}`}
-        title="Cartão 360 do lead"
-      />
+      <nav aria-label="Navegação do contato" className="flex items-center gap-2 text-xs text-muted-foreground"><Link href="/pipeline">Negócios</Link><span aria-hidden="true">›</span><Link href="/leads">Contatos</Link><span aria-hidden="true">›</span><span>{operations.lead.fullName}</span></nav>
 
       <OperationalHistoryWorkspace
         initialOperations={operations}

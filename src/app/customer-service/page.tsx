@@ -13,5 +13,5 @@ export default async function CustomerServicePage({ searchParams }: Readonly<{ s
   try {
     const service = getCustomerServiceService(); [screen, detail] = await Promise.all([service.screen(context, query), requestId ? service.detail(context, requestId) : Promise.resolve(null)]);
   } catch (error) { if (error instanceof AccessDeniedError) redirect("/acesso-negado"); throw error; }
-  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Pós-venda" title="Atendimento ao cliente" description="Solicitações ligadas ao ciclo de receita, SLA reproduzível e satisfação com ação clara." meta={`${context.displayName} · ${screen.timeZone}`} /><CustomerServiceWorkspace detail={JSON.parse(JSON.stringify(detail)) as CustomerServiceDetailView | null} screen={JSON.parse(JSON.stringify(screen)) as CustomerServiceScreenView} /></main>;
+  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Pós-venda" title="Atendimento ao cliente" description="Acompanhe solicitações, prazos de atendimento e a satisfação dos clientes." meta={`${context.displayName} · ${screen.timeZone}`} /><CustomerServiceWorkspace detail={JSON.parse(JSON.stringify(detail)) as CustomerServiceDetailView | null} screen={JSON.parse(JSON.stringify(screen)) as CustomerServiceScreenView} /></main>;
 }

@@ -30,8 +30,8 @@ export default async function AutomationsPage({ searchParams }: Readonly<{ searc
   const [overview, notifications] = data;
   return (
     <main className="page-canvas page-canvas-wide">
-      <PageHeader description="Regras predefinidas, execuções persistidas, erros visíveis e mensagens sempre identificadas como simulação." eyebrow="Operação local" meta={context.displayName} title="Automações locais" />
-      <AutomationsWorkspace initialOverview={overview} notifications={notifications} />
+      <PageHeader description="Acompanhe os fluxos e as ações automáticas da sua operação." eyebrow="Workspace" meta={context.displayName} title="Automações" />
+      <AutomationsWorkspace initialOverview={overview} notifications={notifications} initialTab={params.tab === "history" || ["runId", "status", "ruleId", "leadId", "from", "to"].some((key) => params[key]) ? "history" : "flows"} />
     </main>
   );
 }

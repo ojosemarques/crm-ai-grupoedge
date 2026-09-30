@@ -19,5 +19,5 @@ export default async function DataQualityPage({ searchParams }: Readonly<{ searc
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     throw error;
   }
-  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Revenue OS" title="Qualidade de dados" description="Ocorrências determinísticas, reconciliações e merge humano reversível — sem IA decisora ou correção silenciosa." meta={`Atualizado em ${new Intl.DateTimeFormat("pt-BR", { timeZone: screen.timeZone, dateStyle: "short", timeStyle: "short" }).format(new Date(screen.generatedAt))}`} /><DataQualityWorkspace initial={screen} /></main>;
+  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Revenue OS" title="Qualidade de dados" description="Encontre duplicidades, revise divergências e mantenha seus registros organizados." meta={`Atualizado em ${new Intl.DateTimeFormat("pt-BR", { timeZone: screen.timeZone, dateStyle: "short", timeStyle: "short" }).format(new Date(screen.generatedAt))}`} /><DataQualityWorkspace initial={screen} /></main>;
 }

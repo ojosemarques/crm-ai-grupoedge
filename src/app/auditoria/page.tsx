@@ -22,7 +22,7 @@ export default async function AuditPage({ searchParams }: Readonly<{ searchParam
 
   return (
     <main className="page-canvas page-canvas-wide">
-      <PageHeader description="Alterações append-only, evidências concretas e violações detectadas por regras determinísticas." eyebrow="Governança" meta={context.displayName} title="Auditoria e saúde do processo" />
+      <PageHeader description="Consulte o histórico de alterações e acompanhe a saúde dos processos." eyebrow="Governança" meta={context.displayName} title="Auditoria e saúde do processo" />
       <AuditWorkspace initialScreen={screen} />
     </main>
   );

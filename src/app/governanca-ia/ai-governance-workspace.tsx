@@ -1,5 +1,7 @@
 "use client";
 
+import styles from "@/app/administracao/administration.module.css";
+
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -60,7 +62,7 @@ export function AIGovernanceWorkspace({ initialScreen, roleKey }: Readonly<{ ini
   }
 
   return (
-    <div className="space-y-6">
+    <div className={styles.workspace}>
       <section className="surface-panel p-5" aria-label="Estado dos provedores">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><h2 className="text-lg font-semibold">Execução local governada</h2><p className="text-sm text-muted-foreground">Mock determinístico ativo. Provedor externo desabilitado; nenhuma credencial ou egress configurado.</p></div>
@@ -70,7 +72,7 @@ export function AIGovernanceWorkspace({ initialScreen, roleKey }: Readonly<{ ini
 
       {feedback ? <div aria-live="polite" className={feedback.tone === "success" ? "rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900" : "rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900"} role="status">{feedback.message}</div> : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Observabilidade de IA">
+      <section className={styles.metrics} aria-label="Observabilidade de IA">
         {[
           ["Execuções (30 dias)", screen.observability.totalExecutions],
           ["Sucesso", screen.observability.successRateBps === null ? "Sem base" : `${(screen.observability.successRateBps / 100).toFixed(1)}%`],
@@ -89,9 +91,9 @@ export function AIGovernanceWorkspace({ initialScreen, roleKey }: Readonly<{ ini
 
       {screen.observability.alerts.length > 0 ? <section className="surface-panel border-amber-200 bg-amber-50 p-4"><h2 className="font-semibold text-amber-950">Requer atenção</h2><ul className="mt-2 list-disc pl-5 text-sm text-amber-900">{screen.observability.alerts.map((alert) => <li key={alert}>{alert}</li>)}</ul></section> : null}
 
-      <section className="surface-panel overflow-hidden">
-        <div className="border-b border-border px-5 py-4"><h2 className="text-lg font-semibold">Registro canônico de casos de uso</h2><p className="text-sm text-muted-foreground">Conteúdo publicado é imutável; mudanças exigem nova versão, avaliação e aprovação.</p></div>
-        <div className="divide-y divide-border">
+      <section>
+        <div><h2 className="text-lg font-semibold">Casos de uso de IA</h2><p className="text-sm text-muted-foreground">Conteúdo publicado é imutável; mudanças exigem nova versão, avaliação e aprovação.</p></div>
+        <div className={styles.registry}>
           {screen.versions.map((version) => (
             <article className="grid gap-4 p-5 lg:grid-cols-[1.5fr_1fr_auto]" key={version.id}>
               <div><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{version.name}</h3><span className="status-badge">v{version.version}</span><span className="status-badge">{statusLabel[version.status] ?? version.status}</span><span className="status-badge">Risco {version.riskLevel}</span></div><p className="mt-2 text-sm text-muted-foreground">{version.description}</p><p className="mt-2 text-xs text-muted-foreground">Responsável: {version.owner} · Prompt: {version.prompt}</p></div>

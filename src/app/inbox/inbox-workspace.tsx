@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
+import styles from "./inbox.module.css";
+import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
@@ -128,7 +130,7 @@ export function InboxWorkspace({ initial }: Readonly<{ initial: InboxScreen }>) 
   }
 
   return (
-    <div className="inbox-stack" aria-busy={isPending}>
+    <div className={`${styles.workspace} inbox-stack`} aria-busy={isPending}>
       <section aria-label="Resumo do inbox" className="inbox-metrics">
         <button onClick={() => navigate({ view: "ALL", conversationId: null })} type="button"><span>Abertas</span><strong>{screen.metrics.open}</strong></button>
         <button onClick={() => navigate({ view: "UNREAD", conversationId: null })} type="button"><span>Não lidas</span><strong>{screen.metrics.unread}</strong></button>
@@ -136,7 +138,13 @@ export function InboxWorkspace({ initial }: Readonly<{ initial: InboxScreen }>) 
         <div><span>1ª resposta média</span><strong>{screen.metrics.firstResponseAverageSeconds === null ? "—" : elapsedLabel(Math.round(screen.metrics.firstResponseAverageSeconds))}</strong></div>
       </section>
 
-      <section className="inbox-toolbar" aria-label="Filtros do inbox">
+
+      {simulatorOpen ? <LocalSimulator onComplete={async () => { await refresh(); setSimulatorOpen(false); }} /> : null}
+      {notice ? <div className="feedback-banner" data-tone={notice.tone} role={notice.tone === "danger" ? "alert" : "status"}>{notice.text}</div> : null}
+
+      <section className="inbox-layout">
+        <div className="inbox-list" aria-label="Conversas">
+      <section className={`${styles.filters} inbox-toolbar`} aria-label="Filtros do inbox">
         <form onSubmit={(event) => { event.preventDefault(); navigate({ search, conversationId: null }); }} role="search">
           <label className="sr-only" htmlFor="inbox-search">Buscar conversa</label>
           <input id="inbox-search" onChange={(event) => setSearch(event.target.value)} placeholder="Buscar contato, conta ou assunto" value={search} />
@@ -148,14 +156,10 @@ export function InboxWorkspace({ initial }: Readonly<{ initial: InboxScreen }>) 
         {screen.capabilities.replay ? <Button onClick={() => setSimulatorOpen((open) => !open)} size="sm" type="button">{simulatorOpen ? "Fechar simulador" : "Simular entrada"}</Button> : null}
       </section>
 
-      {simulatorOpen ? <LocalSimulator onComplete={async () => { await refresh(); setSimulatorOpen(false); }} /> : null}
-      {notice ? <div className="feedback-banner" data-tone={notice.tone} role={notice.tone === "danger" ? "alert" : "status"}>{notice.text}</div> : null}
-
-      <section className="inbox-layout">
-        <div className="inbox-list" aria-label="Conversas">
           <div className="inbox-list__header"><div><h2>Conversas</h2><p>{screen.conversations.length} neste recorte</p></div><button onClick={() => void refresh()} type="button">Atualizar</button></div>
           {screen.conversations.length === 0 ? <EmptyState title="Nenhuma conversa neste recorte" description="Altere a visão ou simule uma entrada local autorizada." /> : screen.conversations.map((item) => (
             <button aria-current={item.id === selected?.id ? "true" : undefined} className="inbox-conversation-row" key={item.id} onClick={() => navigate({ conversationId: item.id })} type="button">
+              <span aria-hidden="true" className={styles.avatar}>{item.contactName.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("")}</span>
               <span className="inbox-conversation-row__top"><strong>{item.contactName}</strong><time>{formatDate(item.lastMessageAt)}</time></span>
               <span className="inbox-conversation-row__meta"><span>{channelLabels[item.channel] ?? item.channel}</span><StatusBadge tone={toneFor(item.status)}>{statusLabels[item.status] ?? item.status}</StatusBadge>{item.unreadCount > 0 ? <b aria-label={`${item.unreadCount} mensagens não lidas`}>{item.unreadCount}</b> : null}</span>
               <span className="inbox-conversation-row__preview">{item.preview?.body ?? "Sem prévia disponível"}</span>
@@ -167,6 +171,7 @@ export function InboxWorkspace({ initial }: Readonly<{ initial: InboxScreen }>) 
         <article className="inbox-thread" aria-label="Detalhe da conversa">
           {!selected ? <EmptyState title="Selecione uma conversa" description="O histórico cronológico aparecerá aqui." /> : <>
             <header className="inbox-thread__header">
+              <span aria-hidden="true" className={styles.avatar}>{(selectedSummary?.contactName ?? "C").split(" ").slice(0, 2).map((part) => part[0]).join("")}</span>
               <div><p>{channelLabels[selected.channel] ?? selected.channel}</p><h2>{selectedSummary?.contactName ?? "Contato não identificado"}</h2><span>{selectedSummary?.assignee?.name ?? selectedSummary?.queue?.name ?? "Sem responsável"}</span></div>
               <div className="inbox-thread__actions">
                 {selected.leadId ? <Button asChild size="sm" variant="secondary"><Link href={`/leads/${selected.leadId}/historico`}>Abrir Lead 360</Link></Button> : null}
@@ -190,16 +195,17 @@ export function InboxWorkspace({ initial }: Readonly<{ initial: InboxScreen }>) 
             {screen.capabilities.compose ? <form className="inbox-composer" onSubmit={(event) => { event.preventDefault(); if (!messageBody.trim()) return; void run("COMPOSE_AND_ENQUEUE", { conversationId: selected.id, body: messageBody, subject: selected.channel === "EMAIL" ? emailSubject : null, templateVersionId: templateVersionId || null, idempotencyKey: `ui:${crypto.randomUUID()}`, clientCorrelationId: `ui:${crypto.randomUUID()}` }, "Mensagem avaliada e registrada.").then(() => { setMessageBody(""); setEmailSubject(""); }); }}>
               <label htmlFor="message-body">Responder</label>
               {selected.channel === "EMAIL" ? <><input aria-label="Assunto do e-mail" maxLength={240} onChange={(event) => setEmailSubject(event.target.value)} placeholder="Assunto" required value={emailSubject} /><select aria-label="Template de e-mail" onChange={(event) => setTemplateVersionId(event.target.value)} value={templateVersionId}><option value="">Texto livre</option>{screen.options.templates.filter((item) => item.channel === "EMAIL" && item.version).map((item) => <option key={item.version!.id} value={item.version!.id}>{item.name} · v{item.version!.version}</option>)}</select></> : null}
-              <textarea id="message-body" maxLength={10000} onChange={(event) => setMessageBody(event.target.value)} placeholder="Escreva uma resposta. A privacidade será reavaliada antes de enfileirar." rows={3} value={messageBody} />
-              <div><small>{selected.channel === "WHATSAPP" ? "Envio livre exige janela de 24h aberta; entrega permanece local e simulada." : "Nesta fase, toda entrega é local e explicitamente simulada."}</small><Button disabled={!messageBody.trim()} type="submit">Avaliar e enfileirar</Button></div>
+              <textarea id="message-body" maxLength={10000} onChange={(event) => setMessageBody(event.target.value)} placeholder="Mensagem…" rows={3} value={messageBody} />
+              <div><small>{selected.channel === "WHATSAPP" ? "Envio livre exige janela de 24h aberta; entrega permanece local e simulada." : "Nesta fase, toda entrega é local e explicitamente simulada."}</small><Button disabled={!messageBody.trim()} type="submit">Enviar <Icon name="seta-direita" size={15} /></Button></div>
             </form> : null}
           </>}
         </article>
 
         <aside className="inbox-context" aria-label="Contexto operacional">
-          <section><h2>Responsabilidade</h2><p>{selectedSummary?.assignee?.name ?? selectedSummary?.queue?.name ?? "Selecione uma conversa"}</p><small>Assumir uma conversa não altera silenciosamente o responsável do lead.</small></section>
+          <section className={styles.contactContext}><span className={styles.contextLabel}>CONTATO SELECIONADO</span><h2>{selectedSummary?.contactName ?? "Nenhum contato selecionado"}</h2>{selected?.leadId ? <Link className={styles.contextLink} href={`/leads/${selected.leadId}/historico`}>Ver contato e negócios <Icon name="seta-direita" size={14} /></Link> : null}</section>
+          <section><h2>Responsável pelo atendimento</h2><p>{selectedSummary?.assignee?.name ?? selectedSummary?.queue?.name ?? "Selecione uma conversa"}</p><small>Assumir uma conversa não altera silenciosamente o responsável do lead.</small></section>
           <section><h2>Saúde da fila</h2><dl><div><dt>Aguardando contato</dt><dd>{screen.metrics.waitingCustomer}</dd></div><div><dt>Revisões de identidade</dt><dd>{screen.metrics.identityReview}</dd></div><div><dt>Entradas</dt><dd>{screen.metrics.inboundMessages}</dd></div><div><dt>Saídas</dt><dd>{screen.metrics.outboundMessages}</dd></div></dl></section>
-          <section><h2>Canais</h2><ul>{screen.capabilityMatrix.map((item) => <li key={item.channel}><span>{item.label}</span><small>{item.support === "LOCAL_ONLY" ? "Disponível localmente" : item.support === "EXTERNAL_DEFERRED" ? "Contrato pronto; integração futura" : "Preparado para o futuro"}</small></li>)}</ul></section>
+          <details className={styles.channels}><summary>Canais disponíveis</summary><ul>{screen.capabilityMatrix.map((item) => <li key={item.channel}><span>{item.label}</span><small>{item.support === "LOCAL_ONLY" ? "Disponível localmente" : item.support === "EXTERNAL_DEFERRED" ? "Contrato pronto; integração futura" : "Preparado para o futuro"}</small></li>)}</ul></details>
         </aside>
       </section>
     </div>

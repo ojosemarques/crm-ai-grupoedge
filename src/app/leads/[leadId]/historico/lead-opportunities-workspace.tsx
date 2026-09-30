@@ -2,6 +2,8 @@
 
 import { FormEvent, useState } from "react";
 
+import styles from "./lead-detail.module.css";
+import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import type {
   LeadOpportunityScreen,
@@ -121,7 +123,7 @@ function OpportunityActions({
   }
 
   return (
-    <div className="mt-4 grid gap-4 xl:grid-cols-2">
+    <details className={styles.actionForm}><summary><Icon name="configuracoes" size={14} />Gerenciar negócio e propostas</summary><div className="mt-4 grid gap-4">
       {(opportunity.stageCode === "OPPORTUNITY_CONFIRMED" || opportunity.stageCode === "PROPOSAL") ? (
         <form className="grid gap-3 rounded-md border p-4" onSubmit={proposal}>
           <h4 className="font-semibold">Registrar proposta</h4>
@@ -148,7 +150,7 @@ function OpportunityActions({
         <label className="flex gap-2 text-sm"><input name="confirmed" type="checkbox" /> Confirmo quando a transição for sensível.</label>
         <Button disabled={pending || opportunity.transitions.length === 0} type="submit">Confirmar transição</Button>
       </form>
-    </div>
+    </div></details>
   );
 }
 
@@ -235,12 +237,11 @@ export function LeadOpportunitiesWorkspace({
 
   return (
     <section aria-labelledby="opportunities-title" className="space-y-5">
-      <div><h2 className="text-xl font-semibold" id="opportunities-title">Oportunidades de {screen.leadName}</h2><p className="mt-1 text-sm text-muted-foreground">Valores em BRL, histórico de etapa, proposta e próxima ação persistidos.</p></div>
+      <div className={styles.dealHeading}><Icon name="vendas" size={20} /><div><h2 id="opportunities-title">Negócios de {screen.leadName}</h2><p>{screen.opportunities.length} oportunidades vinculadas</p></div></div>
       {notice ? <p className={`rounded-md border p-3 text-sm ${notice.kind === "error" ? "border-red-300 bg-red-50 text-red-950" : "border-emerald-300 bg-emerald-50 text-emerald-950"}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
 
       {screen.canCreate ? (
-        <form className="surface-panel grid gap-4 p-5 md:grid-cols-2" onSubmit={createOpportunity}>
-          <h3 className="text-lg font-semibold md:col-span-2">Criar oportunidade</h3>
+        <details className={styles.actionForm}><summary><Icon name="mais" size={15} /> Novo negócio</summary><form className="mt-4 grid gap-4 md:grid-cols-2" onSubmit={createOpportunity}>
           <label className="text-sm">Reunião vinculada<select className={inputClass} name="meetingId" required><option value="">Selecione</option>{screen.meetingOptions.map((meeting) => <option key={meeting.id} value={meeting.id}>{meeting.title} · {meeting.status} · {formatDate(meeting.startsAt, screen.timeZone)}</option>)}</select></label>
           <label className="text-sm">Closer responsável<select className={inputClass} name="ownerMemberId" required><option value="">Selecione</option>{screen.closerOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
           <label className="text-sm md:col-span-2">Conta vinculada<select className={inputClass} defaultValue={screen.suggestedAccountId ?? ""} name="accountId"><option value="">Sem conta canônica — manter para revisão</option>{screen.accountOptions.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
@@ -256,14 +257,14 @@ export function LeadOpportunitiesWorkspace({
           <label className="text-sm">Prazo da próxima ação<input className={inputClass} name="nextActionDueAt" required type="datetime-local" /></label>
           <label className="text-sm md:col-span-2">Notas<textarea className={inputClass} name="notes" /></label>
           <Button className="md:col-span-2" disabled={pending} type="submit">{pending ? "Salvando…" : "Criar oportunidade"}</Button>
-        </form>
+        </form></details>
       ) : <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">Para criar uma oportunidade, seu perfil precisa de escrita e o lead deve possuir reunião elegível e closer disponível.</p>}
 
       {screen.opportunities.length === 0 ? <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">Nenhuma oportunidade registrada para este lead.</p> : (
         <div className="space-y-5">{screen.opportunities.map((opportunity) => (
-          <article className="surface-panel p-5" key={opportunity.id}>
+          <article className={styles.dealCard} key={opportunity.id}>
             <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-semibold">{opportunity.name}</h3><p className="text-sm text-muted-foreground">{opportunity.stageName} · {opportunity.ownerName}{opportunity.accountName ? ` · ${opportunity.accountName}` : " · conta não vinculada"}</p></div><span className="rounded-full border px-3 py-1 text-xs">{opportunity.status}</span></div>
-            <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4"><div><dt className="text-muted-foreground">Produto/interesse</dt><dd>{opportunity.productName ?? opportunity.interestDescription ?? "Ausente"}</dd></div><div><dt className="text-muted-foreground">Valor estimado</dt><dd>{formatMoney(opportunity.amountCents)}</dd></div><div><dt className="text-muted-foreground">MRR / TCV</dt><dd>{formatMoney(opportunity.mrrCents)} / {formatMoney(opportunity.tcvCents)}</dd></div><div><dt className="text-muted-foreground">Probabilidade</dt><dd>{opportunity.probabilityPercent}% manual</dd></div><div><dt className="text-muted-foreground">Próxima ação</dt><dd>{opportunity.nextActionDescription ?? "Encerrada"} · {formatDate(opportunity.nextActionAt, screen.timeZone)}</dd></div><div><dt className="text-muted-foreground">Fechamento previsto</dt><dd>{formatDate(opportunity.expectedCloseAt, screen.timeZone)}</dd></div><div><dt className="text-muted-foreground">Motivo de perda</dt><dd>{opportunity.lossReasonName ?? "Não se aplica"}</dd></div></dl>
+            <dl className={styles.dealStats}><div><dt className="text-muted-foreground">Produto/interesse</dt><dd>{opportunity.productName ?? opportunity.interestDescription ?? "Ausente"}</dd></div><div><dt className="text-muted-foreground">Valor estimado</dt><dd>{formatMoney(opportunity.amountCents)}</dd></div><div><dt className="text-muted-foreground">MRR / TCV</dt><dd>{formatMoney(opportunity.mrrCents)} / {formatMoney(opportunity.tcvCents)}</dd></div><div><dt className="text-muted-foreground">Probabilidade</dt><dd>{opportunity.probabilityPercent}% manual</dd></div><div><dt className="text-muted-foreground">Próxima ação</dt><dd>{opportunity.nextActionDescription ?? "Encerrada"} · {formatDate(opportunity.nextActionAt, screen.timeZone)}</dd></div><div><dt className="text-muted-foreground">Fechamento previsto</dt><dd>{formatDate(opportunity.expectedCloseAt, screen.timeZone)}</dd></div><div><dt className="text-muted-foreground">Motivo de perda</dt><dd>{opportunity.lossReasonName ?? "Não se aplica"}</dd></div></dl>
             {opportunity.offers.length > 0 ? <div className="mt-4"><h4 className="text-sm font-semibold">Propostas</h4><ul className="mt-2 space-y-2">{opportunity.offers.map((offer) => <li className="rounded border p-3 text-sm" key={offer.id}>{offer.name} · {offer.productName} · {formatMoney(offer.totalCents)}{offer.acceptedAt ? " · aceita no ganho" : ""}</li>)}</ul></div> : null}
             <OpportunityActions opportunity={opportunity} pending={pending} run={(body, success) => runOpportunity(opportunity.id, body, success)} screen={screen} />
           </article>

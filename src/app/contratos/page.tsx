@@ -21,5 +21,5 @@ export default async function ContractsPage({ searchParams }: Readonly<{ searchP
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     throw error;
   }
-  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Receita contratada" title="Contratos comerciais" description="Snapshots versionados de oportunidade e oferta, com aceite manual local e histórico auditável." meta={`${context.displayName} · ${screen.timeZone}`} /><ContractsWorkspace screen={screen} /></main>;
+  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Receita contratada" title="Contratos comerciais" description="Organize seus contratos, acompanhe os aceites e as próximas renovações." meta={`${context.displayName} · ${screen.timeZone}`} /><ContractsWorkspace screen={screen} /></main>;
 }

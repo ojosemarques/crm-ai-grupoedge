@@ -20,9 +20,9 @@ export default async function InboxPage({ searchParams }: Readonly<{ searchParam
   return (
     <main className="page-canvas page-canvas-wide">
       <PageHeader
-        eyebrow="Comunicação operacional"
-        title="Inbox"
-        description="Uma fila única para mensagens, responsáveis, SLA e histórico — com entrega local simulada nesta fase."
+        eyebrow="Conversas"
+        title="Atendimento"
+        description="Todas as conversas, em um só lugar."
         meta={`Atualizado em ${new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(initial.generatedAt))}`}
       />
       <InboxWorkspace key={`${initial.generatedAt}:${initial.query.view}:${initial.query.conversationId ?? "none"}`} initial={initial} />

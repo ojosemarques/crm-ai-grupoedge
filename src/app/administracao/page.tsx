@@ -20,7 +20,7 @@ export default async function AdministrationPage() {
 
   return (
     <main className="page-canvas page-canvas-wide">
-      <PageHeader description="Disponibilidade, carga operacional, funções comerciais e permissões efetivas calculadas do workspace." eyebrow="Administração" meta={context.displayName} title="Usuários e equipes" />
+      <PageHeader description="Gerencie sua equipe, a disponibilidade e os acessos ao CRM." eyebrow="Administração" meta={context.displayName} title="Usuários e equipes" />
       <WorkspaceAdministration initialScreen={screen} />
     </main>
   );

@@ -15,5 +15,5 @@ export default async function GoalsPage({ searchParams }: Readonly<{ searchParam
   try {
     screen = await getGoalService().screen(context, query);
   } catch (error) { if (error instanceof AccessDeniedError) redirect("/acesso-negado"); throw error; }
-  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Planejamento comercial" title="Metas e quotas" description="Alvos versionados, atingimento reproduzível e evidências por período civil." meta={`${context.displayName} · ${screen.timeZone}`} /><GoalsWorkspace screen={screen as GoalsScreenView} /></main>;
+  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Planejamento comercial" title="Metas e quotas" description="Acompanhe os objetivos da equipe, o progresso e os resultados de cada período." meta={`${context.displayName} · ${screen.timeZone}`} /><GoalsWorkspace screen={screen as GoalsScreenView} /></main>;
 }

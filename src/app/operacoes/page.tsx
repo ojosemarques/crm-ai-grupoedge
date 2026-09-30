@@ -26,7 +26,7 @@ export default async function OperationsPage({ searchParams }: Readonly<{ search
     throw error;
   }
   return <main className="page-canvas page-canvas-wide">
-    <PageHeader eyebrow="Operação governada" title="Observabilidade, segurança e resiliência" description="Sinais locais sem PII, alertas determinísticos, incidentes rastreáveis, privacidade e evidências de recuperação." meta={`Atualizado em ${new Intl.DateTimeFormat("pt-BR", { timeZone: screen.timeZone, dateStyle: "short", timeStyle: "short" }).format(new Date(screen.generatedAt))}`} />
+    <PageHeader eyebrow="Operação governada" title="Operações e segurança" description="Acompanhe alertas, incidentes e a disponibilidade da operação." meta={`Atualizado em ${new Intl.DateTimeFormat("pt-BR", { timeZone: screen.timeZone, dateStyle: "short", timeStyle: "short" }).format(new Date(screen.generatedAt))}`} />
     <OperationsWorkspace initial={screen} initialTab={query.tab} />
   </main>;
 }

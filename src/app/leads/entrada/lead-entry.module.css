@@ -1,0 +1,11 @@
+.workspace { display: grid; gap: 22px; grid-template-columns: 215px minmax(0, 1fr); }
+.navigation { display: grid; align-content: start; gap: 7px; }
+.navigation button { align-items: center; border: 1px solid var(--border); border-radius: 8px; color: var(--muted-foreground); display: flex; font-size: 11px; gap: 12px; padding: 17px 13px; text-align: left; }
+.navigation button[aria-current="page"] { background: var(--surface-subtle); border-color: var(--surface-priority); color: var(--primary); }
+.navigation button small { display: block; font-size: 9px; margin-top: 5px; }
+.content { display: grid; gap: 15px; min-width: 0; }.content [hidden] { display: none; }
+.policy { align-items: center; background: var(--surface-subtle); border-radius: 6px; color: var(--muted-foreground); display: flex; font-size: 10px; gap: 8px; padding: 11px 15px; }
+.content :global(.surface-panel) { padding: 24px; }
+.content label { font-size: 11px; }.content input, .content select, .content textarea { font-size: 12px; }.content :global(.section-header) { border-bottom: 1px solid var(--border); padding-bottom: 16px; }
+.content pre { max-height: 240px; font-size: 10px; }
+@media (max-width: 1000px) { .workspace { grid-template-columns: 1fr; }.navigation { display: flex; overflow: auto; }.navigation button { flex: 0 0 auto; padding: 12px; }.navigation button small { display: none; } }

@@ -1,5 +1,7 @@
 "use client";
 
+import styles from "@/app/administracao/administration.module.css";
+
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
@@ -35,7 +37,7 @@ export function PrivacyWorkspace({ initial }: Readonly<{ initial: PrivacyScreen 
   }
 
   const counts = Object.fromEntries(initial.overview.states.map((item) => [item.state, item._count._all]));
-  return <div className="space-y-5">
+  return <div className={styles.workspace}>
     <Surface tone="accent" className="border-blue-200">
       <SectionHeader title="Decisão conservadora por padrão" description="A configuração atual é técnica e permanece PENDING_LEGAL. Ela não representa parecer jurídico nem autoriza contato real." />
     </Surface>
@@ -51,7 +53,7 @@ export function PrivacyWorkspace({ initial }: Readonly<{ initial: PrivacyScreen 
       <DataTableShell className="mt-4"><table><thead><tr><th>Finalidade</th><th>Versão</th><th>Canais</th><th>Base legal</th><th>Status</th></tr></thead><tbody>{initial.purposes.map((purpose) => <tr key={purpose.id}><td><strong>{purpose.name}</strong><small className="block text-muted-foreground">{purpose.code}</small></td><td>{purpose.currentVersion?.version ?? "—"}</td><td>{purpose.currentVersion?.allowedChannels.join(", ") || "Nenhum"}</td><td>{purpose.currentVersion?.legalBasis?.name ?? "Não definida"}</td><td><span className="status-badge" data-tone="warning">{labels[purpose.currentVersion?.status ?? "DRAFT"]}</span></td></tr>)}</tbody></table></DataTableShell>
     </Surface>
 
-    {initial.permissions.canManageDsr ? <Surface tone="subtle">
+    {initial.permissions.canManageDsr ? <details className={styles.action}><summary>Nova solicitação de titular</summary>
       <SectionHeader title="Registrar solicitação de titular" description="Use somente após identificar a pessoa. Documento bruto não deve ser copiado para este formulário." />
       <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={createDsr}>
         <label className="text-sm">ID do lead<input className={`${inputClass} mt-1 font-mono`} name="leadId" required /></label>
@@ -61,7 +63,7 @@ export function PrivacyWorkspace({ initial }: Readonly<{ initial: PrivacyScreen 
         <div className="md:col-span-2"><Button disabled={pending} type="submit">{pending ? "Registrando…" : "Registrar solicitação"}</Button></div>
       </form>
       {feedback ? <p className="mt-3 text-sm" role="status">{feedback}</p> : null}
-    </Surface> : null}
+    </details> : null}
 
     <div className="grid gap-5 xl:grid-cols-2">
       <Surface><SectionHeader title="Solicitações de titulares" description="Estados e verificação permanecem rastreáveis." />{initial.requests.length === 0 ? <div className="mt-4"><EmptyState title="Nenhuma solicitação" description="O workspace ainda não possui solicitações de titulares." /></div> : <div className="mt-4 space-y-3">{initial.requests.map((request) => <article className="rounded-[var(--radius-control)] border border-border p-3 text-sm" key={request.id}><div className="flex flex-wrap justify-between gap-2"><strong>{nameOf(request.contact)}</strong><span className="status-badge" data-tone={request.status === "BLOCKED" ? "danger" : "default"}>{labels[request.status] ?? request.status}</span></div><p className="mt-1 text-muted-foreground">{request.type} · identidade: {labels[request.verificationStatus] ?? request.verificationStatus}</p></article>)}</div>}</Surface>

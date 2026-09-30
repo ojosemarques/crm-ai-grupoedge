@@ -7,6 +7,8 @@ import { FormEvent, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Icon } from "@/components/ui/icon";
+import styles from "../pipeline/pipeline-workspace.module.css";
 import { DataTableShell } from "@/components/ui/surface";
 import type {
   OpportunityListItem,
@@ -16,8 +18,10 @@ import type {
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
 
 function money(cents: string) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
-    .format(Number(cents) / 100);
+  const amount = BigInt(cents);
+  const absolute = amount < 0n ? -amount : amount;
+  const integer = (absolute / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${amount < 0n ? "-" : ""}R$ ${integer},${(absolute % 100n).toString().padStart(2, "0")}`;
 }
 
 function date(value: string | null, timeZone: string) {
@@ -44,15 +48,21 @@ async function readResult(response: Response) {
   if (!response.ok) throw new Error(body.error?.message ?? "Não foi possível alterar a oportunidade.");
 }
 
-function OpportunityRow({ opportunity, timeZone }: Readonly<{ opportunity: OpportunityListItem; timeZone: string }>) {
+function OpportunityRow({ opportunity, timeZone, onSelect, pending }: Readonly<{ opportunity: OpportunityListItem; timeZone: string; onSelect: () => void; pending: boolean }>) {
   return (
-    <article className="crm-kanban__card text-sm">
-      <div className="crm-kanban__card-top"><span className="crm-kanban__kind">Negócio</span><strong className="crm-kanban__amount">{money(opportunity.amountCents)}</strong></div>
-      <h3>{opportunity.name}</h3>
-      <p className="crm-kanban__card-subtitle">{opportunity.leadName}</p>
-      <div className="crm-kanban__card-owner"><span aria-hidden="true" className="crm-kanban__avatar">{opportunity.ownerName.slice(0, 1).toUpperCase()}</span><span>{opportunity.ownerName}</span></div>
-      <dl className="crm-kanban__card-facts text-xs"><div><dt>Produto</dt><dd>{opportunity.productName ?? opportunity.interestDescription ?? "Ausente"}</dd></div><div><dt>MRR / TCV</dt><dd>{money(opportunity.mrrCents)} / {money(opportunity.tcvCents)}</dd></div></dl>
-      <p className="crm-kanban__next"><span>Próxima ação</span><strong>{opportunity.nextActionDescription ?? "Encerrada"}</strong><small>{date(opportunity.nextActionAt, timeZone)}</small></p>
+    <article className={styles.card}>
+      <div className={styles.cardBody}>
+        <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={opportunity.status === "WON" ? "green" : opportunity.status === "LOST" ? "red" : "purple"}>{opportunity.status === "WON" ? "Ganho" : opportunity.status === "LOST" ? "Perdido" : opportunity.status === "CANCELLED" ? "Cancelado" : "Em aberto"}</span>{opportunity.productName ? <span className={styles.tag} data-tone="blue" title={opportunity.productName}>{opportunity.productName}</span> : null}</div><span aria-label={`Responsável: ${opportunity.ownerName}`} className={styles.avatarSquare} title={opportunity.ownerName}>{opportunity.ownerName.slice(0, 2).toUpperCase()}</span></div>
+        <div className={styles.cardTitle}><Link href={`/leads/${opportunity.leadId}/historico`} title={opportunity.name}>{opportunity.name}</Link><span>{money(opportunity.amountCents)}</span></div>
+        <p className={styles.subtitle}>{opportunity.leadName}{opportunity.accountName ? ` · ${opportunity.accountName}` : ""}</p>
+      </div>
+      <footer className={styles.cardFooter}>
+        <span aria-label={`Responsável: ${opportunity.ownerName}`} className={styles.avatar} title={opportunity.ownerName}>{opportunity.ownerName.slice(0, 1).toUpperCase()}</span>
+        <Link aria-label={`Abrir histórico de ${opportunity.leadName}`} href={`/leads/${opportunity.leadId}/historico`} title="Atividades e histórico"><Icon name="meu-dia" size={13} /></Link>
+        <Link aria-label={`Abrir contato de ${opportunity.leadName}`} href={`/leads/${opportunity.leadId}`} title="Contato"><Icon name="leads" size={13} /></Link>
+        <span className={styles.activity} title={`${opportunity.nextActionDescription ?? "Sem próxima atividade"} · ${date(opportunity.nextActionAt, timeZone)} · MRR ${money(opportunity.mrrCents)} / TCV ${money(opportunity.tcvCents)}`}><Icon name="relogio" size={12} />{opportunity.nextActionAt ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone }).format(new Date(opportunity.nextActionAt)) : "Sem prazo"}</span>
+        {opportunity.canWrite && opportunity.status === "OPEN" ? <button aria-label={`Trabalhar oportunidade ${opportunity.name}`} className={styles.moveButton} disabled={pending} onClick={onSelect} title="Alterar etapa / proposta" type="button"><Icon name="seta-direita" size={13} /></button> : null}
+      </footer>
     </article>
   );
 }
@@ -139,21 +149,30 @@ export function OpportunityPipelineWorkspace({ screen }: Readonly<{ screen: Oppo
   }
 
   return (
-    <div className="space-y-5">
-      <form className="surface-panel grid gap-3 p-4 md:grid-cols-5" method="get">
-        {screen.canFilterCloser ? <label className="text-sm">Closer<select className={inputClass} defaultValue={screen.filters.closerId} name="closerId"><option value="">Todos</option>{screen.closerOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
-        <label className="text-sm">Produto<select className={inputClass} defaultValue={screen.filters.productId} name="productId"><option value="">Todos</option>{screen.productOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label className="text-sm">Etapa<select className={inputClass} defaultValue={screen.filters.stageCode} name="stageCode"><option value="ALL">Todas</option>{screen.stages.map((stage) => <option key={stage.id} value={stage.code}>{stage.name}</option>)}</select></label>
-        <label className="text-sm">Entrada desde<input className={inputClass} defaultValue={screen.filters.from} name="from" type="date" /></label>
-        <label className="text-sm">Entrada até<input className={inputClass} defaultValue={screen.filters.to} name="to" type="date" /></label>
-        <div className="flex items-end gap-2 md:col-span-5"><Button type="submit">Filtrar</Button><Button asChild type="button" variant="secondary"><Link href="/oportunidades">Limpar</Link></Button></div>
+    <div className={styles.workspace}>
+      <form className={styles.filters} method="get">
+        {screen.canFilterCloser ? <label className={styles.filter}>Dono do negócio<select aria-label="Dono do negócio" defaultValue={screen.filters.closerId} name="closerId"><option value="">Todos</option>{screen.closerOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
+        <label className={styles.filter}>Produto<select aria-label="Produto" defaultValue={screen.filters.productId} name="productId"><option value="">Todos</option>{screen.productOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label className={styles.filter}>Etapa<select aria-label="Etapa" defaultValue={screen.filters.stageCode} name="stageCode"><option value="ALL">Todas</option>{screen.stages.map((stage) => <option key={stage.id} value={stage.code}>{stage.name}</option>)}</select></label>
+        <label className={styles.filter}>De<input defaultValue={screen.filters.from} name="from" type="date" /></label>
+        <label className={styles.filter}>Até<input defaultValue={screen.filters.to} name="to" type="date" /></label>
+        <Button size="sm" type="submit" variant="secondary"><Icon name="filtro" size={14} />Aplicar</Button><Link className={styles.clear} href="/oportunidades">Limpar filtros</Link>
       </form>
-
-      <div className="flex gap-2" aria-label="Alternar visualização"><Button onClick={() => setView("board")} type="button" variant={view === "board" ? "default" : "secondary"}>Quadro</Button><Button onClick={() => setView("list")} type="button" variant={view === "list" ? "default" : "secondary"}>Lista</Button></div>
+      <div className={styles.boardToolbar}>
+        <p><strong>{screen.stages.reduce((total, stage) => total + stage.count, 0)}</strong> oportunidades de negócios <span className={styles.pipelineName}>{money(opportunities.reduce((total, item) => total + BigInt(item.amountCents), BigInt(0)).toString())} no pipeline</span></p>
+        <div className={styles.tools}><div className={styles.viewSwitch} aria-label="Alternar visualização"><button aria-pressed={view === "board"} onClick={() => setView("board")} type="button"><Icon name="dashboard" size={14} />Quadro</button><button aria-pressed={view === "list"} onClick={() => setView("list")} type="button"><Icon name="auditoria" size={14} />Lista</button></div><button aria-label="Atualizar oportunidades" className={styles.iconButton} onClick={() => router.refresh()} type="button"><Icon name="meu-dia" size={16} /></button></div>
+      </div>
       {notice ? <p className="feedback-banner rounded-md border p-3 text-sm" data-tone={notice.kind === "error" ? "danger" : "success"} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
-      {opportunities.length === 0 ? <EmptyState description="Crie uma oportunidade a partir da aba Oportunidade de um lead com reunião elegível." title="Nenhuma oportunidade neste recorte" /> : view === "board" ? (
-        <section aria-label="Pipeline de vendas" className="crm-kanban flex snap-x overflow-x-auto pb-5">{screen.stages.map((stage) => <section aria-label={`Etapa ${stage.name}`} className="crm-kanban__lane shrink-0 snap-start" key={stage.id}><header className="mb-3 flex items-center justify-between gap-2"><h2><span className="stage-badge">{stage.name}</span></h2><span aria-label={`${stage.count} oportunidades nesta etapa`} className="rounded bg-background px-2 py-1 text-xs font-semibold">{stage.count}</span></header><div className="space-y-3">{stage.opportunities.map((opportunity) => <div key={opportunity.id}><OpportunityRow opportunity={opportunity} timeZone={screen.timeZone} />{opportunity.canWrite && opportunity.status === "OPEN" ? <Button className="mt-2 w-full" onClick={() => setSelectedId(opportunity.id)} size="sm" type="button" variant="secondary">Alterar etapa</Button> : null}</div>)}{stage.count === 0 ? <p className="rounded border border-dashed p-3 text-xs text-muted-foreground">Etapa vazia neste recorte.</p> : null}</div></section>)}</section>
-      ) : (
+      {view === "board" ? (
+        <section aria-label="Pipeline de vendas" className={styles.board}>
+          {screen.stages.map((stage) => (
+            <section aria-label={`Etapa ${stage.name}`} className={styles.lane} key={stage.id}>
+              <header className={styles.laneHeader}><div><h2>{stage.name}</h2><span>{money(stage.opportunities.reduce((total, item) => total + BigInt(item.amountCents), BigInt(0)).toString())}</span></div><span aria-label={`${stage.count} oportunidades nesta etapa`} className={styles.count}>{stage.count}</span></header>
+              <div className={styles.cards}>{stage.opportunities.map((opportunity) => <OpportunityRow key={opportunity.id} opportunity={opportunity} timeZone={screen.timeZone} pending={pending} onSelect={() => setSelectedId(opportunity.id)} />)}{stage.count === 0 ? <div className={styles.emptyLane}><Icon name="vendas" size={20} /><p>Nenhuma oportunidade</p><span>Os negócios aparecerão aqui ao entrar nesta fase.</span></div> : null}</div>
+            </section>
+          ))}
+        </section>
+      ) : opportunities.length === 0 ? <EmptyState description="Crie uma oportunidade na ficha de um lead com reunião elegível." title="Nenhuma oportunidade neste recorte" /> : (
         <DataTableShell><table className="w-full min-w-[1000px] text-left text-sm"><thead className="sticky top-0 z-10 border-b bg-muted"><tr><th className="p-3">Oportunidade</th><th className="p-3">Lead</th><th className="p-3">Closer</th><th className="p-3">Produto</th><th className="p-3">Etapa</th><th className="p-3">Valor</th><th className="p-3">Próxima ação</th><th className="p-3">Ação</th></tr></thead><tbody>{opportunities.map((opportunity) => <tr className="border-b last:border-0" key={opportunity.id}><td className="p-3 font-medium">{opportunity.name}</td><td className="p-3">{opportunity.leadName}</td><td className="p-3">{opportunity.ownerName}</td><td className="p-3">{opportunity.productName ?? opportunity.interestDescription ?? "Ausente"}</td><td className="p-3"><span className="stage-badge">{opportunity.stageName}</span></td><td className="p-3">{money(opportunity.amountCents)}</td><td className="p-3">{opportunity.nextActionDescription ?? "Encerrada"}</td><td className="p-3">{opportunity.canWrite && opportunity.status === "OPEN" ? <Button onClick={() => setSelectedId(opportunity.id)} size="sm" type="button" variant="secondary">Trabalhar oportunidade</Button> : "Somente leitura"}</td></tr>)}</tbody></table></DataTableShell>
       )}
 

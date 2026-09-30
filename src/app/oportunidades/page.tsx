@@ -29,12 +29,7 @@ export default async function OpportunitiesPage({ searchParams }: Readonly<{ sea
   }
   return (
     <main className="page-canvas page-canvas-wide">
-      <PageHeader
-        description="Oportunidades, propostas, negociação, ganhos e perdas derivados de registros persistidos."
-        eyebrow="Operação do closer"
-        meta={`${context.displayName} · ${screen.timeZone}`}
-        title="Pipeline de vendas"
-      />
+      <PageHeader description="Acompanhe suas oportunidades, propostas e negociações." eyebrow="Negócios" title="Vendas" />
       <OpportunityPipelineWorkspace screen={screen} />
     </main>
   );

@@ -20,7 +20,7 @@
 }
 
 .title {
-  color: var(--brand-navy);
+  color: var(--foreground);
   font-size: clamp(1.65rem, 3vw, 2.25rem);
   font-weight: 700;
   letter-spacing: -0.035em;
@@ -71,27 +71,16 @@
 }
 
 .focusCard {
-  background: var(--brand-navy);
-  border: 1px solid color-mix(in oklab, var(--brand-sky) 20%, transparent);
-  border-radius: var(--radius-modal);
-  box-shadow: var(--shadow-card);
-  color: var(--sidebar-foreground);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 14px;
+  color: var(--foreground);
   overflow: hidden;
-  padding: clamp(1rem, 2.3vw, 1.6rem);
+  padding: 22px 24px;
   position: relative;
 }
 
-.focusCard::after {
-  background: color-mix(in oklab, var(--brand-steel) 24%, transparent);
-  border-radius: 999px;
-  content: "";
-  height: 15rem;
-  pointer-events: none;
-  position: absolute;
-  right: -6rem;
-  top: -8rem;
-  width: 15rem;
-}
 
 .focusHeader,
 .focusBody {
@@ -108,12 +97,12 @@
 
 .focusLabel {
   align-items: center;
-  color: var(--brand-sky);
+  color: var(--primary);
   display: inline-flex;
-  font-size: 0.72rem;
+  font-size: 10px;
   font-weight: 600;
-  gap: 0.45rem;
-  letter-spacing: 0.08em;
+  gap: 8px;
+  letter-spacing: .075em;
   margin: 0;
   text-transform: uppercase;
 }
@@ -154,31 +143,31 @@
 }
 
 .focusMeta {
-  color: color-mix(in oklab, var(--sidebar-foreground) 76%, transparent);
+  color: var(--text-muted);
   font-size: 0.78rem;
   margin: 0.35rem 0 0;
 }
 
 .focusPain {
-  color: color-mix(in oklab, var(--sidebar-foreground) 90%, transparent);
+  color: var(--text-muted);
   font-size: 0.9rem;
   margin: 0.9rem 0 0;
   max-width: 52rem;
 }
 
 .focusReason {
-  background: color-mix(in oklab, var(--brand-blue) 72%, transparent);
-  border: 1px solid color-mix(in oklab, var(--brand-sky) 20%, transparent);
-  border-radius: var(--radius-control);
-  color: var(--sidebar-foreground);
-  font-size: 0.78rem;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
   grid-column: 1 / -1;
   margin: 0;
-  padding: 0.65rem 0.75rem;
+  padding: 12px 14px;
 }
 
 .focusReason strong {
-  color: var(--brand-sky);
+  color: var(--primary);
 }
 
 .focusMetrics {
@@ -187,12 +176,12 @@
 }
 
 .focusMetric {
-  border-left: 1px solid color-mix(in oklab, var(--brand-sky) 24%, transparent);
+  border-left: 1px solid var(--border);
   padding-left: 0.9rem;
 }
 
 .focusMetric span {
-  color: var(--brand-sky);
+  color: var(--primary);
   display: block;
   font-size: 0.68rem;
   font-weight: 500;
@@ -208,15 +197,15 @@
 }
 
 .focusMetric [data-sla-band="HEALTHY"] {
-  color: color-mix(in oklab, var(--success) 38%, white);
+  color: var(--success);
 }
 
 .focusMetric [data-sla-band="ATTENTION"] {
-  color: color-mix(in oklab, var(--warning) 34%, white);
+  color: var(--warning);
 }
 
 .focusMetric [data-sla-band="CRITICAL"] {
-  color: color-mix(in oklab, var(--danger) 34%, white);
+  color: var(--danger);
 }
 
 .focusActions {
@@ -225,17 +214,17 @@
 }
 
 .focusPrimary {
-  background: var(--surface) !important;
-  color: var(--brand-navy) !important;
-  min-height: 2.75rem;
+  background: var(--primary);
+  color: white;
+  min-height: 38px;
 }
 
 .focusPrimary:hover {
-  background: var(--brand-sky) !important;
+  background: var(--primary-hover);
 }
 
 .focusSecondary {
-  color: var(--brand-sky);
+  color: var(--primary);
   font-size: 0.78rem;
   font-weight: 600;
   justify-self: center;
@@ -243,12 +232,12 @@
 }
 
 .focusSecondary:hover {
-  color: var(--sidebar-foreground);
+  color: var(--foreground);
   text-decoration: underline;
 }
 
 .afterAction {
-  color: color-mix(in oklab, var(--sidebar-foreground) 68%, transparent);
+  color: var(--text-muted);
   font-size: 0.7rem;
   line-height: 1.4;
   margin: 0.15rem 0 0;
@@ -256,13 +245,11 @@
 }
 
 .emptyFocus {
-  background: color-mix(in oklab, var(--brand-blue) 66%, transparent);
-  border: 1px dashed color-mix(in oklab, var(--brand-sky) 35%, transparent);
-  border-radius: var(--radius-panel);
-  margin-top: 1rem;
-  padding: 1.15rem;
-  position: relative;
-  z-index: 1;
+  background: var(--surface-muted);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  margin-top: 16px;
+  padding: 22px;
 }
 
 .emptyFocus h2 {
@@ -272,47 +259,45 @@
 }
 
 .emptyFocus p {
-  color: var(--brand-sky);
+  color: var(--primary);
   font-size: 0.78rem;
   margin: 0.25rem 0 0;
 }
 
 .summaryStrip {
   display: grid;
-  gap: 0.55rem;
+  gap: 12px;
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .summaryButton {
-  align-items: center;
-  background: var(--surface-subtle);
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
-  color: var(--muted-foreground);
-  display: flex;
-  gap: 0.65rem;
-  justify-content: space-between;
-  min-height: 3.25rem;
-  padding: 0.55rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--text-muted);
+  display: grid;
+  gap: 12px;
+  padding: 18px;
   text-align: left;
-  transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .summaryButton:hover {
-  background: var(--surface-selected);
-  border-color: var(--border-strong);
-  transform: translateY(-1px);
+  border-color: var(--primary);
+  box-shadow: 0 3px 12px #4f337b0a;
 }
 
 .summaryButton strong {
-  color: var(--brand-navy);
-  font-size: 1.2rem;
-  font-weight: 700;
-  order: 2;
+  color: var(--foreground);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -.04em;
+  line-height: 1;
 }
 
 .summaryButton span {
-  font-size: 0.75rem;
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -333,10 +318,10 @@
 }
 
 .tabsScroller {
-  background: var(--surface-subtle);
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
-  padding: 0.55rem;
+  padding: 0 12px;
   scrollbar-width: thin;
 }
 
@@ -349,16 +334,18 @@
 .tab {
   align-items: center;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  color: var(--muted-foreground);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--text-muted);
   display: inline-flex;
-  font-size: 0.74rem;
+  font-size: 11px;
   font-weight: 500;
-  gap: 0.4rem;
-  min-height: 2.2rem;
-  padding: 0.4rem 0.68rem;
+  gap: 6px;
+  min-height: 46px;
+  padding: 10px 9px;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .tab:hover {
@@ -367,8 +354,9 @@
 }
 
 .tab[aria-selected="true"] {
-  background: var(--brand-navy);
-  color: var(--sidebar-foreground);
+  background: transparent;
+  border-bottom-color: var(--primary);
+  color: var(--primary);
   font-weight: 600;
 }
 
@@ -385,7 +373,8 @@
 }
 
 .queueContent {
-  padding: 1rem;
+  padding: 20px;
+  background: color-mix(in srgb, var(--surface-muted) 65%, var(--surface));
 }
 
 .queueHeader {
@@ -422,17 +411,19 @@
 
 .queueList {
   display: grid;
-  gap: 0;
-  margin-top: 0.7rem;
+  gap: 10px;
+  margin-top: 16px;
 }
 
 .queueRow {
   align-items: center;
-  border-top: 1px solid var(--border);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 10px;
   display: grid;
-  gap: 0.85rem;
-  grid-template-columns: minmax(11rem, 1.3fr) minmax(8rem, 0.75fr) minmax(10rem, 0.85fr) minmax(8rem, auto);
-  padding: 0.8rem 0;
+  gap: 14px;
+  grid-template-columns: minmax(11rem, 1.3fr) minmax(8rem, .75fr) minmax(10rem, .85fr) minmax(8rem, auto);
+  padding: 16px;
 }
 
 .identityLink {
@@ -597,10 +588,10 @@
 }
 
 .sideCard {
-  background: var(--surface-subtle);
-  border: 1px solid color-mix(in oklab, var(--border) 74%, transparent);
-  border-radius: var(--radius-panel);
-  padding: 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
 }
 
 .sideCard[data-tone="danger"] {
@@ -685,6 +676,15 @@
   text-decoration: underline;
   text-underline-offset: 0.16em;
 }
+
+ .summaryLabel { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.summaryLabel svg { color: var(--primary); }
+.summaryButton small { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-muted); font-size: 9px; }
+.summaryButton[aria-pressed="true"] { background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 20%, var(--border)); }
+.focusIdentity h2 { display: flex; align-items: center; gap: 12px; font-size: 22px; }
+.leadAvatar, .rowAvatar { display: inline-grid; place-items: center; flex: 0 0 auto; background: var(--primary-soft); color: var(--primary); border-radius: 10px; font-weight: 600; }
+.leadAvatar { width: 43px; height: 43px; font-size: 14px; }
+.rowAvatar { width: 27px; height: 27px; font-size: 9px; margin-right: 8px; border-radius: 8px; vertical-align: middle; }
 
 @media (max-width: 1279px) {
   .contentGrid {

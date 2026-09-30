@@ -19,6 +19,7 @@ import {
 import styles from "@/app/leads/leads-list.module.css";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 import {
   defaultLeadListColumns,
   leadListColumnKeys,
@@ -213,17 +214,17 @@ function slaLabel(row: LeadListRow): string {
 
 function cellValue(column: LeadListColumnKey, row: LeadListRow, screen: LeadListScreen) {
   switch (column) {
-    case "name": return <div className="min-w-44"><Link aria-label={`Abrir cartão do lead ${row.fullName}`} className="font-semibold text-primary underline-offset-4 hover:underline focus:outline-none focus:ring-2 focus:ring-ring" href={`/leads/${row.id}/historico`}>{row.fullName}</Link><p className="mt-1 text-xs text-muted-foreground">{row.normalizedPhone ?? row.normalizedEmail ?? "Sem contato disponível"}</p></div>;
+    case "name": return <div className={styles.contactCell}><span aria-hidden="true" className={styles.contactAvatar}>{row.fullName.split(" ").filter(Boolean).slice(0, 2).map((name) => name[0]).join("")}</span><div><Link aria-label={`Abrir cartão do lead ${row.fullName}`} className="font-semibold text-primary underline-offset-4 hover:underline focus:outline-none focus:ring-2 focus:ring-ring" href={`/leads/${row.id}/historico`}>{row.fullName}</Link><p className="mt-1 text-xs text-muted-foreground">{row.normalizedPhone ?? row.normalizedEmail ?? "Sem contato disponível"}</p></div></div>;
     case "jobTitle": return row.jobTitle ?? "Não informado";
     case "priority": return row.priorityCode ? <span className="priority-badge" data-priority={row.priorityCode}>{row.priorityCode}</span> : "Sem faixa";
     case "score": return row.score ?? "—";
     case "reason": return row.priorityReason ?? "Sem pontuação registrada";
-    case "responsible": return <span>{row.responsibleName}<small className="block text-muted-foreground">{row.responsibleType === "QUEUE" ? "Fila" : row.teamName ?? "Pessoa"}</small></span>;
-    case "source": return row.sourceName;
+    case "responsible": return <span className={styles.ownerCell}><span aria-hidden="true" className={styles.ownerAvatar}>{row.responsibleName.slice(0, 1)}</span><span>{row.responsibleName}<small className="block text-muted-foreground">{row.responsibleType === "QUEUE" ? "Fila" : row.teamName ?? "Pessoa"}</small></span></span>;
+    case "source": return <span className={styles.sourceTag}>{row.sourceName}</span>;
     case "campaign": return row.campaignName ?? "Sem campanha";
     case "creative": return row.creativeName ?? "Sem criativo";
     case "stage": return <span className="stage-badge">{row.stageName}</span>;
-    case "status": return statusLabels[row.status] ?? row.status;
+    case "status": return <span className={styles.status} data-status={row.status}>{statusLabels[row.status] ?? row.status}</span>;
     case "sla": return <span data-sla-band={row.slaBand}>{slaLabel(row)}</span>;
     case "age": return formatElapsed(row.receivedAt, screen.list.generatedAt);
     case "lastActivity": return <span>{row.lastActivitySubject ?? "Sem descrição"}<small className="block text-muted-foreground">{formatDate(row.lastActivityAt, screen.filters.timeZone)}</small></span>;
@@ -422,19 +423,19 @@ export function LeadListWorkspace({ screen }: Readonly<{ screen: LeadListScreen 
 
   return (
     <div className={styles.workspace}>
-      {(navigating || mutating) && <p aria-live="polite" className={styles.loadingNotice}>Atualizando dados persistidos…</p>}
+      {(navigating || mutating) && <p aria-live="polite" className={styles.loadingNotice}>Atualizando contatos…</p>}
       {notice && <p className={styles.notice} data-kind={notice.kind} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p>}
 
       <section aria-labelledby="lead-filter-title" className={styles.filterSurface}>
         <div className={styles.filterHeading}>
-          <div><h2 id="lead-filter-title">Encontre o lead certo</h2><p>Combine critérios sem perder espaço de trabalho na tabela.</p></div>
+          <div><h2 id="lead-filter-title"><Icon name="leads" size={16} />Todos os contatos</h2></div>
           <span className={styles.resultCount}>{screen.list.total} resultado(s)</span>
         </div>
         <form onSubmit={submitFilters}>
           <div className={styles.primaryBar}>
             <label className={styles.searchField}>
-              <span className="sr-only">Busca</span>
-              <input aria-label="Busca" className={inputClass} onChange={(event) => update("q", event.target.value)} placeholder="Buscar por nome, telefone, e-mail ou organização" type="search" value={draft.q} />
+              <span className="sr-only">Busca</span><svg aria-hidden="true" className={styles.searchIcon} viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg>
+              <input aria-label="Busca" className={inputClass} onChange={(event) => update("q", event.target.value)} placeholder="Pesquisar contatos..." type="search" value={draft.q} />
             </label>
             <MultiSelectDialog label="Prioridade" onApply={(values) => applyFilterChange("priorities", values as LeadListQuery["priorities"])} options={priorityOptions} values={draft.priorities} />
             <MultiSelectDialog label="Etapa" onApply={(values) => applyFilterChange("stages", values)} options={stageOptions} values={draft.stages} />
@@ -478,7 +479,7 @@ export function LeadListWorkspace({ screen }: Readonly<{ screen: LeadListScreen 
 
       <section className={styles.resultSurface}>
         <div className={styles.resultHeader}>
-          <div><h2>Leads encontrados</h2><p>{screen.list.total} filtrado(s) de {screen.list.visibleTotal} permitido(s) · página {screen.list.page} de {screen.list.totalPages}</p></div>
+          <div><h2>{screen.list.total} contatos</h2><p>Página {screen.list.page} de {screen.list.totalPages} · {screen.list.visibleTotal} contatos disponíveis</p></div>
           <span>Atualizado em {formatDate(screen.list.generatedAt, screen.filters.timeZone)}</span>
         </div>
         {screen.canBulkAssign && selected.size > 0 && (
@@ -490,15 +491,15 @@ export function LeadListWorkspace({ screen }: Readonly<{ screen: LeadListScreen 
           </div>
         )}
         {screen.list.visibleTotal === 0 ? (
-          <div className={styles.emptyState}><h3>Nenhum lead disponível</h3><p>Seu escopo ainda não possui leads persistidos.</p><Button asChild><Link href="/leads/entrada">Cadastrar primeiro lead</Link></Button></div>
+          <div className={styles.emptyState}><h3>Nenhum lead disponível</h3><p>Os contatos da sua equipe aparecerão aqui.</p><Button asChild><Link href="/leads/entrada">Cadastrar primeiro lead</Link></Button></div>
         ) : screen.list.total === 0 ? (
           <div className={styles.emptyState}><h3>Nenhum resultado</h3><p>Nenhum lead corresponde à combinação de filtros.</p><Button onClick={resetFilters} type="button" variant="secondary">Limpar filtros</Button></div>
         ) : (
           <div className={styles.tableViewport}>
             <table className={styles.leadTable}>
-              <caption className="sr-only">Lista operacional de leads persistidos</caption>
+              <caption className="sr-only">Lista de contatos</caption>
               <thead><tr><th className={styles.selectColumn}><input aria-label="Selecionar todos os leads desta página" checked={allPageSelected} onChange={(event) => togglePage(event.target.checked)} type="checkbox" /></th>{visibleColumns.map((column) => <th key={column}>{columnLabels[column]}</th>)}</tr></thead>
-              <tbody>{screen.list.rows.map((row) => <tr key={row.id}><td><input aria-label={`Selecionar ${row.fullName}`} checked={selected.has(row.id)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} type="checkbox" /></td>{visibleColumns.map((column) => <td key={column}>{cellValue(column, row, screen)}</td>)}</tr>)}</tbody>
+              <tbody>{screen.list.rows.map((row) => <tr data-selected={selected.has(row.id)} key={row.id}><td><input aria-label={`Selecionar ${row.fullName}`} checked={selected.has(row.id)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} type="checkbox" /></td>{visibleColumns.map((column) => <td key={column}>{cellValue(column, row, screen)}</td>)}</tr>)}</tbody>
             </table>
           </div>
         )}

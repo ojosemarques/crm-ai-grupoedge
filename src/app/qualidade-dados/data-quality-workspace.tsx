@@ -1,5 +1,7 @@
 "use client";
 
+import styles from "@/app/administracao/administration.module.css";
+
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
@@ -61,7 +63,7 @@ export function DataQualityWorkspace({ initial }: Readonly<{ initial: Screen }>)
     await action({ action: "ISSUE", data: { issueId, action: form.get("action"), reason: form.get("reason"), expectedRevision } }, "Ocorrência atualizada com evento e auditoria.");
   }
 
-  return <div className="space-y-5">
+  return <div className={styles.workspace}>
     {notice ? <p className={notice.kind === "error" ? "feedback feedback-error" : "feedback feedback-success"} role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</p> : null}
     <section aria-label="Resumo de qualidade" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard label="Ocorrências abertas" value={initial.counts.OPEN ?? 0} hint="Fato detectado por regra ativa" tone={(initial.counts.OPEN ?? 0) ? "warning" : "success"} />

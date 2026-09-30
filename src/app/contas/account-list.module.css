@@ -1,0 +1,36 @@
+.workspace { display: grid; gap: 22px; min-width: 0; color: var(--text); }
+.summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.summary > div { display: flex; align-items: center; gap: 14px; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.summary small { display: block; font-size: 10px; color: var(--text-muted); }
+.summary strong { display: block; margin-top: 5px; font-size: 26px; font-weight: 550; letter-spacing: -1px; }
+.metricIcon { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 44px; border-radius: 12px; color: #8753cf; background: #f0e5fc; }
+.metricIcon[data-tone="blue"] { color: #518ac3; background: #e7f2fc; }
+.metricIcon[data-tone="green"] { color: #4caa83; background: #e5f8ee; }
+.directory { padding: 0; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.header h2 { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.header h2 span { padding: 3px 7px; border-radius: 5px; color: var(--primary); background: var(--primary-soft); font-size: 10px; }
+.header > div { display: flex; gap: 8px; }
+.filters { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.filters input { flex: 1 1 240px; background: var(--surface-muted); }
+.filters select { flex: 0 1 160px; }
+.filters input, .filters select { min-width: 0; height: 35px; font-size: 11px; }
+.table { width: 100%; min-width: 800px; text-align: left; border-collapse: collapse; }
+.table th { background: var(--surface-muted); color: var(--text-muted); font-size: 10px; font-weight: 500; padding: 11px 14px; }
+.table td { padding: 15px 14px; border-top: 1px solid var(--border); font-size: 11px; }
+.table tr:hover td { background: color-mix(in srgb, var(--primary-soft) 45%, transparent); }
+.company { display: flex; align-items: center; gap: 11px; }
+.companyAvatar { display: grid; place-items: center; flex: 0 0 34px; height: 34px; border-radius: 9px; background: #eae1f8; color: #6f4c98; font-size: 10px; font-weight: 650; }
+.company a { font-size: 12px; font-weight: 600; color: var(--text); text-decoration: none; }
+.company a:hover { color: var(--primary); }
+.company small { display: block; margin-top: 3px; color: var(--text-muted); font-size: 10px; }
+.segment { display: inline-block; padding: 3px 6px; border-radius: 4px; color: #4f83a3; background: #e4f2fb; font-size: 10px; }
+.dialogHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; padding-bottom: 22px; }
+.dialogHeader span { color: var(--text-muted); font-size: 9px; letter-spacing: .05em; }
+.dialogHeader h2 { margin: 7px 0; font-size: 21px; font-weight: 600; }
+.dialogHeader p { max-width: 340px; color: var(--text-muted); font-size: 11px; }
+.dialogHeader button { border: 0; background: var(--surface-muted); color: var(--text-muted); width: 28px; height: 28px; border-radius: 50%; cursor: pointer; }
+.createForm { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.formError { grid-column: 1 / -1; padding: 10px; color: var(--danger); background: var(--danger-surface); border-radius: 6px; font-size: 12px; }
+.dialogActions { display: flex; grid-column: 1 / -1; justify-content: flex-end; gap: 8px; margin-top: 10px; padding-top: 18px; border-top: 1px solid var(--border); }
+@media (max-width: 700px) { .summary { grid-template-columns: 1fr; gap: 8px; } .summary > div { padding: 12px; } .summary strong { font-size: 22px; } .header { align-items: flex-start; flex-direction: column; } .filters select { flex: 1 1 45%; } .createForm { grid-template-columns: 1fr; } }

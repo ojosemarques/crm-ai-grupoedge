@@ -68,10 +68,10 @@ function generatedLabel(generatedAt: string, timeZone: string) {
 }
 
 function comparisonSentence(comparison: DashboardComparison) {
-  if (comparison.direction === "NOT_COMPARABLE") return "Sem base anterior comparável";
+  if (comparison.direction === "NOT_COMPARABLE") return "Sem comparação anterior";
   if (comparison.direction === "STABLE") return "Sem variação no período";
   const direction = comparison.direction === "UP" ? "acima" : "abaixo";
-  if (comparison.percentageDifference === null) return `${comparison.interpretationLabel} · variação ${direction}`;
+  if (comparison.percentageDifference === null) return comparison.direction === "UP" ? "Crescimento no período" : "Queda no período";
   const percentage = Math.abs(comparison.percentageDifference).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
   return `${percentage}% ${direction} do período anterior`;
 }
@@ -86,14 +86,11 @@ const comparisonIcons: Readonly<Record<string, IconName>> = {
 function ComparisonCard({ comparison, featured, query, series }: Readonly<{ comparison: DashboardComparison; featured?: boolean; query: DashboardQuery; series: DashboardTimeSeries | undefined }>) {
   return (
     <article className={`${styles.comparisonCard} ${featured ? styles.comparisonFeatured : ""}`} data-interpretation={comparison.interpretation}>
-      <div className={styles.comparisonHeader}><span className={styles.comparisonIcon}><Icon name={comparisonIcons[comparison.id] ?? "tendencia"} size={18} /></span><span>{comparison.label}</span></div>
+      <div className={styles.comparisonHeader}><span>{comparison.label}</span><span className={styles.comparisonIcon}><Icon name={comparisonIcons[comparison.id] ?? "tendencia"} size={15} /></span></div>
       <strong className={styles.comparisonValue}>{formatValue(comparison.kind, comparison.current.value)}</strong>
       <p className={styles.comparisonDelta}><span aria-hidden="true">{comparison.direction === "UP" ? "↑" : comparison.direction === "DOWN" ? "↓" : "→"}</span>{comparisonSentence(comparison)}</p>
       <KpiSparkline label={comparison.label} series={series} />
-      <div className={styles.comparisonPrevious}><span>Anterior</span><strong>{formatValue(comparison.kind, comparison.previous.value)}</strong></div>
-      <p className={styles.comparisonPeriod}>{periodLabel(comparison.previousPeriod.fromDate, comparison.previousPeriod.toDate)}</p>
-      {comparison.current.denominator !== null ? <p className={styles.comparisonBase}>Base: {Number(comparison.current.numerator).toLocaleString("pt-BR")} de {comparison.current.denominator.toLocaleString("pt-BR")}</p> : null}
-      <Link aria-label={`${comparison.label}: abrir registros`} className={styles.cardLink} href={dashboardHref(query, comparison.current.drilldownId)}>Abrir registros <Icon name="seta-direita" size={14} /></Link>
+      <div className={styles.comparisonFooter}><details className={styles.comparisonFacts}><summary>Comparação</summary><div><p><span>Anterior</span><strong>{formatValue(comparison.kind, comparison.previous.value)}</strong></p><p>{periodLabel(comparison.previousPeriod.fromDate, comparison.previousPeriod.toDate)}</p>{comparison.current.denominator !== null ? <p>Base: {Number(comparison.current.numerator).toLocaleString("pt-BR")} de {comparison.current.denominator.toLocaleString("pt-BR")}</p> : null}</div></details><Link aria-label={`${comparison.label}: abrir registros`} className={styles.cardLink} href={dashboardHref(query, comparison.current.drilldownId)}>Registros <Icon name="seta-direita" size={12} /></Link></div>
     </article>
   );
 }
@@ -151,7 +148,7 @@ function AttentionPanel({ items, query }: Readonly<{ items: readonly DashboardAt
   const total = items.reduce((sum, item) => sum + item.value, 0);
   return (
     <section className={`${styles.panel} ${styles.attentionPanel}`}>
-      <header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Ação necessária</span><h2>Precisa de atenção</h2><p>Achados determinísticos e vinculados a registros.</p></div><span className={styles.attentionTotal}>{total.toLocaleString("pt-BR")}</span></header>
+      <header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Ação necessária</span><h2>Precisa de atenção</h2><p>Prioridades para acompanhar hoje.</p></div><span className={styles.attentionTotal}>{total.toLocaleString("pt-BR")}</span></header>
       <ol className={styles.attentionList}>{items.map((item) => <li key={item.id}><Link className={styles.attentionLink} data-severity={item.severity} href={dashboardHref(query, item.drilldownId)}><span className={styles.attentionMark}><Icon name={item.severity === "INFO" ? "automacoes" : "alerta"} size={16} /></span><span className={styles.attentionText}><strong>{item.label}</strong><span>{item.detail}</span></span><span className={styles.attentionValue}>{item.value.toLocaleString("pt-BR")}</span></Link></li>)}</ol>
     </section>
   );
@@ -217,15 +214,9 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
         <div className={styles.headerActions}><Link className={styles.primaryAction} href={focusAction.href}>{focusAction.label}<Icon name="seta-direita" size={15} /></Link></div>
       </header>
 
-      <section aria-label="Contexto comparativo do dashboard" className={styles.contextStrip}>
-        <div><span>Período atual</span><strong>{currentPeriodLabel}</strong></div>
-        <div><span>Comparado com</span><strong>{previousPeriodLabel}</strong></div>
-        <div><span>Filtros ativos</span><strong>{activeFilterGroups.length > 0 ? activeFilterGroups.join(" · ") : "Nenhum filtro dimensional"}</strong></div>
-        <div><span>Atualizado em</span><strong>{generatedLabel(screen.overview.generatedAt, screen.overview.period.timeZone)}</strong><small>{roleName} · {screen.overview.period.timeZone}</small></div>
-      </section>
-
       <section aria-label="Período e filtros do dashboard" className={styles.toolbar}>
         <nav aria-label="Atalhos de período" className={styles.periodNav}>{(["TODAY", "YESTERDAY", "WEEK", "MONTH"] as const).map((preset) => { const names = { TODAY: "Hoje", YESTERDAY: "Ontem", WEEK: "Semana", MONTH: "Mês" }; return <Link aria-current={q.preset === preset ? "page" : undefined} className={`${styles.periodLink} ${q.preset === preset ? styles.periodActive : ""}`} href={`${basePath}?preset=${preset}`} key={preset}>{names[preset]}</Link>; })}</nav>
+        <div className={styles.contextInline}><strong>{currentPeriodLabel}</strong><details><summary>Comparado ao período anterior</summary><div><p><span>Anterior</span>{previousPeriodLabel}</p><p><span>Filtros</span>{activeFilterGroups.length > 0 ? activeFilterGroups.join(" · ") : "Todos os registros"}</p><p><span>Atualização</span>{generatedLabel(screen.overview.generatedAt, screen.overview.period.timeZone)}</p><p>{roleName} · {screen.overview.period.timeZone}</p></div></details></div>
         <details className={styles.filterDetails} open={activeFilterCount > 0 || q.preset === "CUSTOM"}>
           <summary className={styles.filterSummary}><Icon name="filtro" size={15} /> Filtros{activeFilterCount > 0 ? <span className={styles.filterCount}>{activeFilterCount}</span> : null}</summary>
           <div className={styles.filterPanel}><div className={styles.filterPanelHeader}><div><strong>Refinar análise</strong><span>O mesmo recorte será preservado nos indicadores e drilldowns.</span></div></div><form className={styles.filterForm} method="get">
@@ -237,21 +228,21 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
         </details>
       </section>
 
-      {!screen.hasData ? <section className={styles.emptyState}><Icon name="tendencia" size={22} /><div><h2>Nenhum dado no período</h2><p>Altere o período ou os filtros. Indicadores permanecem zerados e nenhum gráfico exibe séries fictícias.</p></div></section> : null}
+      {!screen.hasData ? <section className={styles.emptyState}><Icon name="tendencia" size={22} /><div><h2>Nenhum dado no período</h2><p>Selecione outro período ou ajuste os filtros para explorar seus resultados.</p></div></section> : null}
 
-      <section aria-labelledby="kpis-title"><header className={styles.sectionHeader}><div><span className={styles.sectionTag}>Comparação principal</span><h2 id="kpis-title">Indicadores acionáveis</h2><p>Valores, tendências reais e base anterior no mesmo recorte.</p></div></header><div className={styles.comparisonGrid}>{primaryComparisons.map((comparison, index) => <ComparisonCard comparison={comparison} featured={index === 0} key={comparison.id} query={q} series={screen.timeSeries.find((series) => series.id === comparison.id)} />)}</div></section>
+      <section aria-label="Indicadores principais"><div className={styles.comparisonGrid}>{primaryComparisons.map((comparison, index) => <ComparisonCard comparison={comparison} featured={index === 0} key={comparison.id} query={q} series={screen.timeSeries.find((series) => series.id === comparison.id)} />)}</div></section>
 
       <div className={styles.primaryGrid}>
-        <section className={`${styles.panel} ${styles.evolutionPanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Evolução comercial</span><h2>Da entrada à venda</h2><p>Selecione a série e compare os mesmos buckets dos dois períodos.</p></div></header><CommercialEvolutionChart currentPeriodLabel={currentPeriodLabel} description="Evolução dos principais marcos comerciais" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Evolução comercial" /></section>
+        <section className={`${styles.panel} ${styles.evolutionPanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Evolução comercial</span><h2>Da entrada à venda</h2><p>Acompanhe o ritmo da operação e compare com o período anterior.</p></div></header><CommercialEvolutionChart currentPeriodLabel={currentPeriodLabel} description="Evolução dos principais marcos comerciais" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Evolução comercial" /></section>
         <AttentionPanel items={screen.attention} query={q} />
       </div>
 
       <section className={styles.pulseStrip} aria-label="Marcos operacionais do período">{operationalPulse.map((metric) => <Link href={dashboardHref(q, metric.drilldownId)} key={metric.id}><span>{metric.label}</span><strong>{metricValue(metric)}</strong><small>{metric.denominator === null ? `${metric.numerator} registros` : `${metric.numerator} de ${metric.denominator}`}</small></Link>)}</section>
 
-      <section className={`${styles.panel} ${styles.flowPanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Volume por marco</span><h2>Movimento do funil no período</h2><p>Recebidos, qualificados, agendados e vendas em buckets reais. As séries não são somadas como se fossem categorias exclusivas.</p></div></header><CommercialFlowChart series={screen.timeSeries} /></section>
+      <section className={`${styles.panel} ${styles.flowPanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Volume por marco</span><h2>Movimento do funil no período</h2><p>Volume de entradas, qualificações, agendamentos e vendas ao longo do período.</p></div></header><CommercialFlowChart series={screen.timeSeries} /></section>
 
       <div className={styles.commercialGrid}>
-        <section className={`${styles.panel} ${styles.revenuePanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Receita e vendas</span><h2>Resultado ao longo do tempo</h2><p>Moeda e quantidade usam visualizações separadas para não misturar escalas.</p></div><span className={styles.ticketBadge}>Ticket {formatMoney(screen.overview.averageTicket.cents)}</span></header><RevenueSalesChart currentPeriodLabel={currentPeriodLabel} description="Receita e vendas por bucket temporal" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Receita e vendas" /></section>
+        <section className={`${styles.panel} ${styles.revenuePanel}`}><header className={styles.panelHeader}><div><span className={styles.panelEyebrow}>Receita e vendas</span><h2>Resultado ao longo do tempo</h2><p>Explore a receita gerada e a evolução das vendas.</p></div><span className={styles.ticketBadge}>Ticket {formatMoney(screen.overview.averageTicket.cents)}</span></header><RevenueSalesChart currentPeriodLabel={currentPeriodLabel} description="Receita e vendas por bucket temporal" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Receita e vendas" /></section>
         <FunnelPanel screen={screen} />
       </div>
 
@@ -261,7 +252,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
 
       <PerformancePanel screen={screen} />
 
-      <details className={styles.details}><summary>Explorar análises complementares <span>Campanhas, criativos, etapas, motivos e aging</span></summary><div className={styles.detailsContent}><SegmentList description="Volume de leads recebidos por origem." query={q} segments={screen.sources} title="Origem dos leads" /><SegmentList description="Distribuição dos leads recebidos." query={q} segments={screen.campaigns} title="Campanhas" /><SegmentList description="Distribuição dos leads recebidos." query={q} segments={screen.creatives} title="Criativos" /><SegmentList description="Entradas históricas por etapa e pipeline." query={q} segments={screen.stageConversion} title="Conversão por etapa" /><SegmentList description="Tempo médio calculado pelo histórico de etapas." query={q} secondaryKind="DURATION" segments={screen.stageTime} title="Tempo por etapa" /><SegmentList description="Eventos de desqualificação no período." query={q} segments={screen.disqualificationReasons} title="Motivos de desqualificação" /><SegmentList description="Perdas vigentes ocorridas no período." query={q} segments={screen.lossReasons} title="Motivos de perda" /><SegmentList description="Último estado persistido das reuniões decididas." query={q} segments={screen.noShowReasons} title="Motivos de no-show" /><SegmentList description="Leads em intervalo aberto no corte." query={q} segments={screen.backlogByStage} title="Backlog por etapa" /><SegmentList description="Idade média do backlog pelo StageHistory." query={q} secondaryKind="DURATION" segments={screen.agingByStage} title="Aging por etapa" /></div></details>
+      <details className={styles.details}><summary>Explorar análises complementares <span>Campanhas, criativos, etapas, motivos e aging</span></summary><div className={styles.detailsContent}><SegmentList description="Volume de leads recebidos por origem." query={q} segments={screen.sources} title="Origem dos leads" /><SegmentList description="Distribuição dos leads recebidos." query={q} segments={screen.campaigns} title="Campanhas" /><SegmentList description="Distribuição dos leads recebidos." query={q} segments={screen.creatives} title="Criativos" /><SegmentList description="Entradas históricas por etapa e pipeline." query={q} segments={screen.stageConversion} title="Conversão por etapa" /><SegmentList description="Tempo médio calculado pelo histórico de etapas." query={q} secondaryKind="DURATION" segments={screen.stageTime} title="Tempo por etapa" /><SegmentList description="Eventos de desqualificação no período." query={q} segments={screen.disqualificationReasons} title="Motivos de desqualificação" /><SegmentList description="Perdas vigentes ocorridas no período." query={q} segments={screen.lossReasons} title="Motivos de perda" /><SegmentList description="Último estado persistido das reuniões decididas." query={q} segments={screen.noShowReasons} title="Motivos de no-show" /><SegmentList description="Leads em intervalo aberto no corte." query={q} segments={screen.backlogByStage} title="Backlog por etapa" /><SegmentList description="Tempo médio dos negócios em cada etapa." query={q} secondaryKind="DURATION" segments={screen.agingByStage} title="Aging por etapa" /></div></details>
     </div>
   );
 }

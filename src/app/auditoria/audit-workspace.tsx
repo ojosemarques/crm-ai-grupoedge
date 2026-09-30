@@ -1,5 +1,7 @@
 "use client";
 
+import styles from "@/app/administracao/administration.module.css";
+
 import Link from "next/link";
 import { useState } from "react";
 
@@ -123,10 +125,11 @@ export function AuditWorkspace({ initialScreen }: Readonly<{ initialScreen: Audi
     }
   }
 
-  return <div className="space-y-6">
+  return <div className={styles.workspace}>
     {notice ? <p className="rounded-md border bg-muted px-4 py-3 text-sm" role="status">{notice}</p> : null}
 
-    <Surface aria-labelledby="health-heading" className="p-5" tone="subtle">
+    <nav className={styles.sectionNav} aria-label="Seções de auditoria"><a href="#process-findings">Saúde do processo</a><a href="#audit-events">Trilha administrativa</a></nav>
+    <Surface id="process-findings" aria-labelledby="health-heading" className="p-5" tone="subtle">
       <SectionHeader action={screen.capabilities.canManage ? <Button disabled={busy === "scan"} onClick={() => void scan()} type="button">{busy === "scan" ? "Verificando…" : "Atualizar achados"}</Button> : null} description="A detecção usa somente relações, timestamps e eventos persistidos; não depende de IA." eyebrow="Integridade operacional" title="Saúde determinística do processo" titleId="health-heading" />
 
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -161,7 +164,7 @@ export function AuditWorkspace({ initialScreen }: Readonly<{ initialScreen: Audi
       <p className="mt-4 text-xs text-muted-foreground">Exportação permanece desabilitada neste MVP até revisão específica de escopo, mascaramento e autorização.</p>
     </Surface>
 
-    <Surface aria-labelledby="audit-heading" className="p-5">
+    <Surface id="audit-events" aria-labelledby="audit-heading" className="p-5">
       <SectionHeader description="A interface mascara telefone, e-mail, token, credenciais e payload bruto; o fato original permanece protegido no banco." eyebrow="Governança" title="Trilha administrativa append-only" titleId="audit-heading" />
       <form className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" method="get">
         <label className="text-xs font-semibold">Busca<input className={selectClass} defaultValue={screen.filters.auditSearch} name="auditSearch" placeholder="Ação, entidade, ator ou request ID" /></label>

@@ -15,7 +15,7 @@ export default async function CustomerSuccessPage({ searchParams }: Readonly<{ s
   try { screen = await getCustomerSuccessService().screen(context, query); }
   catch (error) { if (error instanceof AccessDeniedError) redirect("/acesso-negado"); throw error; }
   return <main className="page-canvas page-canvas-wide">
-    <PageHeader eyebrow="Pós-venda" title="Customer Success" description="Carteira acionável, planos de resultado e saúde explicada por evidências persistidas." meta={`${context.displayName} · ${screen.timeZone}`} />
+    <PageHeader eyebrow="Pós-venda" title="Customer Success" description="Acompanhe sua carteira, a saúde dos clientes e os planos de sucesso." meta={`${context.displayName} · ${screen.timeZone}`} />
     <CustomerSuccessWorkspace screen={JSON.parse(JSON.stringify(screen)) as CustomerSuccessScreenView} />
   </main>;
 }

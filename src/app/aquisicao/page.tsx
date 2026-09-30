@@ -17,7 +17,7 @@ export default async function AcquisitionPage() {
     throw error;
   }
   return <main className="page-canvas page-canvas-wide">
-    <PageHeader eyebrow="Revenue OS" title="Aquisição e atribuição" description="Jornada factual, cobertura, divergências e modelos versionados. Ambiente local, nenhuma mídia externa conectada." />
+    <PageHeader eyebrow="Revenue OS" title="Aquisição e atribuição" description="Entenda as origens dos contatos, acompanhe conversões e compare modelos de atribuição." />
     <AcquisitionWorkspace initial={screen} />
   </main>;
 }

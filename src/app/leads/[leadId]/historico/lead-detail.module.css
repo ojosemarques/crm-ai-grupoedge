@@ -1,0 +1,61 @@
+.workspace { color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 9px; overflow: hidden; min-width: 0; }
+.header { padding: 22px 25px 18px; }
+.header h1 { font-size: 24px; font-weight: 600; letter-spacing: -.04em; }
+.header p { font-size: 11px; }
+.avatar { display: grid; place-items: center; height: 40px; width: 40px; border-radius: 8px; color: #794e20; background: #f0ce96; font-size: 14px; font-weight: 600; margin-right: 6px; }
+.quickActions { padding: 0 25px 15px; }
+.quickActions summary { display: flex; align-items: center; gap: 6px; color: var(--primary); font-size: 11px; cursor: pointer; width: fit-content; }
+.quickActions button { font-size: 10px; min-height: 30px; padding: 6px 10px; }
+.tabs { display: flex; gap: 12px; padding: 0 20px; margin: 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); overflow-x: auto; background: var(--surface); }
+.tabs button { border: 0; border-bottom: 3px solid transparent; padding: 15px 10px; font-size: 12px; border-radius: 0; color: var(--text-muted); }
+.tabs button[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); background: transparent; }
+.stages { display: flex; overflow-x: auto; background: var(--primary-soft); margin: 18px 0 0; padding: 20px 25px 23px; }
+.stages li { position: relative; min-width: 115px; flex: 1; display: grid; justify-items: center; align-content: start; gap: 10px; text-align: center; }
+.stages li::before { content: ""; position: absolute; height: 2px; top: 15px; left: -50%; right: 50%; background: #ded0f7; }
+.stages li:first-child::before { display: none; }
+.stages li > span { z-index: 1; display: grid; place-items: center; background: #dcc6f6; width: 31px; height: 31px; border-radius: 50%; color: #684194; font-size: 13px; }
+.stages strong { font-size: 10px; font-weight: 500; color: var(--text-muted); }
+.stages li[aria-current="step"] > span { color: white; background: var(--primary); box-shadow: 0 0 0 4px var(--surface); }
+.stages li[aria-current="step"] strong { color: var(--primary); font-weight: 650; }
+.layout { display: grid; grid-template-columns: 215px minmax(0,1fr) 220px; align-items: start; }
+.profile { padding: 23px 19px; min-width: 0; }
+.profile h2 { font-size: 12px; font-weight: 600; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.facts { display: grid; gap: 18px; padding: 20px 0; }
+.facts > div { grid-column: auto; min-width: 0; }
+.facts dt { font-size: 9px; color: var(--text-muted); }
+.facts dd { font-size: 11px; overflow-wrap: anywhere; }
+.content { min-width: 0; padding: 20px; background: var(--surface-muted); border-left: 1px solid var(--border); border-right: 1px solid var(--border); min-height: 600px; }
+.content > [role="tabpanel"] { display: flex; flex-direction: column; gap: 20px; }
+.content :global(.surface-panel) { border-radius: 7px; box-shadow: none; background: var(--surface); border-color: var(--border); padding: 18px; }
+.content h2 { font-size: 14px; font-weight: 600; }
+.content h3 { font-size: 12px; }
+.content p, .content label { font-size: 11px; line-height: 1.75; }
+.content input, .content select, .content textarea { font-size: 11px; }
+.content :global(.sm\:grid-cols-3), .content :global(.lg\:grid-cols-6) { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.context { padding: 0; min-width: 0; }
+.context section { padding: 22px 18px; border-bottom: 1px solid var(--border); }
+.context h2 { font-size: 12px; font-weight: 600; margin-bottom: 13px; }
+.context strong { font-size: 11px; }
+.context p { color: var(--text-muted); font-size: 11px; line-height: 1.8; margin: 10px 0; }
+.context a { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--primary); }
+.context button { font-size: 10px; }
+.actionForm { padding: 15px 18px; border: 1px solid var(--border); background: var(--surface); border-radius: 7px; }
+.actionForm summary { display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 600; color: var(--primary); cursor: pointer; }
+.dealHeading { display: flex; align-items: center; gap: 11px; }
+.dealHeading > svg { color: var(--primary); }
+.dealHeading h2 { font-size: 15px; font-weight: 600; }
+.dealHeading p { color: var(--text-muted); margin-top: 4px; }
+.dealCard { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
+.dealCard > div:first-child { padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.dealCard > div:first-child h3 { font-size: 16px; }
+.dealCard > div:first-child > span { background: var(--primary-soft); color: var(--primary); border: 0; border-radius: 4px; font-size: 9px; }
+.dealStats { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 17px; margin: 20px 0; }
+.dealStats dt { font-size: 9px; color: var(--text-muted); }
+.dealStats dd { font-size: 11px; font-weight: 500; line-height: 1.7; margin-top: 5px; overflow-wrap: anywhere; }
+.dealStats > div:nth-child(2) dd { font-size: 19px; letter-spacing: -.03em; color: var(--primary); }
+.content :global(#tarefas) > ul > li { border-color: var(--border); border-radius: 6px; padding: 15px; }
+.content :global(#tarefas) > ul > li > form { border-top: 1px solid var(--border); padding-top: 12px; }
+.content ol > li { background: var(--surface); border-color: var(--border); border-radius: 6px; position: relative; padding-left: 20px; }
+.content ol > li::before { content: ""; position: absolute; top: 20px; left: -5px; width: 8px; height: 8px; border-radius: 50%; background: #c6b5e5; outline: 4px solid var(--surface); }
+@media (max-width: 1250px) { .layout { grid-template-columns: 200px minmax(0,1fr); } .context { grid-column: 1/-1; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-top: 1px solid var(--border); } }
+@media (max-width: 700px) { .header { padding: 18px; } .header h1 { font-size: 20px; } .layout { display: flex; flex-direction: column; } .profile { width: 100%; } .facts { grid-template-columns: repeat(2,minmax(0,1fr)); } .content { width: 100%; padding: 14px; border: 0; border-top: 1px solid var(--border); } .context { width: 100%; display: block; } .tabs { gap: 0; padding: 0 8px; } .stages { padding-left: 15px; } }

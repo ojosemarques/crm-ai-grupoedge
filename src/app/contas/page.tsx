@@ -22,5 +22,5 @@ export default async function AccountsPage({ searchParams }: Readonly<{ searchPa
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     throw error;
   }
-  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Receita B2B" title="Contas" description="Organizações canônicas, pessoas, oportunidades e comitês de compra do workspace." meta={`${result.total} contas · ${openReviews} revisões abertas`} /><AccountListWorkspace initial={result} /></main>;
+  return <main className="page-canvas page-canvas-wide"><PageHeader eyebrow="Receita B2B" title="Empresas" description="Organize empresas, contatos e relacionamentos comerciais." meta={`${result.total} contas · ${openReviews} revisões abertas`} /><AccountListWorkspace initial={result} /></main>;
 }

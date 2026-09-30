@@ -1,0 +1,48 @@
+.workspace { display: grid; gap: 24px; min-width: 0; }
+.overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.overviewCard { padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); display: grid; gap: 10px; }
+.overviewCard > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--text-muted); font-size: 11px; }
+.overviewCard > div svg { color: var(--primary); }
+.overviewCard > strong { font-size: 29px; font-weight: 600; letter-spacing: -.04em; line-height: 1.1; }
+.overviewCard small { color: var(--text-muted); font-size: 10px; }
+.overviewCard:nth-child(3) { background: #f2fcf7; border-color: #e0f1e8; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.planFilter { background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 7px 12px; font-size: 12px; min-width: 150px; max-width: 100%; }
+.sectionHeader { display: flex; align-items: end; justify-content: space-between; gap: 15px; margin-bottom: 15px; }
+.sectionHeader span { text-transform: uppercase; letter-spacing: .09em; font-size: 9px; color: var(--primary); }
+.sectionHeader h2 { font-size: 16px; font-weight: 600; margin-top: 4px; }
+.sectionHeader small { color: var(--text-muted); font-size: 11px; }
+.goalGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.goalCard { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; min-width: 0; }
+.goalCard > header { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+.goalCard > header > div > span { color: var(--text-muted); font-size: 10px; }
+.goalCard h3 { font-size: 13px; font-weight: 600; margin-top: 4px; }
+.gauge { position: relative; margin: 20px auto 12px; width: min(100%, 260px); }
+.gauge svg { display: block; width: 100%; }
+.gaugeTrack { stroke: var(--primary-soft); }
+.gaugeFill { stroke: var(--primary); }
+.gauge strong { position: absolute; left: 50%; bottom: 12%; transform: translateX(-50%); font-size: 29px; letter-spacing: -.035em; font-weight: 650; }
+.goalValues { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.goalValues > div { display: grid; gap: 4px; padding: 10px 12px; border-radius: 8px; background: var(--surface-muted); }
+.goalValues span { color: var(--text-muted); font-size: 10px; }
+.goalValues strong { font-size: 13px; overflow-wrap: anywhere; }
+.goalCard footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 16px; font-size: 10px; }
+.goalCard footer a { display: flex; align-items: center; gap: 6px; color: var(--primary); }
+.goalCard footer > span { color: var(--text-muted); }
+.ruleDetails { font-size: 10px; margin-top: 13px; border-top: 1px solid var(--border); padding-top: 10px; color: var(--text-muted); }
+.ruleDetails summary { cursor: pointer; }
+.ruleDetails p { margin-top: 8px; }
+.plans { display: grid; gap: 12px; }
+.planCard { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+.editor { width: min(1040px, calc(100vw - 40px)); max-width: 1040px; padding: 28px; }
+.dialogClose { float: right; }
+.dialogClose button { border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text-muted); cursor: pointer; width: 28px; height: 28px; font-size: 20px; }
+.confirmDialog { width: min(460px, calc(100vw - 40px)); padding: 26px; }
+.confirmForm { display: grid; gap: 16px; }
+.confirmForm h2 { font-size: 20px; font-weight: 600; }
+.confirmForm > p { color: var(--text-muted); font-size: 12px; }
+.confirmForm label { display: grid; gap: 8px; font-size: 12px; }
+.confirmForm textarea { border: 1px solid var(--border); border-radius: 7px; padding: 10px; background: var(--surface-muted); }
+.confirmForm > div { display: flex; justify-content: end; gap: 10px; }
+@media (max-width: 1100px) { .overview, .goalGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .overview { gap: 10px; } .overviewCard { padding: 14px; } .overviewCard > div { font-size: 10px; } .overviewCard small { font-size: 9px; } .goalGrid { grid-template-columns: minmax(0, 1fr); } .editor { padding: 20px; } }

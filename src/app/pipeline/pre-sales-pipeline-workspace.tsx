@@ -6,6 +6,8 @@ import { FormEvent, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Icon } from "@/components/ui/icon";
+import styles from "./pipeline-workspace.module.css";
 import { DataTableShell } from "@/components/ui/surface";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import type {
@@ -22,18 +24,6 @@ function formatDate(value: string | null, timeZone: string) {
     timeStyle: "short",
     timeZone,
   }).format(new Date(value));
-}
-
-function queryHref(screen: PreSalesPipelineScreen, changes: Record<string, string>) {
-  const query = new URLSearchParams({
-    ...(screen.filters.q ? { q: screen.filters.q } : {}),
-    ...(screen.filters.responsible ? { responsible: screen.filters.responsible } : {}),
-    ...(screen.filters.priority !== "ALL" ? { priority: screen.filters.priority } : {}),
-    ...(screen.filters.stageCode !== "ALL" ? { stageCode: screen.filters.stageCode } : {}),
-    ...changes,
-  });
-  for (const [key, value] of [...query.entries()]) if (!value || value === "ALL") query.delete(key);
-  return `/pipeline${query.size ? `?${query.toString()}` : ""}`;
 }
 
 async function responseResult(response: Response) {
@@ -133,77 +123,61 @@ export function PreSalesPipelineWorkspace({
   }
 
   return (
-    <div className="space-y-5">
-      <section className="surface-panel p-4">
-        <form className="grid gap-3 lg:grid-cols-[minmax(12rem,1fr)_minmax(12rem,16rem)_10rem_auto]" method="get">
-          <label className="text-sm">Busca
-            <input className="mt-1 w-full rounded-md border bg-background px-3 py-2" defaultValue={screen.filters.q} name="q" placeholder="Nome, cargo ou organização" />
-          </label>
-          <label className="text-sm">Responsável
-            <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" defaultValue={screen.filters.responsible} name="responsible">
-              <option value="">Todos</option>
-              {screen.responsibleOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-            </select>
-          </label>
-          <label className="text-sm">Prioridade
-            <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" defaultValue={screen.filters.priority} name="priority">
-              <option value="ALL">Todas</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
-            </select>
-          </label>
-          <div className="flex items-end gap-2"><Button type="submit">Filtrar</Button><Button asChild type="button" variant="secondary"><Link href="/pipeline">Limpar</Link></Button></div>
-        </form>
-      </section>
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div aria-label="Alternar visualização" className="flex gap-2">
-          <Button onClick={() => setView("board")} type="button" variant={view === "board" ? "default" : "secondary"}>Quadro</Button>
-          <Button onClick={() => setView("list")} type="button" variant={view === "list" ? "default" : "secondary"}>Lista</Button>
+    <div className={styles.workspace}>
+      <form className={styles.filters} method="get">
+        <label className={styles.search}><span className="sr-only">Pesquisar negócios</span><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg><input defaultValue={screen.filters.q} name="q" placeholder="Buscar negócio..." /></label>
+        <label className={styles.filter}>Dono do negócio<select aria-label="Dono do negócio" defaultValue={screen.filters.responsible} name="responsible"><option value="">Todos</option>{screen.responsibleOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+        <label className={styles.filter}>Prioridade<select aria-label="Prioridade" defaultValue={screen.filters.priority} name="priority"><option value="ALL">Todas</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option></select></label>
+        <label className={styles.filter}>Etapa<select aria-label="Etapa" defaultValue={screen.filters.stageCode} name="stageCode"><option value="ALL">Todas as etapas</option>{screen.stages.map((stage) => <option key={stage.id} value={stage.code}>{stage.name} ({stage.count})</option>)}</select></label>
+        <input name="view" type="hidden" value={view} />
+        <Button size="sm" type="submit" variant="secondary"><Icon name="filtro" size={14} />Aplicar</Button>
+        <Link className={styles.clear} href="/pipeline">Limpar filtros</Link>
+      </form>
+      <div className={styles.boardToolbar}>
+        <p><strong>{visibleStages.reduce((total, stage) => total + stage.count, 0)}</strong> negócios no pipeline <span className={styles.pipelineName}>{screen.pipelineName}</span></p>
+        <div className={styles.tools}>
+          <div aria-label="Alternar visualização" className={styles.viewSwitch}>
+            <button aria-pressed={view === "board"} onClick={() => setView("board")} type="button"><Icon name="dashboard" size={14} />Quadro</button>
+            <button aria-pressed={view === "list"} onClick={() => setView("list")} type="button"><Icon name="auditoria" size={14} />Lista</button>
+          </div>
+          <button aria-label="Atualizar pipeline" className={styles.iconButton} onClick={() => router.refresh()} title="Atualizar" type="button"><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1" /></svg></button>
+          <Link aria-label="Abrir lista de leads" className={styles.iconButton} href="/leads" title="Lista completa"><Icon name="leads" size={16} /></Link>
         </div>
-        <Button asChild variant="secondary"><Link href="/leads">Abrir lista completa de leads</Link></Button>
       </div>
 
       {notice ? <p className="feedback-banner rounded-md border p-3 text-sm" data-tone={notice.kind === "error" ? "danger" : "success"} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
 
-      <nav aria-label="Contagens por etapa" className="flex gap-2 overflow-x-auto pb-1">
-        {screen.stages.map((stage) => (
-          <Link className={`whitespace-nowrap rounded-md border px-3 py-2 text-sm ${screen.filters.stageCode === stage.code ? "bg-primary text-primary-foreground" : "bg-card"}`} href={queryHref(screen, { stageCode: stage.code })} key={stage.id}>
-            {stage.name} <strong>{stage.count}</strong>
-          </Link>
-        ))}
-      </nav>
-
-      {visibleStages.every((stage) => stage.count === 0) ? (
-        <EmptyState description="Ajuste os filtros ou simule uma entrada de lead." title="Nenhum lead neste recorte" />
-      ) : view === "board" ? (
-        <section aria-label="Quadro do pipeline" className="crm-kanban flex snap-x overflow-x-auto pb-5">
+      {view === "board" ? (
+        <section aria-label="Quadro do pipeline" className={styles.board}>
           {visibleStages.map((stage) => (
-            <section
-              aria-label={`Etapa ${stage.name}`}
-              className="crm-kanban__lane shrink-0 snap-start"
-              key={stage.id}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => void dropOnStage(event, stage)}
-            >
-              <header className="mb-3 flex items-center justify-between gap-2"><h2><span className="stage-badge">{stage.name}</span></h2><span aria-label={`${stage.count} leads nesta etapa`} className="rounded bg-background px-2 py-1 text-xs font-semibold">{stage.count}</span></header>
-              <div className="space-y-3">
+            <section aria-label={`Etapa ${stage.name}`} className={styles.lane} key={stage.id} onDragOver={(event) => event.preventDefault()} onDrop={(event) => void dropOnStage(event, stage)}>
+              <header className={styles.laneHeader}><div><h2>{stage.name}</h2><span>{stage.leads.filter((lead) => lead.nextActionAt).length} atividades agendadas</span></div><span aria-label={`${stage.count} leads nesta etapa`} className={styles.count}>{stage.count}</span></header>
+              <div className={styles.cards}>
                 {stage.leads.map((lead) => (
-                  <article className="crm-kanban__card text-sm" draggable={screen.canWrite} key={lead.id} onDragStart={(event) => startDrag(event, lead)}>
-                    <div className="crm-kanban__card-top"><span className="crm-kanban__kind">Lead</span><span className="priority-badge" data-priority={lead.priorityCode}>{lead.score === null ? "Sem score" : `${lead.priorityCode} · ${lead.score}/100`}</span></div>
-                    <Link href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link>
-                    <p className="crm-kanban__card-subtitle">{lead.jobTitle ?? "Atuação não informada"}</p>
-                    <div className="crm-kanban__card-owner"><span aria-hidden="true" className="crm-kanban__avatar">{lead.responsibleName.slice(0, 1).toUpperCase()}</span><span>{lead.responsibleName}</span></div>
-                    <p className="crm-kanban__next"><span>Próxima ação</span><strong>{lead.nextActionDescription ?? "Ausente"}</strong><small>{formatDate(lead.nextActionAt, screen.timeZone)}</small></p>
-                    <Button className="mt-3 w-full" disabled={!screen.canWrite || pending} onClick={() => setSelectedLeadId(lead.id)} size="sm" type="button" variant="secondary">Alterar etapa</Button>
+                  <article className={styles.card} draggable={screen.canWrite && !pending} key={lead.id} onDragStart={(event) => startDrag(event, lead)}>
+                    <div className={styles.cardBody}>
+                      <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div>
+                      <div className={styles.cardTitle}><Link href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link><span title="Pontuação de qualificação">{lead.score === null ? "—" : `${lead.score}/100`}</span></div>
+                      {lead.jobTitle ? <p className={styles.subtitle}>{lead.jobTitle}</p> : null}
+                    </div>
+                    <footer className={styles.cardFooter}>
+                      <span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatar} title={lead.responsibleName}>{lead.responsibleName.slice(0, 1).toUpperCase()}</span>
+                      <Link aria-label={`Abrir atividades de ${lead.fullName}`} href={`/leads/${lead.id}/historico`} title="Atividades e histórico"><Icon name="meu-dia" size={13} /></Link>
+                      <Link aria-label={`Abrir contato de ${lead.fullName}`} href={`/leads/${lead.id}`} title="Contato"><Icon name="leads" size={13} /></Link>
+                      <span className={styles.activity} title={`${lead.nextActionDescription ?? "Sem próxima atividade"} · ${formatDate(lead.nextActionAt, screen.timeZone)}`}><Icon name="relogio" size={12} />{lead.nextActionAt ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: screen.timeZone }).format(new Date(lead.nextActionAt)) : "Sem prazo"}</span>
+                      <button aria-label={`Alterar etapa de ${lead.fullName}`} className={styles.moveButton} disabled={!screen.canWrite || pending} onClick={() => setSelectedLeadId(lead.id)} title="Alterar etapa" type="button"><Icon name="seta-direita" size={13} /></button>
+                    </footer>
                   </article>
                 ))}
-                {stage.displayedCount === 0 ? <p className="rounded border border-dashed p-3 text-xs text-muted-foreground">Etapa vazia neste recorte.</p> : null}
-                {stage.count > stage.displayedCount ? <p className="text-xs text-muted-foreground">Mostrando {stage.displayedCount} de {stage.count}. Use a lista completa para ver todos.</p> : null}
+                {stage.displayedCount === 0 ? <div className={styles.emptyLane}><Icon name="pipeline" size={20} /><p>Nenhum negócio nesta etapa</p><span>Os negócios aparecerão aqui ao entrar nesta fase.</span></div> : null}
+                {stage.count > stage.displayedCount ? <Link className={styles.moreCards} href="/leads">Ver todos os {stage.count} leads</Link> : null}
               </div>
             </section>
           ))}
         </section>
       ) : (
         <section className="space-y-2">
+          {cards.length === 0 ? <EmptyState description="Ajuste os filtros ou cadastre um lead para começar." title="Nenhum negócio neste recorte" /> : null}
           {visibleStages.some((stage) => stage.count > stage.displayedCount) ? (
             <p className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
               Esta lista operacional mostra até {screen.cardLimitPerStage} leads por etapa. Use a lista completa para consultar todos os registros deste recorte.
