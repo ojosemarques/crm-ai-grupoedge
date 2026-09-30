@@ -240,6 +240,48 @@ describe("canais locais de entrada da CRM-07", () => {
     }
   });
 
+  it("cadastra manualmente sem origem quando a origem técnica ainda não existe", async () => {
+    const manualSources = await database.leadSource.findMany({
+      where: {
+        workspaceId: managerContext.workspaceId,
+        key: { equals: "manual", mode: "insensitive" },
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    await database.leadSource.updateMany({
+      where: { id: { in: manualSources.map(({ id }) => id) } },
+      data: { deletedAt: fixedNow },
+    });
+
+    try {
+      const intake = createLeadIntakeService({ database, authorization, now: () => fixedNow });
+      const service = createLeadEntryService({ database, authorization, intake });
+      const payload = manualPayload(uniquePhone("missing-manual-source"));
+      const leadWithoutSource: Partial<typeof payload.lead> = { ...payload.lead };
+      delete leadWithoutSource.sourceKey;
+      const created = await service.createManual(
+        { ...payload, lead: leadWithoutSource },
+        managerContext,
+      );
+
+      expect(created.outcome).toBe("CREATED");
+      expect(await database.leadSource.findFirst({
+        where: {
+          workspaceId: managerContext.workspaceId,
+          key: { equals: "manual", mode: "insensitive" },
+          type: "MANUAL",
+          deletedAt: null,
+        },
+      })).not.toBeNull();
+    } finally {
+      await database.leadSource.updateMany({
+        where: { id: { in: manualSources.map(({ id }) => id) } },
+        data: { deletedAt: null },
+      });
+    }
+  });
+
   it("gera preview e importa arquivo completo usando a fronteira única", async () => {
     const firstPhone = uniquePhone("csv-complete-1");
     const secondPhone = uniquePhone("csv-complete-2");

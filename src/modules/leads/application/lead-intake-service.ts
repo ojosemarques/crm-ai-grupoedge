@@ -361,6 +361,59 @@ async function ensureGeneralQueue(
   });
 }
 
+async function ensureManualSource(
+  transaction: Prisma.TransactionClient,
+  workspaceId: string,
+  actorId: string,
+): Promise<void> {
+  await transaction.$executeRaw`
+    SELECT pg_advisory_xact_lock(
+      hashtextextended(${`manual-source:${workspaceId}`}, 0)
+    )
+  `;
+
+  const activeSource = await transaction.leadSource.findFirst({
+    where: {
+      workspaceId,
+      key: { equals: "manual", mode: "insensitive" },
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  if (activeSource) return;
+
+  const archivedSource = await transaction.leadSource.findFirst({
+    where: {
+      workspaceId,
+      key: { equals: "manual", mode: "insensitive" },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true },
+  });
+  if (archivedSource) {
+    await transaction.leadSource.update({
+      where: { id: archivedSource.id },
+      data: {
+        type: "MANUAL",
+        deletedAt: null,
+        updatedByActorId: actorId,
+      },
+    });
+    return;
+  }
+
+  await transaction.leadSource.create({
+    data: {
+      workspaceId,
+      key: "manual",
+      name: "Cadastro manual",
+      type: "MANUAL",
+      createdByActorId: actorId,
+      updatedByActorId: actorId,
+    },
+  });
+}
+
 async function findReferences(
   transaction: Prisma.TransactionClient,
   workspaceId: string,
@@ -830,6 +883,13 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         context.workspaceId,
         context.actorId,
       );
+      if (parsed.channel === "MANUAL" && parsed.sourceKey.toLowerCase() === "manual") {
+        await ensureManualSource(
+          transaction,
+          context.workspaceId,
+          context.actorId,
+        );
+      }
       await lockIntakeIdentity(transaction, context.workspaceId, parsed);
 
       const priorSubmission = await transaction.leadFormSubmission.findUnique({
