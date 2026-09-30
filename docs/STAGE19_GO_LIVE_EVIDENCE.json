@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "stage19.go-live.v1",
+  "release": {
+    "commit": "1e5683760f17b9a4f4b9c48cc5f2de2293d2ec60",
+    "deploymentId": "dpl_7gExoY1VHH2d4drYUoKBfU7RFzTQ",
+    "migration": "20260930380000",
+    "productionUrl": "https://crm-ai-grupoedge.vercel.app"
+  },
+  "gates": {
+    "IDENTITY_MFA_RECOVERY": {
+      "status": "BLOCKED",
+      "owner": "Não designado",
+      "verifiedAt": "2026-09-30T13:20:00.000Z",
+      "evidence": ["produção possui 8 usuários e 8 memberships", "MFA e recuperação não existem no contrato atual de autenticação"]
+    },
+    "LEGAL_DPO": {
+      "status": "BLOCKED",
+      "owner": "Não designado",
+      "verifiedAt": "2026-09-30T13:20:00.000Z",
+      "evidence": ["não foi apresentada aprovação jurídica/DPO para finalidades, bases, retenção, avisos e DPA"]
+    },
+    "BACKUP_PITR_RESTORE": {
+      "status": "BLOCKED",
+      "owner": "Não designado",
+      "verifiedAt": "2026-09-30T13:20:00.000Z",
+      "evidence": ["19 migrations locais/remotas conciliadas até 20260930380000", "não foi apresentada evidência atual de PITR e restore isolado do projeto Supabase produtivo"]
+    },
+    "SECOND_OPERATOR": {
+      "status": "BLOCKED",
+      "owner": "Não designado",
+      "verifiedAt": "2026-09-30T13:20:00.000Z",
+      "evidence": ["não existe segundo operador/on-call nominal e homologado"]
+    },
+    "OBSERVABILITY_ON_CALL": {
+      "status": "BLOCKED",
+      "owner": "Não designado",
+      "verifiedAt": "2026-09-30T13:20:00.000Z",
+      "evidence": ["logs Vercel possuem commit, deployment e correlationId", "não há prova de monitor externo, retenção central, alerta financeiro e plantão"]
+    },
+    "INDEPENDENT_PENTEST": {
+      "status": "BLOCKED",
+      "owner": "Não designado",
+      "verifiedAt": "2026-09-30T13:20:00.000Z",
+      "evidence": ["security:scan e testes internos não substituem DAST/pentest independente"]
+    },
+    "PRODUCTION_DOMAIN": {
+      "status": "PASS",
+      "owner": "Matheus Mendonça",
+      "verifiedAt": "2026-09-30T13:20:00.000Z",
+      "evidence": ["https://crm-ai-grupoedge.vercel.app é alias estável do deployment produtivo", "TLS, HSTS, CSP, frame deny e nosniff confirmados em /api/health"]
+    },
+    "WORKER": {
+      "status": "PASS",
+      "owner": "Matheus Mendonça",
+      "verifiedAt": "2026-09-30T13:20:00.000Z",
+      "evidence": ["Vercel Cron executou BATCH_IDLE/HTTP 200 a cada minuto no deployment atual", "chamada sem credencial retornou HTTP 401", "zero job PENDING/RUNNING e zero job FAILED"]
+    },
+    "COST_CONTROL": {
+      "status": "BLOCKED",
+      "owner": "Não designado",
+      "verifiedAt": "2026-09-30T13:20:00.000Z",
+      "evidence": ["deployment informa uso de CPU, mas não foi apresentada política de orçamento, cota ou alerta financeiro"]
+    },
+    "AUTHORIZED_PROVIDERS_AND_DATA": {
+      "status": "BLOCKED",
+      "owner": "Não designado",
+      "verifiedAt": "2026-09-30T13:20:00.000Z",
+      "evidence": ["adapters externos permanecem desativados; nenhuma homologação de provider ou dado real por escopo foi apresentada"]
+    },
+    "FORMAL_APPROVALS": {
+      "status": "BLOCKED",
+      "owner": "Não designado",
+      "verifiedAt": "2026-09-30T13:20:00.000Z",
+      "evidence": ["decisão formal requer aprovadores nomeados de negócio, segurança, privacidade e operações"]
+    }
+  },
+  "approvals": {
+    "business": null,
+    "security": null,
+    "privacy": null,
+    "operations": null
+  }
+}

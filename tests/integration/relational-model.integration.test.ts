@@ -321,16 +321,17 @@ describe("modelo relacional do CRM", () => {
     ).rejects.toThrow();
   });
 
-  it("mantém telefone único por workspace entre leads ativos", async () => {
+  it("permite telefone compartilhado entre leads e delega identidade aos contatos", async () => {
     const firstWorkspace = await createFixture("phone-first");
     const secondWorkspace = await createFixture("phone-second");
     const normalizedPhone = "+5511999990001";
 
     await createLead(firstWorkspace, { normalizedPhone });
 
-    await expect(
-      createLead(firstWorkspace, { normalizedPhone }),
-    ).rejects.toThrow();
+    const secondLeadInWorkspace = await createLead(firstWorkspace, {
+      normalizedPhone,
+    });
+    expect(secondLeadInWorkspace.normalizedPhone).toBe(normalizedPhone);
 
     const leadInAnotherWorkspace = await createLead(secondWorkspace, {
       normalizedPhone,

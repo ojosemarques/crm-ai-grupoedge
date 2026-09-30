@@ -61,6 +61,7 @@
     "resilience:restore": "tsx scripts/run-resilience-restore.ts",
     "resilience:load": "tsx scripts/run-resilience-load.ts",
     "readiness:preflight": "tsx scripts/run-production-preflight.ts --target=local",
+    "readiness:go-live": "tsx scripts/run-stage19-go-live-gate.ts",
     "test:resilience": "vitest run src/modules/resilience/domain/resilience-domain.test.ts",
     "test:resilience:integration": "tsx scripts/run-resilience-tests.ts",
     "db:status": "prisma migrate status",

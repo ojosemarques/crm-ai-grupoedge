@@ -258,15 +258,17 @@ Cada etapa pode virar uma issue/épico. Dentro dela, `Txx.y` é a task e os iten
 
 ### Etapa 19 — Homologação integral, operação e decisão de go-live
 
-- [ ] **T19.1 — Executar suíte de paridade C01–C15.**
-  - [ ] Para cada capacidade, anexar teste funcional, integração, falha/retry, RBAC, privacidade, acessibilidade/mobile, dados de prova e comparação com fonte/trial Clint.
-  - [ ] Rodar jornadas completas: inbound → venda Mandato longa → contrato → onboarding → renovação; campanha → resposta → handoff; agente → humano; checkout transacional → pagamento/reembolso.
+- [x] **T19.1 — Executar suíte de paridade C01–C15.**
+  - [x] Para cada capacidade, anexar teste funcional, integração, falha/retry, RBAC, privacidade, acessibilidade/mobile, dados de prova e comparação com fonte/trial Clint.
+  - [x] Rodar jornadas completas: inbound → venda Mandato longa → contrato → onboarding → renovação; campanha → resposta → handoff; agente → humano; checkout transacional → pagamento/reembolso.
 - [ ] **T19.2 — Fechar prontidão produtiva.**
   - [ ] Resolver gates do [Go/No-Go](./PROD13_FINAL_GO_NO_GO.md): identidade/MFA, jurídico/DPO, backup/PITR/restore, segundo operador, observabilidade, pentest, domínio, worker e custo.
   - [ ] Homologar provedores e dados reais por escopo autorizado; executar plano de deploy, migração reversível, smoke, rollback e reconciliação pós-ativação.
-- [ ] **T19.3 — Publicar relatório de aceite.**
-  - [ ] Marcar C01–C15 como `PAR`, `PARCIAL`, `BLOQUEADO` ou `DIVERGENTE`, com evidência e responsável; nenhum bloqueio recebe “100%”.
-  - [ ] Registrar restrições da Clint não verificáveis publicamente e diferenças intencionais Politizai, inclusive canal inelegível e checkout não aplicável a venda consultiva.
+- [x] **T19.3 — Publicar relatório de aceite.**
+  - [x] Marcar C01–C15 como `PAR`, `PARCIAL`, `BLOQUEADO` ou `DIVERGENTE`, com evidência e responsável; nenhum bloqueio recebe “100%”.
+  - [x] Registrar restrições da Clint não verificáveis publicamente e diferenças intencionais Politizai, inclusive canal inelegível e checkout não aplicável a venda consultiva.
+
+**Decisão em 30/09/2026:** T19.1 e T19.3 foram executadas e estão documentadas em [matriz final de paridade](./STAGE19_PARITY_ACCEPTANCE.md) e [jornadas completas](./STAGE19_COMPLETE_JOURNEYS.md). T19.2 permanece `NO-GO` no [relatório de prontidão](./STAGE19_PRODUCTION_READINESS.md), pois os gates críticos externos e a homologação de provedores/dados reais ainda não possuem evidência. O estado abaixo de 100% é deliberadamente preservado conforme o aceite desta etapa.
 
 **Aceite:** go-live somente com decisão formal e zero bloqueio crítico; “100% de paridade funcional com a Clint” só quando **todos** os C01–C15 tiverem prova de execução real, sem lacunas escondidas. Diferença intencional ou bloqueio de canal permanece explicitamente abaixo de 100%. **Dependência:** 01–18.
 

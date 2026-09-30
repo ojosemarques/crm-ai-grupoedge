@@ -1,5 +1,9 @@
 # Auditoria final GO/NO-GO da PROD-13
 
+> Registro histórico de 16/09/2026. A infraestrutura e a evidência atuais estão
+> em [`STAGE19_PRODUCTION_READINESS.md`](./STAGE19_PRODUCTION_READINESS.md); a
+> decisão atual também permanece **NO-GO**.
+
 Data da auditoria: 16 de setembro de 2026.
 
 ## Decisão executiva

@@ -1,5 +1,9 @@
 # Checklist de go-live
 
+> A execução atual deste checklist está em
+> [`STAGE19_PRODUCTION_READINESS.md`](./STAGE19_PRODUCTION_READINESS.md), com
+> manifesto fail-closed verificável. Os checkpoints abaixo preservam o histórico.
+
 ## Estado
 
 Este checklist é um gate futuro. Em 16 de setembro de 2026, o resultado é:
