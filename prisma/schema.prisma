@@ -2066,6 +2066,7 @@ enum JobType {
   PAYMENT_ATTEMPT
   PAYMENT_WEBHOOK
   PRIVACY_RETENTION_CHECKPOINT
+  OUTBOUND_CAMPAIGN
 }
 
 enum JobStatus {
@@ -12537,4 +12538,106 @@ model ForecastBackfillItem {
   @@unique([workspaceId, runId, sourceType, sourceKey])
   @@index([workspaceId, outcome, createdAt])
   @@map("forecast_backfill_items")
+}
+
+// Campaigns below are outbound communication executions. Acquisition/media
+// campaigns remain in the marketing attribution aggregate.
+model OutboundCampaign {
+  id                    String   @id @default(uuid()) @db.Uuid
+  workspaceId           String   @db.Uuid
+  name                  String
+  channel               String
+  providerMode          String   @default("LOCAL_SIMULATOR")
+  purposeKey            String
+  templateBody          String   @db.Text
+  segmentDefinition     Json
+  postActions           Json
+  windowStartMinute     Int
+  windowEndMinute       Int
+  timeZone              String
+  scheduledAt           DateTime? @db.Timestamptz(3)
+  maxRecipients         Int
+  unitCostCents          Int     @default(0)
+  estimatedVolume       Int     @default(0)
+  estimatedCostCents    BigInt  @default(0)
+  status                String  @default("DRAFT")
+  snapshotHash          String?
+  previewedAt           DateTime? @db.Timestamptz(3)
+  approvedAt            DateTime? @db.Timestamptz(3)
+  approvedByActorId     String? @db.Uuid
+  startedAt             DateTime? @db.Timestamptz(3)
+  completedAt           DateTime? @db.Timestamptz(3)
+  cancelledAt           DateTime? @db.Timestamptz(3)
+  cancelledByActorId    String? @db.Uuid
+  cancellationReason    String?
+  createdByActorId      String  @db.Uuid
+  updatedByActorId      String  @db.Uuid
+  createdAt             DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
+
+  recipients OutboundCampaignRecipient[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status, scheduledAt])
+  @@map("outbound_campaigns")
+}
+
+model OutboundCampaignRecipient {
+  id                    String   @id @default(uuid()) @db.Uuid
+  workspaceId           String   @db.Uuid
+  campaignId            String   @db.Uuid
+  leadId                String   @db.Uuid
+  contactId             String?  @db.Uuid
+  contactPointId        String?  @db.Uuid
+  addressSnapshot       String
+  templateSnapshot      String   @db.Text
+  status                String   @default("PREVIEWED")
+  suppressionReason     String?
+  overlapReason         String?
+  idempotencyKey        String
+  attemptCount          Int      @default(0)
+  providerReceiptId     String?
+  messageId             String?  @db.Uuid
+  phoneCallId           String?  @db.Uuid
+  acceptedAt            DateTime? @db.Timestamptz(3)
+  deliveredAt           DateTime? @db.Timestamptz(3)
+  respondedAt           DateTime? @db.Timestamptz(3)
+  failedAt              DateTime? @db.Timestamptz(3)
+  lastError             String?
+  costCents             Int      @default(0)
+  nextAttemptAt         DateTime? @db.Timestamptz(3)
+  createdAt             DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
+
+  campaign OutboundCampaign @relation(fields: [workspaceId, campaignId], references: [workspaceId, id], onDelete: Restrict)
+  attempts OutboundCampaignAttempt[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, campaignId, leadId])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, campaignId, status, nextAttemptAt])
+  @@index([workspaceId, leadId, createdAt])
+  @@map("outbound_campaign_recipients")
+}
+
+model OutboundCampaignAttempt {
+  id                  String   @id @default(uuid()) @db.Uuid
+  workspaceId         String   @db.Uuid
+  recipientId         String   @db.Uuid
+  attemptNumber       Int
+  status              String
+  providerReceiptId   String?
+  errorCode           String?
+  startedAt           DateTime @db.Timestamptz(3)
+  finishedAt          DateTime @db.Timestamptz(3)
+  simulated           Boolean  @default(true)
+  externalEgress      Boolean  @default(false)
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+
+  recipient OutboundCampaignRecipient @relation(fields: [workspaceId, recipientId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, recipientId, attemptNumber])
+  @@index([workspaceId, status, createdAt])
+  @@map("outbound_campaign_attempts")
 }

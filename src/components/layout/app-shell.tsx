@@ -69,6 +69,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
       { href: "/copilot", icon: "copilot", label: "Copilot gerencial", roles: managerRoles },
       { href: "/governanca-ia", icon: "copilot", label: "Governança de IA", roles: managerRoles },
       { href: "/notificacoes", icon: "notificacoes", label: "Notificações" },
+      { href: "/campanhas", icon: "inbox", label: "Campanhas de envio", roles: ["administrator"] },
     ],
   },
   {
@@ -93,7 +94,7 @@ const sections = [
   { key: "contacts", label: "Contatos", icon: "leads", paths: ["/leads", "/contas", "/leads/entrada", "/portabilidade"] },
   { key: "activities", label: "Atividades", icon: "agenda", paths: ["/meu-dia", "/agenda", "/atividades", "/notificacoes"] },
   { key: "inbox", label: "Atendimento", icon: "inbox", paths: ["/inbox", "/customer-service"] },
-  { key: "automation", label: "Automações", icon: "automacoes", paths: ["/automacoes", "/integracoes", "/copilot", "/governanca-ia"] },
+  { key: "automation", label: "Automações", icon: "automacoes", paths: ["/automacoes", "/campanhas", "/integracoes", "/copilot", "/governanca-ia"] },
   { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/metricas-receita", "/metas", "/forecast", "/aquisicao", "/inteligencia-geografica", "/receita", "/pagamentos"] },
   { key: "settings", label: "Configurações", icon: "configuracoes", paths: ["/configuracoes", "/administracao", "/auditoria", "/qualidade-dados", "/operacoes", "/privacidade"] },
 ] as const;
@@ -103,6 +104,7 @@ const labels: Record<string, string> = {
   "/contas": "Empresas", "/inbox": "Conversas", "/customer-service": "Tickets de atendimento",
   "/portabilidade": "Portabilidade comercial",
   "/atividades": "Fila de atividades",
+  "/campanhas": "Campanhas de envio",
   "/automacoes": "Fluxos de automação", "/dashboard": "Visão geral", "/metricas-receita": "Receita e retenção",
 };
 
