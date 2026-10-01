@@ -45,7 +45,6 @@ const navigationGroups: ReadonlyArray<Readonly<{
     items: [
       { href: "/meu-dia", icon: "meu-dia", label: "Meu Dia", roles: operationalRoles },
       { href: "/pipeline", icon: "pipeline", label: "Pipeline", roles: leadRoles },
-      { href: "/oportunidades", icon: "receita", label: "Vendas e propostas", permission: "opportunities.read" },
       { href: "/leads", icon: "leads", label: "Leads", roles: leadRoles },
       { href: "/agenda", icon: "agenda", label: "Agenda" },
       { href: "/inbox", icon: "inbox", label: "Conversas" },
