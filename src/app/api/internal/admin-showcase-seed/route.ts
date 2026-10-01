@@ -217,13 +217,20 @@ export async function POST(request: NextRequest) {
   }
 
   const history = getOperationalHistoryService();
+  const slaCycle = await database.leadSlaCycle.findFirstOrThrow({
+    where: { workspaceId: context.workspaceId, leadId },
+    orderBy: { receivedAt: "asc" },
+    select: { receivedAt: true },
+  });
+  const activityTime = (offsetSeconds: number) =>
+    new Date(slaCycle.receivedAt.getTime() + offsetSeconds * 1_000);
   const activitySpecs = [
     {
       subject: "Ligação de descoberta realizada",
       type: "CALL_CONNECTED" as const,
       result: "CONNECTED" as const,
       direction: "OUTBOUND" as const,
-      occurredAt: new Date("2026-09-30T13:15:00.000Z"),
+      occurredAt: activityTime(1),
       durationSeconds: 740,
       observation:
         "Mariana confirmou interesse em organizar a operação digital da pré-campanha. A principal dor é a falta de visão única sobre apoiadores, agenda e desempenho por região.",
@@ -240,7 +247,7 @@ export async function POST(request: NextRequest) {
       type: "MESSAGE_SENT" as const,
       result: "SENT" as const,
       direction: "OUTBOUND" as const,
-      occurredAt: new Date("2026-09-30T13:35:00.000Z"),
+      occurredAt: activityTime(2),
       observation:
         "Enviado resumo do diagnóstico, confirmação dos participantes e pedido dos dados dos canais digitais atuais.",
     },
@@ -249,7 +256,7 @@ export async function POST(request: NextRequest) {
       type: "EMAIL" as const,
       result: "SENT" as const,
       direction: "OUTBOUND" as const,
-      occurredAt: new Date("2026-10-01T14:00:00.000Z"),
+      occurredAt: activityTime(3),
       observation:
         "Pauta enviada: cenário político, metas da pré-campanha, equipe envolvida, investimento disponível e próximos passos.",
     },
