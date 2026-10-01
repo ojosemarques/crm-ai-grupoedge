@@ -3,6 +3,29 @@
 .toolbar > div { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 11px; color: var(--text); }
 .toolbar svg { color: var(--primary); }
 .toolbar small { font-size: 10px; color: var(--text-muted); }
+.journeyFilters { display: flex !important; align-items: end !important; gap: 8px !important; margin-left: auto; }
+.journeyFilters label { display: grid; gap: 4px; color: var(--text-muted); font-size: 9px; }
+.journeyFilters select { min-width: 155px; max-width: 220px; height: 32px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); padding: 0 28px 0 9px; font: inherit; }
+.journeyPanel { min-width: 0; border-radius: 24px; padding: 24px; background: linear-gradient(135deg, var(--surface) 65%, #fff4eb); }
+.journeySummary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
+.journeySummary > div { display: grid; gap: 5px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: color-mix(in srgb, var(--surface) 90%, transparent); }
+.journeySummary span { color: var(--text-muted); font-size: 10px; }
+.journeySummary strong { font-size: 21px; font-weight: 550; letter-spacing: -.03em; }
+.journeyStages { display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; overflow-x: auto; }
+.journeyStages li { position: relative; display: grid; align-content: start; gap: 6px; min-height: 132px; padding: 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.journeyStages li:not(:last-child)::after { content: "→"; position: absolute; right: -10px; top: 50%; z-index: 1; color: var(--text-muted); font-size: 13px; transform: translate(50%, -50%); }
+.stageIndex { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: var(--primary-soft); color: var(--primary); font-size: 10px; font-weight: 700; }
+.journeyStages li > span { color: var(--text-muted); font-size: 10px; }
+.journeyStages li > strong { font-size: 24px; font-weight: 550; }
+.journeyStages li > small { color: var(--text-muted); font-size: 9px; line-height: 1.4; }
+.journeyGrid { display: grid; min-width: 0; }
+.journeyGrid td small, .traceTable td small { display: block; margin-top: 4px; color: var(--text-muted); font-size: 9px; }
+.traceTable { min-width: 1000px; }
+.traceTable td { max-width: 210px; vertical-align: top; }
+.traceTable td a { color: var(--primary); font-weight: 600; text-decoration: none; }
+.traceReady, .traceMissing { display: inline-flex; padding: 4px 7px; border-radius: 999px; font-size: 9px; }
+.traceReady { background: color-mix(in srgb, var(--success) 12%, var(--surface)); color: var(--success); }
+.traceMissing { background: var(--surface-muted); color: var(--text-muted); }
 .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 24px; padding: 20px; min-width: 0; display: grid; gap: 12px; }
 .stat > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--text-muted); }
@@ -88,7 +111,7 @@
 .csvLabel { display: grid; gap: 8px; margin-top: 20px; font-size: 12px; }
 .csvLabel textarea { width: 100%; border: 1px solid var(--border); border-radius: 9px; padding: 14px; background: var(--surface-muted); font-family: monospace; font-size: 11px; }
 @media (max-width: 1150px) { .primaryGrid, .secondaryGrid { grid-template-columns: minmax(0, 1fr); } .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 600px) { .stat { padding: 14px; } .stat small { font-size: 9px; } .stat > div { font-size: 10px; } .sourceOverview { grid-template-columns: minmax(0, 1fr); } .panel { padding: 18px; } .importDialog { padding: 20px; } .model { flex-wrap: wrap; } }
+@media (max-width: 600px) { .stat { padding: 14px; } .stat small { font-size: 9px; } .stat > div { font-size: 10px; } .sourceOverview { grid-template-columns: minmax(0, 1fr); } .panel { padding: 18px; } .importDialog { padding: 20px; } .model { flex-wrap: wrap; } .journeyPanel { padding: 18px; } .journeySummary { grid-template-columns: minmax(0, 1fr); } .journeyFilters { width: 100%; margin-left: 0; } .journeyFilters label { min-width: 0; flex: 1; } .journeyFilters select { min-width: 0; max-width: none; width: 100%; } }
 
 .donutSvg { display: block; height: 100%; width: 100%; }
 .coveragePanel { background: var(--surface); border: 1px solid var(--border); border-radius: 24px; display: grid; grid-template-columns: 1.1fr 1.3fr .8fr; gap: 34px; padding: 26px; align-items: center; }

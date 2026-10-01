@@ -3,6 +3,7 @@ import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createOutboxEventInTransaction } from "@/modules/integrations/application/integration-platform-service";
 import { assertExactCreditTotal, ATTRIBUTION_POLICY_VERSION, calculateAttributionCredits } from "@/modules/marketing/domain/attribution-policy";
+import { buildAcquisitionJourney, type AcquisitionJourneyFact } from "@/modules/marketing/domain/acquisition-journey";
 import { acquisitionQuerySchema, attributionModelVersionInputSchema, attributionRunInputSchema, landingPageDefinitionSchema, marketingBackfillInputSchema, marketingEvidenceInputSchema, marketingFormDefinitionSchema, type MarketingEvidenceInput } from "@/modules/marketing/domain/marketing-contracts";
 import { normalizeMarketingEvidence } from "@/modules/marketing/domain/marketing-normalization";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -24,6 +25,101 @@ function resource(context: AuthenticatedContext) {
 
 function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+async function loadAcquisitionJourney(database: PrismaClient, workspaceId: string, periodStart: Date, periodEnd: Date, query: Readonly<{ sourceId?: string | undefined; campaignId?: string | undefined; creativeId?: string | undefined }>) {
+  const filters: Prisma.LeadWhereInput[] = [];
+  if (query.sourceId) filters.push({ OR: [{ sourceId: query.sourceId }, { latestSourceId: query.sourceId }] });
+  if (query.campaignId) filters.push({ OR: [{ campaignId: query.campaignId }, { latestCampaignId: query.campaignId }] });
+  if (query.creativeId) filters.push({ OR: [{ creativeId: query.creativeId }, { latestCreativeId: query.creativeId }] });
+  const [leads, campaignOptions, creativeOptions, landingPages, marketingForms] = await Promise.all([
+    database.lead.findMany({
+      where: { workspaceId, deletedAt: null, createdAt: { gte: periodStart, lt: periodEnd }, AND: filters },
+      select: {
+        id: true, fullName: true, createdAt: true, accountId: true,
+        source: { select: { name: true } }, latestSource: { select: { name: true } },
+        campaign: { select: { id: true, name: true } }, latestCampaign: { select: { id: true, name: true } },
+        creative: { select: { id: true, name: true } }, latestCreative: { select: { id: true, name: true } },
+      }, orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+    }),
+    database.acquisitionCampaign.findMany({ where: { workspaceId, deletedAt: null }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    database.acquisitionCreative.findMany({ where: { workspaceId, deletedAt: null }, select: { id: true, campaignId: true, name: true }, orderBy: { name: "asc" } }),
+    database.landingPage.findMany({ where: { workspaceId, deletedAt: null }, select: { id: true, name: true } }),
+    database.marketingForm.findMany({ where: { workspaceId, deletedAt: null }, select: { id: true, name: true } }),
+  ]);
+  const leadIds = leads.map(lead => lead.id);
+  if (leadIds.length === 0) return { ...buildAcquisitionJourney([]), filters: { campaigns: campaignOptions, creatives: creativeOptions, selectedCampaignId: query.campaignId ?? null, selectedCreativeId: query.creativeId ?? null } };
+
+  const [touchpoints, submissions, conversations, meetings, opportunities] = await Promise.all([
+    database.marketingTouchpoint.findMany({ where: { workspaceId, leadId: { in: leadIds } }, select: { leadId: true, landingPageId: true, marketingFormId: true, landingPath: true, kind: true, occurredAt: true }, orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }),
+    database.leadFormSubmission.findMany({ where: { workspaceId, leadId: { in: leadIds } }, select: { leadId: true, channel: true, marketingFormId: true, submittedAt: true }, orderBy: [{ submittedAt: "asc" }, { id: "asc" }] }),
+    database.conversation.findMany({ where: { workspaceId, leadId: { in: leadIds }, channel: "WHATSAPP", deletedAt: null }, select: { leadId: true, openedAt: true }, orderBy: [{ openedAt: "asc" }, { id: "asc" }] }),
+    database.meeting.findMany({ where: { workspaceId, leadId: { in: leadIds }, deletedAt: null }, select: { id: true, leadId: true, status: true, startsAt: true, completedAt: true }, orderBy: [{ startsAt: "asc" }, { id: "asc" }] }),
+    database.opportunity.findMany({ where: { workspaceId, leadId: { in: leadIds }, deletedAt: null }, select: { id: true, leadId: true, name: true, status: true, amountCents: true, createdAt: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
+  ]);
+  const opportunityIds = opportunities.map(row => row.id);
+  const [outcomes, contracts] = opportunityIds.length ? await Promise.all([
+    database.opportunityOutcomeSnapshot.findMany({ where: { workspaceId, opportunityId: { in: opportunityIds }, status: "WON" }, select: { opportunityId: true, amountCents: true, occurredAt: true }, orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }),
+    database.commercialContract.findMany({ where: { workspaceId, opportunityId: { in: opportunityIds } }, select: { id: true, opportunityId: true } }),
+  ]) : [[], []] as const;
+  const contractIds = contracts.map(row => row.id);
+  const invoices = contractIds.length ? await database.invoice.findMany({ where: { workspaceId, contractId: { in: contractIds } }, select: { id: true, contractId: true, paidAt: true, paidCents: true, status: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }) : [];
+  const invoiceIds = invoices.map(row => row.id);
+  const payments = invoiceIds.length ? await database.payment.findMany({ where: { workspaceId, invoiceId: { in: invoiceIds }, status: "CONFIRMED" }, select: { invoiceId: true, amountCents: true, occurredAt: true }, orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }) : [];
+
+  const landingName = new Map(landingPages.map(row => [row.id, row.name]));
+  const formName = new Map(marketingForms.map(row => [row.id, row.name]));
+  const touchByLead = new Map<string, typeof touchpoints[number]>();
+  for (const row of touchpoints) if (row.leadId && !touchByLead.has(row.leadId) && (row.landingPageId || row.landingPath || row.marketingFormId)) touchByLead.set(row.leadId, row);
+  const submissionByLead = new Map<string, typeof submissions[number]>();
+  for (const row of submissions) if (row.leadId && !submissionByLead.has(row.leadId)) submissionByLead.set(row.leadId, row);
+  const whatsappByLead = new Map<string, typeof conversations[number]>();
+  for (const row of conversations) if (row.leadId && !whatsappByLead.has(row.leadId)) whatsappByLead.set(row.leadId, row);
+  const meetingByLead = new Map<string, typeof meetings[number]>();
+  for (const row of meetings) { const current = meetingByLead.get(row.leadId); if (!current || current.status !== "COMPLETED" && row.status === "COMPLETED") meetingByLead.set(row.leadId, row); }
+  const outcomeByOpportunity = new Map(outcomes.map(row => [row.opportunityId, row]));
+  const opportunitiesByLead = new Map<string, typeof opportunities>();
+  for (const row of opportunities) opportunitiesByLead.set(row.leadId, [...(opportunitiesByLead.get(row.leadId) ?? []), row]);
+  const contractByOpportunity = new Map(contracts.map(row => [row.opportunityId, row.id]));
+  const paymentsByInvoice = new Map<string, typeof payments>();
+  for (const row of payments) paymentsByInvoice.set(row.invoiceId, [...(paymentsByInvoice.get(row.invoiceId) ?? []), row]);
+  const invoicesByContract = new Map<string, typeof invoices>();
+  for (const row of invoices) invoicesByContract.set(row.contractId, [...(invoicesByContract.get(row.contractId) ?? []), row]);
+
+  const facts: AcquisitionJourneyFact[] = leads.map(lead => {
+    const submission = submissionByLead.get(lead.id);
+    const touch = touchByLead.get(lead.id);
+    const whatsapp = whatsappByLead.get(lead.id);
+    const meeting = meetingByLead.get(lead.id);
+    const leadOpportunities = opportunitiesByLead.get(lead.id) ?? [];
+    const opportunity = leadOpportunities.find(row => outcomeByOpportunity.has(row.id)) ?? leadOpportunities.at(-1);
+    const leadOutcomes = leadOpportunities.flatMap(row => { const outcome = outcomeByOpportunity.get(row.id); return outcome ? [outcome] : []; });
+    const outcome = leadOutcomes.at(-1);
+    const relatedInvoices = leadOpportunities.flatMap(row => { const contractId = contractByOpportunity.get(row.id); return contractId ? invoicesByContract.get(contractId) ?? [] : []; });
+    const relatedPayments = relatedInvoices.flatMap(invoice => paymentsByInvoice.get(invoice.id) ?? []);
+    const receivedCents = relatedPayments.reduce((sum, row) => sum + row.amountCents, 0n);
+    const latestPayment = relatedPayments.at(-1);
+    const paidInvoice = relatedInvoices.find(invoice => (paymentsByInvoice.get(invoice.id)?.length ?? 0) > 0) ?? null;
+    const touchLabel = touch?.landingPageId ? landingName.get(touch.landingPageId) ?? "Página identificada"
+      : touch?.landingPath ? `Página ${touch.landingPath}`
+        : touch?.marketingFormId ? formName.get(touch.marketingFormId) ?? "Formulário" : null;
+    const submissionLabel = submission?.marketingFormId ? formName.get(submission.marketingFormId) ?? "Formulário"
+      : submission?.channel === "FORM" || submission?.channel === "LANDING_PAGE" ? "Formulário / landing page" : null;
+    const entryPoint = [
+      ...(touch && touchLabel ? [{ at: touch.occurredAt, label: touchLabel }] : []),
+      ...(submission && submissionLabel ? [{ at: submission.submittedAt, label: submissionLabel }] : []),
+      ...(whatsapp ? [{ at: whatsapp.openedAt, label: "WhatsApp" }] : []),
+    ].sort((left, right) => left.at.getTime() - right.at.getTime())[0]?.label ?? null;
+    return {
+      leadId: lead.id, leadName: lead.fullName, leadCreatedAt: lead.createdAt.toISOString(), sourceName: lead.latestSource?.name ?? lead.source.name,
+      campaignName: lead.campaign?.name ?? lead.latestCampaign?.name ?? null, creativeName: lead.creative?.name ?? lead.latestCreative?.name ?? null, entryPoint,
+      meetingId: meeting?.id ?? null, meetingAt: meeting ? (meeting.completedAt ?? meeting.startsAt).toISOString() : null, meetingStatus: meeting?.status ?? null,
+      opportunityId: opportunity?.id ?? null, opportunityName: opportunity?.name ?? null, wonAt: outcome?.occurredAt.toISOString() ?? null,
+      wonValueCents: leadOutcomes.reduce((sum, row) => sum + row.amountCents, 0n).toString(), invoiceId: paidInvoice?.id ?? null,
+      receivedAt: latestPayment?.occurredAt.toISOString() ?? paidInvoice?.paidAt?.toISOString() ?? null, receivedCents: receivedCents.toString(),
+    };
+  });
+  return { ...buildAcquisitionJourney(facts), filters: { campaigns: campaignOptions, creatives: creativeOptions, selectedCampaignId: query.campaignId ?? null, selectedCreativeId: query.creativeId ?? null } };
 }
 
 export async function ensureAttributionModelsInTransaction(tx: Tx, workspaceId: string, actorId: string) {
@@ -190,7 +286,7 @@ export function createMarketingAttributionService(options: Options) {
     const periodStart = query.periodStart ?? new Date(periodEnd.getTime() - 30 * 86_400_000);
     const workspace = await options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
     const acquisition = { ...(query.sourceId ? { sourceId: query.sourceId } : {}), ...(query.campaignId ? { campaignId: query.campaignId } : {}), ...(query.creativeId ? { creativeId: query.creativeId } : {}) };
-    const [models, definitions, touchpoints, conversions, lastRuns, issues, openReviewCount, sourceBreakdown, leadSources, permissions] = await Promise.all([
+    const [models, definitions, touchpoints, conversions, lastRuns, issues, openReviewCount, sourceBreakdown, leadSources, permissions, journey] = await Promise.all([
       options.database.attributionModel.findMany({ where: { workspaceId: context.workspaceId }, orderBy: { name: "asc" } }),
       Promise.all([
         options.database.landingPage.findMany({ where: { workspaceId: context.workspaceId, deletedAt: null }, orderBy: { name: "asc" } }),
@@ -209,11 +305,12 @@ export function createMarketingAttributionService(options: Options) {
         authorization.authorize(context, PermissionKeys.MARKETING_REVIEWS_MANAGE, resource(context)),
         authorization.authorize(context, PermissionKeys.MARKETING_EVIDENCE_EXPORT, resource(context)),
       ]),
+      loadAcquisitionJourney(options.database, context.workspaceId, periodStart, periodEnd, query),
     ]);
     return {
       period: { start: periodStart.toISOString(), end: periodEnd.toISOString(), timeZone: workspace.timeZone },
       summary: { touchpoints, conversions, openReviews: openReviewCount, latestCoverageBps: lastRuns[0]?.coverageBps ?? null },
-      models, definitions: { landingPages: definitions[0], forms: definitions[1] }, runs: lastRuns, issues,
+      models, definitions: { landingPages: definitions[0], forms: definitions[1] }, runs: lastRuns, issues, journey,
       sourceBreakdown: sourceBreakdown.map((row) => ({ ...row, sourceName: leadSources.find((source) => source.id === row.sourceId)?.name ?? "Origem não identificada" })),
       facts: ["Dados persistidos no workspace", "Modelos versionados; nenhuma mídia externa conectada"],
       inferences: [] as string[],
