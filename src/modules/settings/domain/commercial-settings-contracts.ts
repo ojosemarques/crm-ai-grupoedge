@@ -27,12 +27,22 @@ export type CommercialSettingsScreen = Readonly<{
     maxOpenLeadsPerSdr: number | null;
     leadStagnationDays: number;
     leadWithoutActivityDays: number;
+    cadenceTemplateKey: string;
+    cadenceStopOnReply: boolean;
+    cadenceStopOnMeetingScheduled: boolean;
+    cadenceStopOnStageChange: boolean;
     cadenceDayOffsets: readonly number[];
     cadenceSteps: readonly Readonly<{
       dayOffset: number;
       action: "WHATSAPP" | "CALL" | "EMAIL" | "RECYCLE" | "CLOSE";
+      timeOfDay: string;
+      message: string;
+      assigneeMemberId: string | null;
+      targetStageId: string | null;
     }>[];
   }>;
+  members: readonly Readonly<{ id: string; name: string }>[];
+  cadenceTargetStages: readonly Readonly<{ id: string; name: string }>[];
   scoring: Readonly<{
     id: string;
     key: string;

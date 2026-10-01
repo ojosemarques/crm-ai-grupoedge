@@ -28,6 +28,7 @@ import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-servi
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
+import { parseWorkspaceLocalDateTime } from "@/shared/core/time/workspace-time";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL is required for CRM-23 tests.");
@@ -439,5 +440,60 @@ describe("CRM-23 — cadências, reuniões, estagnação e encerramento", () => 
     await expect(local.notifications.markRead(viewer, { notificationId: target.id })).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect((await local.notifications.markRead(manager, { notificationId: target.id })).changed).toBe(true);
     expect((await local.notifications.markRead(manager, { notificationId: target.id })).changed).toBe(false);
+  });
+
+  it("executa horário, texto, responsável, movimentação e interrupção configurados", async () => {
+    now = new Date("2048-06-01T11:00:00.000Z");
+    const local = services();
+    const leadId = await createLead("cadência configurável");
+    await drain(local.worker, "configured-entry");
+    const [leadBefore, settings, targetStage] = await Promise.all([
+      database.lead.findUniqueOrThrow({ where: { id: leadId }, select: { fullName: true, currentStageId: true } }),
+      database.commercialSettingsVersion.findFirstOrThrow({ where: { workspaceId }, orderBy: { revision: "desc" } }),
+      database.pipelineStage.findFirstOrThrow({ where: { workspaceId, pipeline: { entityType: "LEAD", isDefault: true }, leadStageCode: "TRYING_CONTACT", deletedAt: null } }),
+    ]);
+    await database.commercialSettingsVersion.create({
+      data: {
+        workspaceId,
+        revision: settings.revision + 1,
+        pactoMinimumInvestigatedDimensions: settings.pactoMinimumInvestigatedDimensions,
+        defaultMeetingDurationMinutes: settings.defaultMeetingDurationMinutes,
+        distributionStrategy: settings.distributionStrategy,
+        maxOpenLeadsPerSdr: settings.maxOpenLeadsPerSdr,
+        leadStagnationDays: settings.leadStagnationDays,
+        leadWithoutActivityDays: settings.leadWithoutActivityDays,
+        cadenceTemplateKey: "FIRST_CONTACT",
+        cadenceStopOnReply: true,
+        cadenceStopOnMeetingScheduled: true,
+        cadenceStopOnStageChange: true,
+        createdByActorId: admin.actorId,
+        cadence: { create: [
+          { attemptNumber: 1, dayOffset: 0, action: "WHATSAPP", timeOfDay: "09:15", message: "Olá, {nome}. Mensagem configurada.", assigneeMemberId: closer.memberId, targetStageId: targetStage.id },
+          { attemptNumber: 2, dayOffset: 1, action: "CALL", timeOfDay: "10:00", message: "Esta tarefa deve ser interrompida pela mudança de etapa." },
+        ] },
+      },
+    });
+    await database.workspace.update({ where: { id: workspaceId }, data: { commercialSettingsRevision: settings.revision + 1 } });
+    await local.history.recordActivity(manager, {
+      leadId,
+      type: "CALL_UNANSWERED",
+      direction: "OUTBOUND",
+      subject: "Iniciar cadência configurável",
+      nextTask: { title: "Retorno controlado", kind: "CALL", priority: "HIGH", dueAt: new Date(now.getTime() + 86_400_000) },
+    });
+    const expectedFirstRun = parseWorkspaceLocalDateTime("2048-06-01T09:15", "America/Sao_Paulo");
+    const scheduled = await database.automationRun.findMany({ where: { workspaceId, leadId, rule: { key: LifecycleAutomationKeys.NO_ANSWER } }, include: { job: true }, orderBy: { job: { runAt: "asc" } } });
+    expect(scheduled).toHaveLength(2);
+    expect(scheduled[0]!.job!.runAt).toEqual(expectedFirstRun);
+    now = new Date(expectedFirstRun.getTime() + 1_000);
+    await drain(local.worker, "configured-first-step");
+    const task = await database.task.findFirstOrThrow({ where: { workspaceId, leadId, automationRunId: scheduled[0]!.id } });
+    expect(task).toMatchObject({ assigneeMemberId: closer.memberId, kind: "MESSAGE" });
+    expect(task.description).toContain(`Olá, ${leadBefore.fullName}. Mensagem configurada.`);
+    expect((await database.lead.findUniqueOrThrow({ where: { id: leadId } })).currentStageId).toBe(targetStage.id);
+    now = parseWorkspaceLocalDateTime("2048-06-02T10:01", "America/Sao_Paulo");
+    await drain(local.worker, "configured-stopped-step");
+    expect(await database.task.count({ where: { workspaceId, leadId, automationRunId: scheduled[1]!.id } })).toBe(0);
+    expect((await database.automationRun.findUniqueOrThrow({ where: { id: scheduled[1]!.id } })).outputPayload).toMatchObject({ skipped: true, reason: "LEAD_STAGE_CHANGED" });
   });
 });

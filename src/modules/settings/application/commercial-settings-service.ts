@@ -30,6 +30,10 @@ const cadenceActionSchema = z.enum(["WHATSAPP", "CALL", "EMAIL", "RECYCLE", "CLO
 const cadenceStepsSchema = z.array(z.object({
   dayOffset: z.number().int().min(0).max(90),
   action: cadenceActionSchema,
+  timeOfDay: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional().default("09:00"),
+  message: z.string().trim().max(2_000).nullable().optional().default(null),
+  assigneeMemberId: idSchema.nullable().optional().default(null),
+  targetStageId: idSchema.nullable().optional().default(null),
 }).strict()).min(1).max(15);
 
 const operationalCommand = z.object({
@@ -42,6 +46,10 @@ const operationalCommand = z.object({
   maxOpenLeadsPerSdr: z.number().int().min(1).max(10_000).nullable(),
   leadStagnationDays: z.number().int().min(1).max(365),
   leadWithoutActivityDays: z.number().int().min(1).max(365),
+  cadenceTemplateKey: z.string().trim().min(2).max(80).optional().default("CUSTOM"),
+  cadenceStopOnReply: z.boolean().optional().default(true),
+  cadenceStopOnMeetingScheduled: z.boolean().optional().default(true),
+  cadenceStopOnStageChange: z.boolean().optional().default(false),
   cadenceSteps: cadenceStepsSchema.optional(),
   cadenceDayOffsets: z.array(z.number().int().min(0).max(90)).min(1).max(15).optional(),
 }).strict().superRefine((value, context) => {
@@ -64,7 +72,14 @@ const operationalCommand = z.object({
 });
 
 function cadenceSteps(command: z.infer<typeof operationalCommand>) {
-  return command.cadenceSteps ?? command.cadenceDayOffsets!.map((dayOffset) => ({ dayOffset, action: "CALL" as const }));
+  return command.cadenceSteps ?? command.cadenceDayOffsets!.map((dayOffset) => ({
+    dayOffset,
+    action: "CALL" as const,
+    timeOfDay: "09:00",
+    message: null,
+    assigneeMemberId: null,
+    targetStageId: null,
+  }));
 }
 
 const scoringCommand = z.object({
@@ -170,7 +185,7 @@ export function createCommercialSettingsService(options: SettingsServiceOptions)
   async function getScreen(context: AuthenticatedContext): Promise<CommercialSettingsScreen> {
     await authorize(context);
     const workspaceId = context.workspaceId;
-    const [workspace, scoring, slaBands, products, templates, lossReasons, disqualificationReasons, pipelines] = await Promise.all([
+    const [workspace, scoring, slaBands, products, templates, lossReasons, disqualificationReasons, pipelines, members] = await Promise.all([
       options.database.workspace.findFirst({
         where: { id: workspaceId, deletedAt: null },
         select: {
@@ -189,6 +204,7 @@ export function createCommercialSettingsService(options: SettingsServiceOptions)
         stages: { where: { deletedAt: null }, orderBy: [{ position: "asc" }], include: { _count: { select: { currentLeads: true, currentOpportunities: true, histories: true } } } },
         transitions: { orderBy: [{ fromStageId: "asc" }, { toStageId: "asc" }], include: { fromStage: { select: { name: true } }, toStage: { select: { name: true } } } },
       } }),
+      options.database.workspaceMember.findMany({ where: { workspaceId, status: "ACTIVE", deletedAt: null }, select: { id: true, user: { select: { displayName: true } } }, orderBy: { user: { displayName: "asc" } } }),
     ]);
     if (!workspace) notFound("Workspace não encontrado.");
     const currentSettings = await options.database.commercialSettingsVersion.findFirst({
@@ -205,9 +221,15 @@ export function createCommercialSettingsService(options: SettingsServiceOptions)
         defaultMeetingDurationMinutes: meetingDuration, distributionStrategy: workspace.distributionStrategy,
         maxOpenLeadsPerSdr: workspace.maxOpenLeadsPerSdr, leadStagnationDays: workspace.leadStagnationDays,
         leadWithoutActivityDays: workspace.leadWithoutActivityDays,
+        cadenceTemplateKey: currentSettings.cadenceTemplateKey,
+        cadenceStopOnReply: currentSettings.cadenceStopOnReply,
+        cadenceStopOnMeetingScheduled: currentSettings.cadenceStopOnMeetingScheduled,
+        cadenceStopOnStageChange: currentSettings.cadenceStopOnStageChange,
         cadenceDayOffsets: currentSettings.cadence.map((step) => step.dayOffset),
-        cadenceSteps: currentSettings.cadence.map((step) => ({ dayOffset: step.dayOffset, action: step.action })),
+        cadenceSteps: currentSettings.cadence.map((step) => ({ dayOffset: step.dayOffset, action: step.action, timeOfDay: step.timeOfDay ?? "09:00", message: step.message ?? "", assigneeMemberId: step.assigneeMemberId, targetStageId: step.targetStageId })),
       },
+      members: members.map((member) => ({ id: member.id, name: member.user.displayName })),
+      cadenceTargetStages: pipelines.filter((pipeline) => pipeline.entityType === "LEAD" && pipeline.isDefault).flatMap((pipeline) => pipeline.stages.filter((stage) => stage.type === "OPEN").map((stage) => ({ id: stage.id, name: stage.name }))),
       scoring: scoring ? {
         id: scoring.id, key: scoring.key, version: scoring.version, painMaxPoints: scoring.painMaxPoints,
         capacityMaxPoints: scoring.capacityMaxPoints, decisionMaxPoints: scoring.decisionMaxPoints,
@@ -323,6 +345,14 @@ export function createCommercialSettingsService(options: SettingsServiceOptions)
       leadWithoutActivityDays: workspace.leadWithoutActivityDays,
     };
     const nextCadence = cadenceSteps(command);
+    const assigneeIds = [...new Set(nextCadence.flatMap((step) => step.assigneeMemberId ? [step.assigneeMemberId] : []))];
+    const targetStageIds = [...new Set(nextCadence.flatMap((step) => step.targetStageId ? [step.targetStageId] : []))];
+    const [validAssignees, validStages] = await Promise.all([
+      assigneeIds.length ? transaction.workspaceMember.count({ where: { workspaceId: context.workspaceId, id: { in: assigneeIds }, status: "ACTIVE", deletedAt: null } }) : 0,
+      targetStageIds.length ? transaction.pipelineStage.count({ where: { workspaceId: context.workspaceId, id: { in: targetStageIds }, deletedAt: null, type: "OPEN", pipeline: { entityType: "LEAD", isDefault: true, deletedAt: null } } }) : 0,
+    ]);
+    if (validAssignees !== assigneeIds.length) invalidInput("Um responsável da cadência não está ativo neste workspace.");
+    if (validStages !== targetStageIds.length) invalidInput("Uma etapa de destino da cadência não pertence a um pipeline de leads ativo.");
     const next = {
       revision: nextRevision,
       pactoMinimumInvestigatedDimensions: command.pactoMinimumInvestigatedDimensions,
@@ -331,6 +361,10 @@ export function createCommercialSettingsService(options: SettingsServiceOptions)
       maxOpenLeadsPerSdr: command.maxOpenLeadsPerSdr,
       leadStagnationDays: command.leadStagnationDays,
       leadWithoutActivityDays: command.leadWithoutActivityDays,
+      cadenceTemplateKey: command.cadenceTemplateKey,
+      cadenceStopOnReply: command.cadenceStopOnReply,
+      cadenceStopOnMeetingScheduled: command.cadenceStopOnMeetingScheduled,
+      cadenceStopOnStageChange: command.cadenceStopOnStageChange,
       cadenceSteps: nextCadence,
     };
     await transaction.commercialSettingsVersion.create({
@@ -340,8 +374,12 @@ export function createCommercialSettingsService(options: SettingsServiceOptions)
         defaultMeetingDurationMinutes: command.defaultMeetingDurationMinutes,
         distributionStrategy: command.distributionStrategy, maxOpenLeadsPerSdr: command.maxOpenLeadsPerSdr,
         leadStagnationDays: command.leadStagnationDays, leadWithoutActivityDays: command.leadWithoutActivityDays,
+        cadenceTemplateKey: command.cadenceTemplateKey,
+        cadenceStopOnReply: command.cadenceStopOnReply,
+        cadenceStopOnMeetingScheduled: command.cadenceStopOnMeetingScheduled,
+        cadenceStopOnStageChange: command.cadenceStopOnStageChange,
         createdByActorId: context.actorId,
-        cadence: { create: nextCadence.map((step, index) => ({ attemptNumber: index + 1, dayOffset: step.dayOffset, action: step.action })) },
+        cadence: { create: nextCadence.map((step, index) => ({ attemptNumber: index + 1, dayOffset: step.dayOffset, action: step.action, timeOfDay: step.timeOfDay, message: step.message || null, assigneeMemberId: step.assigneeMemberId, targetStageId: step.targetStageId })) },
       },
     });
     await transaction.workspace.update({

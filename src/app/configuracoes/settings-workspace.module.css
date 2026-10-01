@@ -17,8 +17,14 @@
 .panel form > button { justify-self: start; margin-top: 12px; }
 .cadenceEditor { border: 1px solid var(--border); border-radius: 12px; grid-column: 1 / -1; padding: 16px; }
 .cadenceEditor legend { font-size: 12px; font-weight: 600; padding: 0 6px; }
+.cadenceTemplatePicker { align-items: end; display: grid; gap: 12px; grid-template-columns: minmax(220px, 320px) 1fr; margin-top: 14px; }
+.cadenceTemplatePicker p { color: var(--muted-foreground); font-size: 13px; padding-bottom: 9px; }
+.cadenceStopRules { align-items: center; display: flex; flex-wrap: wrap; gap: 12px 18px; margin-top: 14px; }
+.cadenceStopRules strong { flex-basis: 100%; font-size: 12px; }
+.cadenceStopRules label { align-items: center; display: flex; font-size: 13px; gap: 7px; }
 .cadenceSequence { display: grid; gap: 10px; margin: 14px 0; }
-.cadenceRow { align-items: end; background: var(--surface-subtle); border-radius: 9px; display: grid; gap: 10px; grid-template-columns: 80px 110px minmax(180px, 1fr) auto; padding: 10px; }
+.cadenceRow { align-items: end; background: var(--surface-subtle); border-radius: 9px; display: grid; gap: 10px; grid-template-columns: 70px 75px 130px 100px minmax(160px, 1fr) minmax(160px, 1fr) auto; padding: 12px; }
 .cadenceRow strong { align-self: center; font-size: 11px; }
+.cadenceMessage { grid-column: 2 / -2; }
 @media (max-width: 1000px) { .workspace { grid-template-columns: 1fr; }.navigation { border-bottom: 1px solid var(--border); border-right: 0; display: flex; gap: 4px; overflow: auto; padding: 10px; }.navigation > p, .navigation button small { display: none; }.navigation button { flex: 0 0 auto; margin: 0; width: auto; }.content { padding: 14px; }.panel { padding: 18px; } }
-@media (max-width: 640px) { .cadenceRow { grid-template-columns: 1fr 1fr; }.cadenceRow strong { grid-column: 1 / -1; } }
+@media (max-width: 900px) { .cadenceTemplatePicker { grid-template-columns: 1fr; }.cadenceRow { grid-template-columns: 1fr 1fr; }.cadenceRow strong, .cadenceMessage { grid-column: 1 / -1; } }

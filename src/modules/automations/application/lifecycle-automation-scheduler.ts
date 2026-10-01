@@ -3,7 +3,7 @@ import type {
   InternalAutomationEvent,
   PublicationResult,
 } from "@/modules/automations/domain/automation-contracts";
-import { addWorkspaceCalendarDays } from "@/shared/core/time/workspace-time";
+import { addLocalDays, addWorkspaceCalendarDays, parseWorkspaceLocalDateTime, workspaceDateAt } from "@/shared/core/time/workspace-time";
 
 export type TransactionalAutomationPublisher = Readonly<{
   publishInTransaction: (
@@ -113,23 +113,23 @@ export async function scheduleNoAnswerCadenceInTransaction(
   });
   if (alreadyActive > 0) return Object.freeze({ scheduled: 0, alreadyActive: true });
 
-  const settings = await transaction.commercialSettingsVersion.findFirst({
+  const [settings, lead] = await Promise.all([transaction.commercialSettingsVersion.findFirst({
     where: { workspaceId: input.workspaceId },
     orderBy: [{ revision: "desc" }, { id: "desc" }],
     include: {
       cadence: { orderBy: [{ attemptNumber: "asc" }, { id: "asc" }] },
       workspace: { select: { timeZone: true } },
     },
-  });
-  if (!settings) return Object.freeze({ scheduled: 0, alreadyActive: false });
+  }), transaction.lead.findFirst({ where: { id: input.leadId, workspaceId: input.workspaceId, deletedAt: null }, select: { currentStageId: true } })]);
+  if (!settings || !lead) return Object.freeze({ scheduled: 0, alreadyActive: false });
 
   let scheduled = 0;
   for (const step of settings.cadence) {
-    const runAt = addWorkspaceCalendarDays(
-      input.occurredAt,
-      step.dayOffset,
-      settings.workspace.timeZone,
-    );
+    const localDate = addLocalDays(workspaceDateAt(input.occurredAt, settings.workspace.timeZone), step.dayOffset);
+    const configuredAt = step.timeOfDay
+      ? parseWorkspaceLocalDateTime(`${localDate}T${step.timeOfDay}`, settings.workspace.timeZone)
+      : addWorkspaceCalendarDays(input.occurredAt, step.dayOffset, settings.workspace.timeZone);
+    const runAt = configuredAt < input.occurredAt ? input.occurredAt : configuredAt;
     const result = await publisher.publishInTransaction(transaction, {
       workspaceId: input.workspaceId,
       triggerType: "CALL_UNANSWERED",
@@ -145,6 +145,15 @@ export async function scheduleNoAnswerCadenceInTransaction(
         attemptNumber: step.attemptNumber,
         dayOffset: step.dayOffset,
         cadenceAction: step.action,
+        cadenceMessage: step.message,
+        assigneeMemberId: step.assigneeMemberId,
+        targetStageId: step.targetStageId,
+        initialStageId: lead.currentStageId,
+        stopOnReply: settings.cadenceStopOnReply,
+        stopOnMeetingScheduled: settings.cadenceStopOnMeetingScheduled,
+        stopOnStageChange: settings.cadenceStopOnStageChange,
+        cadenceTemplateKey: settings.cadenceTemplateKey,
+        cadenceStartedAt: input.occurredAt.toISOString(),
         scheduledFor: runAt.toISOString(),
         settingsRevision: settings.revision,
         timeZone: settings.workspace.timeZone,

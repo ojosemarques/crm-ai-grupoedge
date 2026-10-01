@@ -9,6 +9,7 @@ import styles from "./settings-workspace.module.css";
 import { Button } from "@/components/ui/button";
 import { PipelineTemplateWorkspace } from "@/app/configuracoes/pipeline-template-workspace";
 import type { CommercialSettingsScreen, SettingsPreview } from "@/modules/settings/domain/commercial-settings-contracts";
+import { cadenceTemplates } from "@/modules/settings/domain/cadence-templates";
 
 type PendingChange = Readonly<{ command: Record<string, unknown>; preview: SettingsPreview }>;
 type CadenceStep = CommercialSettingsScreen["workspace"]["cadenceSteps"][number];
@@ -48,6 +49,10 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [cadenceSteps, setCadenceSteps] = useState(() => initialScreen.workspace.cadenceSteps.map((step) => ({ ...step })));
+  const [cadenceTemplateKey, setCadenceTemplateKey] = useState(initialScreen.workspace.cadenceTemplateKey);
+  const [stopOnReply, setStopOnReply] = useState(initialScreen.workspace.cadenceStopOnReply);
+  const [stopOnMeetingScheduled, setStopOnMeetingScheduled] = useState(initialScreen.workspace.cadenceStopOnMeetingScheduled);
+  const [stopOnStageChange, setStopOnStageChange] = useState(initialScreen.workspace.cadenceStopOnStageChange);
 
   async function prepare(command: Record<string, unknown>) {
     setBusy(true); setNotice(null);
@@ -69,6 +74,7 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
       if (!response.ok || !body || typeof body !== "object" || !("result" in body)) throw new Error(apiError(body, "Não foi possível aplicar a alteração."));
       const nextScreen = body.result as CommercialSettingsScreen;
       setScreen(nextScreen); setCadenceSteps(nextScreen.workspace.cadenceSteps.map((step) => ({ ...step })));
+      setCadenceTemplateKey(nextScreen.workspace.cadenceTemplateKey); setStopOnReply(nextScreen.workspace.cadenceStopOnReply); setStopOnMeetingScheduled(nextScreen.workspace.cadenceStopOnMeetingScheduled); setStopOnStageChange(nextScreen.workspace.cadenceStopOnStageChange);
       setPending(null); setNotice("Configuração salva e auditada com sucesso.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Falha inesperada."); }
     finally { setBusy(false); }
@@ -81,7 +87,23 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
       pactoMinimumInvestigatedDimensions: Number(data.get("pactoMinimum")), defaultMeetingDurationMinutes: Number(data.get("meetingDuration")),
       distributionStrategy: "ROUND_ROBIN", maxOpenLeadsPerSdr: max ? Number(max) : null,
       leadStagnationDays: Number(data.get("stagnation")), leadWithoutActivityDays: Number(data.get("withoutActivity")),
+      cadenceTemplateKey, cadenceStopOnReply: stopOnReply, cadenceStopOnMeetingScheduled: stopOnMeetingScheduled, cadenceStopOnStageChange: stopOnStageChange,
       cadenceSteps: cadenceSteps.map((step) => ({ ...step })), });
+  }
+
+  function updateCadenceStep(index: number, patch: Partial<CadenceStep>) {
+    setCadenceTemplateKey("CUSTOM");
+    setCadenceSteps((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  }
+
+  function applyCadenceTemplate(key: string) {
+    const template = cadenceTemplates.find((item) => item.key === key);
+    if (!template) return;
+    setCadenceTemplateKey(template.key);
+    setStopOnReply(template.stopOnReply);
+    setStopOnMeetingScheduled(template.stopOnMeetingScheduled);
+    setStopOnStageChange(template.stopOnStageChange);
+    setCadenceSteps(template.steps.map((step) => ({ ...step, assigneeMemberId: null, targetStageId: null })));
   }
 
   function scoringSubmit(event: FormEvent<HTMLFormElement>) {
@@ -115,16 +137,25 @@ export function CommercialSettingsWorkspace({ initialScreen }: Readonly<{ initia
           <label className="text-sm">Sem atividade após (dias)<input className={inputClass} defaultValue={screen.workspace.leadWithoutActivityDays} min="1" name="withoutActivity" required type="number" /></label>
           <fieldset className={styles.cadenceEditor}>
             <legend>Cadência comercial</legend>
-            <p>Defina o dia e a atividade que o vendedor receberá automaticamente.</p>
+            <p>Comece com um modelo pronto e ajuste somente o que fizer sentido para a sua operação.</p>
+            <div className={styles.cadenceTemplatePicker}>
+              <label>Modelo pronto<select className={inputClass} value={cadenceTemplateKey === "CUSTOM" ? "" : cadenceTemplateKey} onChange={(event) => applyCadenceTemplate(event.target.value)}><option value="">Cadência personalizada</option>{cadenceTemplates.map((template) => <option key={template.key} value={template.key}>{template.name}</option>)}</select></label>
+              <p>{cadenceTemplates.find((template) => template.key === cadenceTemplateKey)?.description ?? "Configure livremente dias, canais, textos, responsáveis e movimentações."}</p>
+            </div>
+            <div className={styles.cadenceStopRules}><strong>Interromper automaticamente quando:</strong><label><input checked={stopOnReply} onChange={(event) => { setCadenceTemplateKey("CUSTOM"); setStopOnReply(event.target.checked); }} type="checkbox" /> O lead responder</label><label><input checked={stopOnMeetingScheduled} onChange={(event) => { setCadenceTemplateKey("CUSTOM"); setStopOnMeetingScheduled(event.target.checked); }} type="checkbox" /> Uma reunião for marcada</label><label><input checked={stopOnStageChange} onChange={(event) => { setCadenceTemplateKey("CUSTOM"); setStopOnStageChange(event.target.checked); }} type="checkbox" /> O lead mudar de etapa</label></div>
             <div className={styles.cadenceSequence}>
               {cadenceSteps.map((step, index) => <div className={styles.cadenceRow} key={index}>
                 <strong>Etapa {index + 1}</strong>
-                <label>Dia<input className={inputClass} max="90" min="0" required type="number" value={step.dayOffset} onChange={(event) => setCadenceSteps((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, dayOffset: Number(event.target.value) } : item))} /></label>
-                <label>Ação<select className={inputClass} value={step.action} onChange={(event) => setCadenceSteps((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, action: event.target.value as CadenceStep["action"] } : item))}>{cadenceActions.map((action) => <option key={action.value} value={action.value}>{action.label}</option>)}</select></label>
-                <Button disabled={busy || cadenceSteps.length === 1} size="sm" type="button" variant="secondary" onClick={() => setCadenceSteps((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remover</Button>
+                <label>Dia<input className={inputClass} max="90" min="0" required type="number" value={step.dayOffset} onChange={(event) => updateCadenceStep(index, { dayOffset: Number(event.target.value) })} /></label>
+                <label>Canal ou ação<select className={inputClass} value={step.action} onChange={(event) => updateCadenceStep(index, { action: event.target.value as CadenceStep["action"] })}>{cadenceActions.map((action) => <option key={action.value} value={action.value}>{action.label}</option>)}</select></label>
+                <label>Horário<input className={inputClass} required type="time" value={step.timeOfDay} onChange={(event) => updateCadenceStep(index, { timeOfDay: event.target.value })} /></label>
+                <label>Responsável<select className={inputClass} value={step.assigneeMemberId ?? ""} onChange={(event) => updateCadenceStep(index, { assigneeMemberId: event.target.value || null })}><option value="">Responsável atual do lead</option>{screen.members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+                <label>Mover para a etapa<select className={inputClass} value={step.targetStageId ?? ""} onChange={(event) => updateCadenceStep(index, { targetStageId: event.target.value || null })}><option value="">Não mover automaticamente</option>{screen.cadenceTargetStages.map((stage) => <option key={stage.id} value={stage.id}>{stage.name}</option>)}</select></label>
+                <label className={styles.cadenceMessage}>Mensagem ou orientação<textarea className={inputClass} maxLength={2000} placeholder="Texto que aparecerá para o vendedor. Use {nome} para personalizar." rows={2} value={step.message} onChange={(event) => updateCadenceStep(index, { message: event.target.value })} /></label>
+                <Button disabled={busy || cadenceSteps.length === 1} size="sm" type="button" variant="secondary" onClick={() => { setCadenceTemplateKey("CUSTOM"); setCadenceSteps((current) => current.filter((_, itemIndex) => itemIndex !== index)); }}>Remover</Button>
               </div>)}
             </div>
-            <Button disabled={busy || cadenceSteps.length >= 15} size="sm" type="button" variant="secondary" onClick={() => setCadenceSteps((current) => [...current, { dayOffset: Math.min(90, (current.at(-1)?.dayOffset ?? 0) + 1), action: "CALL" }])}>Adicionar etapa</Button>
+            <Button disabled={busy || cadenceSteps.length >= 15} size="sm" type="button" variant="secondary" onClick={() => { setCadenceTemplateKey("CUSTOM"); setCadenceSteps((current) => [...current, { dayOffset: Math.min(90, (current.at(-1)?.dayOffset ?? 0) + 1), action: "CALL", timeOfDay: "09:00", message: "", assigneeMemberId: null, targetStageId: null }]); }}>Adicionar etapa</Button>
           </fieldset>
           <p className="text-sm text-muted-foreground sm:col-span-2">Distribuição: round-robin. A Fila Geral continua sendo o fallback explícito.</p><Button disabled={busy} type="submit">Revisar impacto</Button>
         </form>

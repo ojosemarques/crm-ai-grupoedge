@@ -10,6 +10,7 @@ import {
   LifecycleAutomationKeys,
   type LifecycleAutomationKey,
 } from "@/modules/automations/domain/predefined-lifecycle-automations";
+import { transitionLeadStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { evaluatePrivacyInTransaction } from "@/modules/privacy/application/privacy-service";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { workspaceDayRange } from "@/shared/core/time/workspace-time";
@@ -32,6 +33,15 @@ const payloadSchema = z
     attemptNumber: z.number().int().positive().optional(),
     dayOffset: z.number().int().min(0).optional(),
     cadenceAction: z.enum(["WHATSAPP", "CALL", "EMAIL", "RECYCLE", "CLOSE"]).optional(),
+    cadenceMessage: z.string().max(2_000).nullable().optional(),
+    assigneeMemberId: z.string().uuid().nullable().optional(),
+    targetStageId: z.string().uuid().nullable().optional(),
+    initialStageId: z.string().uuid().optional(),
+    stopOnReply: z.boolean().optional(),
+    stopOnMeetingScheduled: z.boolean().optional(),
+    stopOnStageChange: z.boolean().optional(),
+    cadenceTemplateKey: z.string().max(80).optional(),
+    cadenceStartedAt: z.coerce.date().optional(),
     scheduledFor: z.coerce.date().optional(),
     settingsRevision: z.number().int().positive().optional(),
     timeZone: z.string().min(1).optional(),
@@ -87,6 +97,7 @@ async function getLead(
       nextActionAt: true,
       nextActionDescription: true,
       lastInboundResponseAt: true,
+      currentStageId: true,
       owner: {
         select: {
           status: true,
@@ -351,12 +362,19 @@ async function handleNoAnswer(
   if (!(["OPEN", "QUALIFIED"] as const).includes(lead.status as "OPEN" | "QUALIFIED")) {
     return { leadId: lead.id, skipped: true, reason: "LEAD_CLOSED" };
   }
-  if (lead.lastInboundResponseAt && lead.lastInboundResponseAt >= (payload.scheduledFor ?? execution.now)) {
+  if (payload.stopOnReply !== false && lead.lastInboundResponseAt && lead.lastInboundResponseAt >= (payload.cadenceStartedAt ?? payload.scheduledFor ?? execution.now)) {
     return { leadId: lead.id, skipped: true, reason: "LEAD_REPLIED" };
+  }
+  if (payload.stopOnStageChange && payload.initialStageId && lead.currentStageId !== payload.initialStageId) {
+    return { leadId: lead.id, skipped: true, reason: "LEAD_STAGE_CHANGED" };
+  }
+  if (payload.stopOnMeetingScheduled && await transaction.meeting.count({ where: { workspaceId: execution.workspaceId, leadId: lead.id, status: { in: ["SCHEDULED", "CONFIRMED"] }, deletedAt: null } })) {
+    return { leadId: lead.id, skipped: true, reason: "MEETING_SCHEDULED" };
   }
 
   const timeZone = payload.timeZone ?? lead.workspace.timeZone;
   const cadenceAction = payload.cadenceAction ?? "CALL";
+  const configuredMessage = payload.cadenceMessage?.replaceAll("{nome}", lead.fullName).trim() || null;
   const taskSpec = ({
     WHATSAPP: { kind: "MESSAGE", title: "enviar WhatsApp", description: "Envie uma mensagem contextual e registre o resultado." },
     CALL: { kind: "CALL", title: "fazer ligação", description: "Faça a ligação e registre o resultado do contato." },
@@ -392,10 +410,10 @@ async function handleNoAnswer(
         workspaceId: execution.workspaceId,
         leadId: lead.id,
         automationRunId: execution.automationRunId,
-        assigneeMemberId: lead.ownerMemberId,
-        queueId: lead.ownerMemberId ? null : lead.queueId,
+        assigneeMemberId: payload.assigneeMemberId ?? lead.ownerMemberId,
+        queueId: payload.assigneeMemberId || lead.ownerMemberId ? null : lead.queueId,
         title: `Cadência D${payload.dayOffset}: ${taskSpec.title}`,
-        description: `${taskSpec.description} Etapa ${payload.attemptNumber} da revisão ${payload.settingsRevision ?? "vigente"}.`,
+        description: `${configuredMessage ?? taskSpec.description} Etapa ${payload.attemptNumber} da revisão ${payload.settingsRevision ?? "vigente"}.`,
         kind: taskSpec.kind,
         status: "OPEN",
         priority: lead.priority,
@@ -413,8 +431,18 @@ async function handleNoAnswer(
     transaction,
     execution,
     lead,
-    `WhatsApp D${payload.dayOffset} sugerido: retomar o contato com contexto e confirmar a próxima ação.`,
+    configuredMessage ?? `WhatsApp D${payload.dayOffset} sugerido: retomar o contato com contexto e confirmar a próxima ação.`,
   ) : null;
+  const transition = payload.targetStageId && payload.targetStageId !== lead.currentStageId
+    ? await transitionLeadStageInTransaction(transaction, { workspaceId: execution.workspaceId, actorId: execution.actorId }, {
+        leadId: lead.id,
+        targetStageId: payload.targetStageId,
+        reason: `Movido pela cadência ${payload.cadenceTemplateKey ?? "configurada"}, etapa ${payload.attemptNumber}.`,
+        origin: "AUTOMATION",
+        managerCorrection: false,
+        confirmed: true,
+      }, execution.now)
+    : null;
   await projectNextTask(transaction, execution, lead.id);
   const refreshed = await getLead(transaction, execution.workspaceId, lead.id);
   const activityId = await appendFact(transaction, execution, refreshed, {
@@ -431,10 +459,13 @@ async function handleNoAnswer(
       taskCreated,
       simulatedMessageId: messageId,
       simulatedOnly: true,
+      cadenceTemplateKey: payload.cadenceTemplateKey ?? "CUSTOM",
+      targetStageId: payload.targetStageId ?? null,
+      transition,
     },
     auditAction: "automation.cadence.step_completed",
   });
-  return { leadId: lead.id, taskId: task.id, taskCreated, cadenceAction, messageId, activityId };
+  return { leadId: lead.id, taskId: task.id, taskCreated, cadenceAction, messageId, activityId, transition };
 }
 
 async function handleQualified(

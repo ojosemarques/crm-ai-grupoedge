@@ -176,7 +176,7 @@ export type TransactionalLeadStageTransitionInput = Readonly<{
 
 export async function transitionLeadStageInTransaction(
   transaction: Prisma.TransactionClient,
-  context: AuthenticatedContext,
+  context: Pick<AuthenticatedContext, "workspaceId" | "actorId">,
   input: TransactionalLeadStageTransitionInput,
   requestedAt: Date,
 ) {

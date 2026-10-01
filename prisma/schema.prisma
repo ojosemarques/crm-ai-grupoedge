@@ -3044,6 +3044,7 @@ model WorkspaceMember {
   conversationAssignmentsFrom  ConversationAssignmentHistory[] @relation("ConversationAssignmentPreviousOwner")
   conversationAssignmentsTo    ConversationAssignmentHistory[] @relation("ConversationAssignmentNewOwner")
   transactionalCheckoutsOwned  TransactionalCheckout[]
+  cadenceStepsAssigned         CadenceStep[]                    @relation("CadenceStepAssignee")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, userId])
@@ -3296,6 +3297,10 @@ model CommercialSettingsVersion {
   maxOpenLeadsPerSdr                 Int?
   leadStagnationDays                 Int
   leadWithoutActivityDays            Int
+  cadenceTemplateKey                 String               @default("CUSTOM")
+  cadenceStopOnReply                 Boolean              @default(true)
+  cadenceStopOnMeetingScheduled      Boolean              @default(true)
+  cadenceStopOnStageChange           Boolean              @default(false)
   createdByActorId                   String               @db.Uuid
   createdAt                          DateTime             @default(now()) @db.Timestamptz(3)
 
@@ -3316,15 +3321,23 @@ model CadenceStep {
   attemptNumber     Int
   dayOffset         Int
   action            CadenceStepAction @default(CALL)
+  timeOfDay         String?
+  message           String?
+  assigneeMemberId  String?  @db.Uuid
+  targetStageId     String?  @db.Uuid
   createdAt         DateTime @default(now()) @db.Timestamptz(3)
 
   workspace       Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   settingsVersion CommercialSettingsVersion @relation(fields: [workspaceId, settingsVersionId], references: [workspaceId, id], onDelete: Restrict)
+  assignee        WorkspaceMember?          @relation("CadenceStepAssignee", fields: [workspaceId, assigneeMemberId], references: [workspaceId, id], onDelete: Restrict)
+  targetStage     PipelineStage?            @relation("CadenceStepTargetStage", fields: [workspaceId, targetStageId], references: [workspaceId, id], onDelete: Restrict)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, settingsVersionId, attemptNumber])
   @@unique([workspaceId, settingsVersionId, dayOffset])
   @@index([workspaceId, settingsVersionId, dayOffset])
+  @@index([workspaceId, assigneeMemberId])
+  @@index([workspaceId, targetStageId])
   @@map("cadence_steps")
 }
 
@@ -4753,6 +4766,7 @@ model PipelineStage {
   histories            StageHistory[]
   outgoingTransitions  PipelineStageTransition[] @relation("PipelineTransitionFrom")
   incomingTransitions  PipelineStageTransition[] @relation("PipelineTransitionTo")
+  cadenceStepsTargeted CadenceStep[]             @relation("CadenceStepTargetStage")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, pipelineId, id])
