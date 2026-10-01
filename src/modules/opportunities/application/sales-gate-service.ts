@@ -1,4 +1,4 @@
-import type { OpportunityPipelineStageCode, Prisma, PrismaClient, TaskKind } from "@/generated/prisma/client";
+import type { OpportunityPipelineStageCode, PermissionScope, Prisma, PrismaClient, TaskKind } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { consultativeEvidenceTypes, evidenceLabels, salesGateCommandSchema, salesReviewCommandSchema, type ConsultativeEvidenceType } from "@/modules/opportunities/domain/sales-gate-contracts";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -27,6 +27,50 @@ function taskKind(activityType: string): TaskKind {
   return (["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "EMAIL", "MEETING", "FOLLOW_UP"] as const).includes(normalized as TaskKind)
     ? normalized as TaskKind
     : "GENERAL";
+}
+
+type ActivityPermissionDecision = Readonly<
+  | { allowed: true; scope: PermissionScope }
+  | { allowed: false }
+>;
+
+function activityPermission(
+  task: Readonly<{ context: string; meetingId: string | null; opportunityId: string | null }>,
+  decisions: Readonly<{
+    tasks: ActivityPermissionDecision;
+    opportunities: ActivityPermissionDecision;
+    meetings: ActivityPermissionDecision;
+    postSale: ActivityPermissionDecision;
+  }>,
+) {
+  if (task.context === "POST_SALE") return decisions.postSale;
+  if (task.meetingId) return decisions.meetings;
+  if (task.opportunityId) return decisions.opportunities;
+  return decisions.tasks;
+}
+
+function withinActivityScope(
+  decision: ActivityPermissionDecision,
+  context: AuthenticatedContext,
+  teamMemberIds: ReadonlySet<string>,
+  teamIds: ReadonlySet<string>,
+  ownerMemberId: string | null,
+  queueTeamId: string | null,
+) {
+  if (!decision.allowed) return false;
+  if (decision.scope === "WORKSPACE") return true;
+  if (ownerMemberId === context.memberId) return true;
+  if (decision.scope === "OWN") return false;
+  return Boolean(
+    (ownerMemberId && teamMemberIds.has(ownerMemberId)) ||
+      (queueTeamId && teamIds.has(queueTeamId)),
+  );
+}
+
+function automationCategory(value: Prisma.JsonValue | null): string | null {
+  if (!value || Array.isArray(value) || typeof value !== "object") return null;
+  const category = value.category;
+  return typeof category === "string" ? category : null;
 }
 
 async function opportunityForAccess(database: PrismaClient, context: AuthenticatedContext, opportunityId: string) {
@@ -285,26 +329,170 @@ export function createSalesGateService(options: SalesGateOptions) {
   }
 
   async function getActivityQueue(context: AuthenticatedContext) {
-    const decision = await options.authorization.authorize(context, PermissionKeys.OPPORTUNITIES_READ, { workspaceId: context.workspaceId, resourceType: "SalesActivityQueue", ownerMemberId: context.memberId });
-    if (!decision.allowed) await options.authorization.assertAuthorized(context, PermissionKeys.OPPORTUNITIES_READ, { workspaceId: context.workspaceId, resourceType: "SalesActivityQueue", ownerMemberId: context.memberId });
-    const scope = decision.allowed ? decision.scope : fail("Acesso negado.", "ACCESS_DENIED", 403);
-    let ownerIds: string[] | undefined;
-    if (scope === "OWN") ownerIds = [context.memberId];
-    if (scope === "TEAM") {
-      const teams = await options.database.teamMember.findMany({ where: { workspaceId: context.workspaceId, workspaceMemberId: context.memberId, deletedAt: null }, select: { teamId: true } });
-      const members = await options.database.teamMember.findMany({ where: { workspaceId: context.workspaceId, teamId: { in: teams.map((item) => item.teamId) }, deletedAt: null }, select: { workspaceMemberId: true }, distinct: ["workspaceMemberId"] });
-      ownerIds = members.map((item) => item.workspaceMemberId);
+    const resource = { workspaceId: context.workspaceId, resourceType: "UnifiedActivityQueue", ownerMemberId: context.memberId };
+    const [tasksDecision, opportunityDecision, meetingDecision, postSaleDecision] = await Promise.all([
+      options.authorization.authorize(context, PermissionKeys.TASKS_READ, resource),
+      options.authorization.authorize(context, PermissionKeys.OPPORTUNITIES_READ, resource),
+      options.authorization.authorize(context, PermissionKeys.MEETINGS_READ, resource),
+      options.authorization.authorize(context, PermissionKeys.CUSTOMER_SUCCESS_READ, resource),
+    ]);
+    const decisions = {
+      tasks: tasksDecision,
+      opportunities: opportunityDecision,
+      meetings: meetingDecision,
+      postSale: postSaleDecision,
+    };
+    if (!Object.values(decisions).some((decision) => decision.allowed)) {
+      await options.authorization.assertAuthorized(context, PermissionKeys.TASKS_READ, resource);
     }
-    const tasks = await options.database.task.findMany({ where: { workspaceId: context.workspaceId, opportunityId: { not: null }, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null, ...(ownerIds ? { assigneeMemberId: { in: ownerIds } } : {}) }, include: { opportunity: { select: { name: true, lead: { select: { sourceId: true } }, currentStage: { select: { name: true } } } }, stageActivityInstance: { select: { id: true, activityType: true, script: true, reentryPolicy: true } }, assignee: { select: { user: { select: { displayName: true } } } } }, orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }] });
-    let visible = tasks;
-    if (scope !== "WORKSPACE") {
-      const teams = await options.database.teamMember.findMany({ where: { workspaceId: context.workspaceId, workspaceMemberId: context.memberId, deletedAt: null }, select: { teamId: true } });
-      const rules = await options.database.pipelineOriginAccessRule.findMany({ where: { workspaceId: context.workspaceId }, select: { sourceId: true, teamId: true, canRead: true } });
-      const teamIds = new Set(teams.map((item) => item.teamId));
-      const governed = new Set(rules.map((rule) => rule.sourceId));
-      visible = tasks.filter((task) => !task.opportunity || !governed.has(task.opportunity.lead.sourceId) || rules.some((rule) => rule.sourceId === task.opportunity?.lead.sourceId && teamIds.has(rule.teamId) && rule.canRead));
-    }
-    return { generatedAt: options.now().toISOString(), items: visible.map((task) => ({ id: task.id, opportunityId: task.opportunityId, opportunityName: task.opportunity?.name ?? "Oportunidade", stageName: task.opportunity?.currentStage.name ?? null, title: task.title, description: task.description, kind: task.kind, status: task.status, dueAt: task.dueAt.toISOString(), ownerMemberId: task.assigneeMemberId, ownerName: task.assignee?.user.displayName ?? null, origin: task.stageActivityInstance ? "STAGE" : "STANDALONE", stageActivityInstanceId: task.stageActivityInstance?.id ?? null, activityType: task.stageActivityInstance?.activityType ?? null, script: task.stageActivityInstance?.script ?? null, reentryPolicy: task.stageActivityInstance?.reentryPolicy ?? null })) };
+
+    const memberships = await options.database.teamMember.findMany({
+      where: { workspaceId: context.workspaceId, workspaceMemberId: context.memberId, deletedAt: null },
+      select: { teamId: true },
+    });
+    const teamIds = new Set(memberships.map((item) => item.teamId));
+    const teamMembers = teamIds.size
+      ? await options.database.teamMember.findMany({
+          where: { workspaceId: context.workspaceId, teamId: { in: [...teamIds] }, deletedAt: null },
+          select: { workspaceMemberId: true },
+          distinct: ["workspaceMemberId"],
+        })
+      : [];
+    const teamMemberIds = new Set(teamMembers.map((item) => item.workspaceMemberId));
+    const [tasks, meetings, originRules] = await Promise.all([
+      options.database.task.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          status: { in: ["OPEN", "IN_PROGRESS"] },
+          deletedAt: null,
+        },
+        include: {
+          lead: { select: { id: true, fullName: true, accountId: true, sourceId: true, currentStage: { select: { name: true } } } },
+          opportunity: { select: { name: true, currentStage: { select: { name: true } } } },
+          meeting: { select: { title: true, status: true } },
+          stageActivityInstance: { select: { id: true, activityType: true, script: true, reentryPolicy: true } },
+          automationRun: { select: { actionConfigSnapshot: true } },
+          assignee: { select: { user: { select: { displayName: true } } } },
+          queue: { select: { name: true, teamId: true } },
+        },
+        orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+      }),
+      meetingDecision.allowed
+        ? options.database.meeting.findMany({
+            where: {
+              workspaceId: context.workspaceId,
+              deletedAt: null,
+              status: { in: ["SCHEDULED", "CONFIRMED"] },
+              tasks: { none: { status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null } },
+            },
+            include: {
+              lead: { select: { id: true, fullName: true, sourceId: true } },
+              opportunity: { select: { name: true, currentStage: { select: { name: true } } } },
+              owner: { select: { user: { select: { displayName: true } } } },
+            },
+            orderBy: [{ startsAt: "asc" }, { id: "asc" }],
+          })
+        : Promise.resolve([]),
+      options.database.pipelineOriginAccessRule.findMany({
+        where: { workspaceId: context.workspaceId },
+        select: { sourceId: true, teamId: true, canRead: true },
+      }),
+    ]);
+    const governedSources = new Set(originRules.map((rule) => rule.sourceId));
+    const sourceAllowed = (sourceId: string) =>
+      !governedSources.has(sourceId) ||
+      originRules.some((rule) => rule.sourceId === sourceId && teamIds.has(rule.teamId) && rule.canRead);
+
+    const taskItems = tasks.flatMap((task) => {
+      const decision = activityPermission(task, decisions);
+      if (!withinActivityScope(decision, context, teamMemberIds, teamIds, task.assigneeMemberId, task.queue?.teamId ?? null)) return [];
+      if (decision.allowed && decision.scope !== "WORKSPACE" && !sourceAllowed(task.lead.sourceId)) return [];
+      const cadence = automationCategory(task.automationRun?.actionConfigSnapshot ?? null) === "OUTREACH_CADENCE";
+      const origin = task.context === "POST_SALE"
+        ? "POST_SALE"
+        : task.meetingId
+          ? "MEETING"
+          : task.stageActivityInstance
+            ? "OPPORTUNITY_STAGE"
+            : cadence
+              ? "CADENCE"
+              : task.opportunityId
+                ? "OPPORTUNITY"
+                : "LEAD";
+      const href = task.meetingId
+        ? `/agenda/reunioes/${task.meetingId}`
+        : task.context === "POST_SALE" && task.lead.accountId
+          ? `/customer-success?accountId=${task.lead.accountId}`
+          : task.opportunityId
+            ? `/oportunidades?opportunityId=${task.opportunityId}`
+            : `/leads/${task.leadId}/historico#tarefas`;
+      return [{
+        id: task.id,
+        recordType: "TASK" as const,
+        leadId: task.leadId,
+        leadName: task.lead.fullName,
+        opportunityId: task.opportunityId,
+        opportunityName: task.opportunity?.name ?? null,
+        meetingId: task.meetingId,
+        stageName: task.opportunity?.currentStage.name ?? task.lead.currentStage.name,
+        title: task.title,
+        description: task.description,
+        kind: task.kind,
+        status: task.status,
+        priority: task.priority,
+        dueAt: task.dueAt.toISOString(),
+        ownerMemberId: task.assigneeMemberId,
+        ownerName: task.assignee?.user.displayName ?? task.queue?.name ?? "Fila sem responsável individual",
+        origin,
+        href,
+        stageActivityInstanceId: task.stageActivityInstance?.id ?? null,
+        activityType: task.stageActivityInstance?.activityType ?? null,
+        script: task.stageActivityInstance?.script ?? null,
+        reentryPolicy: task.stageActivityInstance?.reentryPolicy ?? null,
+      }];
+    });
+    const meetingItems = meetings.flatMap((meeting) => {
+      if (!withinActivityScope(meetingDecision, context, teamMemberIds, teamIds, meeting.ownerMemberId, null)) return [];
+      if (meetingDecision.allowed && meetingDecision.scope !== "WORKSPACE" && !sourceAllowed(meeting.lead.sourceId)) return [];
+      return [{
+        id: `meeting:${meeting.id}`,
+        recordType: "MEETING" as const,
+        leadId: meeting.leadId,
+        leadName: meeting.lead.fullName,
+        opportunityId: meeting.opportunityId,
+        opportunityName: meeting.opportunity?.name ?? null,
+        meetingId: meeting.id,
+        stageName: meeting.opportunity?.currentStage.name ?? null,
+        title: `Reunião: ${meeting.title}`,
+        description: meeting.observation,
+        kind: "MEETING" as const,
+        status: "OPEN" as const,
+        priority: "HIGH" as const,
+        dueAt: meeting.startsAt.toISOString(),
+        ownerMemberId: meeting.ownerMemberId,
+        ownerName: meeting.owner.user.displayName,
+        origin: "MEETING" as const,
+        href: `/agenda/reunioes/${meeting.id}`,
+        stageActivityInstanceId: null,
+        activityType: null,
+        script: null,
+        reentryPolicy: null,
+      }];
+    });
+    const items = [...taskItems, ...meetingItems].sort((left, right) => left.dueAt.localeCompare(right.dueAt) || left.id.localeCompare(right.id));
+    return {
+      generatedAt: options.now().toISOString(),
+      counts: {
+        total: items.length,
+        overdue: items.filter((item) => new Date(item.dueAt) < options.now()).length,
+        leads: items.filter((item) => item.origin === "LEAD").length,
+        cadence: items.filter((item) => item.origin === "CADENCE").length,
+        meetings: items.filter((item) => item.origin === "MEETING").length,
+        opportunities: items.filter((item) => item.origin === "OPPORTUNITY" || item.origin === "OPPORTUNITY_STAGE").length,
+        postSale: items.filter((item) => item.origin === "POST_SALE").length,
+      },
+      items,
+    };
   }
 
   return Object.freeze({ getScreen, command, scanReviews, getReviews, getActivityQueue });
