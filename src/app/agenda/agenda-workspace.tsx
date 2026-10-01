@@ -156,7 +156,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       </section>
       {selectedMeeting ? <AccessibleDialog className={styles.dialog!} labelledBy="meeting-title" onDismiss={() => setSelectedMeetingId(null)}><div className={styles.dialogHeader}><div><span>Reunião</span><h2 id="meeting-title">{selectedMeeting.title}</h2></div><button aria-label="Fechar detalhes" onClick={() => setSelectedMeetingId(null)} type="button">×</button></div>{meetingDetail(selectedMeeting)}</AccessibleDialog> : null}
       {showSchedule ? <AccessibleDialog busy={pending} className={styles.dialog!} labelledBy="schedule-title" onDismiss={() => setShowSchedule(false)}><div className={styles.dialogHeader}><div><span>Agenda</span><h2 id="schedule-title">Agendar reunião</h2></div><button aria-label="Fechar agendamento" disabled={pending} onClick={() => setShowSchedule(false)} type="button">×</button></div>{screen.canSchedule ? <form className={styles.scheduleForm} onSubmit={schedule}>
-        <label>Lead qualificado<select className={inputClass} name="leadId" onChange={(event) => setScheduleLeadId(event.target.value)} required value={scheduleLeadId}><option value="">Selecione o lead</option>{screen.leadOptions.map((lead) => <option key={lead.id} value={lead.id}>{lead.name}</option>)}</select></label>
+        <label>Lead<select className={inputClass} name="leadId" onChange={(event) => setScheduleLeadId(event.target.value)} required value={scheduleLeadId}><option value="">Selecione o lead</option>{screen.leadOptions.map((lead) => <option key={lead.id} value={lead.id}>{lead.name}</option>)}</select></label>
         <label>Closer<select className={inputClass} name="closerId" required><option value="">Selecione o responsável</option>{screen.closerOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
         <label className={styles.fullWidth}>Oportunidade<select className={inputClass} name="opportunityId"><option value="">Sem vínculo explícito</option>{screen.leadOptions.find((lead) => lead.id === scheduleLeadId)?.opportunities.map((opportunity) => <option key={opportunity.id} value={opportunity.id}>{opportunity.name}</option>)}</select></label>
         <label className={styles.fullWidth}>Título<input className={inputClass} name="title" required /></label>
@@ -164,7 +164,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
         <label>Duração<select className={inputClass} defaultValue={screen.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
         <label className={styles.fullWidth}>Observação<textarea className={inputClass} name="observation" rows={3} /></label>
         <p className={styles.fullWidth}>Horários em {screen.timeZone}.</p><Button className={styles.fullWidth} disabled={pending} type="submit">{pending ? "Agendando…" : "Confirmar agendamento"}</Button>
-      </form> : <EmptyState compact description="Qualifique um lead ou selecione outro closer disponível." title="Nenhum lead disponível para agendar" />}{notice ? <p className={styles.notice} role="status">{notice}</p> : null}</AccessibleDialog> : null}
+      </form> : <EmptyState compact description="Cadastre um lead ou configure um closer disponível." title="Nenhum lead disponível para agendar" />}{notice ? <p className={styles.notice} role="status">{notice}</p> : null}</AccessibleDialog> : null}
     </div>
   );
 }

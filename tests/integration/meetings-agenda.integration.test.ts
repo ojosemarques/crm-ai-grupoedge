@@ -171,6 +171,35 @@ beforeAll(async () => {
 afterAll(async () => database.$disconnect());
 
 describe("agenda interna e reuniões", () => {
+  it("agenda reunião para lead novo sem resumo, detalhes ou PACTO", async () => {
+    sequence += 1;
+    const created = await createLeadIntakeService({ database, authorization, now: () => clock }).intake({
+      channel: "MANUAL",
+      idempotencyKey: `meeting-without-qualification:${randomUUID()}`,
+      fullName: `Lead sem detalhes ${randomUUID().slice(0, 8)}`,
+      phone: `+55119${sequence.toString().slice(-8)}`,
+      sourceKey: "manual",
+      priorityBandCode: "P3",
+      rawPayload: { test: "meeting-without-qualification" },
+    }, systemContext);
+    if (created.outcome === "REJECTED") throw new Error(created.code);
+
+    const before = await meetings().getLeadMeetings(managerContext, { leadId: created.leadId });
+    const agenda = await meetings().getAgenda(managerContext, { view: "day", date: "2035-02-11" });
+    expect(before.canSchedule).toBe(true);
+    expect(agenda.leadOptions.map((lead) => lead.id)).toContain(created.leadId);
+
+    const scheduled = await schedule(created.leadId, managerContext, "2035-02-11T15:00");
+    const stored = await database.lead.findUniqueOrThrow({
+      where: { id: created.leadId },
+      include: { currentStage: true, qualification: true },
+    });
+    expect(scheduled.meetingId).toBeTruthy();
+    expect(stored.interestSummary).toBeNull();
+    expect(stored.qualification).toBeNull();
+    expect(stored.currentStage.leadStageCode).toBe("MEETING_SCHEDULED");
+  });
+
   it("agenda de forma atômica, cria tarefa, atualiza pipeline, timeline e auditoria", async () => {
     const lead = await qualifyLead("CRM15 agendamento");
     const before = await meetings().getLeadMeetings(lead.sdrContext, { leadId: lead.leadId });

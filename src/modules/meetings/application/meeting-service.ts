@@ -412,8 +412,6 @@ export function createMeetingService(options: MeetingServiceOptions) {
       where: {
         workspaceId: context.workspaceId,
         deletedAt: null,
-        status: "QUALIFIED",
-        currentStage: { leadStageCode: "QUALIFIED" },
         AND: [leadVisibilityWhere(context, visibility)],
       },
       orderBy: [{ fullName: "asc" }, { id: "asc" }],
@@ -520,7 +518,6 @@ export function createMeetingService(options: MeetingServiceOptions) {
         id: true,
         ownerMemberId: true,
         queueId: true,
-        currentStage: { select: { leadStageCode: true } },
         routingQueue: { select: { teamId: true } },
         queue: { select: { teamId: true } },
         opportunities: { where: { status: "OPEN", deletedAt: null }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], select: { id: true, name: true } },
@@ -558,7 +555,6 @@ export function createMeetingService(options: MeetingServiceOptions) {
       canSchedule:
         write.allowed &&
         closers.length > 0 &&
-        lead.currentStage.leadStageCode === "QUALIFIED" &&
         !rows.some((meeting) => meeting.status === "SCHEDULED" || meeting.status === "CONFIRMED"),
       closerOptions: closers,
       opportunityOptions: lead.opportunities,
@@ -644,9 +640,6 @@ export function createMeetingService(options: MeetingServiceOptions) {
       if (!currentLead) notFound("Lead não encontrado.");
       if (currentLead.meetings.length > 0) {
         conflict("LEAD_ALREADY_HAS_ACTIVE_MEETING", "O lead já possui uma reunião ativa.");
-      }
-      if (currentLead.currentStage.leadStageCode !== "QUALIFIED" && currentLead.currentStage.leadStageCode !== "MEETING_SCHEDULED") {
-        conflict("LEAD_NOT_QUALIFIED", "Agende somente depois que o lead estiver qualificado pelo fluxo de pré-vendas.");
       }
       const opportunityId = parsed.data.opportunityId === null
         ? null
@@ -757,7 +750,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           metadata: { timeZone: workspaceRow.timeZone },
         },
       });
-      if (currentLead.currentStage.leadStageCode === "QUALIFIED") {
+      if (currentLead.currentStage.leadStageCode !== "MEETING_SCHEDULED") {
         const target = await transaction.pipelineStage.findFirst({
           where: {
             workspaceId: context.workspaceId,
@@ -773,7 +766,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           targetStageId: target.id,
           reason: `Reunião ${meeting.id} agendada para ${startsAt.toISOString()}.`,
           origin: "MEETING",
-          managerCorrection: false,
+          managerCorrection: currentLead.currentStage.leadStageCode !== "QUALIFIED",
           confirmed: true,
         }, occurredAt);
       } else {

@@ -101,7 +101,7 @@ export function LeadMeetingsWorkspace({
             <label className="text-sm">Observação<textarea className={inputClass} name="observation" /></label>
             <Button disabled={pending} type="submit">{pending ? "Agendando…" : "Agendar reunião"}</Button>
           </form>
-        ) : <p className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">Para agendar, o lead precisa estar Qualificado, sem reunião ativa, e seu perfil deve ter permissão.</p>}
+        ) : <p className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">Para agendar, o lead precisa estar sem reunião ativa, deve existir um closer disponível e seu perfil deve ter permissão.</p>}
         {notice ? <p className="mt-3 text-sm" role="status">{notice}</p> : null}
       </section>
 
