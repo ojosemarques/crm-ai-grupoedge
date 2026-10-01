@@ -186,6 +186,10 @@ export function PreSalesPipelineWorkspace({
     ? screen.stages
     : screen.stages.filter((stage) => stage.code === screen.filters.stageCode);
 
+  function openLeadCard(lead: LeadPipelineCard, anchor?: string) {
+    router.push(`/leads/${lead.id}/historico${anchor ? `#${anchor}` : ""}`);
+  }
+
   async function transition(
     lead: LeadPipelineCard,
     state: LeadPipelineState,
@@ -372,17 +376,17 @@ export function PreSalesPipelineWorkspace({
               <header className={styles.laneHeader}><div><h2>{stage.name}</h2><span>{stage.leads.filter((lead) => lead.nextActionAt).length} atividades agendadas</span></div><span aria-label={`${stage.count} leads nesta etapa`} className={styles.count}>{stage.count}</span></header>
               <div className={styles.cards}>
                 {stage.leads.map((lead) => (
-                  <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={!touchControls && screen.canWrite && !pending} key={lead.id} onClick={() => { if (!pending) void openTransition(lead); }} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)}>
+                  <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={!touchControls && screen.canWrite && !pending} key={lead.id} onClick={() => { if (!pending) openLeadCard(lead); }} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)}>
                     <div className={styles.cardBody}>
                       <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${lead.fullName}`} className={styles.dragHandle} disabled={!screen.canWrite || pending || touchControls} draggable={!touchControls && screen.canWrite && !pending} onClick={(event) => event.stopPropagation()} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div></div>
-                      <div className={styles.cardTitle}><button aria-label={`Abrir detalhes de ${lead.fullName}`} disabled={pending} draggable={false} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} type="button">{lead.fullName}</button><span title="Pontuação de qualificação">{lead.score === null ? "—" : `${lead.score}/100`}</span></div>
+                      <div className={styles.cardTitle}><button aria-label={`Abrir ficha completa de ${lead.fullName}`} disabled={pending} draggable={false} onClick={(event) => { event.stopPropagation(); openLeadCard(lead); }} type="button">{lead.fullName}</button><span title="Pontuação de qualificação">{lead.score === null ? "—" : `${lead.score}/100`}</span></div>
                       {lead.jobTitle ? <p className={styles.subtitle}>{lead.jobTitle}</p> : null}
                     </div>
                     <footer className={styles.cardFooter}>
                       <span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatar} title={lead.responsibleName}>{lead.responsibleName.slice(0, 1).toUpperCase()}</span>
-                      <button aria-label={`Abrir atividades de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} title="Atividades" type="button"><Icon name="meu-dia" size={13} /></button>
-                      <button aria-label={`Abrir lembretes de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} title="Lembretes" type="button"><Icon name="agenda" size={13} /></button>
-                      <button aria-label={`Abrir reuniões de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} title="Reuniões" type="button"><Icon name="mais" size={13} /></button>
+                      <button aria-label={`Abrir atividades de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); openLeadCard(lead, "registrar-atividade"); }} title="Atividades" type="button"><Icon name="meu-dia" size={13} /></button>
+                      <button aria-label={`Abrir tarefas de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); openLeadCard(lead, "tarefas"); }} title="Tarefas e lembretes" type="button"><Icon name="agenda" size={13} /></button>
+                      <button aria-label={`Abrir reuniões de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); openLeadCard(lead, "reunioes"); }} title="Reuniões" type="button"><Icon name="mais" size={13} /></button>
                       <span className={styles.activity} title={`${lead.nextActionDescription ?? "Sem próxima atividade"} · ${formatDate(lead.nextActionAt, screen.timeZone)}`}><Icon name="relogio" size={12} />{lead.nextActionAt ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: screen.timeZone }).format(new Date(lead.nextActionAt)) : "Sem prazo"}</span>
                       <button aria-label={`Alterar etapa de ${lead.fullName}`} className={styles.moveButton} disabled={!screen.canWrite || pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} title="Alterar etapa" type="button"><Icon name="seta-direita" size={13} /></button>
                       <button aria-label={`Mover ${lead.fullName} para outra etapa`} className={styles.mobileMoveButton} disabled={!screen.canWrite || pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} type="button">Mover para <Icon name="seta-direita" size={13} /></button>
@@ -407,7 +411,7 @@ export function PreSalesPipelineWorkspace({
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="sticky top-0 z-10 border-b bg-muted"><tr><th className="p-3">Lead</th><th className="p-3">Etapa</th><th className="p-3">Prioridade</th><th className="p-3">Responsável</th><th className="p-3">Próxima ação</th><th className="p-3">Ação</th></tr></thead>
               <tbody>{visibleStages.flatMap((stage) => stage.leads).map((lead) => (
-                <tr className="border-b last:border-0" key={lead.id}><td className="p-3"><button className="font-medium underline" disabled={pending} onClick={() => void openTransition(lead)} type="button">{lead.fullName}</button></td><td className="p-3"><span className="stage-badge">{lead.currentStageName}</span></td><td className="p-3">{lead.score === null ? "Ausente" : <span className="priority-badge" data-priority={lead.priorityCode}>{lead.priorityCode} · {lead.score}</span>}</td><td className="p-3">{lead.responsibleName}</td><td className="p-3">{lead.nextActionDescription ?? "Ausente"}</td><td className="p-3"><Button disabled={pending} onClick={() => void openTransition(lead)} size="sm" type="button" variant="secondary">Abrir lead</Button></td></tr>
+                <tr className="border-b last:border-0" key={lead.id}><td className="p-3"><button className="font-medium underline" disabled={pending} onClick={() => openLeadCard(lead)} type="button">{lead.fullName}</button></td><td className="p-3"><span className="stage-badge">{lead.currentStageName}</span></td><td className="p-3">{lead.score === null ? "Ausente" : <span className="priority-badge" data-priority={lead.priorityCode}>{lead.priorityCode} · {lead.score}</span>}</td><td className="p-3">{lead.responsibleName}</td><td className="p-3">{lead.nextActionDescription ?? "Ausente"}</td><td className="p-3"><Button disabled={pending} onClick={() => openLeadCard(lead)} size="sm" type="button" variant="secondary">Abrir lead</Button></td></tr>
               ))}</tbody>
             </table>
           </DataTableShell>

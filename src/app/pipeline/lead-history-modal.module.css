@@ -1,0 +1,9 @@
+.backdrop { align-items: stretch; padding: 18px; }
+.dialog { display: grid; grid-template-rows: auto minmax(0, 1fr); max-height: calc(100dvh - 36px); max-width: 1480px; overflow: hidden; padding: 0; width: min(96vw, 1480px); }
+.toolbar { align-items: center; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; min-height: 48px; padding: 8px 12px 8px 18px; position: relative; z-index: 2; }
+.toolbar p { color: var(--text-muted); font-size: 12px; font-weight: 600; }
+.toolbar button { align-items: center; background: var(--surface-muted); border: 1px solid var(--border); border-radius: 999px; color: var(--text); cursor: pointer; display: inline-flex; font-size: 22px; height: 34px; justify-content: center; line-height: 1; width: 34px; }
+.toolbar button:hover { background: var(--primary-soft); color: var(--primary); }
+.toolbar button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.content { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+@media (max-width: 700px) { .backdrop { padding: 6px; } .dialog { border-radius: 14px; max-height: calc(100dvh - 12px); width: calc(100vw - 12px); } .toolbar { min-height: 44px; padding-left: 12px; } .toolbar button { height: 32px; width: 32px; } }
