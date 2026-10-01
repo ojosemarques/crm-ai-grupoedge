@@ -9,7 +9,7 @@
   "packageManager": "pnpm@11.14.0",
   "scripts": {
     "dev": "next dev --webpack",
-    "build": "pnpm db:generate && next build --webpack",
+    "build": "node scripts/run-production-migrations.mjs && pnpm db:generate && next build --webpack",
     "start": "next start",
     "worker": "tsx src/modules/automations/worker.ts",
     "worker:staging:homologate": "tsx scripts/run-staging-worker-homologation.ts",
