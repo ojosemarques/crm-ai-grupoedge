@@ -263,8 +263,6 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
             ))}
           </nav>
           <div className={styles.sidebarBottom}>
-            <IntentLink aria-label="Minhas empresas" href="/hub" onClick={() => setMenuOpen(false)} title="Minhas empresas"><Icon name="meu-dia" size={16} /><span>Minhas empresas</span></IntentLink>
-            {availableSections.find((section) => section.key === "settings") ? <IntentLink aria-label="Configurações" href={availableSections.find((section) => section.key === "settings")!.items[0]!.href} onClick={() => setMenuOpen(false)} title="Configurações"><Icon name="configuracoes" size={16} /><span>Configurações</span></IntentLink> : null}
             <div className={styles.profileMenuHost} ref={profileMenuRef}>
               <button aria-controls="profile-menu" aria-expanded={profileMenuOpen} aria-haspopup="dialog" aria-label="Abrir menu do usuário" className={styles.account} onClick={() => setProfileMenuOpen((open) => !open)} title="Menu do usuário" type="button">
                 <span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span>
@@ -286,7 +284,7 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
                 </dl>
                 <nav aria-label="Atalhos da conta" className={styles.profileActions}>
                   <IntentLink href="/perfil" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="leads" size={18} /><span>Meu perfil</span></IntentLink>
-                  {(session?.workspace.count ?? 1) > 1 ? <IntentLink href="/hub" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="pipeline" size={18} /><span>Trocar de empresa</span></IntentLink> : null}
+                  <IntentLink href="/hub" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="pipeline" size={18} /><span>{(session?.workspace.count ?? 1) > 1 ? "Trocar de empresa" : "Minhas empresas"}</span></IntentLink>
                   <IntentLink href="/ajuda" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="inbox" size={18} /><span>Ajuda e suporte</span></IntentLink>
                   {availableSections.find((section) => section.key === "settings") ? <IntentLink href="/configuracoes" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="configuracoes" size={18} /><span>Configurações</span></IntentLink> : null}
                 </nav>
