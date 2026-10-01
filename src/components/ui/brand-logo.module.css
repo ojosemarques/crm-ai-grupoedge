@@ -1,9 +1,10 @@
-.logo { align-items: center; color: var(--foreground); display: inline-flex; flex-shrink: 0; gap: 9px; height: 36px; vertical-align: middle; white-space: nowrap; }
-.symbol { border-radius: 8px; height: 34px; object-fit: cover; width: 34px; }
-.wordmark { font-size: 15px; font-weight: 750; letter-spacing: -.025em; line-height: 1; }
-
-@media (max-width: 800px) {
-  .logo { gap: 6px; }
-  .symbol { border-radius: 7px; height: 30px; width: 30px; }
-  .wordmark { font-size: 12px; }
-}
+.logo { display: inline-block; flex-shrink: 0; height: 36px; overflow: hidden; position: relative; vertical-align: middle; width: 158px; }
+.logo img { max-width: none; position: absolute; }
+.edgeLight, .edgeDark { height: 100%; inset: 0; object-fit: contain; width: 100%; }
+.edgeDark, .politizaiDark { display: none; }
+.politizaiLight { height: auto; left: -14.92%; top: 50%; transform: translateY(-47.17%); width: 136.41%; }
+.politizaiDark { height: auto; left: -18.71%; top: 50%; transform: translateY(-47.41%); width: 141.57%; }
+:global(:root[data-theme="dark"]) .logo[data-appearance="auto"] .edgeLight,
+:global(:root[data-theme="dark"]) .logo[data-appearance="auto"] .politizaiLight { display: none; }
+:global(:root[data-theme="dark"]) .logo[data-appearance="auto"] .edgeDark,
+:global(:root[data-theme="dark"]) .logo[data-appearance="auto"] .politizaiDark { display: block; }

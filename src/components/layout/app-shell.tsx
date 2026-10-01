@@ -231,13 +231,15 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
   const activeSection = availableSections.find((section) => section.items.some((item) => isActive(pathname, item.href))) ?? availableSections.find((section) => section.key === "work");
   const mobileCriticalItems = ["/meu-dia", "/pipeline", "/inbox", "/atividades", "/dashboard"]
     .flatMap((href) => allowedItems.filter((item) => item.href === href));
+  const isPolitizaiWorkspace = session?.workspace.slug.trim().toLowerCase() === "politizai";
+  const workspaceBrandName = isPolitizaiWorkspace ? "Politizai" : "EDGE GROUP";
   return (
     <>
       <a className="skip-link" href="#conteudo-principal">Pular para o conteúdo</a>
       <div className={cn("app-shell", styles.shell, collapsed && styles.collapsed)}>
         <header className={styles.topbar} onKeyDown={(event) => { if (event.key === "Escape" && event.target instanceof HTMLElement) { const details = event.target.closest("details"); details?.removeAttribute("open"); details?.querySelector("summary")?.focus(); } }}>
-          <IntentLink aria-label="Grupo Edge CRM, início" className={styles.brand} href="/">
-            <BrandLogo />
+          <IntentLink aria-label={`${workspaceBrandName}, início`} className={styles.brand} href="/">
+            <BrandLogo variant={isPolitizaiWorkspace ? "politizai" : "edge-group"} />
           </IntentLink>
           <nav aria-label="Módulos do CRM" className={styles.topnav}>
             {availableSections.filter((section) => section.key !== "settings").map((section) => (
