@@ -738,28 +738,10 @@ details > summary {
   display: flex;
   font-size: clamp(7px, 0.98vw, 11px);
   gap: 8px;
-  justify-content: space-between;
+  justify-content: flex-end;
   line-height: 1.2;
   margin-top: clamp(2px, 0.35vw, 5px);
-}
-
-.login-form__meta > span:first-child {
-  align-items: center;
-  display: flex;
-  gap: 4px;
-  white-space: nowrap;
-}
-
-.login-form__meta > span:last-child {
   text-align: right;
-}
-
-.login-form__secure-mark {
-  border: 1px solid #bcbcbc;
-  border-radius: 2px;
-  display: inline-block;
-  height: clamp(9px, 1.2vw, 13px);
-  width: clamp(9px, 1.2vw, 13px);
 }
 
 .login-form__submit {
@@ -808,56 +790,6 @@ details > summary {
   color: #a2251a;
   font-size: clamp(10px, 1.2vw, 13px);
   padding: 8px 10px;
-}
-
-.login-panel__assurance {
-  margin-bottom: 8px;
-  margin-top: auto;
-  padding-top: clamp(13px, 2vw, 22px);
-}
-
-.login-panel__divider {
-  align-items: center;
-  color: #666;
-  display: flex;
-  font-size: clamp(8px, 1.06vw, 12px);
-  gap: 7px;
-  justify-content: center;
-  white-space: nowrap;
-}
-
-.login-panel__divider::before,
-.login-panel__divider::after {
-  background: #ccc;
-  content: "";
-  height: 1px;
-  width: 100%;
-}
-
-.login-panel__assurance-pill {
-  align-items: center;
-  background: #ededf0;
-  border-radius: 999px;
-  color: #202024;
-  display: flex;
-  font-size: clamp(8px, 1.12vw, 12px);
-  font-weight: 500;
-  gap: 6px;
-  height: clamp(30px, 4vw, 45px);
-  justify-content: center;
-  margin-top: clamp(8px, 1.15vw, 13px);
-}
-
-.login-panel__assurance-pill span {
-  color: #1425cf;
-  font-size: 1.1em;
-}
-
-.login-panel__footnote {
-  color: #8b8b8b;
-  font-size: clamp(7px, 0.95vw, 11px);
-  margin-top: clamp(8px, 1.3vw, 15px);
-  text-align: center;
 }
 
 .page-header {
@@ -1139,13 +1071,7 @@ details > summary {
   .login-field { font-size: 0.75rem; }
   .login-field__input { font-size: 0.85rem; height: 44px; }
   .login-form__meta { font-size: 0.65rem; }
-  .login-form__secure-mark { height: 12px; width: 12px; }
   .login-form__submit { font-size: 0.85rem; height: 44px; }
-  .login-panel__assurance { padding-top: 1.5rem; }
-  .login-panel__divider,
-  .login-panel__assurance-pill { font-size: 0.7rem; }
-  .login-panel__assurance-pill { height: 40px; }
-  .login-panel__footnote { font-size: 0.66rem; margin-bottom: 0.2rem; }
 }
 
 @media (max-width: 639px) {

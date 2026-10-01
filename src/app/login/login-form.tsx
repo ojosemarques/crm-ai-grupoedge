@@ -70,7 +70,6 @@ export function LoginForm() {
       </label>
 
       <div className="login-form__meta">
-        <span><span className="login-form__secure-mark" aria-hidden="true" /> Acesso protegido</span>
         <span>Esqueceu a senha? Fale com o administrador</span>
       </div>
 

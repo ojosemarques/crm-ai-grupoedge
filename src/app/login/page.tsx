@@ -22,13 +22,6 @@ export default function LoginPage() {
           </header>
 
           <LoginForm />
-
-          <div className="login-panel__assurance">
-            <p className="login-panel__divider"><span>Acesso às empresas do grupo</span></p>
-            <div className="login-panel__assurance-pill"><span aria-hidden="true">✦</span> Seu acesso é individual e protegido</div>
-            <div className="login-panel__assurance-pill"><span aria-hidden="true">●</span> Empresas disponíveis conforme suas permissões</div>
-            <p className="login-panel__footnote">Ainda não tem acesso? Fale com o administrador.</p>
-          </div>
         </section>
       </div>
     </main>
