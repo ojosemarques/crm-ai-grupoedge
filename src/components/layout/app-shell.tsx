@@ -16,10 +16,11 @@ export type AppShellSession = Readonly<{
   id: string;
   user: Readonly<{
     displayName: string;
+    email: string;
     role: Readonly<{ key: string; name: string }>;
     permissionKeys: readonly string[];
   }>;
-  workspace: Readonly<{ slug: string; name: string }>;
+  workspace: Readonly<{ slug: string; name: string; count: number }>;
 }>;
 
 type NavigationItem = Readonly<{
@@ -159,9 +160,11 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
   const session = initialSession;
   const [menuOpen, setMenuOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
   const isMobile = useSyncExternalStore(subscribeToMobileLayout, mobileLayoutSnapshot, serverLayoutSnapshot);
   const menuRef = useRef<HTMLElement>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
   const publicRoute = publicRoutes.has(pathname);
   useCompanySession(publicRoute ? undefined : session?.id);
 
@@ -194,6 +197,25 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    const closeProfileMenu = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent && event.key === "Escape") {
+        setProfileMenuOpen(false);
+        return;
+      }
+      if (event instanceof MouseEvent && event.target instanceof Node && !profileMenuRef.current?.contains(event.target)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closeProfileMenu);
+    document.addEventListener("keydown", closeProfileMenu);
+    return () => {
+      document.removeEventListener("mousedown", closeProfileMenu);
+      document.removeEventListener("keydown", closeProfileMenu);
+    };
+  }, [profileMenuOpen]);
 
   if (publicRoute) return children;
 
@@ -229,7 +251,7 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
             {canUseCopilot ? <button aria-label="Copilot" aria-controls="copilot-drawer" aria-expanded={copilotOpen} className={styles.copilotButton} onClick={() => setCopilotOpen((current) => !current)} type="button"><Icon name="copilot" size={16} /><span>Copilot</span></button> : null}
           </div>
         </header>
-        <button aria-label="Fechar navegação" className={cn(styles.backdrop, menuOpen && styles.visible)} onClick={() => setMenuOpen(false)} tabIndex={menuOpen ? 0 : -1} type="button" />
+        <button aria-label="Fechar navegação" className={cn(styles.backdrop, menuOpen && styles.visible)} onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }} tabIndex={menuOpen ? 0 : -1} type="button" />
         <aside aria-hidden={isMobile && !menuOpen ? true : undefined} className={cn(styles.sidebar, menuOpen && styles.open)} id="menu-principal" inert={isMobile && !menuOpen} ref={menuRef}>
           <div className={styles.sidebarHeading}><Icon name={activeSection?.icon ?? "dashboard"} size={15} /><span>{activeSection?.label ?? "Workspace"}</span><button aria-label={collapsed ? "Expandir menu" : "Recolher menu"} className={styles.collapseButton} onClick={() => setCollapsed(!collapsed)} type="button">{collapsed ? "›" : "‹"}</button></div>
           <nav aria-label="Navegação da área" className={styles.contextNav}>
@@ -242,10 +264,36 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
           <div className={styles.sidebarBottom}>
             <IntentLink aria-label="Minhas empresas" href="/hub" onClick={() => setMenuOpen(false)} title="Minhas empresas"><Icon name="meu-dia" size={16} /><span>Minhas empresas</span></IntentLink>
             {availableSections.find((section) => section.key === "settings") ? <IntentLink aria-label="Configurações" href={availableSections.find((section) => section.key === "settings")!.items[0]!.href} onClick={() => setMenuOpen(false)} title="Configurações"><Icon name="configuracoes" size={16} /><span>Configurações</span></IntentLink> : null}
-            <IntentLink aria-label="Minha conta" className={styles.account} href="/perfil" onClick={() => setMenuOpen(false)} title="Minha conta"><span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span><span><strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small></span></IntentLink>
+            <div className={styles.profileMenuHost} ref={profileMenuRef}>
+              <button aria-controls="profile-menu" aria-expanded={profileMenuOpen} aria-haspopup="dialog" aria-label="Abrir menu do usuário" className={styles.account} onClick={() => setProfileMenuOpen((open) => !open)} title="Menu do usuário" type="button">
+                <span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span>
+                <span><strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small></span>
+                <span aria-hidden="true" className={styles.accountChevron}>⌃</span>
+              </button>
+              {profileMenuOpen && (!isMobile || menuOpen) ? <section aria-label="Menu do usuário" className={styles.profileMenu} id="profile-menu" role="dialog">
+                <div className={styles.profileBanner}>
+                  {availableSections.find((section) => section.key === "settings") ? <IntentLink aria-label="Abrir configurações" className={styles.profileSettings} href="/configuracoes" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }} title="Configurações"><Icon name="configuracoes" size={20} /></IntentLink> : null}
+                </div>
+                <div className={styles.profileAvatar} aria-label={`Foto de ${session?.user.displayName ?? "usuário"}`} role="img">{initials(session?.user.displayName ?? "Usuário")}</div>
+                <div className={styles.profileIdentity}>
+                  <strong>{session?.user.displayName ?? "Minha conta"}</strong>
+                  <span>{session?.user.email || "E-mail não informado"}</span>
+                </div>
+                <dl className={styles.profileDetails}>
+                  <div><dt>Cargo</dt><dd>{session?.user.role.name ?? "Não informado"}</dd></div>
+                  <div><dt>Empresa</dt><dd>{session?.workspace.name ?? "Não informada"}</dd></div>
+                </dl>
+                <nav aria-label="Atalhos da conta" className={styles.profileActions}>
+                  <IntentLink href="/perfil" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="leads" size={18} /><span>Meu perfil</span></IntentLink>
+                  {(session?.workspace.count ?? 1) > 1 ? <IntentLink href="/hub" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="pipeline" size={18} /><span>Trocar de empresa</span></IntentLink> : null}
+                  <IntentLink href="/ajuda" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="inbox" size={18} /><span>Ajuda e suporte</span></IntentLink>
+                  {availableSections.find((section) => section.key === "settings") ? <IntentLink href="/configuracoes" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="configuracoes" size={18} /><span>Configurações</span></IntentLink> : null}
+                </nav>
+              </section> : null}
+            </div>
           </div>
         </aside>
-        <div className={styles.mobileBar}><button aria-controls="menu-principal" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)} type="button"><Icon name="dashboard" size={17} />{activeSection?.label ?? "Navegação"}<span>⌄</span></button></div>
+        <div className={styles.mobileBar}><button aria-controls="menu-principal" aria-expanded={menuOpen} onClick={() => { setProfileMenuOpen(false); setMenuOpen((open) => !open); }} type="button"><Icon name="dashboard" size={17} />{activeSection?.label ?? "Navegação"}<span>⌄</span></button></div>
         <nav aria-label="Atalhos operacionais" className={styles.mobileDock}>
           {mobileCriticalItems.map((item) => (
             <IntentLink aria-current={isActive(pathname, item.href) ? "page" : undefined} href={item.href} key={item.href} onClick={() => setMenuOpen(false)}>

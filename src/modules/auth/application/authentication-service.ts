@@ -73,7 +73,7 @@ function buildContext(session: {
   workspaceMemberId: string;
   actorId: string;
   workspace: { slug: string; name?: string };
-  user: { displayName: string };
+  user: { displayName: string; email: string; memberships?: readonly { id: string }[] };
   member: { roleId: string; role: { key: string; name: string } };
 }): AuthenticatedContext {
   return Object.freeze({
@@ -88,6 +88,8 @@ function buildContext(session: {
     roleKey: session.member.role.key,
     roleName: session.member.role.name,
     displayName: session.user.displayName,
+    email: session.user.email,
+    workspaceCount: session.user.memberships?.length ?? 1,
   });
 }
 
@@ -364,7 +366,20 @@ export function createAuthenticationService(options: AuthenticationServiceOption
       where: { tokenHash: hashSessionToken(token) },
       include: {
         workspace: true,
-        user: { include: { credential: true } },
+        user: {
+          include: {
+            credential: true,
+            memberships: {
+              where: {
+                status: "ACTIVE",
+                deletedAt: null,
+                role: { deletedAt: null },
+                workspace: { status: "ACTIVE", deletedAt: null },
+              },
+              select: { id: true },
+            },
+          },
+        },
         member: { include: { role: true } },
         actor: true,
       },

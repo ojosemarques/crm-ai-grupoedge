@@ -30,12 +30,14 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     id: context.sessionId,
     user: {
       displayName: context.displayName,
+      email: context.email ?? "",
       role: { key: context.roleKey, name: context.roleName },
       permissionKeys: await getAuthorizationService().getEffectivePermissionKeys(context),
     },
     workspace: {
       slug: context.workspaceSlug,
       name: context.workspaceName ?? context.workspaceSlug,
+      count: context.workspaceCount ?? 1,
     },
   } : null;
   return (

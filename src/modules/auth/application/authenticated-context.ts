@@ -10,6 +10,8 @@ export type AuthenticatedContext = WorkspaceContext &
     roleKey: string;
     roleName: string;
     displayName: string;
+    email?: string;
+    workspaceCount?: number;
     workspaceName?: string;
   }>;
 
