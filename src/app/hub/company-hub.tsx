@@ -77,27 +77,58 @@ export function CompanyHub({ initial, sessionId }: { initial: CompanyHubScreen; 
   }
 
   return <main className={styles.hub}>
-    <header className={styles.header}><BrandLogo /><button disabled={busy} onClick={() => void logout()} type="button">Sair da conta</button></header>
+    <div className={styles.ambient} aria-hidden="true" />
+    <header className={styles.header}>
+      <div className={styles.brand}><BrandLogo /><span>Central de empresas</span></div>
+      <div className={styles.account}>
+        <span className={styles.avatar} aria-hidden="true">{screen.displayName.slice(0, 1).toUpperCase()}</span>
+        <span className={styles.accountName}>{screen.displayName}</span>
+        <button className={styles.logout} disabled={busy} onClick={() => void logout()} type="button">Sair <span aria-hidden="true">↗</span></button>
+      </div>
+    </header>
     <section className={styles.content}>
-      <div className={styles.intro}><span className={styles.eyebrow}>SUAS EMPRESAS</span><h1>Onde vamos trabalhar?</h1><p>Olá, {screen.displayName}. Escolha a empresa para acessar sua operação.</p></div>
+      <div className={styles.hero}>
+        <div className={styles.intro}>
+          <span className={styles.eyebrow}><span aria-hidden="true" /> SEUS AMBIENTES</span>
+          <h1>Onde vamos<br />trabalhar?</h1>
+          <p>Acesse uma empresa para continuar. Seus dados, equipe e permissões ficam organizados em ambientes separados.</p>
+        </div>
+        <div className={styles.heroSummary} aria-label="Resumo de acesso">
+          <span>{screen.companies.length.toString().padStart(2, "0")}</span>
+          <p>{screen.companies.length === 1 ? "empresa disponível" : "empresas disponíveis"}</p>
+          <small>Acesso seguro por perfil</small>
+        </div>
+      </div>
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
       {message ? <p className={styles.success} role="status">{message}</p> : null}
       <div className={styles.grid}>
-        {screen.companies.map(company => <article className={styles.card} key={company.id} aria-label={company.name}>
-          <div className={styles.companyIcon} aria-hidden="true">{company.name.slice(0, 2).toUpperCase()}</div>
-          <h2>{company.name}</h2><span className={styles.badge}>{company.roleName}</span>
-          <p>CRM, clientes, financeiro e marketing em um só lugar.</p>
+        {screen.companies.map((company, index) => <article className={styles.card} data-brand={company.slug === "politizai" ? "politizai" : "company"} key={company.id} aria-label={company.name}>
+          <div className={styles.cardTop}>
+            <div className={styles.companyIcon} aria-hidden="true">
+              {company.slug === "politizai" ? <BrandLogo variant="politizai" /> : company.name.slice(0, 2).toUpperCase()}
+            </div>
+            <span className={styles.cardNumber}>{String(index + 1).padStart(2, "0")}</span>
+          </div>
+          <div className={styles.companyMeta}>
+            <span className={styles.status}><span aria-hidden="true" /> Ambiente disponível</span>
+            <h2>{company.name}</h2>
+            <div className={styles.badges}><span className={styles.badge}>{company.roleName}</span>{company.canManage ? <span className={styles.manageBadge}>Gestão liberada</span> : null}</div>
+          </div>
+          <p>CRM, clientes, financeiro e operação comercial reunidos em um só lugar.</p>
           <div className={styles.cardActions}>
-            <button className={styles.primary} disabled={busy || !!pending} onClick={() => void enter(company.id)} type="button" aria-label={`Entrar em ${company.name}`}>Entrar na empresa <span aria-hidden="true">→</span></button>
-            {company.canManage ? <button disabled={busy || !!pending} onClick={() => void enter(company.id, "/configuracao-inicial")} type="button" aria-label={`Configurar ${company.name}`}>Configurar empresa</button> : null}
+            <button className={styles.primary} disabled={busy || !!pending} onClick={() => void enter(company.id)} type="button" aria-label={`Entrar em ${company.name}`}><span>Entrar na empresa</span><span className={styles.arrow} aria-hidden="true">→</span></button>
+            {company.canManage ? <button className={styles.secondary} disabled={busy || !!pending} onClick={() => void enter(company.id, "/configuracao-inicial")} type="button" aria-label={`Configurar ${company.name}`}><span aria-hidden="true">⚙</span> Configurar empresa</button> : null}
           </div>
         </article>)}
       </div>
-      {!screen.companies.length ? <p>Nenhuma empresa está disponível. Fale com o administrador para revisar seu acesso.</p> : null}
-      <div className={styles.toolbar}>
-        {screen.canCreate ? <button disabled={busy || !!pending} onClick={() => { setShowCreate(!showCreate); setShowAccess(false); }} type="button">+ Nova empresa</button> : null}
-        {screen.canCreate && managed.length > 1 ? <button disabled={busy || !!pending} onClick={() => { setShowAccess(!showAccess); setShowCreate(false); }} type="button">Compartilhar acesso de usuário</button> : null}
-      </div>
+      {!screen.companies.length ? <div className={styles.empty}><span aria-hidden="true">＋</span><h2>Nenhuma empresa disponível</h2><p>Fale com o administrador para revisar seu acesso ou crie um novo ambiente.</p></div> : null}
+      {screen.canCreate ? <section className={styles.adminBar} aria-label="Administração de empresas">
+        <div><span className={styles.adminIcon} aria-hidden="true">＋</span><div><strong>Administração de ambientes</strong><p>Crie uma empresa ou compartilhe acessos com sua equipe.</p></div></div>
+        <div className={styles.toolbar}>
+          <button aria-label="+ Nova empresa" className={styles.createButton} disabled={busy || !!pending} onClick={() => { setShowCreate(!showCreate); setShowAccess(false); }} type="button" aria-expanded={showCreate}>Nova empresa <span aria-hidden="true">＋</span></button>
+          {managed.length > 1 ? <button aria-label="Compartilhar acesso de usuário" disabled={busy || !!pending} onClick={() => { setShowAccess(!showAccess); setShowCreate(false); }} type="button" aria-expanded={showAccess}>Compartilhar acesso</button> : null}
+        </div>
+      </section> : null}
       {showCreate ? <form className={styles.panel} onSubmit={prepareCompany} aria-label="Nova empresa"><h2>Nova empresa</h2>
         <fieldset disabled={busy || !!pending}><label>Nome da empresa<input name="name" placeholder="Ex.: Authentico" required minLength={2} maxLength={120} onChange={event => { const field = event.currentTarget.form?.elements.namedItem("slug"); if (field instanceof HTMLInputElement && !field.dataset.edited) field.value = event.target.value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 63); }} /></label>
         <label>Identificador da empresa<input name="slug" required minLength={2} maxLength={63} pattern="[a-z0-9]+(-[a-z0-9]+)*" onChange={event => { event.currentTarget.dataset.edited = "true"; }} /><small>Gerado a partir do nome. Usado nas integrações; não será solicitado no login.</small></label>
@@ -113,7 +144,7 @@ export function CompanyHub({ initial, sessionId }: { initial: CompanyHubScreen; 
         </fieldset>
       </form> : null}
       {pending ? <section className={styles.panel} aria-label="Confirmar alteração"><h2>{pending.title}</h2><p>{pending.description}</p><div className={styles.toolbar}><button className={styles.primary} disabled={busy} onClick={() => void confirm()} type="button">{busy ? "Salvando..." : "Confirmar alteração"}</button><button disabled={busy} onClick={() => setPending(null)} type="button">Cancelar</button></div></section> : null}
-      <footer className={styles.footer}>Cada empresa tem seus próprios dados. Seu papel e suas permissões podem mudar entre empresas.</footer>
+      <footer className={styles.footer}><span aria-hidden="true">◆</span><span><strong>Ambientes protegidos e independentes.</strong> Cada empresa mantém seus próprios dados, papéis e permissões.</span></footer>
     </section>
   </main>;
 }
