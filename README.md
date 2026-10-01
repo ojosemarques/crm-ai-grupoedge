@@ -1,4 +1,4 @@
-# Politizai CRM
+# Grupo Edge CRM
 
 ## Ambiente atual do CRM
 

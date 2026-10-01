@@ -1,7 +1,9 @@
-.logo { display: inline-block; flex-shrink: 0; height: 36px; overflow: hidden; position: relative; vertical-align: middle; width: 158px; }
-/* Frame the artwork inside the supplied transparent canvases, without changing the originals. */
-.logo img { height: auto; max-width: none; position: absolute; top: 50%; }
-.light { left: -14.92%; transform: translateY(-47.17%); width: 136.41%; }
-.dark { display: none; left: -18.71%; transform: translateY(-47.41%); width: 141.57%; }
-:global(:root[data-theme="dark"]) .logo[data-appearance="auto"] .light { display: none; }
-:global(:root[data-theme="dark"]) .logo[data-appearance="auto"] .dark { display: block; }
+.logo { align-items: center; color: var(--foreground); display: inline-flex; flex-shrink: 0; gap: 9px; height: 36px; vertical-align: middle; white-space: nowrap; }
+.symbol { border-radius: 8px; height: 34px; object-fit: cover; width: 34px; }
+.wordmark { font-size: 15px; font-weight: 750; letter-spacing: -.025em; line-height: 1; }
+
+@media (max-width: 800px) {
+  .logo { gap: 6px; }
+  .symbol { border-radius: 7px; height: 30px; width: 30px; }
+  .wordmark { font-size: 12px; }
+}

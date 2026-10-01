@@ -236,7 +236,7 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
       <a className="skip-link" href="#conteudo-principal">Pular para o conteúdo</a>
       <div className={cn("app-shell", styles.shell, collapsed && styles.collapsed)}>
         <header className={styles.topbar} onKeyDown={(event) => { if (event.key === "Escape" && event.target instanceof HTMLElement) { const details = event.target.closest("details"); details?.removeAttribute("open"); details?.querySelector("summary")?.focus(); } }}>
-          <IntentLink aria-label="Politizai, início" className={styles.brand} href="/">
+          <IntentLink aria-label="Grupo Edge CRM, início" className={styles.brand} href="/">
             <BrandLogo />
           </IntentLink>
           <nav aria-label="Módulos do CRM" className={styles.topnav}>

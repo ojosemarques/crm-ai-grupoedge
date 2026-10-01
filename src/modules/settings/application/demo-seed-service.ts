@@ -611,7 +611,7 @@ async function ensureEmailLocalFoundation(
   }
   const profile = await transaction.emailConnectionProfile.upsert({
     where: { workspaceId_connectionId: { workspaceId, connectionId: connection.id } },
-    create: { id: stableSeedId(`email-profile:${key}`), workspaceId, connectionId: connection.id, operatingMode: "LOCAL_SINK", adapterVersion: EMAIL_CONTRACT_VERSION, senderAddress, senderAddressNormalized: senderAddress, displayName: "Politizai CRM", envelopeFrom: senderAddress, domain: "demo.politizai.local", spfStatus: "PENDING_EXTERNAL", dkimStatus: "PENDING_EXTERNAL", dmarcStatus: "PENDING_EXTERNAL", domainStatusProvenance: "LOCAL_FIXTURE_NOT_DNS", configuredAt: new Date(), createdByActorId: actorId, updatedByActorId: actorId },
+    create: { id: stableSeedId(`email-profile:${key}`), workspaceId, connectionId: connection.id, operatingMode: "LOCAL_SINK", adapterVersion: EMAIL_CONTRACT_VERSION, senderAddress, senderAddressNormalized: senderAddress, displayName: "Grupo Edge CRM", envelopeFrom: senderAddress, domain: "demo.politizai.local", spfStatus: "PENDING_EXTERNAL", dkimStatus: "PENDING_EXTERNAL", dmarcStatus: "PENDING_EXTERNAL", domainStatusProvenance: "LOCAL_FIXTURE_NOT_DNS", configuredAt: new Date(), createdByActorId: actorId, updatedByActorId: actorId },
     update: {},
   });
   const existingObservation = await transaction.emailDomainObservation.findFirst({ where: { workspaceId, profileId: profile.id, provenance: "LOCAL_FIXTURE_NOT_DNS" } });
@@ -626,7 +626,7 @@ async function ensureTelephonyLocalFoundation(
   const key = TELEPHONY_CONNECTION_KEY;
   const config = {
     operatingMode: "LOCAL_SIMULATOR",
-    originatorLabel: "Politizai CRM local",
+    originatorLabel: "Grupo Edge CRM local",
     timeZone: "America/Sao_Paulo",
     contactWindowStartMinute: 0,
     contactWindowEndMinute: 1440,

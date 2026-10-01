@@ -16,7 +16,7 @@ describe("loadApplicationConfig", () => {
     const config: ApplicationConfig = loadApplicationConfig(validEnvironment);
 
     expect(config).toMatchObject({
-      APP_NAME: "Politizai CRM",
+      APP_NAME: "Grupo Edge CRM",
       APP_TIME_ZONE: "America/Sao_Paulo",
       AUTOMATION_BACKOFF_BASE_SECONDS: 5,
       AUTOMATION_BATCH_SIZE: 10,

@@ -18,7 +18,7 @@ const emailAddress = z.string().trim().toLowerCase().email().max(254);
 const opaqueEventId = z.string().trim().regex(/^[A-Za-z0-9_.:@<>+-]{6,255}$/);
 
 export const emailConfigureLocalSchema = z.object({
-  displayName: z.string().trim().min(2).max(100).default("Politizai CRM"),
+  displayName: z.string().trim().min(2).max(100).default("Grupo Edge CRM"),
   senderAddress: emailAddress.default("crm@demo.politizai.local"),
   replyTo: emailAddress.nullable().optional(),
   revision: z.number().int().positive().optional(),

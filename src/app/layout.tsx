@@ -18,8 +18,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Politizai CRM",
-  description: "Operação comercial permanente e pós-eleitoral da Politizai.",
+  title: "Grupo Edge CRM",
+  description: "Gestão comercial, relacionamento e operação do Grupo Edge.",
 };
 
 export const dynamic = "force-dynamic";

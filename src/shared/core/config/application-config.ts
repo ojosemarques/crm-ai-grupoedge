@@ -15,7 +15,7 @@ const databaseUrlSchema = z
   );
 
 const applicationConfigSchema = z.object({
-  APP_NAME: z.string().trim().min(1).default("Politizai CRM"),
+  APP_NAME: z.string().trim().min(1).default("Grupo Edge CRM"),
   APP_TIME_ZONE: z.literal("America/Sao_Paulo").default("America/Sao_Paulo"),
   AUTOMATION_BACKOFF_BASE_SECONDS: z.coerce.number().int().min(1).max(3_600).default(5),
   AUTOMATION_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10),

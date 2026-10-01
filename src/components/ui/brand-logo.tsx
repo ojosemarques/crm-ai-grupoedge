@@ -1,14 +1,13 @@
 import Image from "next/image";
 
-import lightLogo from "../../../public/brand/politizai-logo-light.png";
-import darkLogo from "../../../public/brand/politizai-logo-dark.png";
+import edgeSymbol from "../../app/icon.png";
 import styles from "./brand-logo.module.css";
 
 export function BrandLogo({ appearance = "auto" }: Readonly<{ appearance?: "auto" | "light" }>) {
   return (
-    <span aria-label="Politizai" className={styles.logo} data-appearance={appearance} role="img">
-      <Image alt="" className={styles.light} priority sizes="240px" src={lightLogo} />
-      <Image alt="" className={styles.dark} priority sizes="240px" src={darkLogo} />
+    <span aria-label="Grupo Edge CRM" className={styles.logo} data-appearance={appearance} role="img">
+      <Image alt="" className={styles.symbol} priority sizes="36px" src={edgeSymbol} />
+      <span className={styles.wordmark}>Grupo Edge CRM</span>
     </span>
   );
 }
