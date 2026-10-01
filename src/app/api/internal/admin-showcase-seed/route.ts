@@ -119,6 +119,94 @@ export async function POST(request: NextRequest) {
   }
 
   const leadId = lead.id;
+  const memberFunctions = await database.teamMember.findMany({
+    where: {
+      workspaceId: context.workspaceId,
+      workspaceMemberId: context.memberId,
+      deletedAt: null,
+    },
+    select: { function: true, teamId: true },
+  });
+  let sdrTeamId = memberFunctions.find((item) => item.function === "SDR")?.teamId;
+  let closerTeamId = memberFunctions.find((item) => item.function === "CLOSER")?.teamId;
+  if (!sdrTeamId || !closerTeamId) {
+    await database.$transaction(async (transaction) => {
+      async function ensureFunction(teamName: string, teamFunction: "SDR" | "CLOSER") {
+        const existingMembership = await transaction.teamMember.findFirst({
+          where: {
+            workspaceId: context.workspaceId,
+            workspaceMemberId: context.memberId,
+            function: teamFunction,
+            deletedAt: null,
+          },
+          select: { teamId: true },
+        });
+        if (existingMembership) return existingMembership.teamId;
+        let team = await transaction.team.findFirst({
+          where: { workspaceId: context.workspaceId, name: teamName, deletedAt: null },
+          select: { id: true },
+        });
+        if (!team) {
+          team = await transaction.team.create({
+            data: {
+              workspaceId: context.workspaceId,
+              name: teamName,
+              description: "Equipe operacional configurada para o cenário demonstrativo autorizado.",
+              createdByActorId: context.actorId,
+              updatedByActorId: context.actorId,
+            },
+            select: { id: true },
+          });
+        }
+        const archived = await transaction.teamMember.findFirst({
+          where: { workspaceId: context.workspaceId, teamId: team.id, workspaceMemberId: context.memberId },
+          select: { id: true },
+        });
+        if (archived) {
+          await transaction.teamMember.update({
+            where: { id: archived.id },
+            data: { function: teamFunction, deletedAt: null, updatedByActorId: context.actorId },
+          });
+        } else {
+          await transaction.teamMember.create({
+            data: {
+              workspaceId: context.workspaceId,
+              teamId: team.id,
+              workspaceMemberId: context.memberId,
+              function: teamFunction,
+              createdByActorId: context.actorId,
+              updatedByActorId: context.actorId,
+            },
+          });
+        }
+        return team.id;
+      }
+      sdrTeamId = await ensureFunction("Pré-vendas", "SDR");
+      closerTeamId = await ensureFunction("Vendas", "CLOSER");
+      const generalQueue = await transaction.queue.findFirst({
+        where: { workspaceId: context.workspaceId, isGeneral: true, deletedAt: null },
+        select: { id: true, teamId: true },
+      });
+      if (!generalQueue) throw new Error("Fila Geral não encontrada após a criação do lead.");
+      if (!generalQueue.teamId) {
+        await transaction.queue.update({
+          where: { id: generalQueue.id },
+          data: { teamId: sdrTeamId, updatedByActorId: context.actorId },
+        });
+      }
+    });
+  } else {
+    const generalQueue = await database.queue.findFirst({
+      where: { workspaceId: context.workspaceId, isGeneral: true, deletedAt: null },
+      select: { id: true, teamId: true },
+    });
+    if (generalQueue && !generalQueue.teamId) {
+      await database.queue.update({
+        where: { id: generalQueue.id },
+        data: { teamId: sdrTeamId, updatedByActorId: context.actorId },
+      });
+    }
+  }
   const currentOwner = await database.lead.findUniqueOrThrow({ where: { id: leadId }, select: { ownerMemberId: true } });
   if (currentOwner.ownerMemberId !== context.memberId) {
     await getLeadDistributionService().redistribute(context, {
