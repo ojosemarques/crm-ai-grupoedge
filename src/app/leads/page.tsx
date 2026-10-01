@@ -42,10 +42,8 @@ export default async function LeadListPage({ searchParams }: LeadListPageProps) 
   return (
     <main className="page-canvas">
       <PageHeader
-        actions={<Link className="text-sm font-semibold text-primary underline underline-offset-4" href="/meu-dia">Abrir Meu Dia →</Link>}
         description="Lista operacional persistida para busca, filtros combinados e trabalho sobre o histórico do lead."
         eyebrow="Base operacional"
-        meta={`Dados exibidos em ${screen.filters.timeZone}`}
         title="Leads"
       />
 
