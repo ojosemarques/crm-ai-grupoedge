@@ -309,10 +309,6 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
   async function getEffectivePermissionKeys(
     context: AuthenticatedContext,
   ): Promise<readonly string[]> {
-    if (!(await hasValidContext(context))) {
-      throw new AccessDeniedError();
-    }
-
     const rows = await options.database.rolePermission.findMany({
       where: {
         workspaceId: context.workspaceId,

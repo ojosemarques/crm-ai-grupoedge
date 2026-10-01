@@ -81,10 +81,12 @@ describe("authorization service", () => {
       { permission: { key: PermissionKeys.FINANCE_READ } },
       { permission: { key: PermissionKeys.METRICS_READ } },
     ]);
+    const workspaceMemberFindFirst = vi.fn();
+    const actorFindFirst = vi.fn();
     const service = createAuthorizationService({
       database: {
-        workspaceMember: { findFirst: vi.fn().mockResolvedValue({ id: context.memberId }) },
-        actor: { findFirst: vi.fn().mockResolvedValue({ id: context.actorId }) },
+        workspaceMember: { findFirst: workspaceMemberFindFirst },
+        actor: { findFirst: actorFindFirst },
         rolePermission: { findMany: rolePermissionFindMany },
       } as never,
     });
@@ -99,5 +101,7 @@ describe("authorization service", () => {
         roleId: context.roleId,
       }),
     }));
+    expect(workspaceMemberFindFirst).not.toHaveBeenCalled();
+    expect(actorFindFirst).not.toHaveBeenCalled();
   });
 });
