@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState, type KeyboardEvent } from "react";
 
 import styles from "./lead-detail.module.css";
@@ -31,6 +32,12 @@ type Notice = Readonly<{
   kind: "success" | "error";
   message: string;
 }> | null;
+
+type NextQueueLead = Readonly<{
+  id: string;
+  fullName: string;
+  href: string;
+}>;
 
 type TabKey =
   | "summary"
@@ -168,17 +175,17 @@ async function readResponse(response: Response) {
   return body.result;
 }
 
-function NextActionFields() {
+function NextActionFields({ required = false }: Readonly<{ required?: boolean }>) {
   return (
     <fieldset className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
       <legend className="px-1 text-sm font-semibold">Próxima ação explícita</legend>
       <label className="text-sm">
         Título
-        <input className={inputClass} name="nextTitle" placeholder="Retornar ao lead" />
+        <input className={inputClass} name="nextTitle" placeholder="Retornar ao lead" required={required} />
       </label>
       <label className="text-sm">
         Prazo
-        <input className={inputClass} name="nextDueAt" type="datetime-local" />
+        <input className={inputClass} name="nextDueAt" required={required} type="datetime-local" />
       </label>
       <label className="text-sm">
         Tipo
@@ -240,6 +247,7 @@ export function OperationalHistoryWorkspace({
   initialCommunications: LeadCommunicationSummary | null;
   communicationsForbidden: boolean;
 }>) {
+  const router = useRouter();
   const [operations, setOperations] = useState(initialOperations);
   const [pacto, setPacto] = useState(initialPacto);
   const [pipeline, setPipeline] = useState(initialPipeline);
@@ -251,11 +259,33 @@ export function OperationalHistoryWorkspace({
   const [correctionId, setCorrectionId] = useState<string | null>(null);
   const [clock, setClock] = useState(() => new Date(initialOperations.generatedAt).getTime());
   const [contactIdentity, setContactIdentity] = useState(initialContactIdentity);
+  const [nextQueueLead, setNextQueueLead] = useState<NextQueueLead | null>(null);
+  const [nextQueueLeadLoadedForId, setNextQueueLeadLoadedForId] = useState<string | null>(null);
+  const [quickStageId, setQuickStageId] = useState("");
+  const [quickOperationCompletedForId, setQuickOperationCompletedForId] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`/api/leads/${operations.lead.id}/next`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => (await readResponse(response)) as NextQueueLead | null)
+      .then((nextLead) => {
+        setNextQueueLead(nextLead);
+        setNextQueueLeadLoadedForId(operations.lead.id);
+        if (nextLead) router.prefetch(nextLead.href);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setNextQueueLeadLoadedForId(operations.lead.id);
+      });
+    return () => controller.abort();
+  }, [operations.lead.id, router]);
 
   useEffect(() => {
     const openLinkedPanel = () => {
@@ -348,6 +378,105 @@ export function OperationalHistoryWorkspace({
         message: error instanceof Error ? error.message : "Falha inesperada.",
       });
       return false;
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function concludeAndOpenNext(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    setPending(true);
+    setNotice(null);
+    let operationSaved = quickOperationCompletedForId === operations.lead.id;
+    try {
+      const nextTask = nextTaskFromForm(form);
+      if (!nextTask) throw new Error("Defina a próxima ação antes de concluir este atendimento.");
+      const currentTask = operations.tasks.find(
+        (task) => task.id === operations.lead.nextAction?.taskId,
+      );
+      const resultDescription = formText(form, "resultDescription");
+      if (!resultDescription) throw new Error("Descreva o resultado do atendimento.");
+      const action = currentTask && currentTask.kind !== "IMMEDIATE_CALL"
+        ? "COMPLETE_TASK"
+        : "RECORD_ACTIVITY";
+      const data = action === "COMPLETE_TASK"
+        ? {
+            taskId: currentTask!.id,
+            result: resultDescription,
+            nextTask,
+          }
+        : {
+            type: formText(form, "activityType"),
+            direction: "OUTBOUND",
+            result: formText(form, "activityResult"),
+            subject: formText(form, "subject"),
+            observation: resultDescription,
+            nextTask,
+          };
+      if (!operationSaved) {
+        const operationResponse = await fetch(`/api/leads/${operations.lead.id}/operations`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, data }),
+        });
+        await readResponse(operationResponse);
+        operationSaved = true;
+        setQuickOperationCompletedForId(operations.lead.id);
+      }
+
+      if (quickStageId) {
+        const currentStateResponse = await fetch(`/api/leads/${operations.lead.id}/stage`, {
+          cache: "no-store",
+        });
+        const currentState = (await readResponse(currentStateResponse)) as LeadPipelineState;
+        const stageOption = currentState.transitions.find((option) => option.stageId === quickStageId);
+        if (!stageOption) throw new Error("A etapa escolhida não está mais disponível para este lead.");
+        const stageResponse = await fetch(`/api/leads/${operations.lead.id}/stage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            targetStageId: quickStageId,
+            expectedUpdatedAt: currentState.updatedAt,
+            reason: formText(form, "stageReason"),
+            origin: "LEAD_CARD",
+            managerCorrection: false,
+            confirmed: form.get("stageConfirmed") === "on",
+            disqualificationReasonId: formText(form, "disqualificationReasonId") ?? null,
+          }),
+        });
+        await readResponse(stageResponse);
+        setQuickStageId("");
+      }
+
+      let nextLead = nextQueueLeadLoadedForId === operations.lead.id ? nextQueueLead : null;
+      if (!nextLead) {
+        const nextLeadResponse = await fetch(`/api/leads/${operations.lead.id}/next`, {
+          cache: "no-store",
+        });
+        nextLead = (await readResponse(nextLeadResponse)) as NextQueueLead | null;
+      }
+      if (nextLead) {
+        formElement.reset();
+        setQuickStageId("");
+        setQuickOperationCompletedForId(null);
+        router.replace(nextLead.href);
+        return;
+      }
+      formElement.reset();
+      setQuickStageId("");
+      await refresh();
+      setQuickOperationCompletedForId(null);
+      setNotice({
+        kind: "success",
+        message: "Atendimento concluído. Não há outro lead disponível na sua fila agora.",
+      });
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        message: `${operationSaved ? "O resultado e a próxima ação foram salvos. " : ""}${error instanceof Error ? error.message : "Não foi possível concluir o atendimento."}`,
+      });
     } finally {
       setPending(false);
     }
@@ -522,6 +651,13 @@ export function OperationalHistoryWorkspace({
   );
 
   const visibleTabs = tabs;
+  const nextQueueLeadLoaded = nextQueueLeadLoadedForId === operations.lead.id;
+  const currentNextQueueLead = nextQueueLeadLoaded ? nextQueueLead : null;
+  const quickOperationCompleted = quickOperationCompletedForId === operations.lead.id;
+  const quickStage = pipeline.transitions.find((option) => option.stageId === quickStageId) ?? null;
+  const quickCurrentTask = operations.tasks.find(
+    (task) => task.id === operations.lead.nextAction?.taskId,
+  ) ?? null;
 
   function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     const keyToIndex: Readonly<Record<string, number>> = {
@@ -598,6 +734,52 @@ export function OperationalHistoryWorkspace({
           <p className="mt-3 text-sm text-muted-foreground">Seu perfil possui acesso somente para leitura neste lead.</p>
         ) : null}
       </details>
+
+      {operations.permissions.canWrite && operations.permissions.canManageTasks ? (
+        <article className="surface-panel border-2 border-primary/30 p-5" aria-labelledby="complete-next-title">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-primary">Fluxo rápido</p>
+              <h2 className="mt-1 text-lg font-semibold" id="complete-next-title">Concluir atendimento e abrir próximo</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Registre o resultado, defina a próxima ação e avance sem voltar para a fila.</p>
+            </div>
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm" data-next-lead-id={currentNextQueueLead?.id}>
+              <span className="block text-xs text-muted-foreground">Próximo na fila</span>
+              <strong>{nextQueueLeadLoaded ? currentNextQueueLead?.fullName ?? "Fila concluída" : "Preparando…"}</strong>
+            </div>
+          </div>
+          {quickCurrentTask ? (
+            <p className="mt-4 rounded-md border bg-muted/20 p-3 text-sm">
+              Ação atual: <strong>{quickCurrentTask.title}</strong>. Ao concluir, ela será encerrada com o resultado abaixo.
+            </p>
+          ) : null}
+          <form className="mt-4 grid gap-4" onSubmit={concludeAndOpenNext}>
+            {!quickCurrentTask || quickCurrentTask.kind === "IMMEDIATE_CALL" ? (
+              <div className="grid gap-4 sm:grid-cols-3">
+                <label className="text-sm">Atividade realizada<select className={inputClass} defaultValue="CALL_UNANSWERED" name="activityType"><option value="CALL_UNANSWERED">Ligação não atendida</option><option value="CALL_CONNECTED">Ligação atendida</option><option value="MESSAGE_SENT">Mensagem enviada</option><option value="EMAIL">E-mail enviado</option><option value="NOTE">Nota interna</option></select></label>
+                <label className="text-sm">Resultado<select className={inputClass} defaultValue="NOT_CONNECTED" name="activityResult"><option value="NOT_CONNECTED">Não conectado</option><option value="CONNECTED">Conectado</option><option value="SENT">Enviado</option><option value="INFORMATION">Informativo</option><option value="OTHER">Outro</option></select></label>
+                <label className="text-sm">Assunto<input className={inputClass} defaultValue="Atendimento concluído" name="subject" required /></label>
+              </div>
+            ) : null}
+            <label className="text-sm">Resultado do atendimento<textarea className={textareaClass} name="resultDescription" placeholder="Ex.: não atendeu; retornar amanhã às 10h" required /></label>
+            <NextActionFields required />
+            {pipeline.canWrite ? (
+              <fieldset className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
+                <legend className="px-1 text-sm font-semibold">Mover etapa (opcional)</legend>
+                <label className="text-sm sm:col-span-2">Nova etapa<select className={inputClass} name="targetStageId" onChange={(event) => setQuickStageId(event.target.value)} value={quickStageId}><option value="">Manter em {pipeline.currentStageName}</option>{pipeline.transitions.map((option) => <option disabled={!option.allowed} key={option.stageId} value={option.stageId}>{option.name}{option.allowed ? "" : ` — ${option.blockReason}`}</option>)}</select></label>
+                {quickStageId ? <label className="text-sm sm:col-span-2">Motivo da mudança<textarea className={textareaClass} name="stageReason" required /></label> : null}
+                {quickStage?.requiresDisqualificationReason ? <label className="text-sm sm:col-span-2">Motivo da desqualificação<select className={inputClass} name="disqualificationReasonId" required><option value="">Selecione</option>{pipeline.disqualificationReasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select></label> : null}
+                {quickStage?.requiresConfirmation ? <label className="flex items-start gap-2 text-sm sm:col-span-2"><input className="mt-1" name="stageConfirmed" required type="checkbox" /><span>Confirmo a movimentação para {quickStage.name}.</span></label> : null}
+              </fieldset>
+            ) : null}
+            {quickOperationCompleted ? <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">O resultado e a próxima ação já foram salvos. Corrija somente a etapa e tente novamente.</p> : null}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">O próximo lead já está sendo preparado em segundo plano.</p>
+              <Button disabled={pending} type="submit"><Icon name="seta-direita" size={14} />{pending ? "Concluindo…" : "Concluir e próximo"}</Button>
+            </div>
+          </form>
+        </article>
+      ) : null}
 
       {notice ? (
         <div className={`flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm ${notice.kind === "error" ? "border-red-300 bg-red-50 text-red-900" : "border-emerald-300 bg-emerald-50 text-emerald-950"}`} role={notice.kind === "error" ? "alert" : "status"}>
