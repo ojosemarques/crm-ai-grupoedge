@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const customerSuccessQuerySchema = z.object({
+  accountId: z.string().uuid().optional(),
   ownerMemberId: z.string().uuid().optional(),
   teamId: z.string().uuid().optional(),
   health: z.enum(["HEALTHY", "ATTENTION", "RISK", "INSUFFICIENT"]).optional(),
@@ -8,6 +9,17 @@ export const customerSuccessQuerySchema = z.object({
   overdue: z.literal("true").transform(() => true).optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().min(10).max(100).default(25),
+}).strict();
+
+export const postSaleTaskSchema = z.object({
+  accountId: z.string().uuid(),
+  alertId: z.string().trim().min(8).max(240),
+  idempotencyKey: z.string().trim().min(8).max(200),
+}).strict();
+
+export const completePostSaleTaskSchema = z.object({
+  taskId: z.string().uuid(),
+  result: z.string().trim().min(3).max(2_000),
 }).strict();
 
 export const portfolioAssignmentSchema = z.object({

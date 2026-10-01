@@ -82,6 +82,7 @@ export const createCommissionRuleSchema = z.object({
   sellerMemberId: id,
   percentageBps: z.number().int().min(0).max(10_000),
   basis: z.enum(["TCV", "SALE_AMOUNT", "MRR"]).default("TCV"),
+  trigger: z.enum(["SALE", "RECEIPT"]).default("RECEIPT"),
   effectiveFrom: z.coerce.date(),
 }).strict();
 

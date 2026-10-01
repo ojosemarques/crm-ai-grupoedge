@@ -1259,6 +1259,11 @@ enum TaskKind {
   FOLLOW_UP
 }
 
+enum TaskContext {
+  COMMERCIAL
+  POST_SALE
+}
+
 enum CadenceStepAction {
   WHATSAPP
   CALL
@@ -5521,6 +5526,8 @@ model Payment {
   reversalReason     String?
   confirmedByActorId String        @db.Uuid
 
+  commissions        Commission[]
+
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey])
   @@unique([workspaceId, providerKey, externalPaymentId])
@@ -6121,6 +6128,8 @@ model Task {
   title            String
   description      String?
   kind             TaskKind     @default(GENERAL)
+  context          TaskContext  @default(COMMERCIAL)
+  sourceKey        String?
   status           TaskStatus   @default(OPEN)
   priority         LeadPriority @default(MEDIUM)
   dueAt            DateTime     @db.Timestamptz(3)
@@ -6154,10 +6163,12 @@ model Task {
   @@unique([workspaceId, leadId, id])
   @@unique([workspaceId, opportunityId, id])
   @@unique([workspaceId, slaCycleId])
+  @@unique([workspaceId, sourceKey])
   @@index([workspaceId, assigneeMemberId, status, dueAt, deletedAt])
   @@index([workspaceId, queueId, status, dueAt, deletedAt])
   @@index([workspaceId, leadId, status, dueAt])
   @@index([workspaceId, kind, status, dueAt])
+  @@index([workspaceId, context, status, dueAt])
   @@index([workspaceId, opportunityId, status, dueAt])
   @@index([workspaceId, priority, dueAt])
   @@index([workspaceId, automationRunId])
@@ -13378,6 +13389,11 @@ enum CommissionBasis {
   MRR
 }
 
+enum CommissionTrigger {
+  SALE
+  RECEIPT
+}
+
 model FinancialCategory {
   id               String                @id @default(uuid()) @db.Uuid
   workspaceId      String                @db.Uuid
@@ -13557,6 +13573,7 @@ model CommissionRule {
   sellerMemberId   String    @db.Uuid
   percentageBps    Int
   basis            CommissionBasis @default(TCV)
+  trigger          CommissionTrigger @default(SALE)
   active           Boolean   @default(true)
   effectiveFrom    DateTime  @db.Timestamptz(3)
   effectiveTo      DateTime? @db.Timestamptz(3)
@@ -13577,6 +13594,7 @@ model Commission {
   sellerMemberId    String           @db.Uuid
   opportunityId     String           @db.Uuid
   contractId        String?          @db.Uuid
+  paymentId         String?          @db.Uuid
   status            CommissionStatus @default(PENDING)
   basisCents        BigInt
   percentageBps     Int
@@ -13594,9 +13612,12 @@ model Commission {
   createdAt         DateTime         @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime         @updatedAt @db.Timestamptz(3)
 
+  payment           Payment?         @relation(fields: [workspaceId, paymentId], references: [workspaceId, id], onDelete: Restrict)
+
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey])
-  @@unique([workspaceId, opportunityId, ruleId])
+  @@unique([workspaceId, ruleId, paymentId])
+  @@index([workspaceId, opportunityId, ruleId])
   @@index([workspaceId, sellerMemberId, status, earnedAt])
   @@index([workspaceId, status, paidAt])
   @@map("commissions")

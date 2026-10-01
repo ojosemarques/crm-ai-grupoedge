@@ -5,6 +5,8 @@ import {
   calculateCustomerHealth,
   customerSuccessQuerySchema,
   healthAssessmentSchema,
+  postSaleTaskSchema,
+  completePostSaleTaskSchema,
   nextPlanStatus,
   portfolioAssignmentSchema,
   successPlanActionSchema,
@@ -54,6 +56,7 @@ export function createCustomerSuccessService(options: Options) {
     await options.authorization.assertAuthorized(context, PermissionKeys.CUSTOMER_SUCCESS_READ, resource(context.workspaceId, undefined, context.memberId));
     const where: Prisma.CustomerPortfolioAssignmentWhereInput = {
       workspaceId: context.workspaceId,
+      ...(query.accountId ? { accountId: query.accountId } : {}),
       ...(query.ownerMemberId ? { ownerMemberId: query.ownerMemberId } : {}),
       ...(query.teamId ? { teamId: query.teamId } : {}),
       ...(query.state ? { state: query.state } : { validTo: null }),
@@ -105,6 +108,11 @@ export function createCustomerSuccessService(options: Options) {
       if (item.health?.status === "RISK" || review.risks.some((risk) => risk.code === "RENEWAL_AT_RISK")) alerts.push({ id: `churn:${account.id}`, type: "CHURN_RISK" as const, severity: review.risks.some((risk) => risk.severity === "CRITICAL") ? "CRITICAL" as const : "HIGH" as const, accountId: account.id, accountName: account.name, title: "Risco de churn", detail: item.health?.score === null || item.health?.score === undefined ? "Risco persistido sem pontuação completa; revise as evidências e a renovação." : `Saúde em risco com score ${item.health.score}/100; revise as evidências e a renovação.`, occurredAt: item.health?.cutoffAt.toISOString() ?? now.toISOString(), href: `/customer-success?health=RISK&accountId=${account.id}` });
       return alerts;
     }).sort((left, right) => ({ CRITICAL: 0, HIGH: 1, MEDIUM: 2 })[left.severity] - ({ CRITICAL: 0, HIGH: 1, MEDIUM: 2 })[right.severity] || left.occurredAt.localeCompare(right.occurredAt));
+    const postSaleTasks = await options.database.task.findMany({
+      where: { workspaceId: context.workspaceId, context: "POST_SALE", deletedAt: null, lead: { accountId: { in: pageItems.map((item) => item.accountId) } } },
+      select: { id: true, lead: { select: { accountId: true } }, title: true, description: true, status: true, priority: true, dueAt: true, completedAt: true, result: true, sourceKey: true },
+      orderBy: [{ status: "asc" }, { dueAt: "asc" }, { createdAt: "desc" }],
+    });
     return {
       generatedAt: now.toISOString(), timeZone: "America/Sao_Paulo", total: filtered.length, page: query.page, pageSize: query.pageSize,
       metrics: {
@@ -117,9 +125,55 @@ export function createCustomerSuccessService(options: Options) {
         postSaleAlerts: alerts.length,
       },
       formulas: { overdue: "state = ACTIVE e nextActionAt < instante de atualização", health: "pontuação ponderada da versão publicada; sinal obrigatório ausente ou vencido = dados insuficientes" },
-      alerts, items, members: members.map((item) => ({ id: item.id, name: item.user.displayName })), teams, queues,
+      alerts, items: items.map((item) => ({ ...item, tasks: postSaleTasks.filter((task) => task.lead.accountId === item.accountId).map((task) => ({ id: task.id, title: task.title, description: task.description, status: task.status, priority: task.priority, dueAt: task.dueAt.toISOString(), completedAt: task.completedAt?.toISOString() ?? null, result: task.result, sourceKey: task.sourceKey })) })), members: members.map((item) => ({ id: item.id, name: item.user.displayName })), teams, queues,
       permissions: { managePortfolio: canManage.allowed, managePlan: canPlan.allowed, assessHealth: canAssess.allowed, correct: canCorrect.allowed },
     };
+  }
+
+  async function createPostSaleTask(context: AuthenticatedContext, raw: unknown) {
+    const input = postSaleTaskSchema.parse(raw);
+    const existing = await options.database.task.findFirst({ where: { workspaceId: context.workspaceId, sourceKey: `customer-success:${input.alertId}` } });
+    if (existing) return existing;
+    const current = await screen(context, { accountId: input.accountId, pageSize: 100 });
+    const alert = current.alerts.find((item) => item.id === input.alertId);
+    if (!alert) fail("O alerta não está mais ativo ou não pertence à sua carteira.", "POST_SALE_ALERT_NOT_ACTIVE", 409);
+    const assignment = await options.database.customerPortfolioAssignment.findFirstOrThrow({ where: { workspaceId: context.workspaceId, accountId: alert.accountId, validTo: null } });
+    await options.authorization.assertAuthorized(context, PermissionKeys.CUSTOMER_SUCCESS_PLAN_MANAGE, resource(context.workspaceId, alert.accountId, assignment.ownerMemberId, assignment.teamId, assignment.queueId));
+    const lead = await options.database.lead.findFirst({ where: { workspaceId: context.workspaceId, accountId: alert.accountId, deletedAt: null }, orderBy: { updatedAt: "desc" }, select: { id: true } });
+    if (!lead) fail("Não existe lead ativo para vincular a tarefa deste cliente.", "POST_SALE_LEAD_REQUIRED", 409);
+    const dueDays = alert.type === "RENEWAL_DUE" ? 3 : alert.type === "SATISFACTION_DROP" ? 2 : 1;
+    const dueAt = new Date(options.now().getTime() + dueDays * 86_400_000);
+    return options.database.$transaction(async (tx) => {
+      await lockAccount(tx, context.workspaceId, alert.accountId);
+      const replay = await tx.task.findFirst({ where: { workspaceId: context.workspaceId, sourceKey: `customer-success:${input.alertId}` } });
+      if (replay) return replay;
+      const task = await tx.task.create({ data: {
+        workspaceId: context.workspaceId, leadId: lead.id, assigneeMemberId: assignment.ownerMemberId, queueId: assignment.queueId,
+        title: `${alert.title} · ${alert.accountName}`, description: alert.detail, kind: alert.type === "RENEWAL_DUE" ? "FOLLOW_UP" : "GENERAL",
+        context: "POST_SALE", sourceKey: `customer-success:${input.alertId}`, status: "OPEN",
+        priority: alert.severity === "CRITICAL" ? "URGENT" : alert.severity === "HIGH" ? "HIGH" : "MEDIUM", dueAt,
+        createdByActorId: context.actorId, updatedByActorId: context.actorId,
+      } });
+      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "customer_success.task.created", entityType: "Task", entityId: task.id, reason: "Tarefa criada a partir de regra de alerta ativa.", changes: { alertId: alert.id, alertType: alert.type, accountId: alert.accountId, dueAt: dueAt.toISOString(), idempotencyKey: input.idempotencyKey } } });
+      return task;
+    });
+  }
+
+  async function completePostSaleTask(context: AuthenticatedContext, raw: unknown) {
+    const input = completePostSaleTaskSchema.parse(raw);
+    const task = await options.database.task.findFirst({ where: { id: input.taskId, workspaceId: context.workspaceId, context: "POST_SALE", deletedAt: null }, include: { lead: { select: { accountId: true } } } });
+    if (!task || !task.lead.accountId) fail("Tarefa de pós-venda não encontrada.", "NOT_FOUND", 404);
+    const assignment = await options.database.customerPortfolioAssignment.findFirst({ where: { workspaceId: context.workspaceId, accountId: task.lead.accountId, validTo: null } });
+    if (!assignment) fail("A conta saiu da carteira ativa.", "PORTFOLIO_REQUIRED", 409);
+    await options.authorization.assertAuthorized(context, PermissionKeys.CUSTOMER_SUCCESS_PLAN_MANAGE, resource(context.workspaceId, task.lead.accountId, assignment.ownerMemberId, assignment.teamId, assignment.queueId));
+    return options.database.$transaction(async (tx) => {
+      await lockAccount(tx, context.workspaceId, task.lead.accountId!);
+      const at = options.now();
+      const updated = await tx.task.updateMany({ where: { id: task.id, workspaceId: context.workspaceId, status: { in: ["OPEN", "IN_PROGRESS"] } }, data: { status: "COMPLETED", completedAt: at, result: input.result, updatedByActorId: context.actorId } });
+      if (!updated.count) fail("A tarefa já foi concluída ou cancelada.", "POST_SALE_TASK_CLOSED", 409);
+      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "customer_success.task.completed", entityType: "Task", entityId: task.id, reason: input.result, changes: { completedAt: at.toISOString(), accountId: task.lead.accountId } } });
+      return tx.task.findUniqueOrThrow({ where: { id: task.id } });
+    });
   }
 
   async function assignPortfolio(context: AuthenticatedContext, raw: unknown) {
@@ -255,7 +309,7 @@ export function createCustomerSuccessService(options: Options) {
     }, { isolationLevel: "Serializable" });
   }
 
-  return Object.freeze({ screen, assignPortfolio, createPlan, actOnPlan, assessHealth });
+  return Object.freeze({ screen, assignPortfolio, createPlan, actOnPlan, assessHealth, createPostSaleTask, completePostSaleTask });
 }
 
 let service: ReturnType<typeof createCustomerSuccessService> | undefined;

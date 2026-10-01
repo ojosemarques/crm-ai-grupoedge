@@ -206,6 +206,7 @@ export type DashboardScreen = Readonly<{
 }>;
 
 export type DashboardDrilldownPage = Readonly<{
+  generatedAt: string;
   query: DashboardQuery;
   period: DashboardPeriodInterval;
   timeZone: string;

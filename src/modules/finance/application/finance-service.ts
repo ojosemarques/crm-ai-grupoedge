@@ -97,33 +97,49 @@ export async function reconcileCommissionsInTransaction(tx: Transaction, context
       where: { workspaceId: context.workspaceId, ...(opportunityId ? { id: opportunityId } : {}), ownerMemberId: rule.sellerMemberId, status: "WON", closedAt: { not: null, gte: rule.effectiveFrom, lte: through, ...(rule.effectiveTo ? { lt: rule.effectiveTo } : {}) }, deletedAt: null },
       select: { id: true, ownerMemberId: true, amountCents: true, mrrCents: true, tcvCents: true, currency: true, closedAt: true },
     });
-    const existing = new Set((await tx.commission.findMany({
-      where: { workspaceId: context.workspaceId, opportunityId: { in: opportunities.map((item) => item.id) } },
-      select: { opportunityId: true },
-    })).map((item) => item.opportunityId));
     for (const opportunity of opportunities) {
-      if (existing.has(opportunity.id)) continue;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`commission:${context.workspaceId}:${rule.id}:${opportunity.id}`}, 0))`;
       const contract = await tx.commercialContract.findFirst({
         where: { workspaceId: context.workspaceId, opportunityId: opportunity.id, status: "ACCEPTED" },
         select: { id: true },
       });
       const basisCents = rule.basis === "MRR" ? opportunity.mrrCents : rule.basis === "SALE_AMOUNT" ? opportunity.amountCents : opportunity.tcvCents > 0n ? opportunity.tcvCents : opportunity.amountCents;
-      await tx.commission.create({ data: {
-        workspaceId: context.workspaceId,
-        ruleId: rule.id,
-        sellerMemberId: rule.sellerMemberId,
-        opportunityId: opportunity.id,
-        contractId: contract?.id ?? null,
-        basisCents,
-        percentageBps: rule.percentageBps,
-        amountCents: commissionAmountCents(basisCents, rule.percentageBps),
-        currency: opportunity.currency,
-        earnedAt: opportunity.closedAt!,
-        idempotencyKey: `finance:commission:${opportunity.id}`,
-        createdByActorId: context.actorId,
-        updatedByActorId: context.actorId,
-      } });
-      created += 1;
+      if (rule.trigger === "SALE") {
+        const existing = await tx.commission.findFirst({ where: { workspaceId: context.workspaceId, opportunityId: opportunity.id, ruleId: rule.id, paymentId: null }, select: { id: true } });
+        if (existing) continue;
+        await tx.commission.create({ data: {
+          workspaceId: context.workspaceId, ruleId: rule.id, sellerMemberId: rule.sellerMemberId,
+          opportunityId: opportunity.id, contractId: contract?.id ?? null, basisCents,
+          percentageBps: rule.percentageBps, amountCents: commissionAmountCents(basisCents, rule.percentageBps),
+          currency: opportunity.currency, earnedAt: opportunity.closedAt!, idempotencyKey: `finance:commission:${opportunity.id}:${rule.id}`,
+          createdByActorId: context.actorId, updatedByActorId: context.actorId,
+        } });
+        created += 1;
+        continue;
+      }
+      if (!contract || basisCents <= 0n) continue;
+      const invoices = await tx.invoice.findMany({ where: { workspaceId: context.workspaceId, contractId: contract.id }, select: { id: true } });
+      if (!invoices.length) continue;
+      const payments = await tx.payment.findMany({
+        where: { workspaceId: context.workspaceId, invoiceId: { in: invoices.map((item) => item.id) }, status: "CONFIRMED", reversedAt: null, occurredAt: { lte: through } },
+        orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
+      });
+      const existing = await tx.commission.findMany({ where: { workspaceId: context.workspaceId, opportunityId: opportunity.id, ruleId: rule.id, paymentId: { not: null } }, select: { paymentId: true, basisCents: true } });
+      const existingPaymentIds = new Set(existing.map((item) => item.paymentId));
+      let remainingCents = basisCents - existing.reduce((sum, item) => sum + item.basisCents, 0n);
+      for (const payment of payments) {
+        if (existingPaymentIds.has(payment.id) || remainingCents <= 0n) continue;
+        const earnedBasisCents = payment.amountCents < remainingCents ? payment.amountCents : remainingCents;
+        await tx.commission.create({ data: {
+          workspaceId: context.workspaceId, ruleId: rule.id, sellerMemberId: rule.sellerMemberId,
+          opportunityId: opportunity.id, contractId: contract.id, paymentId: payment.id, basisCents: earnedBasisCents,
+          percentageBps: rule.percentageBps, amountCents: commissionAmountCents(earnedBasisCents, rule.percentageBps),
+          currency: payment.currency, earnedAt: payment.occurredAt, idempotencyKey: `finance:commission:${opportunity.id}:${rule.id}:payment:${payment.id}`,
+          createdByActorId: context.actorId, updatedByActorId: context.actorId,
+        } });
+        remainingCents -= earnedBasisCents;
+        created += 1;
+      }
     }
   }
   return { rules: rules.length, created };
@@ -246,8 +262,8 @@ export function createFinanceService(options: Options) {
       entries: normalizedEntries,
       receivables: invoices.map((item) => ({ id: item.id, invoiceNumber: item.invoiceNumber, customerAccountId: item.accountId, customerName: item.accountNameSnapshot, totalCents: money(item.totalCents), paidCents: money(item.paidCents), openCents: money(item.totalCents - item.paidCents), dueAt: item.dueAt.toISOString(), status: item.status })),
       members: members.map((item) => ({ id: item.id, name: item.user.displayName })),
-      commissionRules: rules.map((item) => ({ id: item.id, sellerMemberId: item.sellerMemberId, sellerName: memberName.get(item.sellerMemberId) ?? "Membro indisponível", percentageBps: item.percentageBps, basis: item.basis, active: item.active, effectiveFrom: item.effectiveFrom.toISOString(), effectiveTo: iso(item.effectiveTo) })),
-      commissions: commissions.map((item) => ({ id: item.id, ruleId: item.ruleId, sellerMemberId: item.sellerMemberId, sellerName: memberName.get(item.sellerMemberId) ?? "Membro indisponível", opportunityId: item.opportunityId, contractId: item.contractId, status: item.status, basisCents: money(item.basisCents), percentageBps: item.percentageBps, amountCents: money(item.amountCents), earnedAt: item.earnedAt.toISOString(), approvedAt: iso(item.approvedAt), paidAt: iso(item.paidAt), revision: item.revision })),
+      commissionRules: rules.map((item) => ({ id: item.id, sellerMemberId: item.sellerMemberId, sellerName: memberName.get(item.sellerMemberId) ?? "Membro indisponível", percentageBps: item.percentageBps, basis: item.basis, trigger: item.trigger, active: item.active, effectiveFrom: item.effectiveFrom.toISOString(), effectiveTo: iso(item.effectiveTo) })),
+      commissions: commissions.map((item) => ({ id: item.id, ruleId: item.ruleId, sellerMemberId: item.sellerMemberId, sellerName: memberName.get(item.sellerMemberId) ?? "Membro indisponível", opportunityId: item.opportunityId, contractId: item.contractId, paymentId: item.paymentId, status: item.status, basisCents: money(item.basisCents), percentageBps: item.percentageBps, amountCents: money(item.amountCents), earnedAt: item.earnedAt.toISOString(), approvedAt: iso(item.approvedAt), paidAt: iso(item.paidAt), revision: item.revision })),
       costCenters: costCenters.map((item) => ({ id: item.id, key: item.key, name: item.name, active: item.active })),
       recurrences: recurrences.map((item) => ({ id: item.id, categoryId: item.categoryId, financialAccountId: item.financialAccountId, costCenterId: item.costCenterId, direction: item.direction, description: item.description, counterparty: item.counterparty, amountCents: money(item.amountCents), frequency: item.frequency, installmentCount: item.installmentCount, firstDueAt: item.firstDueAt.toISOString(), active: item.active })),
       statementImports: statementImports.map((item) => ({ id: item.id, financialAccountId: item.financialAccountId, fileName: item.fileName, importedRows: item.importedRows, matchedRows: item.matchedRows, createdAt: item.createdAt.toISOString() })),
@@ -379,7 +395,7 @@ export function createFinanceService(options: Options) {
         const laterRule = await tx.commissionRule.findFirst({ where: { workspaceId: context.workspaceId, sellerMemberId: input.sellerMemberId, effectiveFrom: { gte: input.effectiveFrom } } });
         if (laterRule) fail("Já existe regra com início igual ou posterior. A nova vigência deve ser posterior à última regra.", "FINANCE_COMMISSION_RULE_OVERLAP");
         await tx.commissionRule.updateMany({ where: { workspaceId: context.workspaceId, sellerMemberId: input.sellerMemberId, active: true, effectiveFrom: { lt: input.effectiveFrom } }, data: { active: false, effectiveTo: input.effectiveFrom, updatedByActorId: context.actorId } });
-        const rule = await tx.commissionRule.create({ data: { workspaceId: context.workspaceId, sellerMemberId: input.sellerMemberId, percentageBps: input.percentageBps, basis: input.basis, effectiveFrom: input.effectiveFrom, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+        const rule = await tx.commissionRule.create({ data: { workspaceId: context.workspaceId, sellerMemberId: input.sellerMemberId, percentageBps: input.percentageBps, basis: input.basis, trigger: input.trigger, effectiveFrom: input.effectiveFrom, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
         const reconciliation = await reconcileCommissionsInTransaction(tx, context, options.now());
         return { rule, reconciliation };
       }, { isolationLevel: "Serializable" });

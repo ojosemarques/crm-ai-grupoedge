@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
+import { reconcileCommissionsInTransaction } from "@/modules/finance/application/finance-service";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { canonicalJson, sha256 } from "@/modules/integrations/domain/integration-policy";
 import {
@@ -171,6 +172,7 @@ export function createPaymentService(options: Options) {
       if (changed.count !== 1) fail("A cobrança mudou. Revise uma nova prévia.", "PAYMENT_VERSION_CONFLICT");
       const metadata = { providerKey: MANUAL_RECEIPT_PROVIDER_KEY, financialAccountId: account.id, financialAccountName: account.name, customerAccountId: invoice.accountId, customerName: invoice.accountNameSnapshot, method: input.method, reference: input.reference, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), requestHash, receiptConfirmed: true };
       await appendPaymentEventInTransaction(tx, { workspaceId: context.workspaceId, invoiceId: invoice.id, paymentId: payment.id, type: "PAYMENT_CONFIRMED", actorId: context.actorId, reason: `Recebimento confirmado pelo operador via ${input.method}. Referência: ${input.reference}`, idempotencyKey: eventKey, correlationId: payment.correlationId, occurredAt: input.receivedAt, safeMetadata: metadata });
+      await reconcileCommissionsInTransaction(tx, context, input.receivedAt);
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "payment.receipt.recorded", entityType: "Payment", entityId: payment.id, origin: "DOMAIN", changes: { ...metadata, invoiceId: invoice.id, previousPaidCents: invoice.paidCents.toString(), paidCents: paidCents.toString(), previousStatus: invoice.status, status } } });
       const updated = await tx.invoice.findFirstOrThrow({ where: { id: invoice.id, workspaceId: context.workspaceId } });
       return { invoice: updated, payment, idempotent: false };

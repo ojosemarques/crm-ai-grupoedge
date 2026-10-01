@@ -21,9 +21,9 @@ export async function POST(request: NextRequest) {
     assertSameOrigin(request);
     const context = await requireApiAuthentication(request);
     const body = await request.json().catch(() => null);
-    const action = z.object({ action: z.enum(["ASSIGN_PORTFOLIO", "CREATE_PLAN", "ASSESS_HEALTH"]), payload: z.unknown() }).parse(body);
+    const action = z.object({ action: z.enum(["ASSIGN_PORTFOLIO", "CREATE_PLAN", "ASSESS_HEALTH", "CREATE_POST_SALE_TASK", "COMPLETE_POST_SALE_TASK"]), payload: z.unknown() }).parse(body);
     const service = getCustomerSuccessService();
-    const result = action.action === "ASSIGN_PORTFOLIO" ? await service.assignPortfolio(context, action.payload) : action.action === "CREATE_PLAN" ? await service.createPlan(context, action.payload) : await service.assessHealth(context, action.payload);
+    const result = action.action === "ASSIGN_PORTFOLIO" ? await service.assignPortfolio(context, action.payload) : action.action === "CREATE_PLAN" ? await service.createPlan(context, action.payload) : action.action === "ASSESS_HEALTH" ? await service.assessHealth(context, action.payload) : action.action === "CREATE_POST_SALE_TASK" ? await service.createPostSaleTask(context, action.payload) : await service.completePostSaleTask(context, action.payload);
     return NextResponse.json({ result }, { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) { return handleRouteError(error); }
 }

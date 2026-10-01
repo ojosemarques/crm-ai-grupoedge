@@ -1123,6 +1123,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     const page = Math.min(parsed.data.page, totalPages);
     const start = (page - 1) * parsed.data.pageSize;
     return Object.freeze({
+      generatedAt: screen.overview.generatedAt,
       query: screen.query,
       period: parsed.data.view.startsWith("comparison.previous.")
         ? screen.comparisonPeriod

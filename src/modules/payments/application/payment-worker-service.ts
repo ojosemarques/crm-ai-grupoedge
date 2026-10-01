@@ -1,5 +1,7 @@
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { calculateRetryDelaySeconds } from "@/modules/integrations/domain/integration-policy";
+import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { reconcileCommissionsInTransaction } from "@/modules/finance/application/finance-service";
 import {
   localPaymentSandbox,
   PaymentSandboxError,
@@ -210,6 +212,7 @@ export function createPaymentWorkerService(options: Options) {
         await tx.invoice.update({ where: { id: invoice.id }, data: { paidCents, status, paidAt: status === "PAID" ? new Date(event.occurredAt) : null, revision: { increment: 1 }, updatedByActorId: actor.id } });
         if (attempt) await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { status: "CONFIRMED", confirmedAt: new Date(event.occurredAt) } });
         await appendPaymentEventInTransaction(tx, { workspaceId: job.workspaceId, invoiceId: invoice.id, attemptId: attempt?.id ?? null, paymentId: payment.id, type: "PAYMENT_CONFIRMED", actorId: actor.id, reason: "Pagamento confirmado por webhook local assinado e reconciliado.", idempotencyKey: `payment-event:${event.eventId}`, correlationId: receipt.correlationId, causationId: attempt?.id ?? null, providerEventId: event.eventId, occurredAt: new Date(event.occurredAt), safeMetadata: { amountCents: amount.toString(), currency: event.currency, externalEgress: false, revenueMovementCreated: false } });
+        await reconcileCommissionsInTransaction(tx, { workspaceId: job.workspaceId, actorId: actor.id } as AuthenticatedContext, new Date(event.occurredAt));
       } else {
         const payment = await tx.payment.findFirstOrThrow({ where: { workspaceId: job.workspaceId, providerKey: "LOCAL_PAYMENT_SANDBOX", externalPaymentId: event.externalPaymentId } });
         const nextPaymentStatus = event.eventType === "CHARGEBACK_RECORDED" ? "CHARGEBACK" : "REVERSED";

@@ -42,13 +42,34 @@ describe("finance service", () => {
 
   it("concilia regra histórica pela vigência da venda e ignora comissão já registrada", async () => {
     const tx = {
-      commissionRule: { findMany: vi.fn().mockResolvedValue([{ id: "old", sellerMemberId: "seller", active: false, percentageBps: 500, effectiveFrom: new Date("2026-01-01"), effectiveTo: new Date("2026-09-01") }]) },
-      opportunity: { findMany: vi.fn().mockResolvedValue([{ id: "sale", closedAt: new Date("2026-08-20") }]) },
-      commission: { findMany: vi.fn().mockResolvedValue([{ opportunityId: "sale" }]), create: vi.fn() },
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      commissionRule: { findMany: vi.fn().mockResolvedValue([{ id: "old", sellerMemberId: "seller", active: false, percentageBps: 500, basis: "TCV", trigger: "SALE", effectiveFrom: new Date("2026-01-01"), effectiveTo: new Date("2026-09-01") }]) },
+      opportunity: { findMany: vi.fn().mockResolvedValue([{ id: "sale", amountCents: 100n, mrrCents: 0n, tcvCents: 100n, currency: "BRL", closedAt: new Date("2026-08-20") }]) },
+      commercialContract: { findFirst: vi.fn().mockResolvedValue(null) },
+      commission: { findFirst: vi.fn().mockResolvedValue({ id: "existing" }), create: vi.fn() },
     };
     expect(await reconcileCommissionsInTransaction(tx as never, context, new Date("2026-09-30"), "sale")).toEqual({ rules: 1, created: 0 });
     expect(tx.opportunity.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "sale", closedAt: { not: null, gte: new Date("2026-01-01"), lt: new Date("2026-09-01"), lte: new Date("2026-09-30") } }) }));
-    expect(tx.commission.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: "workspace", opportunityId: { in: ["sale"] } } }));
+    expect(tx.commission.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: "workspace", opportunityId: "sale", ruleId: "old", paymentId: null } }));
     expect(tx.commission.create).not.toHaveBeenCalled();
+  });
+
+  it("gera comissão proporcional para cada recebimento confirmado sem ultrapassar a base", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "commission" });
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      commissionRule: { findMany: vi.fn().mockResolvedValue([{ id: "receipt-rule", sellerMemberId: "seller", active: true, percentageBps: 1_000, basis: "SALE_AMOUNT", trigger: "RECEIPT", effectiveFrom: new Date("2026-01-01"), effectiveTo: null }]) },
+      opportunity: { findMany: vi.fn().mockResolvedValue([{ id: "sale", amountCents: 10_000n, mrrCents: 1_000n, tcvCents: 12_000n, currency: "BRL", closedAt: new Date("2026-08-20") }]) },
+      commercialContract: { findFirst: vi.fn().mockResolvedValue({ id: "contract" }) },
+      invoice: { findMany: vi.fn().mockResolvedValue([{ id: "invoice" }]) },
+      payment: { findMany: vi.fn().mockResolvedValue([
+        { id: "payment-1", amountCents: 6_000n, currency: "BRL", occurredAt: new Date("2026-09-01") },
+        { id: "payment-2", amountCents: 7_000n, currency: "BRL", occurredAt: new Date("2026-09-15") },
+      ]) },
+      commission: { findMany: vi.fn().mockResolvedValue([]), create },
+    };
+    expect(await reconcileCommissionsInTransaction(tx as never, context, new Date("2026-09-30"), "sale")).toEqual({ rules: 1, created: 2 });
+    expect(create).toHaveBeenNthCalledWith(1, expect.objectContaining({ data: expect.objectContaining({ paymentId: "payment-1", basisCents: 6_000n, amountCents: 600n }) }));
+    expect(create).toHaveBeenNthCalledWith(2, expect.objectContaining({ data: expect.objectContaining({ paymentId: "payment-2", basisCents: 4_000n, amountCents: 400n }) }));
   });
 });

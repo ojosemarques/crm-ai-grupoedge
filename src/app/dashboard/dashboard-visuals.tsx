@@ -5,7 +5,7 @@ import styles from "./dashboard.module.css";
 const palette = ["#ff873e", "#46b8e9", "#8760e8", "#f27eae", "#66bd96", "#e5bd58"];
 type LinkedSegment = DashboardSegment & { href: string };
 
-export function StageDistribution({ segments }: Readonly<{ segments: readonly LinkedSegment[] }>) {
+export function StageDistribution({ segments, totalHref }: Readonly<{ segments: readonly LinkedSegment[]; totalHref?: string | undefined }>) {
   const total = segments.reduce((sum, segment) => sum + segment.value, 0);
   let offset = 0;
   return <section className={`${styles.panel} ${styles.distributionPanel}`}>
@@ -19,8 +19,7 @@ export function StageDistribution({ segments }: Readonly<{ segments: readonly Li
           offset += percent;
           return <circle cx="120" cy="120" fill="none" key={segment.id} pathLength="100" r="88" stroke={palette[index % palette.length]} strokeDasharray={`${percent} ${100 - percent}`} strokeDashoffset={-start} strokeWidth="30" transform="rotate(-90 120 120)"><title>{`${segment.label}: ${segment.value.toLocaleString("pt-BR")} leads (${percent.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%)`}</title></circle>;
         }) : null}
-        <text className={styles.donutCaption} textAnchor="middle" x="120" y="111">Nas etapas</text>
-        <text className={styles.donutValue} textAnchor="middle" x="120" y="145">{total.toLocaleString("pt-BR")}</text>
+        {totalHref ? <a aria-label="Abrir registros do total em etapas" href={totalHref}><text className={styles.donutCaption} textAnchor="middle" x="120" y="111">Nas etapas</text><text className={styles.donutValue} textAnchor="middle" x="120" y="145">{total.toLocaleString("pt-BR")}</text></a> : <><text className={styles.donutCaption} textAnchor="middle" x="120" y="111">Nas etapas</text><text className={styles.donutValue} textAnchor="middle" x="120" y="145">{total.toLocaleString("pt-BR")}</text></>}
       </svg>
     </div>
     {total > 0 ? <ul className={styles.donutLegend}>{segments.map((segment, index) => <li key={segment.id}><Link href={segment.href}><svg aria-hidden="true" height="8" width="8"><circle cx="4" cy="4" fill={palette[index % palette.length]} r="4" /></svg><span>{segment.label}</span><strong>{segment.value.toLocaleString("pt-BR")}</strong><small>{(segment.value / total * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</small></Link></li>)}</ul> : <p className={styles.donutEmpty}>Não há leads em aberto neste recorte.</p>}
@@ -55,6 +54,6 @@ export function ConnectedFunnel({ stages }: Readonly<{ stages: readonly (Dashboa
         })}
       </svg>
     </div>
-    <details className={styles.chartTableDetails}><summary>Conversão e denominadores</summary><div className={styles.chartTableScroll}><table className={styles.chartTable}><thead><tr><th>Etapa</th><th>Volume</th><th>Base anterior</th><th>Conversão</th></tr></thead><tbody>{stages.map((stage) => <tr key={stage.id}><td><Link href={stage.href}>{stage.label}</Link></td><td>{stage.value.toLocaleString("pt-BR")}</td><td>{stage.denominator?.toLocaleString("pt-BR") ?? "—"}</td><td>{stage.percentage === null ? "—" : `${stage.percentage.toLocaleString("pt-BR")}%`}</td></tr>)}</tbody></table></div></details>
+    <details className={styles.chartTableDetails}><summary>Conversão e denominadores</summary><div className={styles.chartTableScroll}><table className={styles.chartTable}><thead><tr><th>Etapa</th><th>Volume</th><th>Base anterior</th><th>Conversão</th></tr></thead><tbody>{stages.map((stage) => <tr key={stage.id}><td><Link href={stage.href}>{stage.label}</Link></td><td><Link href={stage.href}>{stage.value.toLocaleString("pt-BR")}</Link></td><td><Link href={stage.href}>{stage.denominator?.toLocaleString("pt-BR") ?? "—"}</Link></td><td><Link href={stage.href}>{stage.percentage === null ? "—" : `${stage.percentage.toLocaleString("pt-BR")}%`}</Link></td></tr>)}</tbody></table></div></details>
   </>;
 }
