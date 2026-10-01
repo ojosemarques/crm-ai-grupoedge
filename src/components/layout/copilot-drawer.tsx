@@ -74,6 +74,31 @@ function PreviewDetails({ preview }: Readonly<{ preview: ProposalPreview }>) {
   </>;
 }
 
+function historyTitle(preview: ProposalPreview) {
+  return "kind" in preview ? preview.title : preview.summary;
+}
+
+function HistoryEntry({ item, onReview }: Readonly<{ item: HistoryItem; onReview: () => void }>) {
+  const canReview = ["DRAFT", "EXECUTING", "EXECUTION_FAILED"].includes(item.status);
+  return <details className={styles.historyItem} data-proposal-id={item.id}>
+    <summary>
+      <span className={styles.historyStatus} data-status={item.status} aria-hidden="true" />
+      <span className={styles.historyCopy}><strong title={historyTitle(item.preview)}>{historyTitle(item.preview)}</strong><small>{labels[item.type as keyof typeof labels] ?? item.type} · {dateTime(item.createdAt)}</small></span>
+      <span className={styles.historyState} data-status={item.status}>{statusLabels[item.status] ?? item.status}</span>
+      <span className={styles.historyChevron} aria-hidden="true">⌄</span>
+    </summary>
+    <div className={styles.historyDetails}>
+      <div className={styles.historyDates}>
+        <span>Criada em {dateTime(item.createdAt)}</span>
+        {item.approvedAt ? <span>Confirmada em {dateTime(item.approvedAt)}</span> : null}
+        {item.cancelledAt ? <span>Cancelada em {dateTime(item.cancelledAt)}</span> : null}
+      </div>
+      <div className={styles.proposal}><PreviewDetails preview={item.preview} /></div>
+      {canReview ? <button className={styles.historyReview} onClick={onReview} type="button">Revisar na conversa <span aria-hidden="true">→</span></button> : null}
+    </div>
+  </details>;
+}
+
 export function CopilotDrawer({ open, onClose }: Readonly<{ open: boolean; onClose: () => void }>) {
   const router = useRouter();
   const [question, setQuestion] = useState("");
@@ -156,14 +181,19 @@ export function CopilotDrawer({ open, onClose }: Readonly<{ open: boolean; onClo
     finally { setBusy(false); setRefreshCount((count) => count + 1); }
   }
 
+  const attentionHistory = screen?.history.filter((item) => ["DRAFT", "EXECUTING", "EXECUTION_FAILED"].includes(item.status)) ?? [];
+  const recentHistory = screen?.history.filter((item) => !["DRAFT", "EXECUTING", "EXECUTION_FAILED"].includes(item.status)) ?? [];
+
   return <aside aria-hidden={!open} aria-label="Chat do Copilot" className={styles.drawer} data-open={open} id="copilot-drawer" inert={!open}>
     <header className={styles.header}><span className={styles.copilotIcon}><Icon name="copilot" size={18} /></span><div><strong>Copilot</strong><small>{screen?.mode === "LOCAL" ? "Consultas e ações locais" : "Dados autorizados do CRM"}</small></div><button aria-label="Fechar Copilot" className={styles.close} onClick={onClose} type="button">×</button></header>
     <nav aria-label="Seções do Copilot" className={styles.tabs}>{([['chat', 'Conversas'], ['history', 'Histórico']] as const).map(([value, label]) => <button aria-current={tab === value ? "page" : undefined} key={value} onClick={() => setTab(value)} type="button">{label}</button>)}</nav>
     <div className={styles.conversation}>
       {tab === "history" ? <>
-        <p className={styles.panelDescription}>Suas últimas 30 propostas autorizadas ficam salvas nesta empresa, incluindo confirmações e cancelamentos.</p>
-        <button className={styles.refreshButton} disabled={busy} onClick={() => setRefreshCount((count) => count + 1)} type="button">Atualizar histórico</button>
-        {screen?.history.length ? screen.history.map((item) => <article className={styles.historyItem} data-proposal-id={item.id} key={item.id}><strong>{labels[item.type as keyof typeof labels] ?? item.type}</strong><span>{statusLabels[item.status] ?? item.status}</span><small>Criada em {dateTime(item.createdAt)}{item.approvedAt ? ` · Confirmada em ${dateTime(item.approvedAt)}` : ""}{item.cancelledAt ? ` · Cancelada em ${dateTime(item.cancelledAt)}` : ""}</small><details><summary>Ver dados e efeitos</summary><div className={styles.proposal}><PreviewDetails preview={item.preview} /></div></details>{["DRAFT", "EXECUTING", "EXECUTION_FAILED"].includes(item.status) ? <button onClick={() => setTab("chat")} type="button">Revisar na conversa</button> : null}</article>) : <p className={styles.panelDescription}>{screen ? "Nenhuma proposta no seu histórico." : "Carregando histórico…"}</p>}
+        <div className={styles.historyHeader}><div><strong>Histórico do Copilot</strong><span>{screen?.history.length ?? 0} registros nesta empresa</span></div><button aria-label="Atualizar histórico" className={styles.refreshButton} disabled={busy} onClick={() => setRefreshCount((count) => count + 1)} title="Atualizar histórico" type="button">↻</button></div>
+        {screen?.history.length ? <div className={styles.historyList}>
+          {attentionHistory.length ? <section className={styles.historySection}><h3>Aguardando ação <span>{attentionHistory.length}</span></h3>{attentionHistory.map((item) => <HistoryEntry item={item} key={item.id} onReview={() => setTab("chat")} />)}</section> : null}
+          {recentHistory.length ? <section className={styles.historySection}><h3>Histórico recente <span>{recentHistory.length}</span></h3>{recentHistory.map((item) => <HistoryEntry item={item} key={item.id} onReview={() => setTab("chat")} />)}</section> : null}
+        </div> : <div className={styles.historyEmpty}><span aria-hidden="true">◇</span><strong>{screen ? "Nenhuma ação registrada" : "Carregando histórico…"}</strong><p>{screen ? "As ações preparadas e confirmadas pelo Copilot aparecerão aqui." : "Buscando os registros desta empresa."}</p></div>}
       </> : null}
       {tab === "chat" ? <div aria-live="polite">
         {!messages.length ? <div className={styles.welcome}><span><Icon name="copilot" size={24} /></span><strong>Como posso ajudar?</strong><p>Converse para consultar dados, cadastrar leads e clientes, mover etapas ou registrar lançamentos. Eu preparo a prévia e você confirma aqui.</p><div className={styles.suggestions}>{suggestions.map((suggestion) => <button disabled={busy} key={suggestion} onClick={() => void ask(suggestion)} type="button">{suggestion}</button>)}</div></div> : messages.map((message) => <article className={styles.message} data-role={message.role} key={message.id}><div>{message.text}</div>{message.result?.proposal ? (() => {
