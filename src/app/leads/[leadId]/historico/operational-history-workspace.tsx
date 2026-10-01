@@ -263,6 +263,7 @@ export function OperationalHistoryWorkspace({
   const [nextQueueLeadLoadedForId, setNextQueueLeadLoadedForId] = useState<string | null>(null);
   const [quickStageId, setQuickStageId] = useState("");
   const [quickOperationCompletedForId, setQuickOperationCompletedForId] = useState<string | null>(null);
+  const [quickFlowOpen, setQuickFlowOpen] = useState(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
@@ -743,17 +744,30 @@ export function OperationalHistoryWorkspace({
               <h2 className="mt-1 text-lg font-semibold" id="complete-next-title">Concluir atendimento e abrir próximo</h2>
               <p className="mt-1 text-sm text-muted-foreground">Registre o resultado, defina a próxima ação e avance sem voltar para a fila.</p>
             </div>
-            <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm" data-next-lead-id={currentNextQueueLead?.id}>
-              <span className="block text-xs text-muted-foreground">Próximo na fila</span>
-              <strong>{nextQueueLeadLoaded ? currentNextQueueLead?.fullName ?? "Fila concluída" : "Preparando…"}</strong>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm" data-next-lead-id={currentNextQueueLead?.id}>
+                <span className="block text-xs text-muted-foreground">Próximo na fila</span>
+                <strong>{nextQueueLeadLoaded ? currentNextQueueLead?.fullName ?? "Fila concluída" : "Preparando…"}</strong>
+              </div>
+              <Button
+                aria-controls="complete-next-content"
+                aria-expanded={quickFlowOpen}
+                onClick={() => setQuickFlowOpen((current) => !current)}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                {quickFlowOpen ? "Fechar fluxo" : "Abrir fluxo"}
+              </Button>
             </div>
           </div>
-          {quickCurrentTask ? (
-            <p className="mt-4 rounded-md border bg-muted/20 p-3 text-sm">
-              Ação atual: <strong>{quickCurrentTask.title}</strong>. Ao concluir, ela será encerrada com o resultado abaixo.
-            </p>
-          ) : null}
-          <form className="mt-4 grid gap-4" onSubmit={concludeAndOpenNext}>
+          <div hidden={!quickFlowOpen} id="complete-next-content">
+            {quickCurrentTask ? (
+              <p className="mt-4 rounded-md border bg-muted/20 p-3 text-sm">
+                Ação atual: <strong>{quickCurrentTask.title}</strong>. Ao concluir, ela será encerrada com o resultado abaixo.
+              </p>
+            ) : null}
+            <form className="mt-4 grid gap-4" onSubmit={concludeAndOpenNext}>
             {!quickCurrentTask || quickCurrentTask.kind === "IMMEDIATE_CALL" ? (
               <div className="grid gap-4 sm:grid-cols-3">
                 <label className="text-sm">Atividade realizada<select className={inputClass} defaultValue="CALL_UNANSWERED" name="activityType"><option value="CALL_UNANSWERED">Ligação não atendida</option><option value="CALL_CONNECTED">Ligação atendida</option><option value="MESSAGE_SENT">Mensagem enviada</option><option value="EMAIL">E-mail enviado</option><option value="NOTE">Nota interna</option></select></label>
@@ -777,7 +791,8 @@ export function OperationalHistoryWorkspace({
               <p className="text-xs text-muted-foreground">O próximo lead já está sendo preparado em segundo plano.</p>
               <Button disabled={pending} type="submit"><Icon name="seta-direita" size={14} />{pending ? "Concluindo…" : "Concluir e próximo"}</Button>
             </div>
-          </form>
+            </form>
+          </div>
         </article>
       ) : null}
 
