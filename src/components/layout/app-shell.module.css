@@ -37,5 +37,4 @@
 @media (max-width: 390px) { .mobileDock a { font-size: 8px; }.mobileDock { padding-inline: 2px; } }
 @media (max-width: 800px) { .actions .iconButton { display: flex; } }
 @media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }
-.companyButton { display: inline-flex; align-items: center; gap: 6px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; color: inherit; text-decoration: none; padding: 8px; border: 1px solid var(--border-subtle, #ddd); border-radius: 8px; }
-@media (max-width: 800px) { .brand > span { width: 100px; } .companyButton { max-width: 60px; font-size: 11px; padding: 7px; } }
+@media (max-width: 800px) { .brand > span { width: 100px; } }

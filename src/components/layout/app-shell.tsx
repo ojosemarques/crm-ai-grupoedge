@@ -223,7 +223,6 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
             ))}
           </nav>
           <div className={styles.actions}>
-            <IntentLink aria-label="Trocar empresa" className={styles.companyButton} href="/hub" title="Escolher empresa">{session?.workspace.name ?? "Empresas"}<span aria-hidden="true">⌄</span></IntentLink>
             {session ? <GlobalSearch /> : null}
             {canCreateLead ? <IntentLink aria-label="Novo lead" className={styles.newButton} href="/leads/entrada"><Icon name="mais" size={14} /><span>Novo</span></IntentLink> : null}
             <IntentLink aria-label="Notificações" className={styles.iconButton} href="/notificacoes"><Icon name="notificacoes" size={17} /></IntentLink>
