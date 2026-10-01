@@ -50,7 +50,6 @@ const navigationGroups: ReadonlyArray<Readonly<{
       { href: "/agenda", icon: "agenda", label: "Agenda" },
       { href: "/inbox", icon: "inbox", label: "Conversas" },
       { href: "/atividades", icon: "meu-dia", label: "Atividades", roles: commercialRoles },
-      { href: "/automacoes", icon: "automacoes", label: "Automações", permission: "automations.read" },
     ],
   },
   {
