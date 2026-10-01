@@ -1132,29 +1132,34 @@ export function OperationalHistoryWorkspace({
                       : taskStatusPresentation[task.status] ?? { label: task.status, className: "border-slate-300 bg-slate-100 text-slate-700" };
                     return (
                       <li className={`rounded-lg border p-4 ${priority.cardClassName}`} key={task.id}>
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="font-semibold">{task.title}</p>
-                            <p className="mt-1 text-xs text-muted-foreground">{taskKindLabels[task.kind] ?? task.kind}</p>
+                        <details className="group">
+                          <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-3 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                            <div>
+                              <p className="font-semibold">{task.title}</p>
+                              <p className="mt-1 text-xs text-muted-foreground">{taskKindLabels[task.kind] ?? task.kind}</p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${priority.badgeClassName}`} title={priority.detail}>
+                                Prioridade {priority.label}
+                              </span>
+                              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${status.className}`}>
+                                {status.label}
+                              </span>
+                              <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-full border bg-background/80 text-sm transition-transform group-open:rotate-180">⌄</span>
+                            </div>
+                          </summary>
+                          <div className="pt-3">
+                            <dl className="grid gap-3 rounded-md border border-black/5 bg-background/70 p-3 text-sm sm:grid-cols-2">
+                              <div><dt className="text-xs text-muted-foreground">Prazo</dt><dd className="mt-1 font-medium">{formatDate(task.dueAt, operations.timeZone)}</dd></div>
+                              <div><dt className="text-xs text-muted-foreground">Nível de prioridade</dt><dd className="mt-1 font-medium">{priority.label} · {priority.detail}</dd></div>
+                              {task.completedAt ? <div><dt className="text-xs text-muted-foreground">Concluída em</dt><dd className="mt-1 font-medium">{formatDate(task.completedAt, operations.timeZone)}</dd></div> : null}
+                            </dl>
+                            {task.description ? <p className="mt-3 text-sm text-muted-foreground">{task.description}</p> : null}
+                            {task.result ? <p className="mt-3 rounded-md border bg-background/70 p-3 text-sm"><strong>Resultado:</strong> {task.result}</p> : null}
+                            {operations.permissions.canManageTasks && (task.status === "OPEN" || task.status === "IN_PROGRESS") && task.kind !== "IMMEDIATE_CALL" ? <form className="mt-3 grid gap-3" onSubmit={(event) => submitCompletion(event, task.id)}><label className="text-sm">Resultado da conclusão<input className={inputClass} name="result" required /></label><NextActionFields /><Button disabled={pending} size="sm" type="submit">Concluir tarefa</Button></form> : null}
+                            {task.kind === "IMMEDIATE_CALL" && (task.status === "OPEN" || task.status === "IN_PROGRESS") ? <p className="mt-3 text-xs text-muted-foreground">Conclua registrando a ligação, com a próxima ação quando necessária.</p> : null}
                           </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${priority.badgeClassName}`} title={priority.detail}>
-                              Prioridade {priority.label}
-                            </span>
-                            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${status.className}`}>
-                              {status.label}
-                            </span>
-                          </div>
-                        </div>
-                        <dl className="mt-3 grid gap-3 rounded-md border border-black/5 bg-background/70 p-3 text-sm sm:grid-cols-2">
-                          <div><dt className="text-xs text-muted-foreground">Prazo</dt><dd className="mt-1 font-medium">{formatDate(task.dueAt, operations.timeZone)}</dd></div>
-                          <div><dt className="text-xs text-muted-foreground">Nível de prioridade</dt><dd className="mt-1 font-medium">{priority.label} · {priority.detail}</dd></div>
-                          {task.completedAt ? <div><dt className="text-xs text-muted-foreground">Concluída em</dt><dd className="mt-1 font-medium">{formatDate(task.completedAt, operations.timeZone)}</dd></div> : null}
-                        </dl>
-                        {task.description ? <p className="mt-3 text-sm text-muted-foreground">{task.description}</p> : null}
-                        {task.result ? <p className="mt-3 rounded-md border bg-background/70 p-3 text-sm"><strong>Resultado:</strong> {task.result}</p> : null}
-                        {operations.permissions.canManageTasks && (task.status === "OPEN" || task.status === "IN_PROGRESS") && task.kind !== "IMMEDIATE_CALL" ? <form className="mt-3 grid gap-3" onSubmit={(event) => submitCompletion(event, task.id)}><label className="text-sm">Resultado da conclusão<input className={inputClass} name="result" required /></label><NextActionFields /><Button disabled={pending} size="sm" type="submit">Concluir tarefa</Button></form> : null}
-                        {task.kind === "IMMEDIATE_CALL" && (task.status === "OPEN" || task.status === "IN_PROGRESS") ? <p className="mt-3 text-xs text-muted-foreground">Conclua registrando a ligação, com a próxima ação quando necessária.</p> : null}
+                        </details>
                       </li>
                     );
                   })}
