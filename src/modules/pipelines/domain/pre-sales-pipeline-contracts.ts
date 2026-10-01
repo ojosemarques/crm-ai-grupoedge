@@ -54,6 +54,26 @@ export type LeadPipelineStageColumn = Readonly<{
   position: number;
   count: number;
   displayedCount: number;
+  health: Readonly<{
+    stalled: number;
+    averageHoursInStage: number;
+    conversionToNextPercent: number | null;
+    withoutTask: number;
+    withoutRecentContact: number;
+    aboveExpectedLimit: number;
+    actionDueToday: number;
+    expectedLimitHours: number | null;
+    conversionPeriodDays: number;
+  }>;
+  leads: readonly LeadPipelineCard[];
+}>;
+
+export type LeadPipelineStagePage = Readonly<{
+  stageId: string;
+  offset: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
   leads: readonly LeadPipelineCard[];
 }>;
 

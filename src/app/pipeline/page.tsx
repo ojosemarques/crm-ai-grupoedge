@@ -41,7 +41,7 @@ export default async function PipelinePage({ searchParams }: Readonly<{ searchPa
     <main className="page-canvas">
       <PageHeader description="Acompanhe os contatos e avance cada conversa até a próxima etapa." eyebrow="Negócios" title="Pré-vendas" />
       <BusinessPipelineSwitcher pipelines={pipelines} selectedPipelineId={screen.pipelineId} />
-      <PreSalesPipelineWorkspace initialView={first(params.view) === "list" ? "list" : "board"} screen={screen} />
+      <PreSalesPipelineWorkspace initialView={first(params.view) === "list" ? "list" : "board"} key={screen.generatedAt} screen={screen} />
     </main>
   );
 }

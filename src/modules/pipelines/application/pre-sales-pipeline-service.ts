@@ -21,6 +21,7 @@ import {
 import {
   leadStageCodes,
   type LeadPipelineCard,
+  type LeadPipelineStagePage,
   type LeadPipelineState,
   type LeadStageCode,
   type PreSalesPipelineScreen,
@@ -31,6 +32,7 @@ import type { ResourceScope } from "@/modules/users/permissions/authorization-se
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 import { z } from "zod";
 
 type AuthorizationPort = Readonly<{
@@ -55,6 +57,24 @@ const screenQuerySchema = z.object({
 }).strict();
 
 const leadStateSchema = z.object({ leadId: z.string().uuid() }).strict();
+
+const stagePageSchema = screenQuerySchema.extend({
+  stageId: z.string().uuid(),
+  offset: z.coerce.number().int().min(0).max(100_000).default(0),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+}).strict();
+
+const expectedStageHours: Readonly<Partial<Record<LeadStageCode, number>>> = Object.freeze({
+  NEW: 24,
+  TRYING_CONTACT: 72,
+  CONNECTED: 48,
+  IN_QUALIFICATION: 72,
+  QUALIFIED: 72,
+  MEETING_SCHEDULED: 168,
+  NURTURING: 720,
+});
+const staleHours = 72;
+const conversionPeriodDays = 90;
 
 const transitionSchema = z.object({
   leadId: z.string().uuid(),
@@ -160,6 +180,42 @@ function activeTaskWhere(workspaceId: string, leadId: string): Prisma.TaskWhereI
     leadId,
     status: { in: ["OPEN", "IN_PROGRESS"] },
     deletedAt: null,
+  };
+}
+
+const pipelineCardInclude = {
+  owner: { select: { user: { select: { displayName: true } } } },
+  queue: { select: { name: true } },
+  currentScore: { select: { leadScore: { select: { score: true, priorityBandCode: true } } } },
+  tasks: {
+    where: { status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null },
+    orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    take: 1,
+    select: { dueAt: true, title: true },
+  },
+  pactoRevisions: {
+    where: { kind: "VALIDATED" },
+    orderBy: [{ revisionNumber: "desc" }, { id: "desc" }],
+    take: 1,
+    select: { isQualificationReady: true },
+  },
+} satisfies Prisma.LeadInclude;
+
+type PipelineCardRow = Prisma.LeadGetPayload<{ include: typeof pipelineCardInclude }>;
+
+function toPipelineCard(lead: PipelineCardRow, stageName: string): LeadPipelineCard {
+  const task = lead.tasks[0] ?? null;
+  return {
+    id: lead.id,
+    fullName: lead.fullName,
+    jobTitle: lead.jobTitle,
+    priorityCode: lead.currentScore?.leadScore.priorityBandCode ?? null,
+    score: lead.currentScore?.leadScore.score ?? null,
+    responsibleName: lead.owner?.user.displayName ?? lead.queue?.name ?? "Responsável não identificado",
+    currentStageName: stageName,
+    nextActionAt: task?.dueAt.toISOString() ?? null,
+    nextActionDescription: task?.title ?? null,
+    pactoReady: lead.pactoRevisions[0]?.isQualificationReady ?? false,
   };
 }
 
@@ -520,7 +576,9 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       resourceType: "LeadPipeline",
       memberId: context.memberId,
     };
-    const [workspace, groupedCounts, write, correct, ownerRefs, queueRefs, stageRows] = await Promise.all([
+    const now = options.now();
+    const historySince = new Date(now.getTime() - conversionPeriodDays * 86_400_000);
+    const [workspace, groupedCounts, write, correct, ownerRefs, queueRefs, stageRows, healthRows, transitionRows] = await Promise.all([
       options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } }),
       options.database.lead.groupBy({ by: ["currentStageId"], where: baseWhere, _count: { _all: true } }),
       options.authorization.authorize(context, PermissionKeys.LEADS_WRITE, pipelineResource),
@@ -534,25 +592,25 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
           where: { ...baseWhere, currentStageId: stage.id },
           orderBy: [{ nextActionAt: "asc" }, { lastActivityAt: "asc" }, { id: "asc" }],
           take: cardLimitPerStage,
-          include: {
-            owner: { select: { user: { select: { displayName: true } } } },
-            queue: { select: { name: true } },
-            currentScore: { select: { leadScore: { select: { score: true, priorityBandCode: true } } } },
-            tasks: {
-              where: { status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null },
-              orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
-              take: 1,
-              select: { dueAt: true, title: true },
-            },
-            pactoRevisions: {
-              where: { kind: "VALIDATED" },
-              orderBy: [{ revisionNumber: "desc" }, { id: "desc" }],
-              take: 1,
-              select: { isQualificationReady: true },
-            },
-          },
+          include: pipelineCardInclude,
         });
       })),
+      options.database.lead.findMany({
+        where: baseWhere,
+        select: {
+          id: true,
+          currentStageId: true,
+          createdAt: true,
+          lastActivityAt: true,
+          stageHistory: { where: { exitedAt: null }, orderBy: { enteredAt: "desc" }, take: 1, select: { enteredAt: true } },
+          tasks: { where: { status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null }, orderBy: [{ dueAt: "asc" }, { id: "asc" }], take: 1, select: { dueAt: true } },
+        },
+      }),
+      options.database.stageHistory.findMany({
+        where: { workspaceId: context.workspaceId, pipelineId: pipeline.id, leadId: { not: null }, enteredAt: { gte: historySince }, lead: baseWhere },
+        orderBy: [{ leadId: "asc" }, { enteredAt: "asc" }, { id: "asc" }],
+        select: { leadId: true, stageId: true, enteredAt: true, exitedAt: true },
+      }),
     ]);
     const [members, queues] = await Promise.all([
       options.database.workspaceMember.findMany({
@@ -572,22 +630,19 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       if (!isLeadStageCode(stage.leadStageCode)) return [];
       const stageCode = stage.leadStageCode;
       const rows = rowsByStage.get(stage.id) ?? [];
-      const leads: LeadPipelineCard[] = rows.map((lead) => {
-        const task = lead.tasks[0] ?? null;
-        const pactoReady = lead.pactoRevisions[0]?.isQualificationReady ?? false;
-        return {
-          id: lead.id,
-          fullName: lead.fullName,
-          jobTitle: lead.jobTitle,
-          priorityCode: lead.currentScore?.leadScore.priorityBandCode ?? null,
-          score: lead.currentScore?.leadScore.score ?? null,
-          responsibleName: lead.owner?.user.displayName ?? lead.queue?.name ?? "Responsável não identificado",
-          currentStageName: stage.name,
-          nextActionAt: task?.dueAt.toISOString() ?? null,
-          nextActionDescription: task?.title ?? null,
-          pactoReady,
-        };
-      });
+      const leads: LeadPipelineCard[] = rows.map((lead) => toPipelineCard(lead, stage.name));
+      const stageHealthRows = healthRows.filter((lead) => lead.currentStageId === stage.id);
+      const expectedLimit = expectedStageHours[stageCode] ?? null;
+      const today = workspaceDayRange(workspaceDateAt(now, workspace.timeZone), workspace.timeZone);
+      const durations = stageHealthRows.map((lead) => Math.max(0, now.getTime() - (lead.stageHistory[0]?.enteredAt ?? lead.createdAt).getTime()) / 3_600_000);
+      const stageIndex = pipeline.stages.findIndex((candidate) => candidate.id === stage.id);
+      const nextStageId = pipeline.stages[stageIndex + 1]?.id ?? null;
+      const exits = transitionRows.filter((row) => row.stageId === stage.id && row.exitedAt !== null);
+      const nextByEntry = new Map(transitionRows.map((row, index) => [`${row.leadId}:${row.enteredAt.toISOString()}`, transitionRows[index + 1] ?? null]));
+      const converted = exits.filter((row) => {
+        const next = nextByEntry.get(`${row.leadId}:${row.enteredAt.toISOString()}`);
+        return Boolean(nextStageId && next?.leadId === row.leadId && next.stageId === nextStageId);
+      }).length;
       return [{
         id: stage.id,
         code: stageCode,
@@ -595,6 +650,17 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         position: stage.position,
         count: counts.get(stage.id) ?? 0,
         displayedCount: leads.length,
+        health: {
+          stalled: stageHealthRows.filter((lead) => Math.max(lead.lastActivityAt.getTime(), (lead.stageHistory[0]?.enteredAt ?? lead.createdAt).getTime()) < now.getTime() - staleHours * 3_600_000).length,
+          averageHoursInStage: durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0,
+          conversionToNextPercent: exits.length ? Math.round((converted / exits.length) * 1_000) / 10 : null,
+          withoutTask: stageHealthRows.filter((lead) => lead.tasks.length === 0).length,
+          withoutRecentContact: stageHealthRows.filter((lead) => lead.lastActivityAt.getTime() < now.getTime() - staleHours * 3_600_000).length,
+          aboveExpectedLimit: expectedLimit === null ? 0 : durations.filter((hours) => hours > expectedLimit).length,
+          actionDueToday: stageHealthRows.filter((lead) => lead.tasks[0] && lead.tasks[0].dueAt >= today.start && lead.tasks[0].dueAt < today.end).length,
+          expectedLimitHours: expectedLimit,
+          conversionPeriodDays,
+        },
         leads,
       }];
     });
@@ -612,6 +678,60 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       stages: columns,
       canWrite: write.allowed,
       canCorrect: correct.allowed,
+    });
+  }
+
+  async function getStagePage(
+    context: AuthenticatedContext,
+    payload: unknown,
+  ): Promise<LeadPipelineStagePage> {
+    const parsed = stagePageSchema.safeParse(payload);
+    if (!parsed.success) invalidInput(parsed.error);
+    if (parsed.data.responsible) {
+      const [kind, id, extra] = parsed.data.responsible.split(":");
+      if (extra || (kind !== "member" && kind !== "queue") || !z.string().uuid().safeParse(id).success) invalidInput("Responsável inválido.");
+    }
+    const [scope, pipeline] = await Promise.all([
+      resolveLeadVisibilityScope(options.database, options.authorization, context, PermissionKeys.LEADS_READ),
+      getPipeline(context.workspaceId, parsed.data.pipelineId),
+    ]);
+    const stage = pipeline.stages.find((item) => item.id === parsed.data.stageId && isLeadStageCode(item.leadStageCode));
+    if (!stage) notFound("Etapa do pipeline não encontrada.");
+    const responsibleFilter: Prisma.LeadWhereInput = parsed.data.responsible.startsWith("member:")
+      ? { ownerMemberId: parsed.data.responsible.slice(7) }
+      : parsed.data.responsible.startsWith("queue:")
+        ? { queueId: parsed.data.responsible.slice(6) }
+        : {};
+    const searchFilter: Prisma.LeadWhereInput = parsed.data.q ? { OR: [
+      { fullName: { contains: parsed.data.q, mode: "insensitive" } },
+      { jobTitle: { contains: parsed.data.q, mode: "insensitive" } },
+      { organizationName: { contains: parsed.data.q, mode: "insensitive" } },
+    ] } : {};
+    const priorityFilter: Prisma.LeadWhereInput = parsed.data.priority === "ALL" ? {} : { currentScore: { leadScore: { priorityBandCode: parsed.data.priority } } };
+    const where: Prisma.LeadWhereInput = {
+      workspaceId: context.workspaceId,
+      pipelineId: pipeline.id,
+      currentStageId: stage.id,
+      deletedAt: null,
+      AND: [leadVisibilityWhere(context, scope), responsibleFilter, searchFilter, priorityFilter],
+    };
+    const [total, rows] = await Promise.all([
+      options.database.lead.count({ where }),
+      options.database.lead.findMany({
+        where,
+        orderBy: [{ nextActionAt: "asc" }, { lastActivityAt: "asc" }, { id: "asc" }],
+        skip: parsed.data.offset,
+        take: parsed.data.limit,
+        include: pipelineCardInclude,
+      }),
+    ]);
+    return Object.freeze({
+      stageId: stage.id,
+      offset: parsed.data.offset,
+      limit: parsed.data.limit,
+      total,
+      hasMore: parsed.data.offset + rows.length < total,
+      leads: rows.map((lead) => toPipelineCard(lead, stage.name)),
     });
   }
 
@@ -663,7 +783,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
     return result;
   }
 
-  return Object.freeze({ getScreen, getLeadState, transition });
+  return Object.freeze({ getScreen, getStagePage, getLeadState, transition });
 }
 
 let service: ReturnType<typeof createPreSalesPipelineService> | undefined;

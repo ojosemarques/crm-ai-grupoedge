@@ -16,6 +16,7 @@ import type {
   LeadPipelineCard,
   LeadPipelineState,
   LeadPipelineStageColumn,
+  LeadPipelineStagePage,
   PreSalesPipelineScreen,
   StageTransitionOption,
 } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
@@ -176,6 +177,7 @@ export function PreSalesPipelineWorkspace({
   initialView,
 }: Readonly<{ screen: PreSalesPipelineScreen; initialView: "board" | "list" }>) {
   const router = useRouter();
+  const [stages, setStages] = useState<readonly LeadPipelineStageColumn[]>(screen.stages);
   const [view, setView] = useState(initialView);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedLeadState, setSelectedLeadState] = useState<LeadPipelineState | null>(null);
@@ -185,16 +187,48 @@ export function PreSalesPipelineWorkspace({
   const [dropStageId, setDropStageId] = useState<string | null>(null);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [loadingStageId, setLoadingStageId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
   const entryOptionsRequest = useRef<Promise<LeadEntryOptions> | null>(null);
   const leadStateRequests = useRef(new Map<string, Readonly<{ expiresAt: number; request: Promise<LeadPipelineState> }>>());
   const leadCardPrefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchControls = useTouchPipelineControls();
-  const cards = useMemo(() => allCards(screen.stages), [screen.stages]);
+  const cards = useMemo(() => allCards(stages), [stages]);
   const selectedLead = cards.find((lead) => lead.id === selectedLeadId) ?? null;
   const visibleStages = screen.filters.stageCode === "ALL"
-    ? screen.stages
-    : screen.stages.filter((stage) => stage.code === screen.filters.stageCode);
+    ? stages
+    : stages.filter((stage) => stage.code === screen.filters.stageCode);
+
+  async function loadMore(stage: LeadPipelineStageColumn) {
+    setLoadingStageId(stage.id);
+    setNotice(null);
+    try {
+      const query = new URLSearchParams({
+        pipelineId: screen.pipelineId,
+        q: screen.filters.q,
+        responsible: screen.filters.responsible,
+        priority: screen.filters.priority,
+        stageCode: screen.filters.stageCode,
+        offset: String(stage.leads.length),
+        limit: String(screen.cardLimitPerStage),
+      });
+      const response = await fetch(`/api/pipeline-stages/${stage.id}?${query.toString()}`, { cache: "no-store" });
+      const page = await responseResult<LeadPipelineStagePage>(response);
+      setStages((current) => current.map((item) => item.id === stage.id ? {
+        ...item,
+        leads: [...item.leads, ...page.leads.filter((lead) => !item.leads.some((existing) => existing.id === lead.id))],
+        displayedCount: Math.min(page.total, item.leads.length + page.leads.length),
+      } : item));
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "Não foi possível carregar mais cards." });
+    } finally {
+      setLoadingStageId(null);
+    }
+  }
+
+  function columnScrollKey(stageId: string) {
+    return `pipeline-scroll:${screen.pipelineId}:${screen.filters.q}:${screen.filters.responsible}:${screen.filters.priority}:${screen.filters.stageCode}:${stageId}`;
+  }
 
   const loadEntryOptions = useCallback(() => {
     if (entryOptionsRequest.current) return entryOptionsRequest.current;
@@ -426,8 +460,20 @@ export function PreSalesPipelineWorkspace({
               onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
               onDrop={(event) => void dropOnStage(event, stage)}
             >
-              <header className={styles.laneHeader}><div><h2>{stage.name}</h2><span>{stage.leads.filter((lead) => lead.nextActionAt).length} atividades agendadas</span></div><span aria-label={`${stage.count} leads nesta etapa`} className={styles.count}>{stage.count}</span></header>
-              <div className={styles.cards}>
+              <header className={styles.laneHeader}><div><h2>{stage.name}</h2><span>{stage.health.actionDueToday} precisam de ação hoje</span></div><span aria-label={`${stage.count} leads nesta etapa`} className={styles.count}>{stage.count}</span></header>
+              <details className={styles.healthPanel}>
+                <summary>Saúde da etapa</summary>
+                <dl>
+                  <div><dt>Parados</dt><dd>{stage.health.stalled}</dd></div>
+                  <div><dt>Tempo médio</dt><dd>{stage.health.averageHoursInStage}h</dd></div>
+                  <div><dt>Conversão</dt><dd>{stage.health.conversionToNextPercent === null ? "—" : `${stage.health.conversionToNextPercent}%`}</dd></div>
+                  <div><dt>Sem tarefa</dt><dd>{stage.health.withoutTask}</dd></div>
+                  <div><dt>Sem contato 72h</dt><dd>{stage.health.withoutRecentContact}</dd></div>
+                  <div><dt>Acima do limite</dt><dd>{stage.health.aboveExpectedLimit}</dd></div>
+                </dl>
+                <p>Conversão dos últimos {stage.health.conversionPeriodDays} dias{stage.health.expectedLimitHours ? ` · limite ${stage.health.expectedLimitHours}h` : ""}.</p>
+              </details>
+              <div className={styles.cards} onScroll={(event) => sessionStorage.setItem(columnScrollKey(stage.id), String(event.currentTarget.scrollTop))} ref={(node) => { if (node && node.scrollTop === 0) node.scrollTop = Number(sessionStorage.getItem(columnScrollKey(stage.id)) ?? 0); }}>
                 {stage.leads.map((lead) => (
                   <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={!touchControls && screen.canWrite && !pending} key={lead.id} onClick={() => { if (!pending) openLeadCard(lead); }} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)} onFocusCapture={() => prefetchLeadCard(lead)} onMouseEnter={() => scheduleLeadCardPrefetch(lead)} onMouseLeave={cancelLeadCardPrefetch} onTouchStart={() => prefetchLeadCard(lead)}>
                     <div className={styles.cardBody}>
@@ -447,7 +493,7 @@ export function PreSalesPipelineWorkspace({
                   </article>
                 ))}
                 {stage.displayedCount === 0 ? <div className={styles.emptyLane}><Icon name="pipeline" size={20} /><p>Nenhum negócio nesta etapa</p><span>Os negócios aparecerão aqui ao entrar nesta fase.</span></div> : null}
-                {stage.count > stage.displayedCount ? <Link className={styles.moreCards} href="/leads">Ver todos os {stage.count} leads</Link> : null}
+                {stage.count > stage.leads.length ? <button className={styles.moreCards} disabled={loadingStageId === stage.id} onClick={() => void loadMore(stage)} type="button">{loadingStageId === stage.id ? "Carregando…" : `Carregar mais (${stage.leads.length} de ${stage.count})`}</button> : null}
               </div>
             </section>
           ))}
