@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -20,6 +20,7 @@ import type {
   PreSalesPipelineScreen,
   StageTransitionOption,
 } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
+import { movePipelineCard } from "@/modules/pipelines/domain/pipeline-optimistic";
 
 function formatDate(value: string | null, timeZone: string) {
   if (!value) return "Ausente";
@@ -189,9 +190,9 @@ export function PreSalesPipelineWorkspace({
   const [pending, setPending] = useState(false);
   const [loadingStageId, setLoadingStageId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
+  const [, startRefresh] = useTransition();
   const entryOptionsRequest = useRef<Promise<LeadEntryOptions> | null>(null);
   const leadStateRequests = useRef(new Map<string, Readonly<{ expiresAt: number; request: Promise<LeadPipelineState> }>>());
-  const leadCardPrefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchControls = useTouchPipelineControls();
   const cards = useMemo(() => allCards(stages), [stages]);
   const selectedLead = cards.find((lead) => lead.id === selectedLeadId) ?? null;
@@ -248,16 +249,6 @@ export function PreSalesPipelineWorkspace({
     router.prefetch(leadCardHref(lead));
   }
 
-  function scheduleLeadCardPrefetch(lead: LeadPipelineCard) {
-    if (leadCardPrefetchTimer.current) clearTimeout(leadCardPrefetchTimer.current);
-    leadCardPrefetchTimer.current = setTimeout(() => prefetchLeadCard(lead), 120);
-  }
-
-  function cancelLeadCardPrefetch() {
-    if (leadCardPrefetchTimer.current) clearTimeout(leadCardPrefetchTimer.current);
-    leadCardPrefetchTimer.current = null;
-  }
-
   const getLeadState = useCallback((leadId: string) => {
     const cached = leadStateRequests.current.get(leadId);
     if (cached && cached.expiresAt > Date.now()) return cached.request;
@@ -270,6 +261,11 @@ export function PreSalesPipelineWorkspace({
     });
     return request;
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadEntryOptions().catch(() => undefined); }, 150);
+    return () => window.clearTimeout(timer);
+  }, [loadEntryOptions]);
 
   function prefetchLeadState(lead: LeadPipelineCard) {
     void getLeadState(lead.id).catch(() => undefined);
@@ -291,6 +287,8 @@ export function PreSalesPipelineWorkspace({
       origin: "PIPELINE_BOARD" | "PIPELINE_LIST";
     }>,
   ) {
+    const previousStages = stages;
+    setStages(movePipelineCard(stages, lead, state.currentStageId, option.stageId, option.name));
     setPending(true);
     setNotice(null);
     try {
@@ -310,8 +308,9 @@ export function PreSalesPipelineWorkspace({
       setSelectedLeadState(null);
       setSelectedLeadOperations(null);
       setRequestedStageId("");
-      router.refresh();
+      startRefresh(() => router.refresh());
     } catch (error) {
+      setStages(previousStages);
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." });
     } finally {
       setPending(false);
@@ -475,7 +474,7 @@ export function PreSalesPipelineWorkspace({
               </details>
               <div className={styles.cards} onScroll={(event) => sessionStorage.setItem(columnScrollKey(stage.id), String(event.currentTarget.scrollTop))} ref={(node) => { if (node && node.scrollTop === 0) node.scrollTop = Number(sessionStorage.getItem(columnScrollKey(stage.id)) ?? 0); }}>
                 {stage.leads.map((lead) => (
-                  <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={!touchControls && screen.canWrite && !pending} key={lead.id} onClick={() => { if (!pending) openLeadCard(lead); }} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)} onFocusCapture={() => prefetchLeadCard(lead)} onMouseEnter={() => scheduleLeadCardPrefetch(lead)} onMouseLeave={cancelLeadCardPrefetch} onTouchStart={() => prefetchLeadCard(lead)}>
+                  <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={!touchControls && screen.canWrite && !pending} key={lead.id} onClick={() => { if (!pending) openLeadCard(lead); }} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)} onFocusCapture={() => prefetchLeadCard(lead)} onMouseEnter={() => prefetchLeadCard(lead)} onPointerDown={() => prefetchLeadCard(lead)} onTouchStart={() => prefetchLeadCard(lead)}>
                     <div className={styles.cardBody}>
                       <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${lead.fullName}`} className={styles.dragHandle} disabled={!screen.canWrite || pending || touchControls} draggable={!touchControls && screen.canWrite && !pending} onClick={(event) => event.stopPropagation()} onFocus={() => prefetchLeadState(lead)} onMouseEnter={() => prefetchLeadState(lead)} onTouchStart={() => prefetchLeadState(lead)} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div></div>
                       <div className={styles.cardTitle}><button aria-label={`Abrir ficha completa de ${lead.fullName}`} disabled={pending} draggable={false} onClick={(event) => { event.stopPropagation(); openLeadCard(lead); }} type="button">{lead.fullName}</button><span title="Pontuação de qualificação">{lead.score === null ? "—" : `${lead.score}/100`}</span></div>
@@ -565,7 +564,7 @@ export function PreSalesPipelineWorkspace({
         onCreated={(message) => {
           setQuickCreateOpen(false);
           setNotice({ kind: "success", message });
-          router.refresh();
+          startRefresh(() => router.refresh());
         }}
         onDismiss={() => setQuickCreateOpen(false)}
         pipelineId={screen.pipelineId}

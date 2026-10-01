@@ -12,7 +12,7 @@ import { Icon, type IconName } from "@/components/ui/icon";
 import { cn } from "@/shared/core/ui/class-names";
 import styles from "./app-shell.module.css";
 
-type SessionView = Readonly<{
+export type AppShellSession = Readonly<{
   id: string;
   user: Readonly<{
     displayName: string;
@@ -162,23 +162,12 @@ const mobileLayoutSnapshot = () => window.matchMedia("(max-width: 800px)").match
 const serverLayoutSnapshot = () => false;
 
 function IntentLink(props: ComponentProps<typeof Link>) {
-  const [prefetch, setPrefetch] = useState(false);
-  const signalIntent = () => setPrefetch(true);
-
-  return (
-    <Link
-      {...props}
-      onFocus={signalIntent}
-      onMouseEnter={signalIntent}
-      onTouchStart={signalIntent}
-      prefetch={prefetch ? null : false}
-    />
-  );
+  return <Link {...props} />;
 }
 
-export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
+export function AppShell({ children, initialSession }: Readonly<{ children: ReactNode; initialSession: AppShellSession | null }>) {
   const pathname = usePathname();
-  const [session, setSession] = useState<SessionView | null | undefined>(undefined);
+  const session = initialSession;
   const [menuOpen, setMenuOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
@@ -193,26 +182,6 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
       document.documentElement.dataset.theme = "dark";
     }
   }, []);
-
-  useEffect(() => {
-    if (publicRoute) return;
-    let active = true;
-    void fetch("/api/auth/session", { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) return null;
-        const body = await response.json() as { session?: SessionView };
-        return body.session ?? null;
-      })
-      .then((value) => {
-        if (active) setSession(value);
-      })
-      .catch(() => {
-        if (active) setSession(null);
-      });
-    return () => {
-      active = false;
-    };
-  }, [publicRoute]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -276,7 +245,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
         <aside aria-hidden={isMobile && !menuOpen ? true : undefined} className={cn(styles.sidebar, menuOpen && styles.open)} id="menu-principal" inert={isMobile && !menuOpen} ref={menuRef}>
           <div className={styles.sidebarHeading}><Icon name={activeSection?.icon ?? "dashboard"} size={15} /><span>{activeSection?.label ?? "Workspace"}</span><button aria-label={collapsed ? "Expandir menu" : "Recolher menu"} className={styles.collapseButton} onClick={() => setCollapsed(!collapsed)} type="button">{collapsed ? "›" : "‹"}</button></div>
           <nav aria-label="Navegação da área" className={styles.contextNav}>
-            {session === undefined ? <div aria-label="Carregando navegação" className={styles.skeleton} role="status">{Array.from({ length: 5 }, (_, index) => <span key={index} />)}</div> : activeSection?.items.map((item, index) => (
+            {activeSection?.items.map((item, index) => (
               <IntentLink aria-current={isActive(pathname, item.href) ? "page" : undefined} aria-label={labels[item.href] ?? item.label} className={styles.contextLink} href={item.href} key={item.href} onClick={() => setMenuOpen(false)} title={labels[item.href] ?? item.label}>
                 <span className={styles.navIcon} data-color={index % 5}><Icon name={item.icon} size={15} /></span><span>{labels[item.href] ?? item.label}</span>
               </IntentLink>

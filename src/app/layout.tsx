@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import type { ReactNode } from "react";
 
-import { AppShell } from "@/components/layout/app-shell";
+import { AppShell, type AppShellSession } from "@/components/layout/app-shell";
+import { getOptionalPageAuthentication } from "@/modules/auth/http/authentication-guards";
+import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 
 import "./globals.css";
 import "./crm-design-system.css";
@@ -22,10 +24,23 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+  const context = await getOptionalPageAuthentication();
+  const initialSession: AppShellSession | null = context ? {
+    id: context.sessionId,
+    user: {
+      displayName: context.displayName,
+      role: { key: context.roleKey, name: context.roleName },
+      permissionKeys: await getAuthorizationService().getEffectivePermissionKeys(context),
+    },
+    workspace: {
+      slug: context.workspaceSlug,
+      name: context.workspaceName ?? context.workspaceSlug,
+    },
+  } : null;
   return (
     <html className={inter.variable} data-theme="light" lang="pt-BR">
-      <body><AppShell>{children}</AppShell></body>
+      <body><AppShell initialSession={initialSession}>{children}</AppShell></body>
     </html>
   );
 }

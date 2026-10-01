@@ -570,7 +570,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       deletedAt: null,
       AND: [visibility, responsibleFilter, searchFilter, priorityFilter],
     };
-    const cardLimitPerStage = 20;
+    const cardLimitPerStage = 12;
     const pipelineResource: ResourceScope = {
       workspaceId: context.workspaceId,
       resourceType: "LeadPipeline",

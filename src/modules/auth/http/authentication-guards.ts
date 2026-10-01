@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { NextRequest } from "next/server";
+import { cache } from "react";
 
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { getAuthenticationService } from "@/modules/auth/application/authentication-service";
@@ -48,9 +49,7 @@ export async function requirePageAuthentication(): Promise<AuthenticatedContext>
   const cookieStore = await cookies();
 
   try {
-    return await getAuthenticationService().validateSession(
-      cookieStore.get(SESSION_COOKIE_NAME)?.value,
-    );
+    return await validatePageSession(cookieStore.get(SESSION_COOKIE_NAME)?.value);
   } catch (error) {
     if (error instanceof SessionExpiredError) {
       redirect("/sessao-expirada");
@@ -60,6 +59,20 @@ export async function requirePageAuthentication(): Promise<AuthenticatedContext>
       redirect("/login");
     }
 
+    throw error;
+  }
+}
+
+const validatePageSession = cache((token: string | undefined) =>
+  getAuthenticationService().validateSession(token),
+);
+
+export async function getOptionalPageAuthentication(): Promise<AuthenticatedContext | null> {
+  const cookieStore = await cookies();
+  try {
+    return await validatePageSession(cookieStore.get(SESSION_COOKIE_NAME)?.value);
+  } catch (error) {
+    if (error instanceof SessionExpiredError || error instanceof AuthenticationRequiredError) return null;
     throw error;
   }
 }
