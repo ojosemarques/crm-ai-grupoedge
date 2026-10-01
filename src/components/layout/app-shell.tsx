@@ -57,6 +57,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
     label: "Indicadores",
     items: [
       { href: "/dashboard", icon: "dashboard", label: "Visão geral", permission: "metrics.read" },
+      { href: "/gestao-equipe", icon: "equipe", label: "Gestão da equipe", roles: managerRoles },
       { href: "/metas", icon: "dashboard", label: "Metas", permission: "metrics.read" },
       { href: "/forecast", icon: "receita", label: "Forecast", permission: "metrics.read" },
       { href: "/metricas-receita", icon: "dashboard", label: "Receita e retenção", permission: "metrics.read" },
@@ -117,7 +118,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
 
 const sections = [
   { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/pipeline", "/oportunidades", "/leads", "/agenda", "/inbox", "/atividades", "/automacoes"] },
-  { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/metas", "/forecast", "/metricas-receita", "/receita", "/analises"] },
+  { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/gestao-equipe", "/metas", "/forecast", "/metricas-receita", "/receita", "/analises"] },
   { key: "finance", label: "Financeiro", icon: "receita", paths: ["/financeiro", "/pagamentos", "/contratos"] },
   { key: "customers", label: "Clientes", icon: "leads", paths: ["/contas", "/onboarding", "/customer-success", "/customer-service", "/farmer"] },
   { key: "marketing", label: "Marketing", icon: "dashboard", paths: ["/aquisicao/midia", "/aquisicao", "/integracoes/meta-ads", "/integracoes/google-ads", "/integracoes"] },
@@ -131,7 +132,7 @@ const labels: Record<string, string> = {
   "/atividades": "Fila de atividades",
   "/campanhas": "Campanhas de envio",
   "/assistente": "Assistente",
-  "/automacoes": "Fluxos de automação", "/dashboard": "Visão geral", "/analises": "Análises", "/metricas-receita": "Receita e retenção",
+  "/automacoes": "Fluxos de automação", "/dashboard": "Visão geral", "/gestao-equipe": "Gestão da equipe", "/analises": "Análises", "/metricas-receita": "Receita e retenção",
 };
 
 function isActive(pathname: string, href: string) {
