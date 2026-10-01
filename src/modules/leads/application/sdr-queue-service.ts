@@ -13,6 +13,7 @@ import {
   type SdrQueueSection,
 } from "@/modules/leads/domain/sdr-queue-contracts";
 import { staleContactCutoff } from "@/modules/leads/domain/lead-operational-policy";
+import { buildDailyGoalProgress } from "@/modules/goals/domain/daily-goal-contracts";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -191,7 +192,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       context,
       PermissionKeys.LEADS_READ,
     );
-    const [workspace, members] = await Promise.all([
+    const [workspace, members, manageDailyGoalsDecision] = await Promise.all([
       options.database.workspace.findUniqueOrThrow({
         where: { id: context.workspaceId },
         select: { timeZone: true },
@@ -209,6 +210,10 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           status: true,
           user: { select: { displayName: true, status: true } },
         },
+      }),
+      options.authorization.authorize(context, PermissionKeys.GOALS_MANAGE, {
+        workspaceId: context.workspaceId,
+        resourceType: "DailyGoalProfile",
       }),
     ]);
     if (
@@ -228,9 +233,24 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     }
     const selectedMemberId =
       parsed.data.memberId ?? (scope.scope === "OWN" ? context.memberId : null);
+    const dailyGoalMembers = manageDailyGoalsDecision.allowed
+      ? await options.database.workspaceMember.findMany({
+          where: {
+            workspaceId: context.workspaceId,
+            status: "ACTIVE",
+            deletedAt: null,
+            user: { status: "ACTIVE", deletedAt: null },
+          },
+          orderBy: [{ user: { displayName: "asc" } }, { id: "asc" }],
+          select: { id: true, user: { select: { displayName: true } } },
+        })
+      : [];
     const productivityMemberIds = selectedMemberId
       ? [selectedMemberId]
       : members.filter((member) => member.status === "ACTIVE" && member.user.status === "ACTIVE").map((member) => member.id);
+    const dailyGoalProfileMemberIds = manageDailyGoalsDecision.allowed
+      ? dailyGoalMembers.map((member) => member.id)
+      : productivityMemberIds;
     const memberFilter =
       selectedMemberId && scope.scope !== "OWN"
         ? Prisma.sql`AND l."ownerMemberId" = ${selectedMemberId}::uuid`
@@ -369,7 +389,18 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       select: { id: true },
     })).map((actor) => actor.id);
     const today = workspaceDayRange(workspaceDateAt(now, workspace.timeZone), workspace.timeZone);
-    const [activityCounts, taskCounts, meetingsScheduled, meetingsCompleted] = await Promise.all([
+    const [
+      activityCounts,
+      taskCounts,
+      meetingsScheduled,
+      meetingsCompleted,
+      effectiveContacts,
+      qualifications,
+      meetingsMarked,
+      proposals,
+      salesValue,
+      dailyGoalProfiles,
+    ] = await Promise.all([
       options.database.activity.groupBy({
         by: ["type"],
         where: {
@@ -417,7 +448,62 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           deletedAt: null,
         },
       }),
+      options.database.activity.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          occurredAt: { gte: today.start, lt: today.end },
+          deletedAt: null,
+          OR: [
+            { createdByActorId: { in: actorIds }, type: "CALL_CONNECTED" },
+            { type: "MESSAGE_RECEIVED", lead: { ownerMemberId: { in: productivityMemberIds } } },
+          ],
+        },
+        distinct: ["leadId"],
+        select: { leadId: true },
+      }),
+      options.database.leadQualification.count({
+        where: {
+          workspaceId: context.workspaceId,
+          status: "COMPLETED",
+          validatedAt: { gte: today.start, lt: today.end },
+          validatedByActorId: { in: actorIds },
+        },
+      }),
+      options.database.meeting.count({
+        where: {
+          workspaceId: context.workspaceId,
+          createdAt: { gte: today.start, lt: today.end },
+          createdByActorId: { in: actorIds },
+          status: { not: "CANCELLED" },
+          deletedAt: null,
+        },
+      }),
+      options.database.offer.count({
+        where: {
+          workspaceId: context.workspaceId,
+          createdAt: { gte: today.start, lt: today.end },
+          createdByActorId: { in: actorIds },
+          deletedAt: null,
+        },
+      }),
+      options.database.opportunity.aggregate({
+        where: {
+          workspaceId: context.workspaceId,
+          ownerMemberId: { in: productivityMemberIds },
+          status: "WON",
+          closedAt: { gte: today.start, lt: today.end },
+          deletedAt: null,
+        },
+        _sum: { amountCents: true },
+      }),
+      options.database.dailyGoalProfile.findMany({
+        where: { workspaceId: context.workspaceId, memberId: { in: dailyGoalProfileMemberIds } },
+        orderBy: { memberId: "asc" },
+      }),
     ]);
+    const productivityDailyGoalProfiles = dailyGoalProfiles.filter((profile) =>
+      productivityMemberIds.includes(profile.memberId),
+    );
     const activityCount = (types: readonly string[]) => activityCounts
       .filter((item) => types.includes(item.type))
       .reduce((total, item) => total + item._count._all, 0);
@@ -427,9 +513,28 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     const openStatuses = ["OPEN", "IN_PROGRESS"];
     const actionableKinds = ["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "EMAIL", "FOLLOW_UP"];
     const tasksDue = taskCount(actionableKinds, openStatuses);
-    const completedTasks = taskCount(actionableKinds, ["COMPLETED"]);
-    const dailyTarget = tasksDue + completedTasks + meetingsScheduled;
-    const dailyCompleted = completedTasks + meetingsCompleted;
+    const calls = activityCount(["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"]);
+    const messages = activityCount(["MESSAGE_SENT"]);
+    const dailyGoalProgress = buildDailyGoalProgress(
+      {
+        calls: BigInt(calls),
+        messages: BigInt(messages),
+        effectiveContacts: BigInt(effectiveContacts.length),
+        qualifications: BigInt(qualifications),
+        meetingsScheduled: BigInt(meetingsMarked),
+        proposals: BigInt(proposals),
+        salesValueCents: salesValue._sum.amountCents ?? 0n,
+      },
+      {
+        calls: productivityDailyGoalProfiles.reduce((total, item) => total + BigInt(item.callsTarget), 0n),
+        messages: productivityDailyGoalProfiles.reduce((total, item) => total + BigInt(item.messagesTarget), 0n),
+        effectiveContacts: productivityDailyGoalProfiles.reduce((total, item) => total + BigInt(item.effectiveContactsTarget), 0n),
+        qualifications: productivityDailyGoalProfiles.reduce((total, item) => total + BigInt(item.qualificationsTarget), 0n),
+        meetingsScheduled: productivityDailyGoalProfiles.reduce((total, item) => total + BigInt(item.meetingsScheduledTarget), 0n),
+        proposals: productivityDailyGoalProfiles.reduce((total, item) => total + BigInt(item.proposalsTarget), 0n),
+        salesValueCents: productivityDailyGoalProfiles.reduce((total, item) => total + item.salesValueTargetCents, 0n),
+      },
+    );
 
     const sections: SdrQueueSection[] = sectionDefinitions.map((definition, index) => {
       const rawRows = rowsBySection[index] ?? [];
@@ -498,10 +603,26 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         name: member.user.displayName,
         active: member.status === "ACTIVE" && member.user.status === "ACTIVE",
       })),
+      dailyGoalMemberOptions: dailyGoalMembers.map((member) => ({
+        id: member.id,
+        name: member.user.displayName,
+      })),
+      permissions: { manageDailyGoals: manageDailyGoalsDecision.allowed },
+      dailyGoalProfiles: manageDailyGoalsDecision.allowed ? dailyGoalProfiles.map((profile) => ({
+        memberId: profile.memberId,
+        revision: profile.revision,
+        callsTarget: profile.callsTarget,
+        messagesTarget: profile.messagesTarget,
+        effectiveContactsTarget: profile.effectiveContactsTarget,
+        qualificationsTarget: profile.qualificationsTarget,
+        meetingsScheduledTarget: profile.meetingsScheduledTarget,
+        proposalsTarget: profile.proposalsTarget,
+        salesValueTargetCents: profile.salesValueTargetCents.toString(),
+      })) : [],
       dailyProduction: {
-        calls: activityCount(["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"]),
+        calls,
         callsPending: taskCount(["IMMEDIATE_CALL", "CALL"], openStatuses),
-        messages: activityCount(["MESSAGE_SENT"]),
+        messages,
         messagesPending: taskCount(["MESSAGE"], openStatuses),
         emails: activityCount(["EMAIL"]),
         tasksDue,
@@ -510,10 +631,10 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         meetingsCompleted,
         staleLeads: sections.find((section) => section.key === "STALE_CONTACT")?.total ?? 0,
         dailyGoal: {
-          completed: dailyCompleted,
-          target: dailyTarget,
-          remaining: Math.max(0, dailyTarget - dailyCompleted),
-          progressPercent: dailyTarget === 0 ? 0 : Math.min(100, Math.round((dailyCompleted / dailyTarget) * 100)),
+          configured: productivityDailyGoalProfiles.length > 0,
+          configuredMembers: productivityDailyGoalProfiles.length,
+          expectedMembers: productivityMemberIds.length,
+          ...dailyGoalProgress,
         },
       },
       sections,

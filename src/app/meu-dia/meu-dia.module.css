@@ -90,10 +90,156 @@
   margin: 0;
 }
 
-.productionHeading > a {
+.productionHeading a {
   color: var(--primary);
   font-size: .75rem;
   font-weight: 600;
+}
+
+.productionActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.goalMetricGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.goalMetricGrid article {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.goalMetricGrid article[data-achieved="true"] {
+  border-color: color-mix(in oklab, var(--success) 45%, var(--border));
+}
+
+.goalMetricGrid article > span,
+.goalMetricGrid article > small {
+  color: var(--muted-foreground);
+  font-size: .65rem;
+  line-height: 1.3;
+}
+
+.goalMetricGrid article > strong {
+  color: var(--foreground);
+  font-size: .9rem;
+  line-height: 1.2;
+}
+
+.goalMetricGrid article > strong small {
+  color: var(--muted-foreground);
+  font-size: .64rem;
+  font-weight: 500;
+}
+
+.goalMetricGrid article > div {
+  background: var(--border);
+  border-radius: 999px;
+  height: 5px;
+  overflow: hidden;
+}
+
+.goalMetricGrid article > div i {
+  background: var(--primary);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+}
+
+.goalMetricGrid article[data-achieved="true"] > div i {
+  background: var(--success);
+}
+
+.operationalDemandTitle {
+  color: var(--foreground);
+  font-size: .78rem;
+  font-weight: 650;
+  margin: 16px 0 0;
+}
+
+.goalDialog {
+  max-width: 48rem;
+  width: min(48rem, calc(100vw - 2rem));
+}
+
+.goalDialogHeader {
+  align-items: start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.goalDialogHeader h2 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.goalDialogHeader p:last-child {
+  color: var(--muted-foreground);
+  font-size: .78rem;
+  margin: 6px 0 0;
+}
+
+.goalDialogHeader button {
+  background: transparent;
+  border: 0;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.goalMemberField,
+.goalFormGrid label {
+  color: var(--foreground);
+  display: grid;
+  font-size: .75rem;
+  font-weight: 600;
+  gap: 5px;
+}
+
+.goalMemberField {
+  margin-top: 18px;
+}
+
+.goalMemberField select,
+.goalFormGrid input {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  min-height: 2.5rem;
+  padding: 0 10px;
+}
+
+.goalFormGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.goalFormGrid label:last-child {
+  grid-column: 1 / -1;
+}
+
+.goalDialogActions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 18px;
 }
 
 .productionGrid {
@@ -806,6 +952,10 @@
 .rowAvatar { width: 27px; height: 27px; font-size: 9px; margin-right: 8px; border-radius: 8px; vertical-align: middle; }
 
 @media (max-width: 1279px) {
+  .goalMetricGrid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .contentGrid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -857,6 +1007,27 @@
 }
 
 @media (max-width: 767px) {
+  .productionHeading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .productionActions {
+    justify-content: flex-start;
+  }
+
+  .goalMetricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .goalFormGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .goalFormGrid label:last-child {
+    grid-column: auto;
+  }
+
   .productionGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
+  type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   useEffect,
   useMemo,
@@ -12,6 +13,7 @@ import {
 } from "react";
 
 import styles from "@/app/meu-dia/meu-dia.module.css";
+import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import {
@@ -52,6 +54,11 @@ function formatTime(value: string, timeZone: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function formatGoalValue(value: string, unit: "COUNT" | "CURRENCY_CENTS"): string {
+  if (unit === "COUNT") return Number(value).toLocaleString("pt-BR");
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(BigInt(value)) / 100);
 }
 
 function elapsedSeconds(from: string, nowMs: number): number {
@@ -454,6 +461,10 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [nowMs, setNowMs] = useState(() => new Date(screen.generatedAt).getTime());
   const [isRefreshing, startRefresh] = useTransition();
+  const [goalEditorOpen, setGoalEditorOpen] = useState(false);
+  const [goalEditorMemberId, setGoalEditorMemberId] = useState(screen.selectedMemberId ?? screen.dailyGoalMemberOptions[0]?.id ?? "");
+  const [goalSaving, setGoalSaving] = useState(false);
+  const [goalNotice, setGoalNotice] = useState<string | null>(null);
 
   const requestedQueue = searchParams.get("queue");
   const activeQueue: SdrQueueBucket = isQueueBucket(requestedQueue)
@@ -583,6 +594,41 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
     router.push(`${pathname}${params.size ? `?${params.toString()}` : ""}`);
   }
 
+  async function saveDailyGoals(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!goalEditorMemberId) return;
+    const form = new FormData(event.currentTarget);
+    const profile = screen.dailyGoalProfiles.find((item) => item.memberId === goalEditorMemberId);
+    const number = (name: string) => Number(form.get(name) ?? 0);
+    setGoalSaving(true);
+    setGoalNotice(null);
+    try {
+      const response = await fetch("/api/goals/daily", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberId: goalEditorMemberId,
+          expectedRevision: profile?.revision ?? null,
+          callsTarget: number("callsTarget"),
+          messagesTarget: number("messagesTarget"),
+          effectiveContactsTarget: number("effectiveContactsTarget"),
+          qualificationsTarget: number("qualificationsTarget"),
+          meetingsScheduledTarget: number("meetingsScheduledTarget"),
+          proposalsTarget: number("proposalsTarget"),
+          salesValueTargetCents: Math.round(number("salesValueTarget") * 100).toString(),
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message ?? "Não foi possível salvar as metas diárias.");
+      setGoalEditorOpen(false);
+      startRefresh(() => router.refresh());
+    } catch (error) {
+      setGoalNotice(error instanceof Error ? error.message : "Não foi possível salvar as metas diárias.");
+    } finally {
+      setGoalSaving(false);
+    }
+  }
+
   function handleTabKeyDown(
     event: ReactKeyboardEvent<HTMLButtonElement>,
     currentIndex: number,
@@ -613,9 +659,28 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
     : screen.viewer.scope === "OWN"
       ? screen.viewer.displayName
       : "Todos no meu escopo";
+  const goalEditorProfile = screen.dailyGoalProfiles.find((profile) => profile.memberId === goalEditorMemberId);
+  const goalEditorMemberName = screen.dailyGoalMemberOptions.find((member) => member.id === goalEditorMemberId)?.name ?? "pessoa selecionada";
 
   return (
     <div className={styles.workspace}>
+      {goalEditorOpen ? <AccessibleDialog busy={goalSaving} className={styles.goalDialog!} labelledBy="daily-goal-editor-title" onDismiss={() => setGoalEditorOpen(false)}>
+        <form key={`${goalEditorMemberId}:${goalEditorProfile?.revision ?? "new"}`} onSubmit={saveDailyGoals}>
+          <header className={styles.goalDialogHeader}><div><p className={styles.eyebrow}>Gestão diária</p><h2 id="daily-goal-editor-title">Metas de {goalEditorMemberName}</h2><p>Defina o volume esperado para cada dia de trabalho. Use zero para não cobrar uma métrica.</p></div><button aria-label="Fechar configuração de metas" disabled={goalSaving} onClick={() => setGoalEditorOpen(false)} type="button">×</button></header>
+          <label className={styles.goalMemberField}>Pessoa<select onChange={(event) => { setGoalEditorMemberId(event.target.value); setGoalNotice(null); }} value={goalEditorMemberId}>{screen.dailyGoalMemberOptions.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+          <div className={styles.goalFormGrid}>
+            <label>Ligações por dia<input defaultValue={goalEditorProfile?.callsTarget ?? 50} min="0" name="callsTarget" required type="number" /></label>
+            <label>Mensagens por dia<input defaultValue={goalEditorProfile?.messagesTarget ?? 40} min="0" name="messagesTarget" required type="number" /></label>
+            <label>Contatos efetivos<input defaultValue={goalEditorProfile?.effectiveContactsTarget ?? 10} min="0" name="effectiveContactsTarget" required type="number" /></label>
+            <label>Qualificações<input defaultValue={goalEditorProfile?.qualificationsTarget ?? 5} min="0" name="qualificationsTarget" required type="number" /></label>
+            <label>Reuniões marcadas<input defaultValue={goalEditorProfile?.meetingsScheduledTarget ?? 3} min="0" name="meetingsScheduledTarget" required type="number" /></label>
+            <label>Propostas<input defaultValue={goalEditorProfile?.proposalsTarget ?? 2} min="0" name="proposalsTarget" required type="number" /></label>
+            <label>Valor de vendas esperado (R$)<input defaultValue={goalEditorProfile ? (Number(BigInt(goalEditorProfile.salesValueTargetCents)) / 100).toFixed(2) : "0.00"} min="0" name="salesValueTarget" required step="0.01" type="number" /></label>
+          </div>
+          {goalNotice ? <p className="feedback feedback-error" role="alert">{goalNotice}</p> : null}
+          <footer className={styles.goalDialogActions}><Button disabled={goalSaving} onClick={() => setGoalEditorOpen(false)} type="button" variant="secondary">Cancelar</Button><Button disabled={goalSaving || !goalEditorMemberId} type="submit">{goalSaving ? "Salvando…" : "Salvar metas diárias"}</Button></footer>
+        </form>
+      </AccessibleDialog> : null}
       <header className={styles.operationalHeader}>
         <div>
           <p className={styles.eyebrow}>Operação SDR</p>
@@ -669,13 +734,14 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
             <p className={styles.eyebrow}>Execução diária</p>
             <h2 id="producao-hoje">Plano e produção de hoje</h2>
           </div>
-          <Link href="/metas">Ver metas e quotas</Link>
+          <div className={styles.productionActions}><Link href="/metas">Ver metas e quotas</Link>{screen.permissions.manageDailyGoals ? <Button disabled={screen.dailyGoalMemberOptions.length === 0} onClick={() => { setGoalEditorMemberId(screen.selectedMemberId ?? screen.dailyGoalMemberOptions[0]?.id ?? ""); setGoalNotice(null); setGoalEditorOpen(true); }} size="sm" type="button" variant="secondary">Configurar metas por pessoa</Button> : null}</div>
         </div>
         <div className={styles.dailyGoal}>
           <div>
             <span>Meta diária operacional</span>
-            <strong>{screen.dailyProduction.dailyGoal.completed} de {screen.dailyProduction.dailyGoal.target} compromissos concluídos</strong>
-            <small>{screen.dailyProduction.dailyGoal.remaining} restantes no plano de hoje</small>
+            <strong>{screen.dailyProduction.dailyGoal.configured ? `${screen.dailyProduction.dailyGoal.completed} de ${screen.dailyProduction.dailyGoal.target} metas atingidas` : "Metas diárias ainda não configuradas"}</strong>
+            <small>{screen.dailyProduction.dailyGoal.configured ? `${screen.dailyProduction.dailyGoal.remaining} metas ainda abaixo do esperado` : "Um gestor pode definir as metas por pessoa nesta página."}</small>
+            {screen.dailyProduction.dailyGoal.configuredMembers < screen.dailyProduction.dailyGoal.expectedMembers ? <small>{screen.dailyProduction.dailyGoal.configuredMembers} de {screen.dailyProduction.dailyGoal.expectedMembers} pessoas possuem meta configurada neste recorte.</small> : null}
           </div>
           <div className={styles.progressSummary}>
             <strong>{screen.dailyProduction.dailyGoal.progressPercent}%</strong>
@@ -684,6 +750,10 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
             </div>
           </div>
         </div>
+        <div className={styles.goalMetricGrid}>
+          {screen.dailyProduction.dailyGoal.metrics.map((metric) => <article data-achieved={metric.achieved} key={metric.key}><span>{metric.label}</span><strong>{formatGoalValue(metric.actualValue, metric.unit)} <small>/ {BigInt(metric.targetValue) > 0n ? formatGoalValue(metric.targetValue, metric.unit) : "sem meta"}</small></strong><div aria-label={`${metric.label}: ${metric.progressPercent ?? 0}% da meta`} aria-valuemax={100} aria-valuemin={0} aria-valuenow={metric.progressPercent ?? 0} role="progressbar"><i style={{ width: `${metric.progressPercent ?? 0}%` }} /></div><small>{BigInt(metric.targetValue) === 0n ? "Aguardando configuração" : metric.achieved ? "Meta atingida" : `Faltam ${formatGoalValue(metric.remainingValue, metric.unit)}`}</small></article>)}
+        </div>
+        <h3 className={styles.operationalDemandTitle}>Demandas operacionais de hoje</h3>
         <div className={styles.productionGrid}>
           <Link href="/atividades"><span>Ligações para fazer</span><strong>{screen.dailyProduction.callsPending}</strong><small>{screen.dailyProduction.calls} registradas hoje</small></Link>
           <Link href="/atividades"><span>Mensagens para enviar</span><strong>{screen.dailyProduction.messagesPending}</strong><small>{screen.dailyProduction.messages} enviadas hoje</small></Link>

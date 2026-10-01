@@ -81,6 +81,24 @@ export type SdrQueueScreen = Readonly<{
     name: string;
     active: boolean;
   }>[];
+  dailyGoalMemberOptions: readonly Readonly<{
+    id: string;
+    name: string;
+  }>[];
+  permissions: Readonly<{
+    manageDailyGoals: boolean;
+  }>;
+  dailyGoalProfiles: readonly Readonly<{
+    memberId: string;
+    revision: number;
+    callsTarget: number;
+    messagesTarget: number;
+    effectiveContactsTarget: number;
+    qualificationsTarget: number;
+    meetingsScheduledTarget: number;
+    proposalsTarget: number;
+    salesValueTargetCents: string;
+  }>[];
   dailyProduction: Readonly<{
     calls: number;
     callsPending: number;
@@ -93,10 +111,23 @@ export type SdrQueueScreen = Readonly<{
     meetingsCompleted: number;
     staleLeads: number;
     dailyGoal: Readonly<{
+      configured: boolean;
+      configuredMembers: number;
+      expectedMembers: number;
       completed: number;
       target: number;
       remaining: number;
       progressPercent: number;
+      metrics: readonly Readonly<{
+        key: "CALLS" | "MESSAGES" | "EFFECTIVE_CONTACTS" | "QUALIFICATIONS" | "MEETINGS_SCHEDULED" | "PROPOSALS" | "SALES_VALUE_CENTS";
+        label: string;
+        unit: "COUNT" | "CURRENCY_CENTS";
+        actualValue: string;
+        targetValue: string;
+        remainingValue: string;
+        progressPercent: number | null;
+        achieved: boolean;
+      }>[];
     }>;
   }>;
   sections: readonly SdrQueueSection[];
