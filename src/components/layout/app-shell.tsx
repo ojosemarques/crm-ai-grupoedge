@@ -92,15 +92,6 @@ const navigationGroups: ReadonlyArray<Readonly<{
     ],
   },
   {
-    label: "Assistentes",
-    items: [
-      { href: "/copilot", icon: "copilot", label: "Copilot gerencial", roles: managerRoles },
-      { href: "/assistente", icon: "copilot", label: "Assistente", roles: managerRoles },
-      { href: "/governanca-ia", icon: "configuracoes", label: "Configuração da IA", permission: "ai.governance.read" },
-      { href: "/notificacoes", icon: "notificacoes", label: "Notificações" },
-    ],
-  },
-  {
     label: "Gestão",
     items: [
       { href: "/administracao", icon: "equipe", label: "Pessoas e equipes", roles: managerRoles },
@@ -121,7 +112,6 @@ const sections = [
   { key: "finance", label: "Financeiro", icon: "receita", paths: ["/financeiro", "/pagamentos", "/contratos"] },
   { key: "customers", label: "Clientes", icon: "leads", paths: ["/contas", "/onboarding", "/customer-success", "/customer-service", "/farmer"] },
   { key: "marketing", label: "Marketing", icon: "dashboard", paths: ["/aquisicao/midia", "/aquisicao", "/integracoes/meta-ads", "/integracoes/google-ads", "/integracoes"] },
-  { key: "assistants", label: "Assistentes", icon: "copilot", paths: ["/copilot", "/assistente", "/governanca-ia", "/notificacoes"] },
   { key: "settings", label: "Configurações", icon: "configuracoes", paths: ["/configuracoes", "/administracao", "/auditoria", "/qualidade-dados", "/operacoes", "/privacidade"] },
 ] as const;
 
