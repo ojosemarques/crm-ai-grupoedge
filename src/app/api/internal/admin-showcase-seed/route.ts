@@ -85,6 +85,20 @@ export async function POST(request: NextRequest) {
     workspaceCount: user.memberships.length,
     workspaceName: membership.workspace.name,
   };
+  const automationActor = await database.actor.findFirst({
+    where: { workspaceId: context.workspaceId, type: "AUTOMATION", userId: null },
+    select: { id: true },
+  });
+  if (!automationActor) {
+    await database.actor.create({
+      data: {
+        workspaceId: context.workspaceId,
+        type: "AUTOMATION",
+        key: "automation:production",
+        displayName: "Automação do CRM",
+      },
+    });
+  }
 
   let lead = await database.lead.findFirst({
     where: { workspaceId: context.workspaceId, normalizedEmail: demoEmail, deletedAt: null },
