@@ -36,7 +36,7 @@ function harness() {
   const loadContext = vi.fn(async () => ({ sources, unavailable: [] }));
   const generate = vi.fn(async (input: unknown): Promise<unknown> => { expect(input).toBeDefined(); return { answer: "Confira a proposta.", sources: ["oportunidades"], sale }; });
   const sales = { authorize: vi.fn(async () => undefined), preview: vi.fn(async () => ({ customerName: "Cliente", payload: sale, pendingSteps: ["Aceite pendente"] })), execute: vi.fn(async () => ({ paymentReceived: false, contractId: id(30) })) };
-  const actionOptions: CopilotActionOptions = { capabilities: ["CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT"], leads: [{ id: id(50), name: "Maria" }], customers: [{ id: id(51), name: "Cliente", revision: 1, legalName: null, domain: null, segment: "UNKNOWN", size: "UNKNOWN" }], categories: [{ id: id(52), name: "Operacional" }], financialAccounts: [{ id: id(53), name: "Conta" }], invoices: [{ id: id(54), label: "Fatura 1", revision: 1, outstandingCents: "10000" }], truncated: false };
+  const actionOptions: CopilotActionOptions = { pipelines: [{ id: id(60), name: "Pré-vendas", stages: [{ id: id(61), name: "Contato" }] }], leadSources: [{ key: "manual", name: "Manual" }], moveLeads: [{ id: id(50), name: "Maria", pipelineId: id(60), stageId: id(62), updatedAt: now.toISOString() }], incomeCategories: [{ id: id(63), name: "Receita" }], metrics: [{ id: "cash.received", name: "Recebido", dateBases: ["receivedAt"] }], capabilities: ["CREATE_LEAD", "MOVE_LEAD", "CREATE_CUSTOMER", "CREATE_INCOME", "CREATE_INDICATOR", "CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT"], leads: [{ id: id(50), name: "Maria" }], customers: [{ id: id(51), name: "Cliente", revision: 1, legalName: null, domain: null, segment: "UNKNOWN", size: "UNKNOWN" }], categories: [{ id: id(52), name: "Operacional" }], financialAccounts: [{ id: id(53), name: "Conta" }], invoices: [{ id: id(54), label: "Fatura 1", revision: 1, outstandingCents: "10000" }], truncated: false };
   const actions = {
     options: vi.fn(async () => actionOptions), authorize: vi.fn(async () => undefined),
     preview: vi.fn(async (_context: AuthenticatedContext, action: CopilotAction): Promise<CopilotActionPreview> => ({ kind: action.kind, title: "Ação", summary: "Revise", details: [{ label: "Nome", before: "Anterior", after: "Novo" }], impact: ["Altera registro"], links: [] })),
@@ -324,14 +324,20 @@ describe("ações tipadas do Copilot", () => {
 });
 
 describe("contrato das ações enviado ao provedor externo", () => {
-  it.each([task, customer, expense, payment])("gera prévia de $kind com schema e guia completos, sem executar", async (action) => {
+  it.each([task, customer, expense, payment,
+    { kind: "CREATE_LEAD", pipelineId: id(60), fullName: "Lead novo", phone: "+5511987623412", sourceKey: "manual", priorityBandCode: "P2" },
+    { kind: "MOVE_LEAD", leadId: id(50), targetStageId: id(61), expectedUpdatedAt: now.toISOString(), reason: "Iniciar contato" },
+    { kind: "CREATE_CUSTOMER", name: "Novo cliente", segment: "UNKNOWN", size: "UNKNOWN" },
+    { ...expense, kind: "CREATE_INCOME", categoryId: id(63) },
+    { kind: "CREATE_INDICATOR", name: "Caixa mensal", metricKey: "cash.received", dateBasis: "receivedAt", period: "MONTH" },
+  ] as CopilotAction[])("gera prévia de $kind com schema e guia completos, sem executar", async (action) => {
     const h = harness();
     h.generate.mockResolvedValueOnce({ answer: "Confira os dados antes de confirmar.", sources: [], operation: action, sale: null });
     const message = `Preparar ${action.kind} com os dados informados`;
     const result = await h.service.command(context, { action: "CHAT", message });
     const sent = h.generate.mock.calls[0]![0] as { responseSchema: { properties: Record<string, unknown> }; actionInputGuide: Record<string, { outputField: string }>; actionOptions: CopilotActionOptions };
     expect(Object.keys(sent.responseSchema.properties)).toEqual(["answer", "sources", "sale", "operation", "plan", "searches"]);
-    expect(Object.keys(sent.actionInputGuide)).toEqual(["CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT", "CLOSE_SALE"]);
+    expect(Object.keys(sent.actionInputGuide)).toEqual(["CREATE_LEAD", "MOVE_LEAD", "CREATE_CUSTOMER", "CREATE_INCOME", "CREATE_INDICATOR", "CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT", "CLOSE_SALE"]);
     expect(sent.actionInputGuide[action.kind]?.outputField).toBe("operation");
     expect(sent.actionOptions.capabilities).toContain(action.kind);
     expect(h.actions.options).toHaveBeenCalledWith(context, message);
@@ -368,4 +374,13 @@ describe("contrato das ações enviado ao provedor externo", () => {
     await h.service.command(context, { action: "CHAT", message: 'Agora consultar "Outra Empresa"', history });
     expect(h.actions.options).toHaveBeenLastCalledWith(context, 'Agora consultar "Outra Empresa"');
   });
+});
+
+
+it("preserva e-mail fornecido para cadastrar lead e continua removendo segredos", async () => {
+  const h = harness(); h.generate.mockResolvedValueOnce({ answer: "Qual pipeline?", sources: [], sale: null });
+  await h.service.command(context, { action: "CHAT", message: "Cadastre um lead Maria, email maria@example.test, token=segredo123" });
+  const sent = JSON.stringify(h.generate.mock.calls[0]![0]);
+  expect(sent).toContain("maria@example.test"); expect(sent).not.toContain("segredo123");
+  expect(h.actions.execute).not.toHaveBeenCalled();
 });

@@ -1,3 +1,4 @@
+import { getPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import type { Prisma } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { getAccountService } from "@/modules/accounts/application/account-service";
@@ -20,7 +21,7 @@ import { addLocalDays, workspaceDateAt, workspaceDayRange, workspaceWeekRange } 
 
 type RecordRow = CopilotRecordResult["records"][number];
 const sources = {
-  database: getDatabaseClient, authorization: getAuthorizationService,
+  pipeline: getPreSalesPipelineService, database: getDatabaseClient, authorization: getAuthorizationService,
   accounts: getAccountService, operations: getOperationalHistoryService, leads: getLeadListService,
   contracts: getContractService, media: getMediaPerformanceService,
   meetings: getMeetingService, onboarding: getOnboardingService, opportunities: getOpportunityService,
@@ -74,7 +75,8 @@ export function createCopilotRecordSearchService(overrides: Partial<typeof sourc
       if (query.id) {
         const data = await service.operations().getLeadOperations(context, { leadId: query.id, pageSize: 1 });
         const item = data.lead;
-        return result([row(item.id, item.fullName, `/leads/${item.id}`, { id: item.id, name: item.fullName, fullName: item.fullName, organizationName: item.organizationName, account: item.account, status: item.status, stageName: item.stageName, ownerMemberId: item.ownerMemberId, responsibleName: item.operationalOwner, sourceName: item.sourceName, campaignName: item.campaignName, creativeName: item.creativeName, nextAction: item.nextAction, interestSummary: item.interestSummary, canManageTasks: data.permissions.canManageTasks })], 1, "Detalhe operacional autorizado pelas permissões canônicas de lead e tarefas, sem telefone, e-mail ou payload de formulário.");
+        const pipeline = await service.pipeline().getLeadState(context, { leadId: item.id });
+        return result([row(item.id, item.fullName, `/leads/${item.id}`, { updatedAt: pipeline.updatedAt, currentStageId: pipeline.currentStageId, transitions: pipeline.transitions, canMove: pipeline.canWrite, id: item.id, name: item.fullName, fullName: item.fullName, organizationName: item.organizationName, account: item.account, status: item.status, stageName: item.stageName, ownerMemberId: item.ownerMemberId, responsibleName: item.operationalOwner, sourceName: item.sourceName, campaignName: item.campaignName, creativeName: item.creativeName, nextAction: item.nextAction, interestSummary: item.interestSummary, canManageTasks: data.permissions.canManageTasks })], 1, "Detalhe operacional autorizado pelas permissões canônicas de lead e tarefas, sem telefone, e-mail ou payload de formulário.");
       }
       const data = await service.leads().getScreen(context, { q: query.query, page: query.page, pageSize: query.pageSize, sort: "name", direction: "asc", ...(query.from ? { enteredFrom: query.from, enteredTo: query.to } : {}) });
       const items = offset < data.list.total ? data.list.rows : [];

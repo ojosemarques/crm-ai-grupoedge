@@ -48,7 +48,7 @@ describe("busca estruturada do Copilot", () => {
     ]) expect(copilotRecordQuerySchema.safeParse(query).success).toBe(false);
   });
   it("detalhe do lead mantém identidade e responsável sem e-mail, telefone ou payload bruto", async () => {
-    const service = createCopilotRecordSearchService({ operations: () => ({ getLeadOperations: async () => ({ lead: { id: id(5), fullName: "Lead autorizado", ownerMemberId: id(2), normalizedEmail: "privado@example.test", normalizedPhone: "5511999999999", rawPayload: { token: "secret" } }, permissions: { canManageTasks: true } }) }) } as unknown as Sources);
+    const service = createCopilotRecordSearchService({ pipeline: () => ({ getLeadState: async () => ({ updatedAt: "2026-09-30T15:00:00.000Z", currentStageId: id(6), transitions: [], canWrite: true }) }), operations: () => ({ getLeadOperations: async () => ({ lead: { id: id(5), fullName: "Lead autorizado", ownerMemberId: id(2), normalizedEmail: "privado@example.test", normalizedPhone: "5511999999999", rawPayload: { token: "secret" } }, permissions: { canManageTasks: true } }) }) } as unknown as Sources);
     const found = await service.search(context, { entity: "LEAD", id: id(5) });
     expect(found.records[0]?.data).toMatchObject({ id: id(5), name: "Lead autorizado", ownerMemberId: id(2) });
     expect(JSON.stringify(found)).not.toMatch(/privado|5511999999999|rawPayload|secret/);

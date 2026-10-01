@@ -34,7 +34,7 @@ export const copilotPlanSchema = z.object({
     if (step.kind === "CREATE_TASK" && step.opportunityId && plan.steps.slice(index + 1).some((later) => later.kind === "CLOSE_SALE" && later.payload.opportunityId === step.opportunityId)) {
       context.addIssue({ code: "custom", path: ["steps", index], message: "O fechamento cancela tarefas abertas da oportunidade. Coloque a tarefa depois do fechamento." });
     }
-    if (step.kind === "CREATE_EXPENSE" && step.customerAccountId && customerIds.has(step.customerAccountId)) {
+    if ((step.kind === "CREATE_EXPENSE" || step.kind === "CREATE_INCOME") && step.customerAccountId && customerIds.has(step.customerAccountId)) {
       context.addIssue({ code: "custom", path: ["steps", index], message: "Atualize o cliente primeiro e prepare a despesa em uma nova prévia com o cadastro atualizado." });
     }
     if (step.kind === "CLOSE_SALE" && step.payload.customer?.mode === "LINK" && customerIds.has(step.payload.customer.accountId)) {

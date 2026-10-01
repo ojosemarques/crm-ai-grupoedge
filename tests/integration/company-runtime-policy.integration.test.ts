@@ -19,6 +19,11 @@ it("políticas privadas aceitam empresas ativas e continuam negando acesso públ
     }
     const existing = await client.query("SELECT 1 FROM pg_policies WHERE schemaname=$1 AND policyname='company_runtime_select'", [schema]);
     if (!existing.rowCount) await client.query(await readFile("prisma/migrations/20261001040000_company_hub_private_runtime/migration.sql", "utf8"));
+    await client.query(await readFile("prisma/migrations/20261001070100_copilot_indicator_runtime/migration.sql", "utf8"));
+    for (const table of ["analytics_dashboards", "analytics_widgets", "analytics_mutation_receipts"]) {
+      const grants = (await client.query("SELECT has_table_privilege('crm_politizai_runtime',$1,'SELECT') AS read, has_table_privilege('crm_politizai_runtime',$1,'INSERT') AS write, has_table_privilege('crm_politizai_runtime',$1,'UPDATE') AS update, has_table_privilege('company_hub_public_test',$1,'SELECT') AS public_read", [`${schema}.${table}`])).rows[0];
+      expect(grants).toEqual({ read: true, write: true, update: false, public_read: false });
+    }
     const policies = await client.query("SELECT roles::text[] AS roles, cmd, qual, with_check FROM pg_policies WHERE schemaname=$1 AND policyname LIKE 'company_runtime_%'", [schema]);
     expect(policies.rows).toHaveLength(39);
     expect(policies.rows.every(row => JSON.stringify(row.roles) === '["crm_politizai_runtime"]')).toBe(true);

@@ -1,3 +1,12 @@
+import { createLeadEntryService } from "@/modules/leads/application/lead-entry-service";
+import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { createAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
+import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
+import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
+import { createAnalyticsBuilderService } from "@/modules/analytics-builder/application/analytics-builder-service";
+import { analyticsWidgetInputSchema, validateWidgetCompatibility } from "@/modules/analytics-builder/domain/analytics-builder-contracts";
+import { createRevenueMetricsService } from "@/modules/metrics/application/revenue-metrics-service";
+import { revenueMetricRegistry } from "@/modules/metrics/domain/revenue-metric-registry";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
@@ -7,7 +16,7 @@ import { copilotActionSchema, type CopilotAction, type CopilotActionOptions, typ
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createFinanceService } from "@/modules/finance/application/finance-service";
 import { createLeadListService } from "@/modules/leads/application/lead-list-service";
-import { getLeadDistributionService } from "@/modules/leads/application/lead-distribution-service";
+import { createLeadDistributionService } from "@/modules/leads/application/lead-distribution-service";
 import { copilotSearchTerms, searchCopilotPages } from "@/modules/ai-assistant/domain/copilot-search";
 import { canonicalJson } from "@/modules/integrations/domain/integration-policy";
 import { createPaymentService } from "@/modules/payments/application/payment-service";
@@ -21,6 +30,8 @@ type ActionResult = { answer: string; result: unknown; targetType: string; targe
 const json = (value: unknown) => JSON.parse(JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item)) as Prisma.InputJsonValue;
 const digest = (value: unknown) => createHash("sha256").update(canonicalJson(value)).digest("hex");
 function fail(message: string, code = "COPILOT_ACTION_INVALID", statusCode = 409): never { throw new ApplicationError(message, { code, statusCode, expose: true }); }
+const fieldLabels: Record<string, string> = { fullName: "Nome", email: "E-mail", organizationName: "Empresa", jobTitle: "Cargo", city: "Cidade", stateCode: "UF", interestSummary: "Interesse", priorityBandCode: "Prioridade", budgetBrl: "Orçamento", name: "Nome", legalName: "Razão social", domain: "Site/domínio", segment: "Segmento", size: "Porte" };
+const fieldDetail = ([key, value]: [string, unknown]) => ({ label: fieldLabels[key] ?? key, after: value === "UNKNOWN" ? "Não informado" : String(value) });
 const money = (value: string) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value) / 100);
 const linksFor = (kind: CopilotAction["kind"], id?: string) => [{
   label: kind === "CREATE_TASK" ? "Tarefas do lead" : kind === "UPDATE_CUSTOMER" ? "Cliente" : kind === "RECORD_PAYMENT" ? "Cobranças" : "Financeiro",
@@ -40,15 +51,29 @@ function withinTransaction(tx: Prisma.TransactionClient): PrismaClient {
 }
 
 export function createCopilotActionsService(options: Options) {
+  const indicatorWidget = (action: Extract<CopilotAction, { kind: "CREATE_INDICATOR" }>) => analyticsWidgetInputSchema.parse({ title: action.name, metricKey: action.metricKey, type: "KPI", aggregation: "LATEST", dateBasis: action.dateBasis, period: { preset: action.period } });
+  async function indicatorRuntimeAvailable(database: PrismaClient) {
+    const [result] = await database.$queryRaw<Array<{ allowed: boolean }>>`SELECT bool_and(has_table_privilege(current_user, format('%I.%I', current_schema(), table_name), 'SELECT') AND has_table_privilege(current_user, format('%I.%I', current_schema(), table_name), 'INSERT')) AS allowed FROM unnest(ARRAY['analytics_dashboards','analytics_widgets','analytics_mutation_receipts']) AS table_name`;
+    return result?.allowed === true;
+  }
   async function authorized(database: PrismaClient, context: AuthenticatedContext, action: CopilotAction) {
     const authorization = createAuthorizationService({ database });
     const check = (key: PermissionKey, scope: ResourceScope) => authorization.assertAuthorized(context, key, scope);
-    if (action.kind === "CREATE_TASK") {
+    if (action.kind === "CREATE_LEAD") {
+      const queue = await database.queue.findFirst({ where: { workspaceId: context.workspaceId, isGeneral: true, deletedAt: null } });
+      if (!queue) fail("Configure uma fila de entrada para cadastrar leads.");
+      await check(PermissionKeys.LEADS_WRITE, { workspaceId: context.workspaceId, resourceType: "LeadEntry", queueId: queue.id, teamId: queue.teamId });
+    } else if (action.kind === "CREATE_CUSTOMER") {
+      for (const key of [PermissionKeys.ACCOUNTS_READ, PermissionKeys.ACCOUNTS_WRITE]) await check(key, { workspaceId: context.workspaceId, resourceType: "Account" });
+    } else if (action.kind === "CREATE_INDICATOR") {
+      for (const key of [PermissionKeys.METRICS_READ, PermissionKeys.OPERATIONS_MANAGE]) await check(key, { workspaceId: context.workspaceId, resourceType: "AnalyticsDashboard", memberId: context.memberId });
+      if (!await indicatorRuntimeAvailable(database)) fail("A criação de indicadores aguarda habilitação das permissões do banco. As outras ações do Copilot continuam disponíveis.", "COPILOT_INDICATOR_UNAVAILABLE", 503);
+    } else if (action.kind === "CREATE_TASK" || action.kind === "MOVE_LEAD") {
       const lead = await database.lead.findFirst({ where: { id: action.leadId, workspaceId: context.workspaceId, deletedAt: null }, include: { routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } });
       if (!lead) fail("Lead inexistente ou não autorizado.", "NOT_FOUND", 404);
       const scope = { workspaceId: context.workspaceId, resourceType: "Lead", resourceId: lead.id, ownerMemberId: lead.ownerMemberId, queueId: lead.queueId, teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null };
-      for (const key of [PermissionKeys.LEADS_READ, PermissionKeys.TASKS_READ, PermissionKeys.TASKS_WRITE]) await check(key, scope);
-      if (action.opportunityId) {
+      for (const key of action.kind === "MOVE_LEAD" ? [PermissionKeys.LEADS_READ, PermissionKeys.LEADS_WRITE] : [PermissionKeys.LEADS_READ, PermissionKeys.TASKS_READ, PermissionKeys.TASKS_WRITE]) await check(key, scope);
+      if (action.kind === "CREATE_TASK" && action.opportunityId) {
         const opportunity = await database.opportunity.findFirst({ where: { workspaceId: context.workspaceId, id: action.opportunityId, leadId: lead.id, deletedAt: null } });
         if (!opportunity) fail("A oportunidade não pertence ao lead selecionado.");
         await check(PermissionKeys.OPPORTUNITIES_READ, { ...scope, resourceType: "Opportunity", resourceId: opportunity.id, opportunityId: opportunity.id, ownerMemberId: opportunity.ownerMemberId });
@@ -77,6 +102,31 @@ export function createCopilotActionsService(options: Options) {
 
   async function inspect(database: PrismaClient, context: AuthenticatedContext, action: CopilotAction): Promise<CopilotActionPreview> {
     await authorized(database, context, action);
+    if (action.kind === "CREATE_LEAD") {
+      const pipeline = await database.pipeline.findFirst({ where: { id: action.pipelineId, workspaceId: context.workspaceId, entityType: "LEAD", deletedAt: null }, include: { stages: { where: { deletedAt: null }, orderBy: { position: "asc" } } } });
+      const source = await database.leadSource.findFirst({ where: { workspaceId: context.workspaceId, key: action.sourceKey, deletedAt: null } });
+      const phone = normalizePhone(action.phone);
+      if (!phone.success) fail("Informe um telefone válido para cadastrar o lead.");
+      if (!pipeline || !pipeline.stages.length || !source) fail("Pipeline ou origem indisponível nesta empresa.");
+      if (await database.lead.findFirst({ where: { workspaceId: context.workspaceId, normalizedPhone: phone.normalizedPhone, deletedAt: null }, select: { id: true } })) fail("Já existe um lead com este telefone. Localize o cadastro existente antes de continuar.", "COPILOT_DUPLICATE_LEAD");
+      return { kind: action.kind, title: "Cadastrar lead", summary: action.fullName, details: [{ label: "Pipeline", after: pipeline.name }, { label: "Etapa inicial", after: pipeline.stages[0]!.name }, { label: "Telefone", after: phone.normalizedPhone }, { label: "Origem", after: source.name }, ...Object.entries(action).filter(([key]) => !["kind","pipelineId","sourceKey","phone"].includes(key)).map(fieldDetail)], impact: ["Cadastra o lead pelo fluxo oficial de entrada, com contato, tarefa inicial, SLA e automações aplicáveis."], bindings: { pipelineId: pipeline.id, sourceId: source.id }, links: [{ label: "Pipeline", href: "/pipeline", entityType: "MODULE" }] };
+    }
+    if (action.kind === "MOVE_LEAD") {
+      const service = createPreSalesPipelineService({ database, authorization: createAuthorizationService({ database }), now: options.now });
+      const state = await service.getLeadState(context, { leadId: action.leadId });
+      const target = state.transitions.find(item => item.stageId === action.targetStageId);
+      if (state.updatedAt !== action.expectedUpdatedAt) fail("O lead mudou. Consulte a etapa atual e prepare outra prévia.", "COPILOT_STALE_LEAD");
+      if (!target || !target.allowed || !state.canWrite) fail("A etapa não está disponível para este lead.");
+      const lead = await database.lead.findUniqueOrThrow({ where: { id: action.leadId }, select: { fullName: true } });
+      return { kind: action.kind, title: "Mover lead", summary: lead.fullName, details: [{ label: "Etapa", before: state.currentStageName, after: target.name }, { label: "Motivo", after: action.reason }], impact: ["Altera a etapa e registra o histórico operacional.", ...(target.code === "DISQUALIFIED" ? ["Desqualificar cancela as tarefas abertas do lead."] : [])], bindings: { leadId: action.leadId, updatedAt: state.updatedAt, targetStageId: target.stageId }, links: [{ label: "Lead", href: `/leads/${action.leadId}`, entityType: "Lead" }] };
+    }
+    if (action.kind === "CREATE_CUSTOMER") {
+      return { kind: action.kind, title: "Cadastrar cliente", summary: action.name, details: Object.entries(action).filter(([key]) => key !== "kind").map(fieldDetail), impact: ["Cria o cadastro do cliente nesta empresa. Não registra venda, contrato, mensalidade nem recebimento."], links: [{ label: "Clientes", href: "/contas", entityType: "MODULE" }] };
+    }
+    if (action.kind === "CREATE_INDICATOR") {
+      const metric = validateWidgetCompatibility(indicatorWidget(action));
+      return { kind: action.kind, title: "Criar indicador", summary: action.name, details: [{ label: "Métrica", after: metric.name }, { label: "Fórmula", after: metric.formula }, { label: "Data-base", after: action.dateBasis }, { label: "Período", after: action.period }], impact: ["Cria um painel com indicador calculado a partir dos dados autorizados. Não inventa valores nem altera a fórmula oficial."], links: [{ label: "Indicadores", href: "/analises", entityType: "MODULE" }] };
+    }
     if (action.kind === "CREATE_TASK") {
       const lead = await database.lead.findUniqueOrThrow({ where: { id: action.leadId }, include: { owner: { include: { user: { select: { displayName: true } } } }, queue: true } });
       const opportunity = action.opportunityId ? await database.opportunity.findUniqueOrThrow({ where: { id: action.opportunityId }, select: { name: true } }) : null;
@@ -95,20 +145,20 @@ export function createCopilotActionsService(options: Options) {
       const before = { name: account.name, legalName: account.legalName, domain: account.originalDomain, segment: account.segment, size: account.size };
       return { kind: action.kind, title: "Atualizar cliente", summary: account.name, details: Object.entries(action.changes).map(([key, value]) => ({ label: labels[key as keyof typeof labels], before: String(before[key as keyof typeof labels] ?? "Não informado"), after: String(value ?? "Remover informação") })), impact: ["Atualiza o cadastro compartilhado do cliente.", "Documentos emitidos preservam os dados registrados na emissão."], links: linksFor(action.kind, account.id) };
     }
-    if (action.kind === "CREATE_EXPENSE") {
+    if (action.kind === "CREATE_EXPENSE" || action.kind === "CREATE_INCOME") {
       const [category, account, customer] = await Promise.all([
-        database.financialCategory.findFirst({ where: { workspaceId: context.workspaceId, id: action.categoryId, active: true, kind: "EXPENSE" } }),
+        database.financialCategory.findFirst({ where: { workspaceId: context.workspaceId, id: action.categoryId, active: true, kind: action.kind === "CREATE_INCOME" ? "INCOME" : "EXPENSE" } }),
         database.financialAccount.findFirst({ where: { workspaceId: context.workspaceId, id: action.financialAccountId, active: true } }),
         action.customerAccountId ? database.account.findFirst({ where: { workspaceId: context.workspaceId, id: action.customerAccountId, deletedAt: null } }) : null,
       ]);
-      if (!category || !account || (action.customerAccountId && !customer)) fail("Confira categoria, conta financeira e cliente da despesa.");
+      if (!category || !account || (action.customerAccountId && !customer)) fail("Confira categoria, conta financeira e cliente do lançamento.");
       if (action.settledAt && new Date(action.settledAt) > options.now()) fail("Pagamento realizado não pode ter data futura.");
-      return { kind: action.kind, title: "Registrar despesa", summary: `${action.description} · ${money(action.amountCents)}`, details: [
+      return { kind: action.kind, title: action.kind === "CREATE_INCOME" ? "Registrar entrada" : "Registrar despesa", summary: `${action.description} · ${money(action.amountCents)}`, details: [
         { label: "Valor", after: money(action.amountCents) }, { label: "Categoria", after: category.name }, { label: "Conta financeira", after: account.name },
         { label: "Fornecedor", after: action.counterparty ?? "Não informado" }, { label: "Cliente associado", after: customer?.name ?? "Nenhum" },
         { label: "Competência", after: action.competenceAt }, { label: "Vencimento", after: action.dueAt },
-        { label: "Situação", after: action.status === "SETTLED" ? `Pagamento realizado em ${action.settledAt}` : "A pagar" },
-      ], impact: [action.status === "SETTLED" ? "Registra saída de caixa de um pagamento já realizado." : "Registra uma obrigação a pagar, sem reduzir o caixa recebido.", "Inclui a despesa no financeiro e na DRE pela competência. Não executa transferência bancária."], links: linksFor(action.kind) };
+        { label: "Situação", after: action.status === "SETTLED" ? `${action.kind === "CREATE_INCOME" ? "Recebimento" : "Pagamento"} realizado em ${action.settledAt}` : action.kind === "CREATE_INCOME" ? "A receber" : "A pagar" },
+      ], impact: action.kind === "CREATE_INCOME" ? [action.status === "SETTLED" ? "Registra uma entrada avulsa recebida no caixa." : "Registra uma entrada prevista sem aumentar o caixa recebido.", "Não quita cobrança de cliente nem aumenta MRR. Para quitar cobrança, use Registrar recebimento."] : [action.status === "SETTLED" ? "Registra saída de caixa de um pagamento já realizado." : "Registra uma obrigação a pagar, sem reduzir o caixa recebido.", "Inclui a despesa no financeiro e na DRE pela competência. Não executa transferência bancária."], links: linksFor(action.kind) };
     }
     const { kind: _kind, receiptConfirmed: _receipt, ...input } = action;
     void _kind; void _receipt;
@@ -143,19 +193,37 @@ export function createCopilotActionsService(options: Options) {
       if (confirmation.expectedPreview !== undefined && digest(json(currentPreview)) !== digest(confirmation.expectedPreview)) fail("Os dados mudaram desde a prévia confirmada. Gere uma nova proposta.", "COPILOT_PREVIEW_CHANGED");
       const authorization = createAuthorizationService({ database });
       let result: ActionResult;
-      if (action.kind === "CREATE_TASK") {
+      if (action.kind === "CREATE_LEAD") {
+        const { kind: _kind, pipelineId, ...lead } = action; void _kind;
+        const intake = createLeadIntakeService({ database, authorization, now: options.now, automationPublisher: createAutomationEngineService({ database, authorization, now: options.now }) });
+        const created = await createLeadEntryService({ database, authorization, intake }).createManual({ idempotencyKey: confirmation.idempotencyKey, pipelineId, lead }, context);
+        if (created.outcome === "REJECTED") fail(created.issues.map(item => item.message).join(" "), created.code, 400);
+        if (created.outcome !== "CREATED") fail("Um lead com este contato foi cadastrado durante a confirmação. Consulte-o antes de continuar.", "COPILOT_DUPLICATE_LEAD");
+        result = { answer: "Lead cadastrado no pipeline solicitado, com o fluxo de entrada e histórico.", result: { id: created.leadId }, targetType: "Lead", targetId: created.leadId, links: [{ label: "Abrir lead", href: `/leads/${created.leadId}`, entityType: "Lead" }] };
+      } else if (action.kind === "MOVE_LEAD") {
+        const { kind: _kind, ...input } = action; void _kind;
+        await createPreSalesPipelineService({ database, authorization, now: options.now }).transition(context, { ...input, origin: "LEAD_CARD", confirmed: true });
+        result = { answer: "Lead movido para a etapa confirmada. Histórico atualizado.", result: { id: action.leadId }, targetType: "Lead", targetId: action.leadId, links: [{ label: "Abrir lead", href: `/leads/${action.leadId}`, entityType: "Lead" }] };
+      } else if (action.kind === "CREATE_CUSTOMER") {
+        const { kind: _kind, ...input } = action; void _kind;
+        const account = await createAccountService({ database, authorization, now: options.now }).create(context, input);
+        result = { answer: "Cliente cadastrado. Nenhuma venda ou pagamento foi presumido.", result: { id: account.id }, targetType: "Account", targetId: account.id, links: [{ label: "Abrir cliente", href: `/contas/${account.id}`, entityType: "Account" }] };
+      } else if (action.kind === "CREATE_INDICATOR") {
+        const dashboard = await createAnalyticsBuilderService({ database, authorization, now: options.now, revenue: createRevenueMetricsService({ database, authorization, now: options.now }) }).create(context, { name: action.name, widgets: [indicatorWidget(action)], idempotencyKey: confirmation.idempotencyKey });
+        result = { answer: "Indicador criado no painel de análises com a métrica e o período confirmados.", result: dashboard.result, targetType: "AnalyticsDashboard", targetId: dashboard.result.id, links: [{ label: "Abrir indicadores", href: "/analises", entityType: "MODULE" }] };
+      } else if (action.kind === "CREATE_TASK") {
         const { kind: _kind, taskKind, ...input } = action; void _kind;
         const task = await createOperationalHistoryService({ database, authorization, now: options.now }).createTask(context, { ...input, kind: taskKind });
         result = { answer: "Tarefa criada e incluída no histórico do lead.", result: task, targetType: "Task", targetId: task.id, links: linksFor(action.kind, action.leadId) };
       } else if (action.kind === "UPDATE_CUSTOMER") {
         const account = await createAccountService({ database, authorization, now: options.now }).update(context, action.accountId, { expectedRevision: action.expectedRevision, ...action.changes });
         result = { answer: "Cadastro do cliente atualizado conforme a prévia.", result: { id: account.id, revision: account.revision }, targetType: "Account", targetId: account.id, links: linksFor(action.kind, account.id) };
-      } else if (action.kind === "CREATE_EXPENSE") {
+      } else if (action.kind === "CREATE_EXPENSE" || action.kind === "CREATE_INCOME") {
         const { kind: _kind, paymentConfirmed: _confirmed, ...input } = action; void _kind; void _confirmed;
         const existingEntry = await tx.financialEntry.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey: confirmation.idempotencyKey } }, select: { id: true } });
         if (existingEntry) fail("Esta confirmação já identifica outro lançamento financeiro. Prepare uma nova proposta.", "COPILOT_ACTION_REPLAY_CONFLICT");
-        const entry = await createFinanceService({ database, authorization, now: options.now }).command(context, { ...input, action: "CREATE_ENTRY", direction: "EXPENSE", idempotencyKey: confirmation.idempotencyKey }) as { id: string };
-        result = { answer: action.status === "SETTLED" ? "Despesa registrada como paga, conforme sua declaração de pagamento real." : "Despesa registrada como conta a pagar.", result: { id: entry.id }, targetType: "FinancialEntry", targetId: entry.id, links: linksFor(action.kind) };
+        const entry = await createFinanceService({ database, authorization, now: options.now }).command(context, { ...input, action: "CREATE_ENTRY", direction: action.kind === "CREATE_INCOME" ? "INCOME" : "EXPENSE", idempotencyKey: confirmation.idempotencyKey }) as { id: string };
+        result = { answer: action.kind === "CREATE_INCOME" ? "Entrada avulsa registrada no financeiro conforme a prévia." : action.status === "SETTLED" ? "Despesa registrada como paga, conforme sua declaração de pagamento real." : "Despesa registrada como conta a pagar.", result: { id: entry.id }, targetType: "FinancialEntry", targetId: entry.id, links: linksFor(action.kind) };
       } else {
         const { kind: _kind, receiptConfirmed: _receipt, ...input } = action; void _kind; void _receipt;
         const receipt = await createPaymentService({ database, now: options.now }).recordReceipt(context, { ...input, confirmed: true, idempotencyKey: confirmation.idempotencyKey });
@@ -171,9 +239,19 @@ export function createCopilotActionsService(options: Options) {
     const authorization = createAuthorizationService({ database });
     const result: CopilotActionOptions = { capabilities: [], leads: [], customers: [], categories: [], financialAccounts: [], invoices: [], truncated: false };
     const allowed = async (key: PermissionKey, resource: ResourceScope) => (await authorization.authorize(context, key, resource)).allowed;
+    const entryQueue = await database.queue.findFirst({ where: { workspaceId: context.workspaceId, isGeneral: true, deletedAt: null } });
+    if (entryQueue && await allowed(PermissionKeys.LEADS_WRITE, { workspaceId: context.workspaceId, resourceType: "LeadEntry", queueId: entryQueue.id, teamId: entryQueue.teamId })) {
+      result.capabilities.push("CREATE_LEAD");
+      result.leadSources = await database.leadSource.findMany({ where: { workspaceId: context.workspaceId, deletedAt: null }, select: { key: true, name: true }, take: 100 });
+      result.pipelines = await database.pipeline.findMany({ where: { workspaceId: context.workspaceId, entityType: "LEAD", deletedAt: null }, select: { id: true, name: true, stages: { where: { deletedAt: null }, select: { id: true, name: true }, orderBy: { position: "asc" } } }, take: 100 });
+    }
+    if (await allowed(PermissionKeys.METRICS_READ, { workspaceId: context.workspaceId, resourceType: "AnalyticsDashboard", memberId: context.memberId }) && await allowed(PermissionKeys.OPERATIONS_MANAGE, { workspaceId: context.workspaceId, resourceType: "AnalyticsDashboard", memberId: context.memberId })) {
+      if (await indicatorRuntimeAvailable(database)) { result.capabilities.push("CREATE_INDICATOR"); result.metrics = revenueMetricRegistry.map(metric => ({ id: metric.id, name: metric.name, dateBases: metric.supportedDateBases })); }
+    }
+    result.moveLeads = [];
     const terms = copilotSearchTerms(query);
     const limit = query.trim() ? 25 : 100;
-    const leadList = createLeadListService({ database, authorization, distribution: getLeadDistributionService(), now: options.now });
+    const leadList = createLeadListService({ database, authorization, distribution: createLeadDistributionService({ database, authorization, now: options.now }), now: options.now });
     const leadMatches = await searchCopilotPages(terms, async (q) => {
       try {
         const page = await leadList.getScreen(context, { q, pageSize: limit, sort: "receivedAt", direction: "desc" });
@@ -187,7 +265,9 @@ export function createCopilotActionsService(options: Options) {
     for (const lead of leads.slice(0, 100)) {
       const scope = { workspaceId: context.workspaceId, resourceType: "Lead", resourceId: lead.id, ownerMemberId: lead.ownerMemberId, queueId: lead.queueId, teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null };
       if (await allowed(PermissionKeys.LEADS_READ, scope) && await allowed(PermissionKeys.TASKS_READ, scope) && await allowed(PermissionKeys.TASKS_WRITE, scope)) result.leads.push({ id: lead.id, name: lead.fullName });
+      if (await allowed(PermissionKeys.LEADS_READ, scope) && await allowed(PermissionKeys.LEADS_WRITE, scope)) result.moveLeads.push({ id: lead.id, name: lead.fullName, pipelineId: lead.pipelineId, stageId: lead.currentStageId, updatedAt: lead.updatedAt.toISOString() });
     }
+    if (result.moveLeads.length) result.capabilities.push("MOVE_LEAD");
     result.truncated = leadMatches.truncated;
     if (result.leads.length) result.capabilities.push("CREATE_TASK");
     const accountScope = { workspaceId: context.workspaceId, resourceType: "Account" };
@@ -197,7 +277,7 @@ export function createCopilotActionsService(options: Options) {
       const accounts = await database.account.findMany({ where: { workspaceId: context.workspaceId, deletedAt: null, id: { in: matches.items.map((item) => item.id) } }, orderBy: { updatedAt: "desc" } });
       result.customers = accounts.slice(0, 100).map((row) => ({ id: row.id, name: row.name, revision: row.revision, legalName: row.legalName, domain: row.originalDomain, segment: row.segment, size: row.size }));
       result.truncated ||= matches.truncated;
-      result.capabilities.push("UPDATE_CUSTOMER");
+      result.capabilities.push("UPDATE_CUSTOMER", "CREATE_CUSTOMER");
     }
     const financeScope = { workspaceId: context.workspaceId, resourceType: "Finance" };
     if (await allowed(PermissionKeys.FINANCE_READ, financeScope) && await allowed(PermissionKeys.FINANCE_MANAGE, financeScope)) {
@@ -206,6 +286,8 @@ export function createCopilotActionsService(options: Options) {
         database.financialAccount.findMany({ where: { workspaceId: context.workspaceId, active: true }, take: limit + 1, orderBy: { name: "asc" }, select: { id: true, name: true } }),
         database.invoice.findMany({ where: { workspaceId: context.workspaceId, status: { in: ["OPEN", "PARTIALLY_PAID"] }, ...(terms.length ? { OR: terms.flatMap((term) => [{ invoiceNumber: { contains: term, mode: "insensitive" as const } }, { accountNameSnapshot: { contains: term, mode: "insensitive" as const } }, { descriptionSnapshot: { contains: term, mode: "insensitive" as const } }]) } : {}) }, take: limit + 1, orderBy: { dueAt: "asc" } }),
       ]);
+      result.incomeCategories = await database.financialCategory.findMany({ where: { workspaceId: context.workspaceId, active: true, kind: "INCOME" }, select: { id: true, name: true }, take: 100 });
+      result.capabilities.push("CREATE_INCOME");
       result.categories = categories.slice(0, limit); result.financialAccounts = accounts.slice(0, limit);
       result.capabilities.push("CREATE_EXPENSE"); result.truncated ||= categories.length > limit || accounts.length > limit || invoices.length > limit;
       for (const invoice of invoices.slice(0, limit)) {

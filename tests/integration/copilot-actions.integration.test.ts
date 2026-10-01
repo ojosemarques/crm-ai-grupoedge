@@ -244,3 +244,56 @@ describe("ações operacionais do Copilot", () => {
     expect(agenda.coverage).toContain("3 primeiras reuniões autorizadas");
   });
 });
+
+
+describe("ações por conversa entre módulos", () => {
+  it("cadastra lead no pipeline solicitado, preserva contato, inicializa tarefas e move a etapa uma vez", async () => {
+    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId, entityType: "LEAD", deletedAt: null }, include: { stages: { where: { deletedAt: null }, orderBy: { position: "asc" } } } });
+    const action: CopilotAction = { kind: "CREATE_LEAD", pipelineId: pipeline.id, fullName: "Lead Conversa Novo", phone: "+5511987623412", email: "conversa@example.test", organizationName: "Empresa Conversa", sourceKey: "manual", priorityBandCode: "P2" };
+    const preview = await actions.preview(admin, action);
+    expect(await database.lead.count({ where: { workspaceId, fullName: action.fullName } })).toBe(0);
+    const confirmationInput = { ...confirmation(), expectedPreview: preview };
+    const created = await actions.execute(admin, action, confirmationInput);
+    expect((await actions.execute(admin, action, confirmationInput)).targetId).toBe(created.targetId);
+    const lead = await database.lead.findUniqueOrThrow({ where: { id: created.targetId } });
+    expect(lead.pipelineId).toBe(pipeline.id); expect(lead.normalizedEmail).toBe(action.email);
+    expect(await database.task.count({ where: { workspaceId, leadId: lead.id } })).toBeGreaterThan(0);
+    await expect(actions.preview(admin, action)).rejects.toMatchObject({ code: "COPILOT_DUPLICATE_LEAD" });
+    const target = pipeline.stages.find(stage => stage.leadStageCode === "TRYING_CONTACT")!;
+    const move: CopilotAction = { kind: "MOVE_LEAD", leadId: lead.id, targetStageId: target.id, expectedUpdatedAt: lead.updatedAt.toISOString(), reason: "Iniciar contato solicitado na conversa" };
+    const before = await actions.preview(admin, move);
+    expect((await database.lead.findUniqueOrThrow({ where: { id: lead.id } })).currentStageId).toBe(lead.currentStageId);
+    const moveConfirmation = { ...confirmation(), expectedPreview: before };
+    await actions.execute(admin, move, moveConfirmation); await actions.execute(admin, move, moveConfirmation);
+    expect((await database.lead.findUniqueOrThrow({ where: { id: lead.id } })).currentStageId).toBe(target.id);
+    await expect(actions.preview(admin, move)).rejects.toMatchObject({ code: "COPILOT_STALE_LEAD" });
+    await expect(actions.preview(admin, { ...move, leadId: randomUUID() })).rejects.toMatchObject({ statusCode: 404 });
+  });
+  it("cria cliente sem inventar venda e repete a confirmação sem duplicar", async () => {
+    const action: CopilotAction = { kind: "CREATE_CUSTOMER", name: "Cliente cadastrado pelo chat", segment: "UNKNOWN", size: "UNKNOWN" };
+    const preview = await actions.preview(admin, action); const key = { ...confirmation(), expectedPreview: preview };
+    const created = await actions.execute(admin, action, key); await actions.execute(admin, action, key);
+    expect(await database.account.count({ where: { workspaceId, name: action.name } })).toBe(1);
+    expect(await database.opportunity.count({ where: { workspaceId, accountId: created.targetId } })).toBe(0);
+    await expect(actions.preview(viewer, action)).rejects.toMatchObject({ statusCode: 403 });
+  });
+  it("registra entrada avulsa e preserva cobranças/MRR; exige recebimento real", async () => {
+    const category = await finance.command(admin, { action: "CREATE_CATEGORY", key: "conversa_receita", name: "Receita avulsa", kind: "INCOME" }) as { id: string };
+    const action: CopilotAction = { ...expense(), kind: "CREATE_INCOME", categoryId: category.id, description: "Recebimento avulso confirmado" } as CopilotAction;
+    const preview = await actions.preview(admin, action); const key = { ...confirmation(), expectedPreview: preview };
+    const result = await actions.execute(admin, action, key); await actions.execute(admin, action, key);
+    expect(await database.financialEntry.findUniqueOrThrow({ where: { id: result.targetId } })).toMatchObject({ direction: "INCOME", status: "SETTLED", amountCents: 15000n });
+    await expect(actions.preview(admin, { ...action, categoryId } as CopilotAction)).rejects.toMatchObject({ code: "COPILOT_ACTION_INVALID" });
+    await expect(actions.preview(viewer, action)).rejects.toMatchObject({ statusCode: 403 });
+  });
+  it("cria indicador persistido com métrica oficial e não aceita fórmula inventada", async () => {
+    const choices = await actions.options(admin);
+    const metric = choices.metrics!.find(item => item.id === "cash.received")!;
+    const action: CopilotAction = { kind: "CREATE_INDICATOR", name: "Caixa do mês no chat", metricKey: metric.id, dateBasis: metric.dateBases[0]!, period: "MONTH" };
+    const preview = await actions.preview(admin, action); const key = { ...confirmation(), expectedPreview: preview };
+    const result = await actions.execute(admin, action, key); await actions.execute(admin, action, key);
+    expect(await database.analyticsWidget.count({ where: { workspaceId, dashboardId: result.targetId, metricId: metric.id } })).toBe(1);
+    await expect(actions.preview(admin, { ...action, metricKey: "invented.metric" })).rejects.toThrow();
+    await expect(actions.preview(viewer, action)).rejects.toMatchObject({ statusCode: 403 });
+  });
+});

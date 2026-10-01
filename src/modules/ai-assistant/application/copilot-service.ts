@@ -40,10 +40,11 @@ type Options = {
 const json = (value: unknown) => JSON.parse(JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item)) as Prisma.InputJsonValue;
 // Compare previews independent of the key order used by PostgreSQL JSONB.
 const hash = (value: unknown) => sha256(canonicalJson(json(value)));
-const proposalTypes = ["CLOSE_SALE", "CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT"];
+const proposalTypes = ["CLOSE_SALE", "CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT", "CREATE_LEAD", "MOVE_LEAD", "CREATE_CUSTOMER", "CREATE_INCOME", "CREATE_INDICATOR"];
 const lifetimeMs = 30 * 60_000;
 function fail(message: string, code: string, statusCode = 409): never { throw new ApplicationError(message, { code, statusCode, expose: true }); }
-const redact = (text: string) => text.replace(/\bsk-[a-zA-Z0-9_-]{12,}\b/g, "[SEGREDO_REMOVIDO]").replace(/\b(?:bearer|token|password|senha|secret)\s*[:= ]\s*[^\s,;]+/gi, "[SEGREDO_REMOVIDO]").replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, "[EMAIL_REMOVIDO]").replace(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, "[DOCUMENTO_REMOVIDO]");
+const redactSecrets = (text: string) => text.replace(/\bsk-[a-zA-Z0-9_-]{12,}\b/g, "[SEGREDO_REMOVIDO]").replace(/\b(?:bearer|token|password|senha|secret)\s*[:= ]\s*[^\s,;]+/gi, "[SEGREDO_REMOVIDO]");
+const redact = (text: string) => redactSecrets(text).replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, "[EMAIL_REMOVIDO]").replace(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, "[DOCUMENTO_REMOVIDO]");
 
 function sanitize(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
@@ -142,9 +143,12 @@ export function createCopilotService(options: Options) {
       }
     }
     if (action.kind === "UPDATE_CUSTOMER") allowed = allowed && (available.customers.some((row) => row.id === action.accountId && row.revision === action.expectedRevision) || found("CUSTOMER", action.accountId, action.expectedRevision));
-    if (action.kind === "CREATE_EXPENSE") allowed = allowed && (has(available.categories, action.categoryId) || found("CATEGORY", action.categoryId)) && (has(available.financialAccounts, action.financialAccountId) || found("FINANCIAL_ACCOUNT", action.financialAccountId)) && (!action.customerAccountId || has(available.customers, action.customerAccountId) || found("CUSTOMER", action.customerAccountId));
+    if (action.kind === "CREATE_EXPENSE" || action.kind === "CREATE_INCOME") allowed = allowed && (has(action.kind === "CREATE_INCOME" ? available.incomeCategories ?? [] : available.categories, action.categoryId) || found("CATEGORY", action.categoryId)) && (has(available.financialAccounts, action.financialAccountId) || found("FINANCIAL_ACCOUNT", action.financialAccountId)) && (!action.customerAccountId || has(available.customers, action.customerAccountId) || found("CUSTOMER", action.customerAccountId));
     if (action.kind === "RECORD_PAYMENT") allowed = allowed && (available.invoices.some((row) => row.id === action.invoiceId && row.revision === action.expectedRevision) || found("INVOICE", action.invoiceId, action.expectedRevision)) && (has(available.financialAccounts, action.financialAccountId) || found("FINANCIAL_ACCOUNT", action.financialAccountId));
-    if (!allowed) fail("A ação usa registros que não estão no contexto autorizado. Selecione os registros pelo formulário de ações.", "COPILOT_UNKNOWN_RESOURCE", 403);
+    if (action.kind === "CREATE_LEAD") allowed = allowed && has(available.pipelines ?? [], action.pipelineId) && Boolean(available.leadSources?.some(source => source.key === action.sourceKey));
+    if (action.kind === "MOVE_LEAD") allowed = (allowed || found("LEAD", action.leadId)) && (available.moveLeads?.some(lead => lead.id === action.leadId && lead.updatedAt === action.expectedUpdatedAt) || found("LEAD", action.leadId)) === true && Boolean(available.pipelines?.some(pipeline => pipeline.stages.some(stage => stage.id === action.targetStageId)) || evidence.some(({result}) => result?.entity === "LEAD" && result.records.some(record => record.id === action.leadId && Array.isArray(record.data.transitions) && record.data.transitions.some((stage: {stageId: string}) => stage.stageId === action.targetStageId))));
+    if (action.kind === "CREATE_INDICATOR") allowed = allowed && Boolean(available.metrics?.some(metric => metric.id === action.metricKey && metric.dateBases.includes(action.dateBasis)));
+    if (!allowed) fail("A ação usa registros que não estão no contexto autorizado. Peça para localizar os registros corretos na conversa e preparar outra prévia.", "COPILOT_UNKNOWN_RESOURCE", 403);
   }
 
   async function command(context: AuthenticatedContext, raw: unknown) {
@@ -162,21 +166,23 @@ export function createCopilotService(options: Options) {
     if (input.action === "CHAT") {
       if (!options.generate) {
         const normalized = input.message.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-        if (/\b(crie|criar|cadastre|cadastrar|registre|registrar|atualize|atualizar|altere|alterar|baixe|baixar|feche|fechar)\b/.test(normalized)) return { answer: "Use Ações neste Copilot para criar uma tarefa, atualizar um cliente, registrar uma despesa ou baixar um recebimento. Preencha os dados, revise a prévia e confirme. Para fechar uma venda, use Preparar fechamento no pipeline. Estas ações funcionam sem configurar um provedor de IA.", sources: [], links: [{ label: "Pipeline de vendas", href: "/oportunidades", entityType: "MODULE" }], proposal: null, mode: "LOCAL" };
+        if (/\b(crie|criar|cadastre|cadastrar|registre|registrar|atualize|atualizar|altere|alterar|baixe|baixar|feche|fechar)\b/.test(normalized)) return { answer: "A interpretação de ações por conversa precisa da conexão com a OpenAI e da governança habilitadas nesta empresa. Nenhuma ação foi executada. Você pode continuar operando pelos módulos do CRM.", sources: [], links: [{ label: "Pipeline de vendas", href: "/oportunidades", entityType: "MODULE" }], proposal: null, mode: "LOCAL" };
         if (localCopilotSources(input.message).length) return localCopilotAnswer(input.message, await options.loadContext(context, input.message, options.now()));
         const fallback = await options.fallback(context, input.message) as { answer?: { directAnswer: string }; links?: unknown[] };
-        return { answer: fallback.answer?.directAnswer ?? "Consulte leads, oportunidades, tarefas, clientes, financeiro e marketing. Em Ações, você pode preparar alterações com prévia e confirmação. A interpretação livre de pedidos pode ser habilitada na Governança de IA.", sources: [], links: fallback.links ?? [], proposal: null, mode: "LOCAL" };
+        return { answer: fallback.answer?.directAnswer ?? "Consulte leads, oportunidades, tarefas, clientes, financeiro e marketing. As alterações por conversa exigem a conexão com a IA habilitada. A interpretação livre de pedidos pode ser habilitada na Governança de IA.", sources: [], links: fallback.links ?? [], proposal: null, mode: "LOCAL" };
       }
       const policy = await options.database.aIUseCaseVersion.findFirst({ where: { workspaceId: context.workspaceId, key: "metric-synthesis", status: "APPROVED" }, orderBy: { version: "desc" }, select: { id: true } });
       if (!policy) fail("A síntese gerencial de IA precisa estar aprovada na governança deste workspace.", "AI_USE_CASE_NOT_APPROVED");
       const retrievalQuery = /["“][^"”]{2,80}["”]/.test(input.message) ? input.message : [input.message, ...input.history.filter((item) => item.role === "user").slice(-2).map((item) => item.content.slice(0, 600))].join("\n");
       const [data, actionOptions] = await Promise.all([options.loadContext(context, input.message, options.now(), retrievalQuery), options.actions.options(context, retrievalQuery)]);
-      const modelInput = { now: options.now().toISOString(), message: redact(input.message), history: input.history.map((item) => ({ ...item, content: redact(item.content) })), context: data, actionOptions, responseSchema: copilotResponseSchema, actionInputGuide: copilotActionInputGuide, searchInputGuide: copilotRecordInputGuide };
+      const contactRequested = /\bleads?\b/i.test([...input.history.filter(item => item.role === "user").map(item => item.content), input.message].join("\n"));
+      const userText = contactRequested ? redactSecrets : redact;
+      const modelInput = { now: options.now().toISOString(), message: userText(input.message), history: input.history.map((item) => ({ ...item, content: item.role === "user" ? userText(item.content) : redact(item.content) })), context: data, actionOptions, responseSchema: copilotResponseSchema, actionInputGuide: copilotActionInputGuide, searchInputGuide: copilotRecordInputGuide };
       if (JSON.stringify(json(modelInput)).length > 100_000) fail("O contexto excede o limite desta consulta. Use os filtros dos módulos para uma análise mais específica.", "COPILOT_CONTEXT_LIMIT", 400);
       let generated: unknown;
       let evidence: CopilotSearchEvidence[] = [];
       try {
-        ({ generated, evidence } = await generateCopilotWithSearch({ input: modelInput, generate: options.generate, search: options.search ? (query) => options.search!(context, query) : undefined, sanitize }));
+        ({ generated, evidence } = await generateCopilotWithSearch({ input: modelInput, generate: options.generate, search: options.search ? (query) => options.search!(context, query) : undefined, sanitize: (value) => { const safe = sanitize(value) as Record<string, unknown>; return { ...safe, message: modelInput.message, history: modelInput.history }; } }));
       }
       catch (error) {
         if (error instanceof AIProviderError) {
