@@ -18,6 +18,20 @@ import { AccessDeniedError } from "@/modules/users/permissions/authorization-err
 import { requirePageAuthentication } from "@/modules/auth/http/authentication-guards";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
+type OptionalAccessResult<T> = Readonly<{
+  value: T | null;
+  forbidden: boolean;
+}>;
+
+async function readOptional<T>(read: () => Promise<T>): Promise<OptionalAccessResult<T>> {
+  try {
+    return { value: await read(), forbidden: false };
+  } catch (error) {
+    if (error instanceof AccessDeniedError) return { value: null, forbidden: true };
+    throw error;
+  }
+}
+
 export async function LeadHistoryContent({
   leadId,
   embedded = false,
@@ -43,44 +57,40 @@ export async function LeadHistoryContent({
   let communicationsForbidden = false;
 
   try {
-    [operations, pacto, score, pipeline, meetings, opportunities] = await Promise.all([
-      getOperationalHistoryService().getLeadOperations(context, { leadId, pageSize: 20 }),
-      getPactoQualificationService().getPacto(context, { leadId }),
-      getLeadScoringService().getScore(context, { leadId }),
-      getPreSalesPipelineService().getLeadState(context, { leadId }),
-      getMeetingService().getLeadMeetings(context, { leadId }),
-      getOpportunityService().getLeadScreen(context, { leadId }),
+    const [core, intelligenceResult, contactResult, privacyResult, communicationsResult] = await Promise.all([
+      Promise.all([
+        getOperationalHistoryService().getLeadOperations(context, { leadId, pageSize: 20 }),
+        getPactoQualificationService().getPacto(context, { leadId }),
+        getLeadScoringService().getScore(context, { leadId }),
+        getPreSalesPipelineService().getLeadState(context, { leadId }),
+        getMeetingService().getLeadMeetings(context, { leadId }),
+        getOpportunityService().getLeadScreen(context, { leadId }),
+      ]),
+      readOptional(() => getLeadIntelligenceService().getScreen(context, { leadId })),
+      readOptional(async () => {
+        const identity = await getContactIdentityService().getLeadContact(context, { leadId });
+        const contactJourney = identity.contact
+          ? await getLifecycleService().getJourney(context, {
+              entityType: "CONTACT",
+              entityId: identity.contact.id,
+            })
+          : null;
+        return { identity, journey: contactJourney };
+      }),
+      readOptional(() => getPrivacyService().getLeadStatus(context, leadId, "PHONE")),
+      readOptional(() => getOmnichannelService().getLeadSummary(context, leadId)),
     ]);
-    try {
-      intelligence = await getLeadIntelligenceService().getScreen(context, { leadId });
-    } catch (error) {
-      if (error instanceof AccessDeniedError) intelligenceForbidden = true;
-      else throw error;
-    }
-    try {
-      contactIdentity = await getContactIdentityService().getLeadContact(context, { leadId });
-      if (contactIdentity.contact) {
-        journey = await getLifecycleService().getJourney(context, {
-          entityType: "CONTACT",
-          entityId: contactIdentity.contact.id,
-        });
-      }
-    } catch (error) {
-      if (error instanceof AccessDeniedError) contactIdentityForbidden = true;
-      else throw error;
-    }
-    try {
-      privacy = await getPrivacyService().getLeadStatus(context, leadId, "PHONE");
-    } catch (error) {
-      if (error instanceof AccessDeniedError) privacyForbidden = true;
-      else throw error;
-    }
-    try {
-      communications = await getOmnichannelService().getLeadSummary(context, leadId);
-    } catch (error) {
-      if (error instanceof AccessDeniedError) communicationsForbidden = true;
-      else throw error;
-    }
+
+    [operations, pacto, score, pipeline, meetings, opportunities] = core;
+    intelligence = intelligenceResult.value;
+    intelligenceForbidden = intelligenceResult.forbidden;
+    contactIdentity = contactResult.value?.identity ?? null;
+    journey = contactResult.value?.journey ?? null;
+    contactIdentityForbidden = contactResult.forbidden;
+    privacy = privacyResult.value;
+    privacyForbidden = privacyResult.forbidden;
+    communications = communicationsResult.value;
+    communicationsForbidden = communicationsResult.forbidden;
   } catch (error) {
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     if (error instanceof ApplicationError && error.code === "NOT_FOUND") notFound();

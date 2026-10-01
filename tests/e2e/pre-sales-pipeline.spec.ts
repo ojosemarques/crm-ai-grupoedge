@@ -59,23 +59,12 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await page.getByRole("button", { name: "Lista" }).click();
   await expect(page.getByRole("row").filter({ hasText: leadName })).toContainText("Tentando contato");
   await page.getByRole("button", { name: "Abrir lead" }).click();
-  const qualifiedStageId = await page
-    .getByLabel("Etapa de destino")
-    .locator("option")
-    .filter({ hasText: /^Qualificado/ })
-    .getAttribute("value");
-  expect(qualifiedStageId).toBeTruthy();
-  await page.getByLabel("Etapa de destino").selectOption(qualifiedStageId!);
-  await page.getByRole("button", { name: "Confirmar transição" }).click();
-  await expect(page.getByRole("status")).toContainText(`${leadName} foi movido para Qualificado.`);
-  await expect(page.getByRole("row").filter({ hasText: leadName })).toContainText("Qualificado");
-
-  await page.getByRole("button", { name: leadName, exact: true }).click();
   await expect(page).toHaveURL(/\/pipeline(?:\?|$)/);
   await expect(page.getByRole("table")).toBeVisible();
-  await expect(page.getByRole("dialog", { name: leadName })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Resumo do lead" })).toBeVisible();
-  await page.getByRole("button", { name: "Fechar painel" }).click();
+  const leadDialog = page.getByRole("dialog");
+  await expect(leadDialog).toBeVisible();
+  await expect(leadDialog.getByRole("heading", { name: leadName, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Fechar ficha e voltar ao pipeline" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 

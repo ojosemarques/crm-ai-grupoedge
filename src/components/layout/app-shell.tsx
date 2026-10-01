@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode } from "react";
 
 import { CopilotDrawer } from "@/components/layout/copilot-drawer";
 import { GlobalSearch } from "@/components/layout/global-search";
@@ -160,6 +160,21 @@ function subscribeToMobileLayout(onChange: () => void) {
 const mobileLayoutSnapshot = () => window.matchMedia("(max-width: 800px)").matches;
 const serverLayoutSnapshot = () => false;
 
+function IntentLink(props: ComponentProps<typeof Link>) {
+  const [prefetch, setPrefetch] = useState(false);
+  const signalIntent = () => setPrefetch(true);
+
+  return (
+    <Link
+      {...props}
+      onFocus={signalIntent}
+      onMouseEnter={signalIntent}
+      onTouchStart={signalIntent}
+      prefetch={prefetch ? null : false}
+    />
+  );
+}
+
 export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const pathname = usePathname();
   const [session, setSession] = useState<SessionView | null | undefined>(undefined);
@@ -240,19 +255,19 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
       <a className="skip-link" href="#conteudo-principal">Pular para o conteúdo</a>
       <div className={cn("app-shell", styles.shell, collapsed && styles.collapsed)}>
         <header className={styles.topbar} onKeyDown={(event) => { if (event.key === "Escape" && event.target instanceof HTMLElement) { const details = event.target.closest("details"); details?.removeAttribute("open"); details?.querySelector("summary")?.focus(); } }}>
-          <Link aria-label="Politizai, início" className={styles.brand} href="/">
+          <IntentLink aria-label="Politizai, início" className={styles.brand} href="/">
             <BrandLogo />
-          </Link>
+          </IntentLink>
           <nav aria-label="Módulos do CRM" className={styles.topnav}>
             {availableSections.filter((section) => section.key !== "settings").map((section) => (
-              <Link aria-current={activeSection?.key === section.key ? "true" : undefined} href={section.items[0]!.href} key={section.key} onClick={() => setMenuOpen(false)}>{section.label}</Link>
+              <IntentLink aria-current={activeSection?.key === section.key ? "true" : undefined} href={section.items[0]!.href} key={section.key} onClick={() => setMenuOpen(false)}>{section.label}</IntentLink>
             ))}
           </nav>
           <div className={styles.actions}>
-            <Link aria-label="Trocar empresa" className={styles.companyButton} href="/hub" title="Escolher empresa">{session?.workspace.name ?? "Empresas"}<span aria-hidden="true">⌄</span></Link>
+            <IntentLink aria-label="Trocar empresa" className={styles.companyButton} href="/hub" title="Escolher empresa">{session?.workspace.name ?? "Empresas"}<span aria-hidden="true">⌄</span></IntentLink>
             {session ? <GlobalSearch /> : null}
-            {canCreateLead ? <Link aria-label="Novo lead" className={styles.newButton} href="/leads/entrada"><Icon name="mais" size={14} /><span>Novo</span></Link> : null}
-            <Link aria-label="Notificações" className={styles.iconButton} href="/notificacoes"><Icon name="notificacoes" size={17} /></Link>
+            {canCreateLead ? <IntentLink aria-label="Novo lead" className={styles.newButton} href="/leads/entrada"><Icon name="mais" size={14} /><span>Novo</span></IntentLink> : null}
+            <IntentLink aria-label="Notificações" className={styles.iconButton} href="/notificacoes"><Icon name="notificacoes" size={17} /></IntentLink>
             {canUseCopilot ? <button aria-label="Copilot" aria-controls="copilot-drawer" aria-expanded={copilotOpen} className={styles.copilotButton} onClick={() => setCopilotOpen((current) => !current)} type="button"><Icon name="copilot" size={16} /><span>Copilot</span></button> : null}
           </div>
         </header>
@@ -261,24 +276,24 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
           <div className={styles.sidebarHeading}><Icon name={activeSection?.icon ?? "dashboard"} size={15} /><span>{activeSection?.label ?? "Workspace"}</span><button aria-label={collapsed ? "Expandir menu" : "Recolher menu"} className={styles.collapseButton} onClick={() => setCollapsed(!collapsed)} type="button">{collapsed ? "›" : "‹"}</button></div>
           <nav aria-label="Navegação da área" className={styles.contextNav}>
             {session === undefined ? <div aria-label="Carregando navegação" className={styles.skeleton} role="status">{Array.from({ length: 5 }, (_, index) => <span key={index} />)}</div> : activeSection?.items.map((item, index) => (
-              <Link aria-current={isActive(pathname, item.href) ? "page" : undefined} aria-label={labels[item.href] ?? item.label} className={styles.contextLink} href={item.href} key={item.href} onClick={() => setMenuOpen(false)} title={labels[item.href] ?? item.label}>
+              <IntentLink aria-current={isActive(pathname, item.href) ? "page" : undefined} aria-label={labels[item.href] ?? item.label} className={styles.contextLink} href={item.href} key={item.href} onClick={() => setMenuOpen(false)} title={labels[item.href] ?? item.label}>
                 <span className={styles.navIcon} data-color={index % 5}><Icon name={item.icon} size={15} /></span><span>{labels[item.href] ?? item.label}</span>
-              </Link>
+              </IntentLink>
             ))}
           </nav>
           <div className={styles.sidebarBottom}>
-            <Link aria-label="Minhas empresas" href="/hub" onClick={() => setMenuOpen(false)} title="Minhas empresas"><Icon name="meu-dia" size={16} /><span>Minhas empresas</span></Link>
-            {availableSections.find((section) => section.key === "settings") ? <Link aria-label="Configurações" href={availableSections.find((section) => section.key === "settings")!.items[0]!.href} onClick={() => setMenuOpen(false)} title="Configurações"><Icon name="configuracoes" size={16} /><span>Configurações</span></Link> : null}
-            <Link aria-label="Minha conta" className={styles.account} href="/perfil" onClick={() => setMenuOpen(false)} title="Minha conta"><span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span><span><strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small></span></Link>
+            <IntentLink aria-label="Minhas empresas" href="/hub" onClick={() => setMenuOpen(false)} title="Minhas empresas"><Icon name="meu-dia" size={16} /><span>Minhas empresas</span></IntentLink>
+            {availableSections.find((section) => section.key === "settings") ? <IntentLink aria-label="Configurações" href={availableSections.find((section) => section.key === "settings")!.items[0]!.href} onClick={() => setMenuOpen(false)} title="Configurações"><Icon name="configuracoes" size={16} /><span>Configurações</span></IntentLink> : null}
+            <IntentLink aria-label="Minha conta" className={styles.account} href="/perfil" onClick={() => setMenuOpen(false)} title="Minha conta"><span className={styles.avatar}>{initials(session?.user.displayName ?? "Usuário")}</span><span><strong>{session?.user.displayName ?? "Minha conta"}</strong><small>{session?.user.role.name ?? ""}</small></span></IntentLink>
           </div>
         </aside>
         <div className={styles.mobileBar}><button aria-controls="menu-principal" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)} type="button"><Icon name="dashboard" size={17} />{activeSection?.label ?? "Navegação"}<span>⌄</span></button></div>
         <nav aria-label="Atalhos operacionais" className={styles.mobileDock}>
           {mobileCriticalItems.map((item) => (
-            <Link aria-current={isActive(pathname, item.href) ? "page" : undefined} href={item.href} key={item.href} onClick={() => setMenuOpen(false)}>
+            <IntentLink aria-current={isActive(pathname, item.href) ? "page" : undefined} href={item.href} key={item.href} onClick={() => setMenuOpen(false)}>
               <Icon name={item.icon} size={18} />
               <span>{item.href === "/pipeline" ? "Funil" : item.href === "/dashboard" ? "Painel" : item.label}</span>
-            </Link>
+            </IntentLink>
           ))}
         </nav>
         {canUseCopilot ? <CopilotDrawer onClose={() => setCopilotOpen(false)} open={copilotOpen} /> : null}

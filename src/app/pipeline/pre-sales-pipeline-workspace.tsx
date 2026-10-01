@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -44,6 +44,18 @@ type LeadEntryOptions = Readonly<{
   priorityBands: readonly Readonly<{ code: "P1" | "P2" | "P3"; name: string }>[];
 }>;
 
+async function fetchLeadEntryOptions(): Promise<LeadEntryOptions> {
+  const response = await fetch("/api/leads/entry-options", { cache: "no-store" });
+  const body = (await response.json().catch(() => ({}))) as {
+    options?: LeadEntryOptions;
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.options) {
+    throw new Error(body.error?.message ?? "Não foi possível carregar as opções do cadastro.");
+  }
+  return body.options;
+}
+
 const quickInputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring";
 
 function optionalFormValue(form: FormData, name: string): string | undefined {
@@ -54,11 +66,13 @@ function optionalFormValue(form: FormData, name: string): string | undefined {
 function QuickLeadDialog({
   pipelineId,
   pipelineName,
+  loadOptions,
   onDismiss,
   onCreated,
 }: Readonly<{
   pipelineId: string;
   pipelineName: string;
+  loadOptions: () => Promise<LeadEntryOptions>;
   onDismiss: () => void;
   onCreated: (message: string) => void;
 }>) {
@@ -68,25 +82,18 @@ function QuickLeadDialog({
   const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
-    const controller = new AbortController();
-    void fetch("/api/leads/entry-options", { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        const body = (await response.json().catch(() => ({}))) as {
-          options?: LeadEntryOptions;
-          error?: { message?: string };
-        };
-        if (!response.ok || !body.options) {
-          throw new Error(body.error?.message ?? "Não foi possível carregar as opções do cadastro.");
-        }
-        setOptions(body.options);
+    let active = true;
+    void loadOptions()
+      .then((value) => {
+        if (active) setOptions(value);
       })
       .catch((cause: unknown) => {
-        if (!controller.signal.aborted) {
+        if (active) {
           setError(cause instanceof Error ? cause.message : "Não foi possível carregar as opções do cadastro.");
         }
       });
-    return () => controller.abort();
-  }, []);
+    return () => { active = false; };
+  }, [loadOptions]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -179,6 +186,9 @@ export function PreSalesPipelineWorkspace({
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
+  const entryOptionsRequest = useRef<Promise<LeadEntryOptions> | null>(null);
+  const leadStateRequests = useRef(new Map<string, Readonly<{ expiresAt: number; request: Promise<LeadPipelineState> }>>());
+  const leadCardPrefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchControls = useTouchPipelineControls();
   const cards = useMemo(() => allCards(screen.stages), [screen.stages]);
   const selectedLead = cards.find((lead) => lead.id === selectedLeadId) ?? null;
@@ -186,8 +196,53 @@ export function PreSalesPipelineWorkspace({
     ? screen.stages
     : screen.stages.filter((stage) => stage.code === screen.filters.stageCode);
 
+  const loadEntryOptions = useCallback(() => {
+    if (entryOptionsRequest.current) return entryOptionsRequest.current;
+    const request = fetchLeadEntryOptions();
+    entryOptionsRequest.current = request;
+    void request.catch(() => {
+      if (entryOptionsRequest.current === request) entryOptionsRequest.current = null;
+    });
+    return request;
+  }, []);
+
+  function leadCardHref(lead: LeadPipelineCard, anchor?: string) {
+    return `/leads/${lead.id}/historico${anchor ? `#${anchor}` : ""}`;
+  }
+
+  function prefetchLeadCard(lead: LeadPipelineCard) {
+    router.prefetch(leadCardHref(lead));
+  }
+
+  function scheduleLeadCardPrefetch(lead: LeadPipelineCard) {
+    if (leadCardPrefetchTimer.current) clearTimeout(leadCardPrefetchTimer.current);
+    leadCardPrefetchTimer.current = setTimeout(() => prefetchLeadCard(lead), 120);
+  }
+
+  function cancelLeadCardPrefetch() {
+    if (leadCardPrefetchTimer.current) clearTimeout(leadCardPrefetchTimer.current);
+    leadCardPrefetchTimer.current = null;
+  }
+
+  const getLeadState = useCallback((leadId: string) => {
+    const cached = leadStateRequests.current.get(leadId);
+    if (cached && cached.expiresAt > Date.now()) return cached.request;
+    const request = fetch(`/api/leads/${leadId}/stage`, { cache: "no-store" })
+      .then((response) => responseResult<LeadPipelineState>(response));
+    const record = { expiresAt: Date.now() + 10_000, request };
+    leadStateRequests.current.set(leadId, record);
+    void request.catch(() => {
+      if (leadStateRequests.current.get(leadId) === record) leadStateRequests.current.delete(leadId);
+    });
+    return request;
+  }, []);
+
+  function prefetchLeadState(lead: LeadPipelineCard) {
+    void getLeadState(lead.id).catch(() => undefined);
+  }
+
   function openLeadCard(lead: LeadPipelineCard, anchor?: string) {
-    router.push(`/leads/${lead.id}/historico${anchor ? `#${anchor}` : ""}`);
+    router.push(leadCardHref(lead, anchor));
   }
 
   async function transition(
@@ -215,6 +270,7 @@ export function PreSalesPipelineWorkspace({
         }),
       });
       await responseResult(response);
+      leadStateRequests.current.delete(lead.id);
       setNotice({ kind: "success", message: `${lead.fullName} foi movido para ${option.name}.` });
       setSelectedLeadId(null);
       setSelectedLeadState(null);
@@ -249,14 +305,14 @@ export function PreSalesPipelineWorkspace({
     event.dataTransfer.setData("application/x-politizai-lead", lead.id);
     event.dataTransfer.setData("text/plain", lead.id);
     setDraggedLeadId(lead.id);
+    prefetchLeadState(lead);
   }
 
   async function loadLeadState(lead: LeadPipelineCard): Promise<LeadPipelineState | null> {
     setPending(true);
     setNotice(null);
     try {
-      const response = await fetch(`/api/leads/${lead.id}/stage`, { cache: "no-store" });
-      return await responseResult<LeadPipelineState>(response);
+      return await getLeadState(lead.id);
     } catch (error) {
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." });
       return null;
@@ -273,14 +329,11 @@ export function PreSalesPipelineWorkspace({
     setPending(true);
     setNotice(null);
     try {
-      const [stateResponse, operationsResponse] = await Promise.all([
-        fetch(`/api/leads/${lead.id}/stage`, { cache: "no-store" }),
+      const [state, operationsResponse] = await Promise.all([
+        getLeadState(lead.id),
         fetch(`/api/leads/${lead.id}/operations?pageSize=8`, { cache: "no-store" }),
       ]);
-      const [state, operations] = await Promise.all([
-        responseResult<LeadPipelineState>(stateResponse),
-        responseResult<LeadCardOperations>(operationsResponse),
-      ]);
+      const operations = await responseResult<LeadCardOperations>(operationsResponse);
       setSelectedLeadState(state);
       setSelectedLeadOperations(operations);
     } catch (error) {
@@ -343,7 +396,7 @@ export function PreSalesPipelineWorkspace({
         <label className={styles.filter}>Etapa<select aria-label="Etapa" defaultValue={screen.filters.stageCode} name="stageCode"><option value="ALL">Todas as etapas</option>{screen.stages.map((stage) => <option key={stage.id} value={stage.code}>{stage.name} ({stage.count})</option>)}</select></label>
         <input name="view" type="hidden" value={view} />
         <Button size="sm" type="submit" variant="secondary"><Icon name="filtro" size={14} />Aplicar</Button>
-        {screen.canWrite ? <Button onClick={() => setQuickCreateOpen(true)} size="sm" type="button"><Icon name="mais" size={14} />Adicionar</Button> : null}
+        {screen.canWrite ? <Button onFocus={() => { void loadEntryOptions().catch(() => undefined); }} onMouseEnter={() => { void loadEntryOptions().catch(() => undefined); }} onTouchStart={() => { void loadEntryOptions().catch(() => undefined); }} onClick={() => setQuickCreateOpen(true)} size="sm" type="button"><Icon name="mais" size={14} />Adicionar</Button> : null}
         <Link className={styles.clear} href={`/pipeline?pipelineId=${screen.pipelineId}`}>Limpar filtros</Link>
       </form>
       <div className={styles.boardToolbar}>
@@ -376,9 +429,9 @@ export function PreSalesPipelineWorkspace({
               <header className={styles.laneHeader}><div><h2>{stage.name}</h2><span>{stage.leads.filter((lead) => lead.nextActionAt).length} atividades agendadas</span></div><span aria-label={`${stage.count} leads nesta etapa`} className={styles.count}>{stage.count}</span></header>
               <div className={styles.cards}>
                 {stage.leads.map((lead) => (
-                  <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={!touchControls && screen.canWrite && !pending} key={lead.id} onClick={() => { if (!pending) openLeadCard(lead); }} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)}>
+                  <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={!touchControls && screen.canWrite && !pending} key={lead.id} onClick={() => { if (!pending) openLeadCard(lead); }} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)} onFocusCapture={() => prefetchLeadCard(lead)} onMouseEnter={() => scheduleLeadCardPrefetch(lead)} onMouseLeave={cancelLeadCardPrefetch} onTouchStart={() => prefetchLeadCard(lead)}>
                     <div className={styles.cardBody}>
-                      <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${lead.fullName}`} className={styles.dragHandle} disabled={!screen.canWrite || pending || touchControls} draggable={!touchControls && screen.canWrite && !pending} onClick={(event) => event.stopPropagation()} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div></div>
+                      <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${lead.fullName}`} className={styles.dragHandle} disabled={!screen.canWrite || pending || touchControls} draggable={!touchControls && screen.canWrite && !pending} onClick={(event) => event.stopPropagation()} onFocus={() => prefetchLeadState(lead)} onMouseEnter={() => prefetchLeadState(lead)} onTouchStart={() => prefetchLeadState(lead)} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div></div>
                       <div className={styles.cardTitle}><button aria-label={`Abrir ficha completa de ${lead.fullName}`} disabled={pending} draggable={false} onClick={(event) => { event.stopPropagation(); openLeadCard(lead); }} type="button">{lead.fullName}</button><span title="Pontuação de qualificação">{lead.score === null ? "—" : `${lead.score}/100`}</span></div>
                       {lead.jobTitle ? <p className={styles.subtitle}>{lead.jobTitle}</p> : null}
                     </div>
@@ -388,8 +441,8 @@ export function PreSalesPipelineWorkspace({
                       <button aria-label={`Abrir tarefas de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); openLeadCard(lead, "tarefas"); }} title="Tarefas e lembretes" type="button"><Icon name="agenda" size={13} /></button>
                       <button aria-label={`Abrir reuniões de ${lead.fullName}`} disabled={pending} onClick={(event) => { event.stopPropagation(); openLeadCard(lead, "reunioes"); }} title="Reuniões" type="button"><Icon name="mais" size={13} /></button>
                       <span className={styles.activity} title={`${lead.nextActionDescription ?? "Sem próxima atividade"} · ${formatDate(lead.nextActionAt, screen.timeZone)}`}><Icon name="relogio" size={12} />{lead.nextActionAt ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: screen.timeZone }).format(new Date(lead.nextActionAt)) : "Sem prazo"}</span>
-                      <button aria-label={`Alterar etapa de ${lead.fullName}`} className={styles.moveButton} disabled={!screen.canWrite || pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} title="Alterar etapa" type="button"><Icon name="seta-direita" size={13} /></button>
-                      <button aria-label={`Mover ${lead.fullName} para outra etapa`} className={styles.mobileMoveButton} disabled={!screen.canWrite || pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} type="button">Mover para <Icon name="seta-direita" size={13} /></button>
+                      <button aria-label={`Alterar etapa de ${lead.fullName}`} className={styles.moveButton} disabled={!screen.canWrite || pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} onFocus={() => prefetchLeadState(lead)} onMouseEnter={() => prefetchLeadState(lead)} onTouchStart={() => prefetchLeadState(lead)} title="Alterar etapa" type="button"><Icon name="seta-direita" size={13} /></button>
+                      <button aria-label={`Mover ${lead.fullName} para outra etapa`} className={styles.mobileMoveButton} disabled={!screen.canWrite || pending} onClick={(event) => { event.stopPropagation(); void openTransition(lead); }} onFocus={() => prefetchLeadState(lead)} onTouchStart={() => prefetchLeadState(lead)} type="button">Mover para <Icon name="seta-direita" size={13} /></button>
                     </footer>
                   </article>
                 ))}
@@ -462,6 +515,7 @@ export function PreSalesPipelineWorkspace({
         </AccessibleDialog>
       ) : null}
       {quickCreateOpen ? <QuickLeadDialog
+        loadOptions={loadEntryOptions}
         onCreated={(message) => {
           setQuickCreateOpen(false);
           setNotice({ kind: "success", message });

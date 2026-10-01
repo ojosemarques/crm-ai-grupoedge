@@ -481,13 +481,15 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         invalidInput("Responsável inválido.");
       }
     }
-    const scope = await resolveLeadVisibilityScope(
-      options.database,
-      options.authorization,
-      context,
-      PermissionKeys.LEADS_READ,
-    );
-    const pipeline = await getPipeline(context.workspaceId, parsed.data.pipelineId);
+    const [scope, pipeline] = await Promise.all([
+      resolveLeadVisibilityScope(
+        options.database,
+        options.authorization,
+        context,
+        PermissionKeys.LEADS_READ,
+      ),
+      getPipeline(context.workspaceId, parsed.data.pipelineId),
+    ]);
     const visibility = leadVisibilityWhere(context, scope);
     const responsibleFilter: Prisma.LeadWhereInput = parsed.data.responsible.startsWith("member:")
       ? { ownerMemberId: parsed.data.responsible.slice(7) }

@@ -20,19 +20,22 @@ export default async function PipelinePage({ searchParams }: Readonly<{ searchPa
   const context = await requirePageAuthentication();
   const params = await searchParams;
   let screen;
+  let pipelines;
   try {
-    screen = await getPreSalesPipelineService().getScreen(context, {
-      pipelineId: first(params.pipelineId),
-      q: first(params.q),
-      responsible: first(params.responsible),
-      priority: first(params.priority),
-      stageCode: first(params.stageCode),
-    });
+    [screen, pipelines] = await Promise.all([
+      getPreSalesPipelineService().getScreen(context, {
+        pipelineId: first(params.pipelineId),
+        q: first(params.q),
+        responsible: first(params.responsible),
+        priority: first(params.priority),
+        stageCode: first(params.stageCode),
+      }),
+      listBusinessPipelines(context),
+    ]);
   } catch (error) {
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     throw error;
   }
-  const pipelines = await listBusinessPipelines(context);
 
   return (
     <main className="page-canvas">
