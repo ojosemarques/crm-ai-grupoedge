@@ -26,6 +26,7 @@ test("admin cria empresas, compartilha acesso, troca contexto e mantém módulos
     await expect(page.getByRole("button", { name: `Entrar em ${company}`, exact: true })).toHaveCount(0);
     await preview.getByRole("button", { name: "Confirmar alteração" }).click();
     await expect(page.getByRole("button", { name: `Entrar em ${company}`, exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: `Configurar ${company}`, exact: true })).toBeVisible();
   }
   const screen = (await (await page.request.get("/api/hub")).json()).result;
   const target = screen.companies.find((c: { name: string }) => c.name === name);

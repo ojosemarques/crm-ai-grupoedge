@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 
 import { WorkspaceAdministration } from "@/app/administracao/workspace-administration";
 import { PageHeader } from "@/components/layout/page-header";
+import { Button } from "@/components/ui/button";
 import { requirePageAuthentication } from "@/modules/auth/http/authentication-guards";
 import { getWorkspaceAdministrationService } from "@/modules/users/application/workspace-administration-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
@@ -20,7 +22,7 @@ export default async function AdministrationPage() {
 
   return (
     <main className="page-canvas page-canvas-wide">
-      <PageHeader description="Gerencie sua equipe, a disponibilidade e os acessos ao CRM." eyebrow="Administração" meta={context.displayName} title="Usuários e equipes" />
+      <PageHeader description="Gerencie sua equipe, a disponibilidade e os acessos ao CRM." eyebrow="Administração" meta={context.displayName} title="Usuários e equipes" actions={<Button asChild variant="secondary"><Link href="/configuracao-inicial">Assistente de configuração →</Link></Button>} />
       <WorkspaceAdministration initialScreen={screen} />
     </main>
   );

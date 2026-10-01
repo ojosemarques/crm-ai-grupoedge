@@ -30,12 +30,12 @@ export function CompanyHub({ initial, sessionId }: { initial: CompanyHubScreen; 
     return body;
   }
 
-  async function enter(id: string) {
+  async function enter(id: string, destination = "/") {
     setBusy(true); setError(null);
     try {
       await request("/api/auth/workspace", { workspaceId: id });
       announceCompanySwitch();
-      window.location.assign(new URL("/", window.location.origin).href);
+      window.location.assign(new URL(destination, window.location.origin).href);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao selecionar empresa."); setBusy(false); }
   }
 
@@ -87,7 +87,10 @@ export function CompanyHub({ initial, sessionId }: { initial: CompanyHubScreen; 
           <div className={styles.companyIcon} aria-hidden="true">{company.name.slice(0, 2).toUpperCase()}</div>
           <h2>{company.name}</h2><span className={styles.badge}>{company.roleName}</span>
           <p>CRM, clientes, financeiro e marketing em um só lugar.</p>
-          <button className={styles.primary} disabled={busy || !!pending} onClick={() => void enter(company.id)} type="button" aria-label={`Entrar em ${company.name}`}>Entrar na empresa <span aria-hidden="true">→</span></button>
+          <div className={styles.cardActions}>
+            <button className={styles.primary} disabled={busy || !!pending} onClick={() => void enter(company.id)} type="button" aria-label={`Entrar em ${company.name}`}>Entrar na empresa <span aria-hidden="true">→</span></button>
+            {company.canManage ? <button disabled={busy || !!pending} onClick={() => void enter(company.id, "/configuracao-inicial")} type="button" aria-label={`Configurar ${company.name}`}>Configurar empresa</button> : null}
+          </div>
         </article>)}
       </div>
       {!screen.companies.length ? <p>Nenhuma empresa está disponível. Fale com o administrador para revisar seu acesso.</p> : null}
