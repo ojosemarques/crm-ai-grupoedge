@@ -214,6 +214,13 @@ describe("histórico operacional baseado em eventos", () => {
     });
     expect(taskAudits).toBeGreaterThanOrEqual(3);
     expect(taskActivities).toBe(4);
+    const summary = await service.getLeadOperations(managerContext, {
+      leadId: lead.leadId,
+    });
+    expect(summary.summary.activities).toMatchObject({
+      completedFollowUps: 1,
+      completedTasks: 1,
+    });
 
     await expect(
       service.completeTask(managerContext, {
@@ -385,6 +392,14 @@ describe("histórico operacional baseado em eventos", () => {
       select: { type: true, createdBy: { select: { type: true } } },
     });
     const storedTypes = new Set(allActivities.map(({ type }) => type));
+    expect(firstPage.summary.activities).toMatchObject({
+      total: allActivities.length,
+      calls: 3,
+      connectedCalls: 1,
+      messages: 3,
+      emails: 1,
+      meetings: 1,
+    });
     for (const type of types) expect(storedTypes.has(type)).toBe(true);
     expect(new Set(allActivities.map(({ createdBy }) => createdBy.type))).toEqual(
       new Set(["HUMAN", "SYSTEM", "AUTOMATION", "AI_AGENT"]),

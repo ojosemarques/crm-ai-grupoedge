@@ -81,6 +81,14 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await expect(leadDialog).toBeVisible();
   await expect(leadDialog.getByRole("heading", { name: leadName, exact: true })).toBeVisible();
   await expect(leadDialog.getByRole("tab", { name: "Inteligência" })).toHaveCount(0);
+  await leadDialog.getByRole("tab", { name: "Resumo" }).click();
+  await expect(leadDialog.getByRole("heading", { name: "Comunicações" })).toBeVisible();
+  await expect(leadDialog.getByRole("heading", { name: "Atividades realizadas" })).toBeVisible();
+  await expect(leadDialog.getByText("Atividades registradas", { exact: true })).toBeVisible();
+  await expect(leadDialog.getByText("Retornos concluídos", { exact: true })).toBeVisible();
+  await expect(leadDialog.getByRole("heading", { name: "Privacidade para contato" })).toHaveCount(0);
+  await expect(leadDialog.getByRole("heading", { name: "Contexto atual" })).toHaveCount(0);
+  await leadDialog.getByRole("tab", { name: "Atividades" }).click();
   const timeline = leadDialog.locator("details#timeline");
   await expect(timeline).not.toHaveAttribute("open", "");
   await expect(timeline.getByText("Abrir", { exact: true })).toBeVisible();

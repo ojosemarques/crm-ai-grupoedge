@@ -96,6 +96,16 @@ export type LeadCardOperations = Readonly<{
     nextActionIssue: string | null;
   }>;
   summary: Readonly<{
+    activities: Readonly<{
+      total: number;
+      calls: number;
+      connectedCalls: number;
+      messages: number;
+      emails: number;
+      meetings: number;
+      completedFollowUps: number;
+      completedTasks: number;
+    }>;
     latestSubmission: Readonly<{
       channel: string | null;
       submittedAt: string;

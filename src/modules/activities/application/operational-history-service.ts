@@ -1335,7 +1335,7 @@ export function createOperationalHistoryService(
     }
     const routingTeamId = lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null;
 
-    const [workspace, publicLead, tasks, activities, assignmentTargets] =
+    const [workspace, publicLead, tasks, activities, activityBreakdown, taskBreakdown, assignmentTargets] =
       await Promise.all([
       options.database.workspace.findUniqueOrThrow({
         where: { id: context.workspaceId },
@@ -1497,6 +1497,24 @@ export function createOperationalHistoryService(
           },
         },
       }),
+      options.database.activity.groupBy({
+        by: ["type", "result"],
+        where: {
+          workspaceId: context.workspaceId,
+          leadId: lead.id,
+          deletedAt: null,
+        },
+        _count: { _all: true },
+      }),
+      options.database.task.groupBy({
+        by: ["kind", "status"],
+        where: {
+          workspaceId: context.workspaceId,
+          leadId: lead.id,
+          deletedAt: null,
+        },
+        _count: { _all: true },
+      }),
       assignDecision.allowed
         ? options.database.workspaceMember.findMany({
             where: commercialMemberWhere({
@@ -1514,6 +1532,19 @@ export function createOperationalHistoryService(
     ]);
     const hasMore = activities.length > parsed.data.pageSize;
     const timeline = activities.slice(0, parsed.data.pageSize);
+    const countActivities = (types?: readonly ActivityType[]) => activityBreakdown.reduce(
+      (total, row) => total + (!types || types.includes(row.type) ? row._count._all : 0),
+      0,
+    );
+    const completedTasks = taskBreakdown
+      .filter((row) => row.status === "COMPLETED")
+      .reduce((total, row) => total + row._count._all, 0);
+    const completedFollowUps = taskBreakdown
+      .filter((row) => row.status === "COMPLETED" && row.kind === "FOLLOW_UP")
+      .reduce((total, row) => total + row._count._all, 0);
+    const connectedCalls = activityBreakdown
+      .filter((row) => row.type === "CALL_CONNECTED" || (row.type === "CALL" && row.result === "CONNECTED"))
+      .reduce((total, row) => total + row._count._all, 0);
     const activeTasks = tasks.filter(
       (task) => task.status === "OPEN" || task.status === "IN_PROGRESS",
     );
@@ -1659,6 +1690,16 @@ export function createOperationalHistoryService(
               : null,
       },
       summary: {
+        activities: {
+          total: countActivities(),
+          calls: countActivities(["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"]),
+          connectedCalls,
+          messages: countActivities(["MESSAGE", "MESSAGE_SENT", "MESSAGE_RECEIVED", "AUDIO"]),
+          emails: countActivities(["EMAIL"]),
+          meetings: countActivities(["MEETING"]),
+          completedFollowUps,
+          completedTasks,
+        },
         latestSubmission: latestSubmission
           ? {
               channel: latestSubmission.channel,

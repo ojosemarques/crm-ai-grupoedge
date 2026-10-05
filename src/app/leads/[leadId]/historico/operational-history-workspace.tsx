@@ -178,14 +178,6 @@ function formatDate(value: string, timeZone: string) {
   }).format(new Date(value));
 }
 
-function formatMoney(cents: string | null) {
-  if (cents === null) return "Não informado";
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(Number(cents) / 100);
-}
-
 function formatElapsed(seconds: number) {
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
@@ -535,9 +527,16 @@ export function OperationalHistoryWorkspace({
   }
 
   function openStagePanel() {
-    setActiveTab("summary");
+    setActiveTab("timeline");
     window.setTimeout(() => {
       document.getElementById("alterar-etapa")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }
+
+  function openContactEditor() {
+    setActiveTab("identity");
+    window.setTimeout(() => {
+      document.getElementById("editar-informacoes")?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 0);
   }
 
@@ -553,20 +552,6 @@ export function OperationalHistoryWorkspace({
       city: nullableFormText(form, "city"),
       stateCode: nullableFormText(form, "stateCode"),
       interestSummary: nullableFormText(form, "interestSummary"),
-    });
-  }
-
-  async function submitRedistribution(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const destination = formText(form, "destination");
-    if (!destination) return;
-    const target = destination === "general"
-      ? { type: "GENERAL_QUEUE" }
-      : { type: "MEMBER", memberId: destination.replace("member:", "") };
-    await mutate("REDISTRIBUTE", {
-      target,
-      reason: formText(form, "reason"),
     });
   }
 
@@ -892,7 +877,7 @@ export function OperationalHistoryWorkspace({
         </dl>
 
           <div className="grid gap-3">
-            <Button onClick={() => setActiveTab("summary")} size="sm" type="button" variant="secondary">Editar informações</Button>
+            <Button onClick={openContactEditor} size="sm" type="button" variant="secondary">Editar informações</Button>
             {operations.permissions.canAssign ? (
               <details className={styles.sellerAssignment} id="vendedor-do-lead">
                 <summary>
@@ -933,122 +918,67 @@ export function OperationalHistoryWorkspace({
         </aside>
         <div className={styles.content}>
       {activeTab === "summary" ? (
-        <div aria-labelledby="tab-summary" className="grid gap-6 xl:grid-cols-2" id="panel-summary" role="tabpanel">
-          <section className="surface-panel surface-panel--soft p-5 xl:col-span-2" aria-label="Resumo de comunicações">
+        <div aria-labelledby="tab-summary" className="grid gap-6" id="panel-summary" role="tabpanel">
+          <section className="surface-panel surface-panel--soft p-5" aria-label="Resumo de comunicações">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><h2 className="text-lg font-semibold">Comunicações</h2><p className="mt-1 text-sm text-muted-foreground">Resumo relacional do inbox; a timeline mantém apenas a referência ao fato canônico.</p></div>
+              <div>
+                <h2 className="text-lg font-semibold">Comunicações</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Conversas e mensagens vinculadas a este lead.</p>
+              </div>
               <Button asChild size="sm" variant="secondary"><Link href={initialCommunications?.recent[0] ? `/inbox?conversationId=${initialCommunications.recent[0].id}` : "/inbox"}>Abrir inbox</Link></Button>
             </div>
-            {communicationsForbidden ? <p className="mt-4 text-sm text-muted-foreground">Sem permissão para consultar conversas deste lead.</p> : initialCommunications ? <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6"><div><dt className="text-xs text-muted-foreground">Conversas</dt><dd className="mt-1 font-semibold">{initialCommunications.conversationCount}</dd></div><div><dt className="text-xs text-muted-foreground">Abertas</dt><dd className="mt-1 font-semibold">{initialCommunications.openCount}</dd></div><div><dt className="text-xs text-muted-foreground">Aguardando time</dt><dd className="mt-1 font-semibold">{initialCommunications.waitingTeamCount}</dd></div><div><dt className="text-xs text-muted-foreground">Não lidas</dt><dd className="mt-1 font-semibold">{initialCommunications.unreadCount}</dd></div><div><dt className="text-xs text-muted-foreground">Entradas</dt><dd className="mt-1 font-semibold">{initialCommunications.inboundMessageCount}</dd></div><div><dt className="text-xs text-muted-foreground">Saídas</dt><dd className="mt-1 font-semibold">{initialCommunications.outboundMessageCount}</dd></div></dl> : <p className="mt-4 text-sm text-muted-foreground">Resumo de comunicação indisponível.</p>}
-            {!communicationsForbidden && initialCommunications?.conversationCount === 0 ? <p className="mt-4 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Ainda não há conversa canônica para este lead.</p> : null}
-          </section>
-          <section className="surface-panel xl:col-span-2 p-5" aria-label="Situação de privacidade">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><h2 className="text-lg font-semibold">Privacidade para contato</h2><p className="mt-1 text-sm text-muted-foreground">Decisão determinística por finalidade, canal e ponto de contato.</p></div>
-              {privacyForbidden ? <span className="status-badge">Sem permissão</span> : initialPrivacy ? <span className="status-badge" data-tone={initialPrivacy.outcome === "ALLOW" ? "success" : initialPrivacy.outcome === "DENY" ? "danger" : "warning"}>{initialPrivacy.outcome === "ALLOW" ? "Autorizado" : initialPrivacy.outcome === "DENY" ? "Contato bloqueado" : "Revisão necessária"}</span> : <span className="status-badge">Sem avaliação</span>}
-            </div>
-            {initialPrivacy ? <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3"><p><strong>Estado:</strong> {initialPrivacy.consentState}</p><p><strong>Finalidade:</strong> {initialPrivacy.purpose?.name ?? "Não configurada"}</p><p><strong>Modo:</strong> {initialPrivacy.mode === "SHADOW_LOCAL" ? "Local conservador" : "Aplicado"}</p><p className="sm:col-span-3 text-muted-foreground">Motivos: {initialPrivacy.reasonCodes.join(", ")}. {initialPrivacy.missingEvidence.length ? `Faltam: ${initialPrivacy.missingEvidence.join(", ")}.` : "Evidência suficiente para a regra vigente."}</p></div> : null}
-          </section>
-          <div className="xl:col-span-2"><JourneyPanel journey={initialJourney} /></div>
-          <div className="xl:col-span-2">
-            <ScoringWorkspace
-              initialScore={score}
-              onCommitted={refresh}
-              onUpdated={setScore}
-            />
-          </div>
-          <div className="xl:col-span-2">
-            <LeadStageWorkspace
-              onCommitted={refresh}
-              onUpdated={setPipeline}
-              pipeline={pipeline}
-              timeZone={operations.timeZone}
-            />
-          </div>
-          <section className="space-y-6">
-            <article className="surface-panel p-5">
-              <h2 className="text-lg font-semibold">Contexto atual</h2>
-              <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
-                <div><dt className="text-xs text-muted-foreground">Dor ou interesse</dt><dd className="mt-1 whitespace-pre-wrap">{operations.lead.interestSummary ?? "Não informado"}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Capacidade / orçamento</dt><dd className="mt-1">{formatMoney(operations.lead.budgetCents)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Prioridade vigente</dt><dd className="mt-1">{operations.lead.priorityCode ? <span className="priority-badge" data-priority={operations.lead.priorityCode}>{operations.lead.priorityCode}</span> : "Não classificada"}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Motivo disponível</dt><dd className="mt-1">{operations.lead.priorityReason ?? "Sem explicação persistida"}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Campanha</dt><dd className="mt-1">{operations.lead.campaignName ?? "Não informada"}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Criativo</dt><dd className="mt-1">{operations.lead.creativeName ?? "Não informado"}</dd></div>
-                <div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">Próxima ação</dt><dd className="mt-1">{operations.lead.nextAction ? `${operations.lead.nextAction.title} · ${formatDate(operations.lead.nextAction.dueAt, operations.timeZone)}` : "Ausente"}</dd></div>
+            {communicationsForbidden ? (
+              <p className="mt-4 text-sm text-muted-foreground">Sem permissão para consultar conversas deste lead.</p>
+            ) : initialCommunications ? (
+              <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
+                <div><dt className="text-xs text-muted-foreground">Conversas</dt><dd className="mt-1 text-xl font-semibold">{initialCommunications.conversationCount}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Abertas</dt><dd className="mt-1 text-xl font-semibold">{initialCommunications.openCount}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Aguardando time</dt><dd className="mt-1 text-xl font-semibold">{initialCommunications.waitingTeamCount}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Não lidas</dt><dd className="mt-1 text-xl font-semibold">{initialCommunications.unreadCount}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Entradas</dt><dd className="mt-1 text-xl font-semibold">{initialCommunications.inboundMessageCount}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Saídas</dt><dd className="mt-1 text-xl font-semibold">{initialCommunications.outboundMessageCount}</dd></div>
               </dl>
-            </article>
-
-            <article className="surface-panel bg-[var(--surface-subtle)] p-5">
-              <h2 className="text-lg font-semibold">Respostas do formulário mais recente</h2>
-              {operations.summary.latestSubmission ? (
-                <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
-                  <div><dt className="text-xs text-muted-foreground">Recebido em</dt><dd className="mt-1">{formatDate(operations.summary.latestSubmission.submittedAt, operations.timeZone)}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Canal</dt><dd className="mt-1">{operations.summary.latestSubmission.channel ?? "Não classificado"}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Nome enviado</dt><dd className="mt-1">{operations.summary.latestSubmission.fullName ?? "Ausente"}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Telefone enviado</dt><dd className="mt-1">{operations.summary.latestSubmission.phone ?? "Ausente"}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">E-mail enviado</dt><dd className="mt-1 break-all">{operations.summary.latestSubmission.email ?? "Ausente"}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Atuação enviada</dt><dd className="mt-1">{operations.summary.latestSubmission.jobTitle ?? "Ausente"}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Organização enviada</dt><dd className="mt-1">{operations.summary.latestSubmission.organizationName ?? "Ausente"}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Localidade enviada</dt><dd className="mt-1">{[operations.summary.latestSubmission.city, operations.summary.latestSubmission.stateCode].filter(Boolean).join(" / ") || "Ausente"}</dd></div>
-                  <div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">Dor / interesse enviado</dt><dd className="mt-1 whitespace-pre-wrap">{operations.summary.latestSubmission.interestSummary ?? "Ausente"}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Origem</dt><dd className="mt-1">{operations.summary.latestSubmission.sourceName}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Campanha / criativo</dt><dd className="mt-1">{[operations.summary.latestSubmission.campaignName, operations.summary.latestSubmission.creativeName].filter(Boolean).join(" / ") || "Ausente"}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Capacidade enviada</dt><dd className="mt-1">{formatMoney(operations.summary.latestSubmission.budgetCents)}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Consentimento / contato</dt><dd className="mt-1">{operations.summary.latestSubmission.contactPreference ?? "Ausente"}</dd></div>
-                </dl>
-              ) : (
-                <p className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">Nenhuma submissão de formulário foi encontrada.</p>
-              )}
-            </article>
-
-            <article className="surface-panel p-5">
-              <h2 className="text-lg font-semibold">Alertas e campos faltantes</h2>
-              {operations.summary.alerts.length > 0 ? (
-                <ul className="mt-4 space-y-2">
-                  {operations.summary.alerts.map((alert) => <li className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" key={alert.key}><p className="font-semibold">{alert.title}</p><p className="mt-1">{alert.message}</p></li>)}
-                </ul>
-              ) : <p className="mt-3 text-sm text-muted-foreground">Nenhum alerta operacional aberto.</p>}
-              {operations.summary.missingFields.length > 0 ? (
-                <div className="mt-4"><p className="text-sm font-semibold">Campos ainda ausentes</p><ul className="mt-2 flex flex-wrap gap-2">{operations.summary.missingFields.map((field) => <li className="rounded-full border px-2.5 py-1 text-xs" key={field}>{field}</li>)}</ul></div>
-              ) : <p className="mt-4 text-sm text-emerald-800">Os campos de contexto deste resumo estão preenchidos.</p>}
-            </article>
+            ) : <p className="mt-4 text-sm text-muted-foreground">Resumo de comunicação indisponível.</p>}
+            {!communicationsForbidden && initialCommunications?.conversationCount === 0 ? <p className="mt-4 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Ainda não há conversa para este lead.</p> : null}
           </section>
 
-          <section className="space-y-6">
-            <article className="surface-panel p-5">
-              <h2 className="text-lg font-semibold">Editar resumo</h2>
-              {operations.permissions.canWrite ? (
-                <form className="mt-4 grid gap-4 sm:grid-cols-2" key={operations.lead.updatedAt} onSubmit={submitSummary}>
-                  <label className="text-sm sm:col-span-2">Nome<input className={inputClass} defaultValue={operations.lead.fullName} name="fullName" required /></label>
-                  <label className="text-sm sm:col-span-2">E-mail<input className={inputClass} defaultValue={operations.lead.normalizedEmail ?? ""} name="normalizedEmail" type="email" /></label>
-                  <label className="text-sm">Cargo ou atuação<input className={inputClass} defaultValue={operations.lead.jobTitle ?? ""} name="jobTitle" /></label>
-                  <label className="text-sm">Partido, mandato ou equipe<input className={inputClass} defaultValue={operations.lead.organizationName ?? ""} name="organizationName" /></label>
-                  <label className="text-sm">Cidade<input className={inputClass} defaultValue={operations.lead.city ?? ""} name="city" /></label>
-                  <label className="text-sm">Estado<input className={inputClass} defaultValue={operations.lead.stateCode ?? ""} maxLength={2} name="stateCode" placeholder="SP" /></label>
-                  <label className="text-sm sm:col-span-2">Dor ou interesse<textarea className={textareaClass} defaultValue={operations.lead.interestSummary ?? ""} name="interestSummary" /></label>
-                  <p className="text-xs text-muted-foreground sm:col-span-2">Campos opcionais vazios são limpos explicitamente. O telefone não é editado aqui porque identifica duplicidades.</p>
-                  <Button className="sm:col-span-2" disabled={pending} type="submit">{pending ? "Salvando…" : "Salvar resumo"}</Button>
-                </form>
-              ) : <p className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">Sem permissão para alterar os dados deste lead.</p>}
-            </article>
-
-            {operations.permissions.canAssign ? (
-              <article className="surface-panel scroll-mt-4 p-5" id="alterar-responsavel">
-                <h2 className="text-lg font-semibold">Alterar responsável</h2>
-                <form className="mt-4 grid gap-4" onSubmit={submitRedistribution}>
-                  <label className="text-sm">Destino<select className={inputClass} defaultValue={operations.lead.ownerMemberId ? `member:${operations.lead.ownerMemberId}` : "general"} name="destination">{operations.assignmentTargets.map((target) => <option key={target.id} value={`member:${target.id}`}>{target.name}</option>)}<option value="general">Fila Geral</option></select></label>
-                  <label className="text-sm">Motivo<textarea className={textareaClass} name="reason" required /></label>
-                  <Button disabled={pending} type="submit">Redistribuir</Button>
-                </form>
-              </article>
-            ) : null}
+          <section className="surface-panel p-5" aria-label="Resumo de atividades">
+            <div>
+              <h2 className="text-lg font-semibold">Atividades realizadas</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Totais de todo o histórico operacional do lead até agora.</p>
+            </div>
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Atividades registradas</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.total}</dd></div>
+              <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Retornos concluídos</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.completedFollowUps}</dd></div>
+              <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Tarefas concluídas</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.completedTasks}</dd></div>
+              <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Ligações</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.calls}</dd></div>
+              <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Contatos efetivos</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.connectedCalls}</dd></div>
+              <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Mensagens</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.messages}</dd></div>
+              <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">E-mails</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.emails}</dd></div>
+              <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Reuniões</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.meetings}</dd></div>
+            </dl>
           </section>
         </div>
       ) : null}
 
       {activeTab === "identity" ? (
         <section aria-labelledby="tab-identity" className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]" id="panel-identity" role="tabpanel">
+          <article className="surface-panel p-5 lg:col-span-2" id="editar-informacoes">
+            <h2 className="text-lg font-semibold">Editar informações</h2>
+            {operations.permissions.canWrite ? (
+              <form className="mt-4 grid gap-4 sm:grid-cols-2" key={operations.lead.updatedAt} onSubmit={submitSummary}>
+                <label className="text-sm sm:col-span-2">Nome<input className={inputClass} defaultValue={operations.lead.fullName} name="fullName" required /></label>
+                <label className="text-sm sm:col-span-2">E-mail<input className={inputClass} defaultValue={operations.lead.normalizedEmail ?? ""} name="normalizedEmail" type="email" /></label>
+                <label className="text-sm">Cargo ou atuação<input className={inputClass} defaultValue={operations.lead.jobTitle ?? ""} name="jobTitle" /></label>
+                <label className="text-sm">Partido, mandato ou equipe<input className={inputClass} defaultValue={operations.lead.organizationName ?? ""} name="organizationName" /></label>
+                <label className="text-sm">Cidade<input className={inputClass} defaultValue={operations.lead.city ?? ""} name="city" /></label>
+                <label className="text-sm">Estado<input className={inputClass} defaultValue={operations.lead.stateCode ?? ""} maxLength={2} name="stateCode" placeholder="SP" /></label>
+                <label className="text-sm sm:col-span-2">Dor ou interesse<textarea className={textareaClass} defaultValue={operations.lead.interestSummary ?? ""} name="interestSummary" /></label>
+                <p className="text-xs text-muted-foreground sm:col-span-2">Campos opcionais vazios são removidos ao salvar. O telefone identifica duplicidades e não é editado aqui.</p>
+                <Button className="sm:col-span-2" disabled={pending} type="submit">{pending ? "Salvando…" : "Salvar informações"}</Button>
+              </form>
+            ) : <p className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">Sem permissão para alterar os dados deste lead.</p>}
+          </article>
           {contactIdentityForbidden ? (
             <article className="surface-panel border-dashed p-6 lg:col-span-2">
               <h2 className="text-lg font-semibold">Identidade canônica protegida</h2>
@@ -1128,6 +1058,12 @@ export function OperationalHistoryWorkspace({
       {activeTab === "timeline" ? (
         <div aria-labelledby="tab-timeline" className="grid gap-6 xl:grid-cols-[minmax(360px,0.8fr)_minmax(0,1.2fr)]" id="panel-timeline" role="tabpanel">
           <section className="space-y-6">
+            <LeadStageWorkspace
+              onCommitted={refresh}
+              onUpdated={setPipeline}
+              pipeline={pipeline}
+              timeZone={operations.timeZone}
+            />
             {operations.permissions.canWrite ? (
               <details className={styles.actionForm} id="registrar-atividade"><summary><Icon name="mais" size={15} />Registrar atividade</summary>
                 <form className="mt-4 grid gap-4" onSubmit={submitActivity}>
@@ -1223,6 +1159,10 @@ export function OperationalHistoryWorkspace({
               </div>
             </details>
 
+            <JourneyPanel journey={initialJourney} />
+
+            <ScoringWorkspace initialScore={score} onCommitted={refresh} onUpdated={setScore} />
+
             {correctionId ? (
               <article className="rounded-lg border border-amber-300 bg-amber-50 p-5 text-amber-950">
                 <h2 className="text-lg font-semibold">Evento corretivo</h2><p className="mt-1 text-xs">O fato original não será alterado nem apagado.</p>
@@ -1233,7 +1173,9 @@ export function OperationalHistoryWorkspace({
         </div>
       ) : null}
 
-      {activeTab === "qualification" ? <FreeQualificationWorkspace initialScreen={initialQualifications} onCommitted={refresh} /> : null}
+      {activeTab === "qualification" ? (
+        <FreeQualificationWorkspace initialScreen={initialQualifications} onCommitted={refresh} />
+      ) : null}
       {activeTab === "meetings" ? <LeadMeetingsWorkspace initialMeetings={initialMeetings} onCommitted={refresh} /> : null}
       {showOpportunities && activeTab === "opportunity" ? (
         <div aria-labelledby="tab-opportunity" id="panel-opportunity" role="tabpanel">

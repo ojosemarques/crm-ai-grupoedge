@@ -16,6 +16,12 @@ async function login(page: import("@playwright/test").Page, email: string) {
   await expect(page).toHaveURL(/\/$/);
 }
 
+async function logout(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Abrir menu do usuário" }).click();
+  await page.getByRole("button", { name: "Sair da conta" }).click();
+  await expect(page).toHaveURL(/\/login$/);
+}
+
 function uniquePhone(): string {
   const hash = createHash("sha256").update(randomUUID()).digest("hex");
   const suffix = (BigInt(`0x${hash.slice(0, 12)}`) % 100_000_000n)
@@ -36,28 +42,29 @@ test("registra atividade e tarefa no histórico operacional persistido", async (
     .getByRole("link", { name: "Abrir histórico operacional do lead" })
     .click();
 
-  await expect(page.getByRole("heading", { name: "Cartão 360 do lead" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Lead histórico E2E", exact: true })).toBeVisible();
   await expect(page.getByText(/^Ligar agora ·/).first()).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Resumo" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Atividades" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("Lead histórico E2E", { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Jornada de receita" })).toBeVisible();
-  await expect(page.getByText("SDR:", { exact: false }).first()).toBeVisible();
+  await page.getByRole("tab", { name: "Resumo" }).click();
+  await expect(page.getByRole("heading", { name: "Comunicações" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Atividades realizadas" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Contexto atual" })).toHaveCount(0);
 
-  await page.getByRole("tab", { name: "Identidade" }).click();
+  await page.getByRole("tab", { name: "Contato" }).click();
   await expect(
     page
-      .getByRole("tabpanel", { name: "Identidade" })
+      .getByRole("tabpanel", { name: "Contato" })
       .getByRole("heading", { name: "Lead histórico E2E", level: 2 }),
   ).toBeVisible();
   await expect(page.getByText("Contato canônico", { exact: true })).toBeVisible();
   await expect(page.getByText("Campos antigos preservados", { exact: true })).toBeVisible();
   await expect(page.getByText("Nenhuma pendência aberta para este contato.")).toBeVisible();
 
+  await page.locator("summary").filter({ hasText: "Ações do contato" }).click();
   await page.getByRole("button", { name: "Adicionar nota" }).click();
 
-  const activity = page.locator("article").filter({
-    has: page.getByRole("heading", { name: "Registrar atividade" }),
-  });
+  const activity = page.locator("#registrar-atividade");
   await expect(activity).toBeVisible();
   await expect(activity.locator('select[name="type"]')).toHaveValue("NOTE");
   await activity.getByLabel("Direção").selectOption("INTERNAL");
@@ -65,12 +72,11 @@ test("registra atividade e tarefa no histórico operacional persistido", async (
   await activity.getByLabel("Observação").fill("Fato operacional de demonstração.");
   await activity.getByRole("button", { name: "Registrar atividade" }).click();
   await expect(page.getByRole("status")).toContainText("Operação registrada com sucesso.");
+  await page.locator("#timeline > summary").click();
   await expect(page.getByText("Nota persistida no E2E", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Criar tarefa", exact: true }).first().click();
-  const task = page.locator("article").filter({
-    has: page.getByRole("heading", { name: "Criar tarefa" }),
-  });
+  const task = page.locator("#criar-tarefa");
   await task.getByLabel("Título").fill("Retornar no E2E");
   await task.getByLabel("Prazo").fill("2035-01-15T10:30");
   await task.getByRole("button", { name: "Criar tarefa" }).click();
@@ -92,13 +98,14 @@ test("exibe estados seguro de inexistência e negação de mutação", async ({ 
     .click();
   await expect(page).toHaveURL(/\/leads\/[0-9a-f-]+\/historico$/);
   await expect(
-    page.getByRole("heading", { name: "Cartão 360 do lead" }),
+    page.getByRole("heading", { name: "Lead permissão E2E", exact: true }),
   ).toBeVisible();
   const historyPath = new URL(page.url()).pathname;
-  await page.getByRole("button", { name: "Sair" }).click();
+  await logout(page);
 
   await login(page, DEMO_USERS.at(-1)!.email);
   await page.goto(historyPath);
+  await page.locator("summary").filter({ hasText: "Ações do contato" }).click();
   await expect(page.getByText("Seu perfil possui acesso somente para leitura neste lead.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Registrar ligação" })).toBeDisabled();
   await expect(page.getByRole("tab", { name: "Auditoria" })).toHaveCount(0);
@@ -120,13 +127,10 @@ test("exibe estados seguro de inexistência e negação de mutação", async ({ 
   expect(denied.status).toBe(403);
   expect(denied.body.error.message).toBe("Você não tem permissão para realizar esta ação.");
 
-  await page.getByRole("button", { name: "Sair" }).click();
+  await logout(page);
   await login(page, DEMO_USERS[0].email);
   await page.goto(historyPath);
-  await page.getByRole("tab", { name: "Auditoria" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Visualização de auditoria ainda não implementada" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Lead permissão E2E", exact: true })).toBeVisible();
 });
 
 test("edita o resumo, registra qualificações livres e mantém integrações futuras honestas", async ({ page }) => {
@@ -141,19 +145,20 @@ test("edita o resumo, registra qualificações livres e mantém integrações fu
   await page.getByRole("button", { name: "Cadastrar lead" }).click();
   await page.getByRole("link", { name: "Abrir histórico operacional do lead" }).click();
 
-  await expect(page.getByRole("heading", { name: "Pontuação e prioridade explicáveis" })).toBeVisible();
   const scoring = page.locator('section[aria-labelledby="score-title"]');
   await expect(scoring.getByText("50 · P2", { exact: true }).first()).toBeVisible();
-
+  await page.getByRole("tab", { name: "Contato" }).click();
   const summary = page.locator("article").filter({
-    has: page.getByRole("heading", { name: "Editar resumo" }),
+    has: page.getByRole("heading", { name: "Editar informações" }),
   });
   await summary.getByLabel("Cargo ou atuação").fill("");
-  await summary.getByLabel("Organização").fill("Organização atualizada");
-  await summary.getByRole("button", { name: "Salvar resumo" }).click();
+  await summary.getByLabel("Partido, mandato ou equipe").fill("Organização atualizada");
+  await summary.getByRole("button", { name: "Salvar informações" }).click();
   await expect(page.getByRole("status")).toContainText("Operação registrada com sucesso.");
   await expect(page.getByText(/Organização atualizada/).first()).toBeVisible();
-  await expect(page.locator("li").filter({ hasText: "Cargo ou atuação" })).toBeVisible();
+
+  await page.getByRole("tab", { name: "Qualificação" }).click();
+  await expect(page.getByText("PACTO", { exact: false })).toHaveCount(0);
 
   const assignment = page.locator("#vendedor-do-lead");
   await assignment.getByText("Vendedor", { exact: true }).click();
@@ -174,7 +179,6 @@ test("edita o resumo, registra qualificações livres e mantém integrações fu
   await expect(page.getByRole("status")).toContainText("Operação registrada com sucesso.");
   await expect(page.getByText(alternative!.label, { exact: true }).first()).toBeVisible();
 
-  await page.getByRole("tab", { name: "Qualificação" }).click();
   await expect(page.getByRole("heading", { name: "Nova qualificação" })).toBeVisible();
   const qualification = page.getByLabel("Qualificação do lead");
   await qualification.fill("Primeira qualificação livre com contexto da prospecção.");
@@ -185,7 +189,7 @@ test("edita o resumo, registra qualificações livres e mantém integrações fu
   await expect(page.getByText("2 registros", { exact: true })).toBeVisible();
   await expect(page.getByText("Primeira qualificação livre com contexto da prospecção.")).toBeVisible();
   await expect(page.getByText("Segunda qualificação livre com o retorno do lead.")).toBeVisible();
-  await page.getByRole("tab", { name: "Resumo" }).click();
+  await page.getByRole("tab", { name: "Atividades" }).click();
   await expect(scoring.getByText("50 · P2", { exact: true }).first()).toBeVisible();
   await page.getByLabel("Pontuação (0 a 100)").fill("35");
   await page.getByLabel("Motivo obrigatório").fill("Gestor validou prioridade menor no cenário E2E.");
