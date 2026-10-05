@@ -89,6 +89,8 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await expect(leadDialog.getByRole("heading", { name: "Privacidade para contato" })).toHaveCount(0);
   await expect(leadDialog.getByRole("heading", { name: "Contexto atual" })).toHaveCount(0);
   await leadDialog.getByRole("tab", { name: "Atividades" }).click();
+  await expect(leadDialog.getByRole("heading", { name: "Jornada de receita" })).toHaveCount(0);
+  await expect(leadDialog.getByRole("heading", { name: "Pontuação e prioridade explicáveis" })).toHaveCount(0);
   const timeline = leadDialog.locator("details#timeline");
   await expect(timeline).not.toHaveAttribute("open", "");
   await expect(timeline.getByText("Abrir", { exact: true })).toBeVisible();

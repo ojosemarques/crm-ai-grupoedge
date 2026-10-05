@@ -105,6 +105,7 @@ export async function LeadHistoryContent({
         initialScore={score}
         initialMeetings={meetings}
         initialOpportunities={opportunities}
+        showJourneyAndScoring={!embedded}
         showOpportunities={!embedded}
         initialContactIdentity={contactIdentity}
         contactIdentityForbidden={contactIdentityForbidden}

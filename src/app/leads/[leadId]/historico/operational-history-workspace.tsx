@@ -258,6 +258,7 @@ export function OperationalHistoryWorkspace({
   initialScore,
   initialMeetings,
   initialOpportunities,
+  showJourneyAndScoring = true,
   showOpportunities = true,
   initialContactIdentity,
   contactIdentityForbidden,
@@ -273,6 +274,7 @@ export function OperationalHistoryWorkspace({
   initialScore: LeadScoreView;
   initialMeetings: LeadMeetingsScreen;
   initialOpportunities: LeadOpportunityScreen;
+  showJourneyAndScoring?: boolean;
   showOpportunities?: boolean;
   initialContactIdentity: LeadContactView | null;
   contactIdentityForbidden: boolean;
@@ -1190,9 +1192,12 @@ export function OperationalHistoryWorkspace({
               </div>
             </details>
 
-            <JourneyPanel journey={initialJourney} />
-
-            <ScoringWorkspace initialScore={score} onCommitted={refresh} onUpdated={setScore} />
+            {showJourneyAndScoring ? (
+              <>
+                <JourneyPanel journey={initialJourney} />
+                <ScoringWorkspace initialScore={score} onCommitted={refresh} onUpdated={setScore} />
+              </>
+            ) : null}
 
             {correctionId ? (
               <article className="rounded-lg border border-amber-300 bg-amber-50 p-5 text-amber-950">
