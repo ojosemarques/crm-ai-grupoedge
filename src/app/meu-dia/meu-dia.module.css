@@ -335,200 +335,6 @@
   height: 100%;
 }
 
-.focusCard {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--primary);
-  border-radius: 20px;
-  color: var(--foreground);
-  overflow: hidden;
-  padding: 22px 24px;
-  position: relative;
-}
-
-
-.focusHeader,
-.focusBody {
-  position: relative;
-  z-index: 1;
-}
-
-.focusHeader {
-  align-items: center;
-  display: flex;
-  gap: 0.75rem;
-  justify-content: space-between;
-}
-
-.focusLabel {
-  align-items: center;
-  color: var(--primary);
-  display: inline-flex;
-  font-size: 10px;
-  font-weight: 600;
-  gap: 8px;
-  letter-spacing: .075em;
-  margin: 0;
-  text-transform: uppercase;
-}
-
-.focusLabel::before {
-  background: var(--success);
-  border: 2px solid color-mix(in oklab, var(--success) 28%, white);
-  border-radius: 999px;
-  content: "";
-  height: 0.55rem;
-  width: 0.55rem;
-}
-
-.focusBody {
-  align-items: start;
-  display: grid;
-  gap: 1.5rem;
-  grid-template-columns: minmax(0, 1.25fr) minmax(11rem, 0.55fr) minmax(13rem, 0.62fr);
-  margin-top: 1rem;
-}
-
-.focusIdentity h2 {
-  font-size: clamp(1.4rem, 2.5vw, 2rem);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1.15;
-  margin: 0;
-}
-
-.focusIdentity h2 a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.focusIdentity h2 a:hover {
-  text-decoration: underline;
-  text-underline-offset: 0.2em;
-}
-
-.focusMeta {
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  margin: 0.35rem 0 0;
-}
-
-.focusPain {
-  color: var(--text-muted);
-  font-size: 0.9rem;
-  margin: 0.9rem 0 0;
-  max-width: 52rem;
-}
-
-.focusReason {
-  background: var(--surface-muted);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text-muted);
-  font-size: 11px;
-  grid-column: 1 / -1;
-  margin: 0;
-  padding: 12px 14px;
-}
-
-.focusReason strong {
-  color: var(--primary);
-}
-
-.focusMetrics {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.focusMetric {
-  border-left: 1px solid var(--border);
-  padding-left: 0.9rem;
-}
-
-.focusMetric span {
-  color: var(--primary);
-  display: block;
-  font-size: 0.68rem;
-  font-weight: 500;
-  letter-spacing: 0.035em;
-  text-transform: uppercase;
-}
-
-.focusMetric strong {
-  display: block;
-  font-size: 1.05rem;
-  font-weight: 700;
-  margin-top: 0.08rem;
-}
-
-.focusMetric [data-sla-band="HEALTHY"] {
-  color: var(--success);
-}
-
-.focusMetric [data-sla-band="ATTENTION"] {
-  color: var(--warning);
-}
-
-.focusMetric [data-sla-band="CRITICAL"] {
-  color: var(--danger);
-}
-
-.focusActions {
-  display: grid;
-  gap: 0.55rem;
-}
-
-.focusPrimary {
-  background: var(--primary);
-  color: white;
-  min-height: 38px;
-}
-
-.focusPrimary:hover {
-  background: var(--primary-hover);
-}
-
-.focusSecondary {
-  color: var(--primary);
-  font-size: 0.78rem;
-  font-weight: 600;
-  justify-self: center;
-  text-underline-offset: 0.2em;
-}
-
-.focusSecondary:hover {
-  color: var(--foreground);
-  text-decoration: underline;
-}
-
-.afterAction {
-  color: var(--text-muted);
-  font-size: 0.7rem;
-  line-height: 1.4;
-  margin: 0.15rem 0 0;
-  text-align: center;
-}
-
-.emptyFocus {
-  background: var(--surface-muted);
-  border: 1px dashed var(--border);
-  border-radius: 10px;
-  margin-top: 16px;
-  padding: 22px;
-}
-
-.emptyFocus h2 {
-  font-size: 1rem;
-  font-weight: 600;
-  margin: 0;
-}
-
-.emptyFocus p {
-  color: var(--primary);
-  font-size: 0.78rem;
-  margin: 0.25rem 0 0;
-}
-
 .summaryStrip {
   display: grid;
   gap: 12px;
@@ -946,9 +752,7 @@
 .summaryLabel svg { color: var(--primary); }
 .summaryButton small { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-muted); font-size: 9px; }
 .summaryButton[aria-pressed="true"] { background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 20%, var(--border)); }
-.focusIdentity h2 { display: flex; align-items: center; gap: 12px; font-size: 22px; }
-.leadAvatar, .rowAvatar { display: inline-grid; place-items: center; flex: 0 0 auto; background: var(--primary-soft); color: var(--primary); border-radius: 10px; font-weight: 600; }
-.leadAvatar { width: 43px; height: 43px; font-size: 14px; }
+.rowAvatar { display: inline-grid; place-items: center; flex: 0 0 auto; background: var(--primary-soft); color: var(--primary); border-radius: 10px; font-weight: 600; }
 .rowAvatar { width: 27px; height: 27px; font-size: 9px; margin-right: 8px; border-radius: 8px; vertical-align: middle; }
 
 @media (max-width: 1279px) {
@@ -975,20 +779,6 @@
   }
   .productionGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .focusBody {
-    grid-template-columns: minmax(0, 1.2fr) minmax(10rem, 0.7fr);
-  }
-
-  .focusActions {
-    grid-column: 1 / -1;
-    grid-template-columns: minmax(12rem, 18rem) auto;
-  }
-
-  .afterAction {
-    grid-column: 1 / -1;
-    text-align: left;
   }
 
   .queueRow {
@@ -1047,22 +837,6 @@
     min-width: 0;
     text-align: left;
     width: 100%;
-  }
-
-  .focusBody {
-    align-items: stretch;
-    gap: 1rem;
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .focusActions {
-    grid-column: auto;
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .afterAction {
-    grid-column: auto;
-    text-align: center;
   }
 
   .summaryStrip {

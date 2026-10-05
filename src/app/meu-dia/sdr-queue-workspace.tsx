@@ -115,16 +115,6 @@ function slaState(item: SdrQueueItem, screen: SdrQueueScreen, nowMs: number) {
   };
 }
 
-function afterActionLabel(item: SdrQueueItem): string {
-  if (item.recommendation.code === "CREATE_NEXT_ACTION") {
-    return "Depois: defina o prazo e confirme quem executará a ação.";
-  }
-  if (item.recommendation.code === "OPEN_MEETING") {
-    return "Depois: registre o resultado da reunião e a próxima ação combinada.";
-  }
-  return "Depois: registre o resultado e confirme a próxima ação no Lead 360.";
-}
-
 function PriorityScore({ item }: Readonly<{ item: SdrQueueItem }>) {
   return (
     <div className={styles.scoreLine}>
@@ -138,112 +128,6 @@ function PriorityScore({ item }: Readonly<{ item: SdrQueueItem }>) {
         {item.score === null ? "Sem pontuação" : `${item.score}/100`}
       </span>
     </div>
-  );
-}
-
-function FocusLead({
-  item,
-  nowMs,
-  screen,
-}: Readonly<{
-  item: SdrQueueItem | undefined;
-  nowMs: number;
-  screen: SdrQueueScreen;
-}>) {
-  if (!item) {
-    return (
-      <section aria-labelledby="focus-title" className={styles.focusCard}>
-        <p className={styles.focusLabel}>Atenda agora</p>
-        <div className={styles.emptyFocus}>
-          <h2 id="focus-title">Nenhum atendimento imediato</h2>
-          <p>
-            A fila “Agora” está vazia no escopo selecionado. Revise as demais
-            filas abaixo.
-          </p>
-        </div>
-      </section>
-    );
-  }
-
-  const sla = slaState(item, screen, nowMs);
-
-  return (
-    <section
-      aria-labelledby="focus-title"
-      className={styles.focusCard}
-      data-focus-lead-id={item.id}
-      data-operational-recommendation={item.recommendation.code}
-    >
-      <header className={styles.focusHeader}>
-        <p className={styles.focusLabel}>Atenda agora</p>
-        <span
-          className={styles.priority}
-          data-priority={item.priorityCode ?? undefined}
-        >
-          {item.priorityCode ?? "Sem prioridade"}
-        </span>
-      </header>
-
-      <div className={styles.focusBody}>
-        <div className={styles.focusIdentity}>
-          <h2 id="focus-title">
-            <span aria-hidden="true" className={styles.leadAvatar}>{item.fullName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("")}</span>
-            <Link href={`/leads/${item.id}/historico`}>{item.fullName}</Link>
-          </h2>
-          <p className={styles.focusMeta}>
-            {item.jobTitle ?? "Atuação não informada"} · {item.stageName} · {" "}
-            {item.responsibleName}
-          </p>
-          <p className={styles.focusPain}>
-            <strong>Dor:</strong> {item.pain ?? "Não informada"}
-          </p>
-        </div>
-
-        <div className={styles.focusMetrics}>
-          <div className={styles.focusMetric}>
-            <span>SLA em tempo real</span>
-            <strong data-sla-band={sla.band}>{sla.label}</strong>
-          </div>
-          <div className={styles.focusMetric}>
-            <span>Desde a entrada</span>
-            <strong>há {elapsedLabel(item.receivedAt, nowMs)}</strong>
-          </div>
-          <div className={styles.focusMetric}>
-            <span>Pontuação vigente</span>
-            <strong>
-              {item.score === null ? "Não calculada" : `${item.score}/100`}
-            </strong>
-          </div>
-        </div>
-
-        <div className={styles.focusActions}>
-          <p className={styles.focusMeta}>
-            <strong>Próxima ação:</strong> {" "}
-            {item.nextActionAt
-              ? `${item.nextActionDescription ?? "Ação sem descrição"} · ${formatDate(item.nextActionAt, screen.timeZone)}`
-              : "ausente — erro operacional"}
-          </p>
-          <Button asChild className={styles.focusPrimary}>
-            <Link href={item.recommendation.href}>
-              {item.recommendation.label}
-            </Link>
-          </Button>
-          <Link
-            aria-label={`Abrir próximo lead da fila: ${item.fullName}`}
-            className={styles.focusSecondary}
-            href={`/leads/${item.id}/historico`}
-          >
-            Abrir próximo lead da fila
-          </Link>
-          <p className={styles.afterAction}>{afterActionLabel(item)}</p>
-        </div>
-
-        <p className={styles.focusReason}>
-          <strong>Por que está no topo:</strong> {item.recommendation.reason} {" "}
-          {item.priorityReason ?? "Motivo de prioridade não registrado."}
-        </p>
-      </div>
-    </section>
   );
 }
 
@@ -325,18 +209,15 @@ function QueueRow({
 }
 
 function QueuePanel({
-  focusLeadId,
   nowMs,
   screen,
   section,
 }: Readonly<{
-  focusLeadId: string | undefined;
   nowMs: number;
   screen: SdrQueueScreen;
   section: SdrQueueSection;
 }>) {
   const headingId = `queue-panel-${section.key.toLowerCase()}`;
-  const visibleItems = section.items.filter((item) => item.id !== focusLeadId);
 
   return (
     <div
@@ -362,15 +243,13 @@ function QueuePanel({
         </Link>
       </header>
 
-      {visibleItems.length === 0 ? (
+      {section.items.length === 0 ? (
         <div className={styles.emptyQueue}>
-          {section.total > 0 && focusLeadId
-            ? "O único lead deste recorte já está em destaque em “Atenda agora”."
-            : "Nenhum lead nesta fila com o escopo atual."}
+          Nenhum lead nesta fila com o escopo atual.
         </div>
       ) : (
         <div className={styles.queueList}>
-          {visibleItems.map((item) => (
+          {section.items.map((item) => (
             <QueueRow
               item={item}
               key={item.id}
@@ -473,9 +352,6 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
   const activeSection =
     screen.sections.find((section) => section.key === activeQueue) ??
     screen.sections[0]!;
-  const focusLead = screen.sections.find((section) => section.key === "NOW")
-    ?.items[0];
-
   useEffect(() => {
     const clockId = window.setInterval(() => setNowMs(Date.now()), 1_000);
     const refreshId = window.setInterval(() => {
@@ -493,7 +369,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
   );
 
   const sideGroups = useMemo(() => {
-    const usedLeadIds = new Set<string>(focusLead ? [focusLead.id] : []);
+    const usedLeadIds = new Set<string>();
     const takeUnique = (key: SdrQueueBucket, limit = 2) => {
       const items = sectionsByKey.get(key)?.items ?? [];
       const selected: SdrQueueItem[] = [];
@@ -557,7 +433,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
     ];
 
     return groups;
-  }, [focusLead, nowMs, screen, sectionsByKey]);
+  }, [nowMs, screen, sectionsByKey]);
 
   const secondsUntilRefresh = Math.max(
     0,
@@ -783,8 +659,6 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         })}
       </nav>
 
-      <FocusLead item={focusLead} nowMs={nowMs} screen={screen} />
-
       <div className={styles.contentGrid}>
         <section aria-label="Navegador de filas" className={styles.queuePanel}>
           <div className={styles.tabsScroller}>
@@ -813,7 +687,6 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
           </div>
 
           <QueuePanel
-            focusLeadId={focusLead?.id}
             nowMs={nowMs}
             screen={screen}
             section={activeSection}

@@ -90,20 +90,19 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
   await expect(page.getByRole("heading", { name: "Agora", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "P1", exact: true })).toHaveCount(0);
 
-  const focus = page.locator(`[data-focus-lead-id="${leadId}"]`);
-  await expect(focus).toBeVisible();
-  await expect(focus).toContainText("P1");
-  await expect(focus).toContainText("Por que está no topo:");
-  await expect(focus.locator("[data-sla-band='CRITICAL']")).toBeVisible();
-  await expect(focus.getByRole("link", { name: "Responder agora" })).toBeVisible();
-  await expect(focus.getByRole("link", { name: `Abrir próximo lead da fila: ${leadName}` })).toBeVisible();
+  await expect(page.getByText("Atenda agora", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("SLA em tempo real", { exact: true })).toHaveCount(0);
+  const queueLead = page.getByRole("tabpanel").locator(`[data-lead-id="${leadId}"]`);
+  await expect(queueLead).toBeVisible();
+  await expect(queueLead).toContainText("P1");
+  await expect(queueLead.locator("[data-sla-band='CRITICAL']")).toBeVisible();
+  await expect(queueLead.getByRole("link", { name: "Responder agora" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Plano e produção de hoje" })).toBeVisible();
   await expect(page.getByText("Ligações para fazer", { exact: true })).toBeVisible();
   await expect(page.getByText("Mensagens para enviar", { exact: true })).toBeVisible();
   await expect(page.getByText("Acompanhamentos atrasados", { exact: true })).toBeVisible();
   await expect(page.getByText("Sem contato recente", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("progressbar", { name: /da meta diária concluída/ })).toBeVisible();
-  await expect(page.locator(`[data-lead-id="${leadId}"]`)).toHaveCount(0);
 
   await page.getByRole("tab", { name: /^P1 \d+$/ }).click();
   await expect(page).toHaveURL(/queue=P1/);
@@ -114,7 +113,7 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
   await expect(page.getByText(leadName, { exact: true })).toBeVisible();
 
   await page.goto(`/meu-dia?memberId=${assigned.ownerMemberId}`);
-  await page.locator(`[data-focus-lead-id="${leadId}"]`).getByRole("link", { name: "Responder agora" }).click();
+  await page.getByRole("tabpanel").locator(`[data-lead-id="${leadId}"]`).getByRole("link", { name: "Responder agora" }).click();
   await expect(page).toHaveURL(/\/leads\/[0-9a-f-]+\/historico#registrar-atividade$/);
   const activity = page.locator("#registrar-atividade");
   await activity.locator('select[name="type"]').selectOption("CALL_UNANSWERED");
@@ -125,9 +124,7 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
   await expect(page.getByRole("status")).toContainText("Operação registrada com sucesso.");
 
   await page.goto(`/meu-dia?memberId=${assigned.ownerMemberId}`);
-  const updatedCard = page.locator(
-    `[data-focus-lead-id="${leadId}"], [data-lead-id="${leadId}"]`,
-  ).first();
+  const updatedCard = page.getByRole("tabpanel").locator(`[data-lead-id="${leadId}"]`).first();
   await expect(updatedCard).toContainText("tentativa registrada");
   await expect(updatedCard).toContainText("Retornar amanhã");
   await expect(updatedCard.getByRole("link", { name: "Responder agora" })).toBeVisible();
