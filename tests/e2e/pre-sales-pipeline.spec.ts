@@ -88,6 +88,17 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await expect(timeline.getByText("Fechar", { exact: true })).toBeVisible();
   await timeline.locator("summary").click();
   await expect(timeline).not.toHaveAttribute("open", "");
+  await leadDialog.getByRole("tab", { name: "Qualificação" }).click();
+  await expect(leadDialog.getByText("PACTO", { exact: false })).toHaveCount(0);
+  const qualificationField = leadDialog.getByLabel("Qualificação do lead");
+  await qualificationField.fill("Primeiro contato: lead pediu informações sobre a proposta.");
+  await leadDialog.getByRole("button", { name: "Salvar qualificação" }).click();
+  await expect(leadDialog.getByText("Qualificação salva.")).toBeVisible();
+  await qualificationField.fill("Retorno: lead confirmou interesse e indicou o próximo responsável.");
+  await leadDialog.getByRole("button", { name: "Salvar qualificação" }).click();
+  await expect(leadDialog.getByText("2 registros", { exact: true })).toBeVisible();
+  await expect(leadDialog.getByText("Primeiro contato: lead pediu informações sobre a proposta.")).toBeVisible();
+  await expect(leadDialog.getByText("Retorno: lead confirmou interesse e indicou o próximo responsável.")).toBeVisible();
   await expect(leadDialog.getByRole("tab", { name: "Negócios" })).toHaveCount(0);
   await expect(leadDialog.getByRole("button", { name: "Criar oportunidade" })).toHaveCount(0);
   await expect(leadDialog.getByRole("heading", { name: "Negócios", exact: true })).toHaveCount(0);

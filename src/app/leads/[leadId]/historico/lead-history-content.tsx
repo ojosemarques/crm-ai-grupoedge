@@ -12,7 +12,7 @@ import { getMeetingService } from "@/modules/meetings/application/meeting-servic
 import { getOpportunityService } from "@/modules/opportunities/application/opportunity-service";
 import { getPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { getPrivacyService } from "@/modules/privacy/application/privacy-service";
-import { getPactoQualificationService } from "@/modules/qualification/application/pacto-qualification-service";
+import { getFreeQualificationService } from "@/modules/qualification/application/free-qualification-service";
 import { getLeadScoringService } from "@/modules/qualification/application/lead-scoring-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { requirePageAuthentication } from "@/modules/auth/http/authentication-guards";
@@ -41,7 +41,7 @@ export async function LeadHistoryContent({
 }>) {
   const context = await requirePageAuthentication();
   let operations;
-  let pacto;
+  let qualifications;
   let score;
   let pipeline;
   let meetings;
@@ -60,7 +60,7 @@ export async function LeadHistoryContent({
     const [core, intelligenceResult, contactResult, privacyResult, communicationsResult] = await Promise.all([
       Promise.all([
         getOperationalHistoryService().getLeadOperations(context, { leadId, pageSize: 20 }),
-        getPactoQualificationService().getPacto(context, { leadId }),
+        getFreeQualificationService().getScreen(context, { leadId }),
         getLeadScoringService().getScore(context, { leadId }),
         getPreSalesPipelineService().getLeadState(context, { leadId }),
         getMeetingService().getLeadMeetings(context, { leadId }),
@@ -81,7 +81,7 @@ export async function LeadHistoryContent({
       readOptional(() => getOmnichannelService().getLeadSummary(context, leadId)),
     ]);
 
-    [operations, pacto, score, pipeline, meetings, opportunities] = core;
+    [operations, qualifications, score, pipeline, meetings, opportunities] = core;
     intelligence = intelligenceResult.value;
     intelligenceForbidden = intelligenceResult.forbidden;
     contactIdentity = contactResult.value?.identity ?? null;
@@ -106,7 +106,7 @@ export async function LeadHistoryContent({
       </nav>
       <OperationalHistoryWorkspace
         initialOperations={operations}
-        initialPacto={pacto}
+        initialQualifications={qualifications}
         initialPipeline={pipeline}
         initialScore={score}
         initialMeetings={meetings}

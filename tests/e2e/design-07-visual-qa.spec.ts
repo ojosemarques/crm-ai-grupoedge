@@ -125,7 +125,7 @@ test("telas operacionais e administrativas permanecem consistentes nas cinco res
   }
 });
 
-test("PACTO e Inteligência preservam tabs, foco e adaptação mobile", async ({ page }, testInfo) => {
+test("Qualificação livre e Inteligência preservam tabs, foco e adaptação mobile", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await login(page);
   await page.goto("/leads", { waitUntil: "domcontentloaded" });
@@ -137,18 +137,18 @@ test("PACTO e Inteligência preservam tabs, foco e adaptação mobile", async ({
     await page.goto(leadHref!, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("status", { name: /Carregando/ })).toHaveCount(0);
     const summary = page.getByRole("tab", { name: "Resumo" });
-    const identity = page.getByRole("tab", { name: "Identidade" });
-    const pacto = page.getByRole("tab", { name: "PACTO" });
+    const identity = page.getByRole("tab", { name: "Contato" });
+    const qualification = page.getByRole("tab", { name: "Qualificação" });
     await summary.focus();
     await summary.press("ArrowRight");
     await expect(identity).toBeFocused();
     await expect(identity).toHaveAttribute("aria-selected", "true");
     await identity.press("ArrowRight");
-    await expect(pacto).toBeFocused();
-    await expect(pacto).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("progressbar", { name: /dimensões PACTO investigadas/ })).toBeVisible();
-    await expectNoPageOverflow(page, `${viewport.label} PACTO`);
-    await capture(page, testInfo, `${viewport.label}-pacto`);
+    await expect(qualification).toBeFocused();
+    await expect(qualification).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByLabel("Qualificação do lead")).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.label} Qualificação`);
+    await capture(page, testInfo, `${viewport.label}-qualificacao`);
 
     const intelligence = page.getByRole("tab", { name: "Inteligência" });
     await intelligence.click();

@@ -8,7 +8,7 @@ import styles from "./lead-detail.module.css";
 import { Icon } from "@/components/ui/icon";
 import { leadStageCodes, leadStageLabels } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import { Button } from "@/components/ui/button";
-import { PactoWorkspace } from "@/app/leads/[leadId]/historico/pacto-workspace";
+import { FreeQualificationWorkspace } from "@/app/leads/[leadId]/historico/free-qualification-workspace";
 import { ScoringWorkspace } from "@/app/leads/[leadId]/historico/scoring-workspace";
 import { LeadStageWorkspace } from "@/app/leads/[leadId]/historico/lead-stage-workspace";
 import { LeadMeetingsWorkspace } from "@/app/leads/[leadId]/historico/lead-meetings-workspace";
@@ -17,7 +17,7 @@ import { LeadIntelligencePanel } from "@/app/leads/[leadId]/historico/lead-intel
 import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
 import type { LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
 import type { LeadOpportunityScreen } from "@/modules/opportunities/domain/opportunity-contracts";
-import type { PactoQualificationView } from "@/modules/qualification/domain/pacto-contracts";
+import type { FreeQualificationScreen } from "@/modules/qualification/domain/free-qualification-contracts";
 import type { LeadScoreView } from "@/modules/qualification/domain/scoring-contracts";
 import type { LeadPipelineState } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import type { LeadIntelligenceScreen } from "@/modules/ai/domain/lead-intelligence-contracts";
@@ -42,7 +42,7 @@ type NextQueueLead = Readonly<{
 type TabKey =
   | "summary"
   | "identity"
-  | "pacto"
+  | "qualification"
   | "timeline"
   | "meetings"
   | "opportunity"
@@ -138,7 +138,7 @@ const tabs: readonly Readonly<{ key: TabKey; label: string }>[] = [
   { key: "timeline", label: "Atividades" },
   { key: "summary", label: "Resumo" },
   { key: "identity", label: "Contato" },
-  { key: "pacto", label: "Qualificação" },
+  { key: "qualification", label: "Qualificação" },
   { key: "meetings", label: "Reuniões" },
   { key: "opportunity", label: "Negócios" },
   { key: "intelligence", label: "Inteligência" },
@@ -265,7 +265,7 @@ function NextActionFields({ required = false }: Readonly<{ required?: boolean }>
 
 export function OperationalHistoryWorkspace({
   initialOperations,
-  initialPacto,
+  initialQualifications,
   initialPipeline,
   initialScore,
   initialMeetings,
@@ -282,7 +282,7 @@ export function OperationalHistoryWorkspace({
   communicationsForbidden,
 }: Readonly<{
   initialOperations: LeadCardOperations;
-  initialPacto: PactoQualificationView;
+  initialQualifications: FreeQualificationScreen;
   initialPipeline: LeadPipelineState;
   initialScore: LeadScoreView;
   initialMeetings: LeadMeetingsScreen;
@@ -300,7 +300,6 @@ export function OperationalHistoryWorkspace({
 }>) {
   const router = useRouter();
   const [operations, setOperations] = useState(initialOperations);
-  const [pacto, setPacto] = useState(initialPacto);
   const [pipeline, setPipeline] = useState(initialPipeline);
   const [score, setScore] = useState(initialScore);
   const [activeTab, setActiveTab] = useState<TabKey>("timeline");
@@ -361,11 +360,10 @@ export function OperationalHistoryWorkspace({
   }, [showOpportunities]);
 
   async function refresh() {
-    const [operationsResponse, scoreResponse, pipelineResponse, pactoResponse, contactResponse] = await Promise.all([
+    const [operationsResponse, scoreResponse, pipelineResponse, contactResponse] = await Promise.all([
       fetch(`/api/leads/${operations.lead.id}/operations?pageSize=20`, { cache: "no-store" }),
       fetch(`/api/leads/${operations.lead.id}/score`, { cache: "no-store" }),
       fetch(`/api/leads/${operations.lead.id}/stage`, { cache: "no-store" }),
-      fetch(`/api/leads/${operations.lead.id}/qualification`, { cache: "no-store" }),
       contactIdentityForbidden
         ? Promise.resolve(null)
         : fetch(`/api/leads/${operations.lead.id}/contact`, { cache: "no-store" }),
@@ -373,12 +371,10 @@ export function OperationalHistoryWorkspace({
     const result = (await readResponse(operationsResponse)) as LeadCardOperations;
     const scoreResult = (await readResponse(scoreResponse)) as LeadScoreView;
     const pipelineResult = (await readResponse(pipelineResponse)) as LeadPipelineState;
-    const pactoResult = (await readResponse(pactoResponse)) as PactoQualificationView;
     setOperations(result);
     setSellerMemberId(result.lead.ownerMemberId ?? "");
     setScore(scoreResult);
     setPipeline(pipelineResult);
-    setPacto(pactoResult);
     if (contactResponse) {
       setContactIdentity((await readResponse(contactResponse)) as LeadContactView);
     }
@@ -789,7 +785,7 @@ export function OperationalHistoryWorkspace({
           <Button disabled={!pipeline.canWrite} onClick={openStagePanel} size="sm" type="button" variant="secondary">Alterar etapa</Button>
           <Button disabled={!pipeline.canWrite} onClick={openStagePanel} size="sm" type="button" variant="secondary">Desqualificar</Button>
           <Button disabled={!pipeline.canWrite} onClick={openStagePanel} size="sm" type="button" variant="secondary">Colocar em nutrição</Button>
-          <Button disabled={!pacto.canWrite} key="Qualificar" onClick={() => setActiveTab("pacto")} size="sm" type="button" variant="secondary">Qualificar</Button>
+          <Button disabled={!initialQualifications.canWrite} key="Qualificar" onClick={() => setActiveTab("qualification")} size="sm" type="button" variant="secondary">Qualificar</Button>
           <Button disabled={!initialMeetings.canSchedule} onClick={() => setActiveTab("meetings")} size="sm" type="button" variant="secondary">Agendar reunião</Button>
           {showOpportunities ? <Button disabled={!initialOpportunities.canCreate} onClick={() => setActiveTab("opportunity")} size="sm" type="button" variant="secondary">Criar oportunidade</Button> : null}
         </div>
@@ -1245,7 +1241,7 @@ export function OperationalHistoryWorkspace({
         </div>
       ) : null}
 
-      {activeTab === "pacto" ? <PactoWorkspace initialPacto={pacto} onCommitted={refresh} onUpdated={setPacto} /> : null}
+      {activeTab === "qualification" ? <FreeQualificationWorkspace initialScreen={initialQualifications} onCommitted={refresh} /> : null}
       {activeTab === "meetings" ? <LeadMeetingsWorkspace initialMeetings={initialMeetings} onCommitted={refresh} /> : null}
       {showOpportunities && activeTab === "opportunity" ? (
         <div aria-labelledby="tab-opportunity" id="panel-opportunity" role="tabpanel">

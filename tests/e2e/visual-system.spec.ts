@@ -155,14 +155,14 @@ test("tabs e diálogo operacionais seguem o padrão de teclado", async ({ page }
   const summary = page.getByRole("tab", { name: "Resumo" });
   await summary.focus();
   await summary.press("ArrowRight");
-  const identity = page.getByRole("tab", { name: "Identidade" });
+  const identity = page.getByRole("tab", { name: "Contato" });
   await expect(identity).toBeFocused();
   await expect(identity).toHaveAttribute("aria-selected", "true");
   await identity.press("ArrowRight");
-  const pacto = page.getByRole("tab", { name: "PACTO" });
-  await expect(pacto).toBeFocused();
-  await expect(pacto).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("progressbar", { name: /dimensões PACTO investigadas/ })).toBeVisible();
+  const qualification = page.getByRole("tab", { name: "Qualificação" });
+  await expect(qualification).toBeFocused();
+  await expect(qualification).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByLabel("Qualificação do lead")).toBeVisible();
 
   await page.goto(`/pipeline?q=${encodeURIComponent(leadName)}`, { waitUntil: "domcontentloaded" });
   const card = page.locator("article").filter({ hasText: leadName });

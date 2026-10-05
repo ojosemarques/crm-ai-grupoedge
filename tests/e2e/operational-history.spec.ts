@@ -102,9 +102,9 @@ test("exibe estados seguro de inexistência e negação de mutação", async ({ 
   await expect(page.getByText("Seu perfil possui acesso somente para leitura neste lead.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Registrar ligação" })).toBeDisabled();
   await expect(page.getByRole("tab", { name: "Auditoria" })).toHaveCount(0);
-  await page.getByRole("tab", { name: "PACTO" }).click();
-  await expect(page.getByText("Seu perfil possui acesso somente para leitura desta qualificação.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Validar PACTO" })).toHaveCount(0);
+  await page.getByRole("tab", { name: "Qualificação" }).click();
+  await expect(page.getByText("Seu perfil possui acesso somente para leitura neste lead.").last()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Salvar qualificação" })).toHaveCount(0);
 
   const denied = await page.evaluate(async () => {
     const response = await fetch(`${window.location.pathname.replace("/historico", "/operations").replace("/leads/", "/api/leads/")}`, {
@@ -129,7 +129,7 @@ test("exibe estados seguro de inexistência e negação de mutação", async ({ 
   ).toBeVisible();
 });
 
-test("edita o resumo, qualifica por PACTO e mantém integrações futuras honestas", async ({ page }) => {
+test("edita o resumo, registra qualificações livres e mantém integrações futuras honestas", async ({ page }) => {
   await login(page, DEMO_USERS[1].email);
   await page.goto("/leads/entrada");
   await page.getByLabel("Nome", { exact: true }).fill("Lead cartão CRM-11");
@@ -174,35 +174,19 @@ test("edita o resumo, qualifica por PACTO e mantém integrações futuras honest
   await expect(page.getByRole("status")).toContainText("Operação registrada com sucesso.");
   await expect(page.getByText(alternative!.label, { exact: true }).first()).toBeVisible();
 
-  await page.getByRole("tab", { name: "PACTO" }).click();
-  await expect(page.getByRole("heading", { name: "Qualificação PACTO" })).toBeVisible();
-  const dimensions = [
-    "P — Político / contexto",
-    "A — Aflição",
-    "C — Capacidade",
-    "T — Tomada de decisão",
-    "O — Oportunidade agora",
-  ] as const;
-  for (const [index, dimension] of dimensions.entries()) {
-    await page.getByLabel(`Status — ${dimension}`).selectOption(index === 2 ? "PARTIAL" : "POSITIVE");
-    await page.getByLabel(`Origem da evidência — ${dimension}`).selectOption("SDR");
-    await page
-      .getByRole("textbox", { name: `Evidência — ${dimension}`, exact: true })
-      .fill(`Evidência E2E da dimensão ${index + 1}.`);
-  }
-  await page.getByRole("button", { name: "Salvar rascunho" }).click();
-  await expect(
-    page.getByText("Rascunho PACTO salvo; ele ainda não está validado.", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Revisão 1 · Rascunho")).toBeVisible();
-  await page.getByRole("button", { name: "Validar PACTO" }).click();
-  await expect(
-    page.getByText("PACTO validado com responsabilidade humana.", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Validado e apto à qualificação")).toBeVisible();
-  await expect(page.getByText("Revisão 2 · Validada")).toBeVisible();
+  await page.getByRole("tab", { name: "Qualificação" }).click();
+  await expect(page.getByRole("heading", { name: "Nova qualificação" })).toBeVisible();
+  const qualification = page.getByLabel("Qualificação do lead");
+  await qualification.fill("Primeira qualificação livre com contexto da prospecção.");
+  await page.getByRole("button", { name: "Salvar qualificação" }).click();
+  await expect(page.getByText("Qualificação salva.")).toBeVisible();
+  await qualification.fill("Segunda qualificação livre com o retorno do lead.");
+  await page.getByRole("button", { name: "Salvar qualificação" }).click();
+  await expect(page.getByText("2 registros", { exact: true })).toBeVisible();
+  await expect(page.getByText("Primeira qualificação livre com contexto da prospecção.")).toBeVisible();
+  await expect(page.getByText("Segunda qualificação livre com o retorno do lead.")).toBeVisible();
   await page.getByRole("tab", { name: "Resumo" }).click();
-  await expect(scoring.getByText("85 · P1", { exact: true }).first()).toBeVisible();
+  await expect(scoring.getByText("50 · P2", { exact: true }).first()).toBeVisible();
   await page.getByLabel("Pontuação (0 a 100)").fill("35");
   await page.getByLabel("Motivo obrigatório").fill("Gestor validou prioridade menor no cenário E2E.");
   await page.getByRole("button", { name: "Aplicar override" }).click();
