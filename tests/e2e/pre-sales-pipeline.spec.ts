@@ -7,6 +7,7 @@ import {
   DEMO_SEED_PASSWORD,
   DEMO_USERS,
 } from "@/modules/settings/application/demo-seed-service";
+import { getDatabaseClient } from "@/shared/core/database/client";
 
 async function login(page: import("@playwright/test").Page, email: string) {
   await page.goto("/login");
@@ -20,6 +21,20 @@ function uniquePhone(label: string) {
   const hash = createHash("sha256").update(`${label}:${randomUUID()}`).digest("hex");
   const suffix = (BigInt(`0x${hash.slice(0, 12)}`) % 100_000_000n).toString().padStart(8, "0");
   return `+55119${suffix}`;
+}
+
+async function removeActiveProspectingPipeline() {
+  const database = getDatabaseClient();
+  const pipeline = await database.pipeline.findFirst({
+    where: { workspace: { slug: "politizai" }, entityType: "LEAD", name: "Prospecção Ativa", deletedAt: null },
+    select: { id: true, workspaceId: true },
+  });
+  if (!pipeline) return;
+  await database.$transaction([
+    database.pipelineStageTransition.deleteMany({ where: { workspaceId: pipeline.workspaceId, pipelineId: pipeline.id } }),
+    database.pipelineStage.deleteMany({ where: { workspaceId: pipeline.workspaceId, pipelineId: pipeline.id } }),
+    database.pipeline.delete({ where: { id: pipeline.id } }),
+  ]);
 }
 
 async function createManualLead(page: import("@playwright/test").Page, name: string) {
@@ -73,7 +88,9 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
 });
 
 test("abre Prospecção Ativa como pipeline principal ao clicar em Negócios", async ({ page }) => {
+  await removeActiveProspectingPipeline();
   await login(page, DEMO_USERS[1].email);
+  const leadName = `Prospecção ativa E2E ${randomUUID().slice(0, 8)}`;
   const businessLink = page.getByRole("navigation", { name: "Navegação da área" }).getByRole("link", { name: "Negócios", exact: true });
   await expect(page.getByRole("button", { name: /^(Expandir|Recolher) menu$/ })).toHaveCount(0);
   await expect(businessLink).toBeVisible();
@@ -85,6 +102,15 @@ test("abre Prospecção Ativa como pipeline principal ao clicar em Negócios", a
   const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
   await expect(pipelineNavigation.getByRole("link", { name: "Prospecção AtivaPrincipal" })).toHaveAttribute("aria-current", "page");
   await expect(pipelineNavigation.getByRole("link", { name: "Pré-vendasPré-vendas" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Quadro do pipeline" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Etapa Novo" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Adicionar", exact: true }).click();
+  const addLeadDialog = page.getByRole("dialog");
+  await addLeadDialog.getByLabel("Nome", { exact: true }).fill(leadName);
+  await addLeadDialog.getByLabel("Telefone", { exact: true }).fill(uniquePhone(leadName));
+  await addLeadDialog.getByRole("button", { name: "Adicionar lead" }).click();
+  await expect(page.locator("article").filter({ hasText: leadName })).toBeVisible();
 });
 
 test("mantém o pipeline somente leitura para o visualizador", async ({ page }) => {

@@ -176,9 +176,11 @@ function QuickLeadDialog({
 export function PreSalesPipelineWorkspace({
   screen,
   initialView,
-}: Readonly<{ screen: PreSalesPipelineScreen; initialView: "board" | "list" }>) {
+  basePath = "/pipeline",
+}: Readonly<{ screen: PreSalesPipelineScreen; initialView: "board" | "list"; basePath?: string }>) {
   const router = useRouter();
   const [stages, setStages] = useState<readonly LeadPipelineStageColumn[]>(screen.stages);
+  const [screenVersion, setScreenVersion] = useState(screen.generatedAt);
   const [view, setView] = useState(initialView);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedLeadState, setSelectedLeadState] = useState<LeadPipelineState | null>(null);
@@ -199,6 +201,11 @@ export function PreSalesPipelineWorkspace({
   const visibleStages = screen.filters.stageCode === "ALL"
     ? stages
     : stages.filter((stage) => stage.code === screen.filters.stageCode);
+
+  if (screenVersion !== screen.generatedAt) {
+    setScreenVersion(screen.generatedAt);
+    setStages(screen.stages);
+  }
 
   async function loadMore(stage: LeadPipelineStageColumn) {
     setLoadingStageId(stage.id);
@@ -412,7 +419,7 @@ export function PreSalesPipelineWorkspace({
       return;
     }
     await transition(lead, state, option, {
-      reason: "Movido pelo quadro de pré-vendas.",
+      reason: `Movido pelo pipeline ${screen.pipelineName}.`,
       managerCorrection: false,
       confirmed: false,
       origin: "PIPELINE_BOARD",
@@ -430,7 +437,7 @@ export function PreSalesPipelineWorkspace({
         <input name="view" type="hidden" value={view} />
         <Button size="sm" type="submit" variant="secondary"><Icon name="filtro" size={14} />Aplicar</Button>
         {screen.canWrite ? <Button onFocus={() => { void loadEntryOptions().catch(() => undefined); }} onMouseEnter={() => { void loadEntryOptions().catch(() => undefined); }} onTouchStart={() => { void loadEntryOptions().catch(() => undefined); }} onClick={() => setQuickCreateOpen(true)} size="sm" type="button"><Icon name="mais" size={14} />Adicionar</Button> : null}
-        <Link className={styles.clear} href={`/pipeline?pipelineId=${screen.pipelineId}`}>Limpar filtros</Link>
+        <Link className={styles.clear} href={basePath}>Limpar filtros</Link>
       </form>
       <div className={styles.boardToolbar}>
         <p><strong>{visibleStages.reduce((total, stage) => total + stage.count, 0)}</strong> negócios no pipeline <span className={styles.pipelineName}>{screen.pipelineName}</span></p>

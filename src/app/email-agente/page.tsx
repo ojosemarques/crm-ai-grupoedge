@@ -1,50 +1,58 @@
 import { redirect } from "next/navigation";
 
-import { InboxWorkspace } from "@/app/inbox/inbox-workspace";
+import { PreSalesPipelineWorkspace } from "@/app/pipeline/pre-sales-pipeline-workspace";
 import { PageHeader } from "@/components/layout/page-header";
 import { BusinessPipelineSwitcher } from "@/components/pipelines/business-pipeline-switcher";
 import { requirePageAuthentication } from "@/modules/auth/http/authentication-guards";
-import { getOmnichannelService } from "@/modules/communications/application/omnichannel-service";
-import { ACTIVE_PROSPECTING_PIPELINE_ID, listBusinessPipelines } from "@/modules/pipelines/application/business-pipeline-navigation";
+import {
+  ACTIVE_PROSPECTING_PIPELINE_NAME,
+  listBusinessPipelines,
+} from "@/modules/pipelines/application/business-pipeline-navigation";
+import { getPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 
 export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-export default async function EmailAgentPage({ searchParams }: Readonly<{ searchParams: SearchParams }>) {
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function ActiveProspectingPage({ searchParams }: Readonly<{ searchParams: SearchParams }>) {
   const context = await requirePageAuthentication();
-  const params = { ...await searchParams, channels: "EMAIL" };
-  let initial;
+  const params = await searchParams;
+  let screen;
   let pipelines;
   try {
-    [initial, pipelines] = await Promise.all([
-      getOmnichannelService().getInbox(context, params),
-      listBusinessPipelines(context),
-    ]);
-    if (initial.selected && initial.selected.channel !== "EMAIL") {
-      const emailParams = { ...params, conversationId: undefined };
-      initial = await getOmnichannelService().getInbox(context, emailParams);
-    }
+    pipelines = await listBusinessPipelines(context);
+    const activeProspecting = pipelines.find((pipeline) => pipeline.entityType === "PROSPECTING");
+    if (!activeProspecting) redirect("/pipeline");
+    screen = await getPreSalesPipelineService().getScreen(context, {
+      pipelineId: activeProspecting.id,
+      q: first(params.q),
+      responsible: first(params.responsible),
+      priority: first(params.priority),
+      stageCode: first(params.stageCode),
+    });
   } catch (error) {
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     throw error;
   }
 
   return (
-    <main className="page-canvas page-canvas-wide">
+    <main className="page-canvas">
       <PageHeader
-        eyebrow="Negócios · comunicação"
-        title="Prospecção Ativa"
-        description="Acompanhe, organize e responda as conversas comerciais por e-mail em uma fila dedicada."
-        meta={`Atualizado em ${new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(initial.generatedAt))}`}
+        description="Organize a prospecção comercial, avance os contatos e acompanhe cada próxima ação."
+        eyebrow="Negócios"
+        title={ACTIVE_PROSPECTING_PIPELINE_NAME}
       />
-      <BusinessPipelineSwitcher pipelines={pipelines} selectedPipelineId={ACTIVE_PROSPECTING_PIPELINE_ID} />
-      <InboxWorkspace
+      <BusinessPipelineSwitcher pipelines={pipelines} selectedPipelineId={screen.pipelineId} />
+      <PreSalesPipelineWorkspace
         basePath="/email-agente"
-        initial={initial}
-        key={`${initial.generatedAt}:${initial.query.view}:${initial.query.conversationId ?? "none"}`}
-        lockedChannel="EMAIL"
+        initialView={first(params.view) === "list" ? "list" : "board"}
+        key={screen.pipelineId}
+        screen={screen}
       />
     </main>
   );

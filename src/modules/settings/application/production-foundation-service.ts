@@ -47,10 +47,23 @@ class DryRunRollback extends Error {
   constructor(readonly created: Counters) { super("Rollback da prévia de inicialização."); }
 }
 
-async function ensureLeadPipeline(tx: Prisma.TransactionClient, workspaceId: string, actorId: string, result: Counters) {
-  let pipeline = await tx.pipeline.findFirst({ where: { workspaceId, entityType: "LEAD", isDefault: true, deletedAt: null } });
+async function ensureLeadPipeline(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  actorId: string,
+  result: Counters,
+  definition: Readonly<{ name: string; isDefault: boolean }>,
+) {
+  let pipeline = await tx.pipeline.findFirst({
+    where: {
+      workspaceId,
+      entityType: "LEAD",
+      deletedAt: null,
+      ...(definition.isDefault ? { isDefault: true } : { name: definition.name }),
+    },
+  });
   if (!pipeline) {
-    pipeline = await tx.pipeline.create({ data: { workspaceId, name: "Pré-vendas", entityType: "LEAD", isDefault: true, createdByActorId: actorId, updatedByActorId: actorId } });
+    pipeline = await tx.pipeline.create({ data: { workspaceId, name: definition.name, entityType: "LEAD", isDefault: definition.isDefault, createdByActorId: actorId, updatedByActorId: actorId } });
     result.pipelines += 1;
   }
   const ids = new Map<string, string>();
@@ -72,6 +85,19 @@ async function ensureLeadPipeline(tx: Prisma.TransactionClient, workspaceId: str
       result.transitions += 1;
     }
   }
+}
+
+export async function ensureActiveProspectingPipeline(
+  database: PrismaClient,
+  workspaceId: string,
+  actorId: string,
+) {
+  return database.$transaction(async (transaction) => {
+    await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`active-prospecting:${workspaceId}`}))`;
+    const result: Counters = { settings: 0, cadence: 0, pipelines: 0, stages: 0, transitions: 0, scoringRules: 0, slaPolicies: 0, priorityBands: 0, reasons: 0 };
+    await ensureLeadPipeline(transaction, workspaceId, actorId, result, { name: "Prospecção Ativa", isDefault: false });
+    return result;
+  }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 });
 }
 
 async function ensureSalesPipeline(tx: Prisma.TransactionClient, workspaceId: string, actorId: string, result: Counters) {
@@ -157,7 +183,8 @@ export async function ensureProductionFoundationInTransaction(tx: Prisma.Transac
       result.priorityBands += 1;
     }
 
-    await ensureLeadPipeline(tx, workspaceId, actorId, result);
+    await ensureLeadPipeline(tx, workspaceId, actorId, result, { name: "Pré-vendas", isDefault: true });
+    await ensureLeadPipeline(tx, workspaceId, actorId, result, { name: "Prospecção Ativa", isDefault: false });
     await ensureSalesPipeline(tx, workspaceId, actorId, result);
 
     for (const [position, [key, name]] of ([

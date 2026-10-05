@@ -118,51 +118,48 @@ const teamDefinitions = [
   },
 ] as const;
 
+const leadPipelineStages = [
+  ["new", "Novo", "OPEN", "NEW", null],
+  ["contact-attempt", "Tentando contato", "OPEN", "TRYING_CONTACT", null],
+  ["contacted", "Conectado", "OPEN", "CONNECTED", null],
+  ["pacto", "Em qualificação", "OPEN", "IN_QUALIFICATION", null],
+  ["sales-qualified", "Qualificado", "WON", "QUALIFIED", null],
+  ["meeting-scheduled", "Reunião agendada", "OPEN", "MEETING_SCHEDULED", null],
+  ["nurturing", "Nutrição", "OPEN", "NURTURING", null],
+  ["disqualified", "Desqualificado", "LOST", "DISQUALIFIED", null],
+] as const;
+const leadPipelineTransitions = [
+  ["NEW", "TRYING_CONTACT"], ["NEW", "CONNECTED"], ["NEW", "DISQUALIFIED"],
+  ["TRYING_CONTACT", "CONNECTED"], ["TRYING_CONTACT", "NURTURING"], ["TRYING_CONTACT", "DISQUALIFIED"],
+  ["CONNECTED", "IN_QUALIFICATION"], ["CONNECTED", "NURTURING"], ["CONNECTED", "DISQUALIFIED"],
+  ["IN_QUALIFICATION", "CONNECTED"], ["IN_QUALIFICATION", "QUALIFIED"], ["IN_QUALIFICATION", "NURTURING"], ["IN_QUALIFICATION", "DISQUALIFIED"],
+  ["QUALIFIED", "MEETING_SCHEDULED"], ["QUALIFIED", "NURTURING"], ["QUALIFIED", "DISQUALIFIED"],
+  ["MEETING_SCHEDULED", "QUALIFIED"], ["MEETING_SCHEDULED", "NURTURING"], ["MEETING_SCHEDULED", "DISQUALIFIED"],
+  ["NURTURING", "TRYING_CONTACT"], ["NURTURING", "CONNECTED"], ["NURTURING", "IN_QUALIFICATION"], ["NURTURING", "DISQUALIFIED"],
+] as const;
+
 const pipelineDefinitions = [
   {
     key: "pre-sales",
     name: "Pré-vendas",
     entityType: "LEAD",
-    stages: [
-      ["new", "Novo", "OPEN", "NEW", null],
-      ["contact-attempt", "Tentando contato", "OPEN", "TRYING_CONTACT", null],
-      ["contacted", "Conectado", "OPEN", "CONNECTED", null],
-      ["pacto", "Em qualificação", "OPEN", "IN_QUALIFICATION", null],
-      ["sales-qualified", "Qualificado", "WON", "QUALIFIED", null],
-      ["meeting-scheduled", "Reunião agendada", "OPEN", "MEETING_SCHEDULED", null],
-      ["nurturing", "Nutrição", "OPEN", "NURTURING", null],
-      ["disqualified", "Desqualificado", "LOST", "DISQUALIFIED", null],
-    ],
-    transitions: [
-      ["NEW", "TRYING_CONTACT"],
-      ["NEW", "CONNECTED"],
-      ["NEW", "DISQUALIFIED"],
-      ["TRYING_CONTACT", "CONNECTED"],
-      ["TRYING_CONTACT", "NURTURING"],
-      ["TRYING_CONTACT", "DISQUALIFIED"],
-      ["CONNECTED", "IN_QUALIFICATION"],
-      ["CONNECTED", "NURTURING"],
-      ["CONNECTED", "DISQUALIFIED"],
-      ["IN_QUALIFICATION", "CONNECTED"],
-      ["IN_QUALIFICATION", "QUALIFIED"],
-      ["IN_QUALIFICATION", "NURTURING"],
-      ["IN_QUALIFICATION", "DISQUALIFIED"],
-      ["QUALIFIED", "MEETING_SCHEDULED"],
-      ["QUALIFIED", "NURTURING"],
-      ["QUALIFIED", "DISQUALIFIED"],
-      ["MEETING_SCHEDULED", "QUALIFIED"],
-      ["MEETING_SCHEDULED", "NURTURING"],
-      ["MEETING_SCHEDULED", "DISQUALIFIED"],
-      ["NURTURING", "TRYING_CONTACT"],
-      ["NURTURING", "CONNECTED"],
-      ["NURTURING", "IN_QUALIFICATION"],
-      ["NURTURING", "DISQUALIFIED"],
-    ],
+    isDefault: true,
+    stages: leadPipelineStages,
+    transitions: leadPipelineTransitions,
+  },
+  {
+    key: "active-prospecting",
+    name: "Prospecção Ativa",
+    entityType: "LEAD",
+    isDefault: false,
+    stages: leadPipelineStages,
+    transitions: leadPipelineTransitions,
   },
   {
     key: "sales",
     name: "Vendas",
     entityType: "OPPORTUNITY",
+    isDefault: true,
     stages: [
       ["meeting-scheduled", "Reunião agendada", "OPEN", null, "MEETING_SCHEDULED"],
       ["meeting-held", "Reunião realizada", "OPEN", null, "MEETING_HELD"],
@@ -1050,21 +1047,23 @@ async function ensurePipeline(
   pipeline ??= await transaction.pipeline.findFirst({
     where: { workspaceId, name: definition.name, deletedAt: null },
   });
-  pipeline ??= await transaction.pipeline.findFirst({
-    where: {
-      workspaceId,
-      entityType: definition.entityType,
-      isDefault: true,
-      deletedAt: null,
-    },
-  });
+  if (definition.isDefault) {
+    pipeline ??= await transaction.pipeline.findFirst({
+      where: {
+        workspaceId,
+        entityType: definition.entityType,
+        isDefault: true,
+        deletedAt: null,
+      },
+    });
+  }
   pipeline ??= await transaction.pipeline.create({
     data: {
       id,
       workspaceId,
       name: definition.name,
       entityType: definition.entityType,
-      isDefault: true,
+      isDefault: definition.isDefault,
       createdByActorId: actorId,
       updatedByActorId: actorId,
     },
