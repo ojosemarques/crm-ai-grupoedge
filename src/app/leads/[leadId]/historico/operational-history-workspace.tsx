@@ -1218,13 +1218,22 @@ export function OperationalHistoryWorkspace({
               )}
             </article>
 
-            <article className="surface-panel bg-[var(--surface-subtle)] p-5">
-              <h2 className="text-lg font-semibold">Timeline</h2>
-              {operations.timeline.length === 0 ? <p className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">Nenhum fato histórico registrado.</p> : (
-                <ol className="mt-4 space-y-3">{operations.timeline.map((entry) => <li className="rounded-md border p-3" key={entry.id}><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-medium">{entry.subject}</p><p className="mt-1 text-xs text-muted-foreground">{activityLabels[entry.type] ?? entry.type} · {formatDate(entry.occurredAt, operations.timeZone)}</p></div><span className="rounded-full border px-2 py-0.5 text-xs">{actorLabels[entry.actor.type] ?? entry.actor.type}: {entry.actor.name}</span></div>{entry.description ? <p className="mt-2 text-sm">{entry.description}</p> : null}{entry.result ? <p className="mt-2 text-xs">Resultado: {entry.result}</p> : null}{entry.nextActionDescription && entry.nextActionAt ? <p className="mt-2 text-xs text-muted-foreground">Próxima ação registrada: {entry.nextActionDescription} · {formatDate(entry.nextActionAt, operations.timeZone)}</p> : null}{entry.correctsActivityId ? <p className="mt-2 text-xs text-amber-800">Evento corretivo de {entry.correctsActivityId}</p> : null}{operations.permissions.canWrite ? <Button className="mt-3" onClick={() => setCorrectionId(entry.id)} size="sm" type="button" variant="secondary">Registrar correção</Button> : null}</li>)}</ol>
-              )}
-              {operations.nextCursor ? <Button className="mt-4" disabled={pending} onClick={loadMore} type="button" variant="secondary">Carregar mais</Button> : null}
-            </article>
+            <details className="group surface-panel bg-[var(--surface-subtle)] p-5" id="timeline" key={operations.lead.id}>
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                <span className="text-lg font-semibold">Timeline</span>
+                <span className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                  <span className="group-open:hidden">Abrir</span>
+                  <span className="hidden group-open:inline">Fechar</span>
+                  <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-full border bg-background transition-transform group-open:rotate-180">⌄</span>
+                </span>
+              </summary>
+              <div className="pt-4">
+                {operations.timeline.length === 0 ? <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">Nenhum fato histórico registrado.</p> : (
+                  <ol className="space-y-3">{operations.timeline.map((entry) => <li className="rounded-md border p-3" key={entry.id}><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-medium">{entry.subject}</p><p className="mt-1 text-xs text-muted-foreground">{activityLabels[entry.type] ?? entry.type} · {formatDate(entry.occurredAt, operations.timeZone)}</p></div><span className="rounded-full border px-2 py-0.5 text-xs">{actorLabels[entry.actor.type] ?? entry.actor.type}: {entry.actor.name}</span></div>{entry.description ? <p className="mt-2 text-sm">{entry.description}</p> : null}{entry.result ? <p className="mt-2 text-xs">Resultado: {entry.result}</p> : null}{entry.nextActionDescription && entry.nextActionAt ? <p className="mt-2 text-xs text-muted-foreground">Próxima ação registrada: {entry.nextActionDescription} · {formatDate(entry.nextActionAt, operations.timeZone)}</p> : null}{entry.correctsActivityId ? <p className="mt-2 text-xs text-amber-800">Evento corretivo de {entry.correctsActivityId}</p> : null}{operations.permissions.canWrite ? <Button className="mt-3" onClick={() => setCorrectionId(entry.id)} size="sm" type="button" variant="secondary">Registrar correção</Button> : null}</li>)}</ol>
+                )}
+                {operations.nextCursor ? <Button className="mt-4" disabled={pending} onClick={loadMore} type="button" variant="secondary">Carregar mais</Button> : null}
+              </div>
+            </details>
 
             {correctionId ? (
               <article className="rounded-lg border border-amber-300 bg-amber-50 p-5 text-amber-950">
