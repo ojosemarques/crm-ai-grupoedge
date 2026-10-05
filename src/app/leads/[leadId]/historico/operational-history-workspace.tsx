@@ -13,14 +13,12 @@ import { ScoringWorkspace } from "@/app/leads/[leadId]/historico/scoring-workspa
 import { LeadStageWorkspace } from "@/app/leads/[leadId]/historico/lead-stage-workspace";
 import { LeadMeetingsWorkspace } from "@/app/leads/[leadId]/historico/lead-meetings-workspace";
 import { LeadOpportunitiesWorkspace } from "@/app/leads/[leadId]/historico/lead-opportunities-workspace";
-import { LeadIntelligencePanel } from "@/app/leads/[leadId]/historico/lead-intelligence-panel";
 import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
 import type { LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
 import type { LeadOpportunityScreen } from "@/modules/opportunities/domain/opportunity-contracts";
 import type { FreeQualificationScreen } from "@/modules/qualification/domain/free-qualification-contracts";
 import type { LeadScoreView } from "@/modules/qualification/domain/scoring-contracts";
 import type { LeadPipelineState } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
-import type { LeadIntelligenceScreen } from "@/modules/ai/domain/lead-intelligence-contracts";
 import type { LeadContactView } from "@/modules/contacts/domain/contact-contracts";
 import { JourneyPanel } from "@/components/lifecycle/journey-panel";
 import type { JourneySnapshot } from "@/modules/lifecycle/domain/lifecycle-contracts";
@@ -45,8 +43,7 @@ type TabKey =
   | "qualification"
   | "timeline"
   | "meetings"
-  | "opportunity"
-  | "intelligence";
+  | "opportunity";
 
 const inputClass =
   "mt-1.5 h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring";
@@ -141,7 +138,6 @@ const tabs: readonly Readonly<{ key: TabKey; label: string }>[] = [
   { key: "qualification", label: "Qualificação" },
   { key: "meetings", label: "Reuniões" },
   { key: "opportunity", label: "Negócios" },
-  { key: "intelligence", label: "Inteligência" },
 ];
 
 function formText(form: FormData, name: string): string | undefined {
@@ -271,8 +267,6 @@ export function OperationalHistoryWorkspace({
   initialMeetings,
   initialOpportunities,
   showOpportunities = true,
-  initialIntelligence,
-  intelligenceForbidden,
   initialContactIdentity,
   contactIdentityForbidden,
   initialJourney,
@@ -288,8 +282,6 @@ export function OperationalHistoryWorkspace({
   initialMeetings: LeadMeetingsScreen;
   initialOpportunities: LeadOpportunityScreen;
   showOpportunities?: boolean;
-  initialIntelligence: LeadIntelligenceScreen | null;
-  intelligenceForbidden: boolean;
   initialContactIdentity: LeadContactView | null;
   contactIdentityForbidden: boolean;
   initialJourney: JourneySnapshot | null;
@@ -1248,7 +1240,6 @@ export function OperationalHistoryWorkspace({
           <LeadOpportunitiesWorkspace initialScreen={initialOpportunities} onCommitted={refresh} />
         </div>
       ) : null}
-      {activeTab === "intelligence" ? <LeadIntelligencePanel initialForbidden={intelligenceForbidden} initialScreen={initialIntelligence} leadId={operations.lead.id} onCommitted={refresh} /> : null}
         </div>
         <aside className={styles.context}>
           <section><h2>Contexto político</h2><p>{operations.lead.organizationName ?? operations.lead.account?.name ?? "Partido, mandato ou equipe não informado"}</p></section>

@@ -194,15 +194,5 @@ test("edita o resumo, registra qualificações livres e mantém integrações fu
   await expect(
     page.getByText("Prioridade alterada com motivo e auditoria.", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("tab", { name: "Inteligência" }).click();
-  await expect(page.getByRole("heading", { name: "Inteligência aplicada ao lead" })).toBeVisible();
-  await expect(page.getByText("Modo local / simulado", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Analisar lead" }).click();
-  await expect(
-    page.getByText("Análise criada sem alterar dados comerciais.", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Análise do lead" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Fatos" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Inferências" })).toBeVisible();
-  await expect(page.getByText("Nenhuma inferência foi produzida no modo local.")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Inteligência" })).toHaveCount(0);
 });

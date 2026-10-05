@@ -125,7 +125,7 @@ test("telas operacionais e administrativas permanecem consistentes nas cinco res
   }
 });
 
-test("Qualificação livre e Inteligência preservam tabs, foco e adaptação mobile", async ({ page }, testInfo) => {
+test("Qualificação livre preserva tabs, foco e adaptação mobile", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await login(page);
   await page.goto("/leads", { waitUntil: "domcontentloaded" });
@@ -150,12 +150,7 @@ test("Qualificação livre e Inteligência preservam tabs, foco e adaptação mo
     await expectNoPageOverflow(page, `${viewport.label} Qualificação`);
     await capture(page, testInfo, `${viewport.label}-qualificacao`);
 
-    const intelligence = page.getByRole("tab", { name: "Inteligência" });
-    await intelligence.click();
-    await expect(intelligence).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("heading", { name: "Inteligência aplicada ao lead" })).toBeVisible();
-    await expectNoPageOverflow(page, `${viewport.label} Inteligência`);
-    await capture(page, testInfo, `${viewport.label}-inteligencia`);
+    await expect(page.getByRole("tab", { name: "Inteligência" })).toHaveCount(0);
   }
 });
 

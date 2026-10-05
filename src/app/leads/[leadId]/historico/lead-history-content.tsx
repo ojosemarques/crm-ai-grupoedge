@@ -3,7 +3,6 @@ import { notFound, redirect } from "next/navigation";
 
 import { OperationalHistoryWorkspace } from "@/app/leads/[leadId]/historico/operational-history-workspace";
 import { getOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
-import { getLeadIntelligenceService } from "@/modules/ai/application/lead-intelligence-service";
 import { getOmnichannelService } from "@/modules/communications/application/omnichannel-service";
 import { getContactIdentityService } from "@/modules/contacts/application/contact-identity-service";
 import { getLifecycleService } from "@/modules/lifecycle/application/lifecycle-service";
@@ -46,8 +45,6 @@ export async function LeadHistoryContent({
   let pipeline;
   let meetings;
   let opportunities;
-  let intelligence = null;
-  let intelligenceForbidden = false;
   let contactIdentity = null;
   let contactIdentityForbidden = false;
   let journey: JourneySnapshot | null = null;
@@ -57,7 +54,7 @@ export async function LeadHistoryContent({
   let communicationsForbidden = false;
 
   try {
-    const [core, intelligenceResult, contactResult, privacyResult, communicationsResult] = await Promise.all([
+    const [core, contactResult, privacyResult, communicationsResult] = await Promise.all([
       Promise.all([
         getOperationalHistoryService().getLeadOperations(context, { leadId, pageSize: 20 }),
         getFreeQualificationService().getScreen(context, { leadId }),
@@ -66,7 +63,6 @@ export async function LeadHistoryContent({
         getMeetingService().getLeadMeetings(context, { leadId }),
         getOpportunityService().getLeadScreen(context, { leadId }),
       ]),
-      readOptional(() => getLeadIntelligenceService().getScreen(context, { leadId })),
       readOptional(async () => {
         const identity = await getContactIdentityService().getLeadContact(context, { leadId });
         const contactJourney = identity.contact
@@ -82,8 +78,6 @@ export async function LeadHistoryContent({
     ]);
 
     [operations, qualifications, score, pipeline, meetings, opportunities] = core;
-    intelligence = intelligenceResult.value;
-    intelligenceForbidden = intelligenceResult.forbidden;
     contactIdentity = contactResult.value?.identity ?? null;
     journey = contactResult.value?.journey ?? null;
     contactIdentityForbidden = contactResult.forbidden;
@@ -112,8 +106,6 @@ export async function LeadHistoryContent({
         initialMeetings={meetings}
         initialOpportunities={opportunities}
         showOpportunities={!embedded}
-        initialIntelligence={intelligence}
-        intelligenceForbidden={intelligenceForbidden}
         initialContactIdentity={contactIdentity}
         contactIdentityForbidden={contactIdentityForbidden}
         initialJourney={journey}
