@@ -6,19 +6,26 @@ import { getDatabaseClient } from "@/shared/core/database/client";
 export type BusinessPipelineOption = Readonly<{
   id: string;
   name: string;
-  entityType: "LEAD" | "OPPORTUNITY";
+  entityType: "PROSPECTING" | "LEAD" | "OPPORTUNITY";
   href: string;
 }>;
+
+export const ACTIVE_PROSPECTING_PIPELINE_ID = "active-prospecting";
 
 export async function listBusinessPipelines(
   context: AuthenticatedContext,
 ): Promise<readonly BusinessPipelineOption[]> {
   const authorization = getAuthorizationService();
-  const [pipelines, leadRead, opportunityRead] = await Promise.all([
+  const [pipelines, inboxRead, leadRead, opportunityRead] = await Promise.all([
     getDatabaseClient().pipeline.findMany({
       where: { workspaceId: context.workspaceId, deletedAt: null },
       orderBy: [{ entityType: "asc" }, { isDefault: "desc" }, { name: "asc" }, { id: "asc" }],
       select: { id: true, name: true, entityType: true },
+    }),
+    authorization.authorize(context, PermissionKeys.INBOX_READ, {
+      workspaceId: context.workspaceId,
+      resourceType: "Conversation",
+      ownerMemberId: context.memberId,
     }),
     authorization.authorize(context, PermissionKeys.LEADS_READ, {
       workspaceId: context.workspaceId,
@@ -32,7 +39,7 @@ export async function listBusinessPipelines(
     }),
   ]);
 
-  return pipelines
+  const configuredPipelines = pipelines
     .filter((pipeline) => pipeline.entityType === "LEAD" ? leadRead.allowed : opportunityRead.allowed)
     .map((pipeline) => ({
       ...pipeline,
@@ -40,4 +47,13 @@ export async function listBusinessPipelines(
         ? `/pipeline?pipelineId=${pipeline.id}`
         : `/oportunidades?pipelineId=${pipeline.id}`,
     }));
+
+  return inboxRead.allowed
+    ? [{
+        id: ACTIVE_PROSPECTING_PIPELINE_ID,
+        name: "Prospecção Ativa",
+        entityType: "PROSPECTING" as const,
+        href: "/email-agente",
+      }, ...configuredPipelines]
+    : configuredPipelines;
 }

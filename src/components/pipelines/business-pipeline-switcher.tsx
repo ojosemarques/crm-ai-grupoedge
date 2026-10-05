@@ -24,7 +24,7 @@ export function BusinessPipelineSwitcher({
             key={pipeline.id}
           >
             {pipeline.name}
-            <span className="ml-1.5 text-[10px] opacity-70">{pipeline.entityType === "LEAD" ? "Pré-vendas" : "Vendas"}</span>
+            <span className="ml-1.5 text-[10px] opacity-70">{pipeline.entityType === "PROSPECTING" ? "Principal" : pipeline.entityType === "LEAD" ? "Pré-vendas" : "Vendas"}</span>
           </Link>
         );
       })}

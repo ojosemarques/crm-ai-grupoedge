@@ -42,6 +42,7 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   const card = page.locator("article").filter({ hasText: leadName });
   await expect(card).toBeVisible();
   const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
+  await expect(pipelineNavigation.getByRole("link", { name: "Prospecção AtivaPrincipal" })).toHaveAttribute("href", "/email-agente");
   await expect(pipelineNavigation.getByRole("link", { name: "Pré-vendasPré-vendas" })).toHaveAttribute("aria-current", "page");
   await expect(pipelineNavigation.getByRole("link", { name: "VendasVendas" })).toBeVisible();
   await expect(page.getByLabel("Etapa").getByRole("option", { name: "Novo (1)" })).toHaveCount(1);
@@ -69,6 +70,18 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await expect(leadDialog.getByRole("heading", { name: "Negócios", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Fechar ficha e voltar ao pipeline" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("abre Prospecção Ativa como pipeline principal ao clicar em Negócios", async ({ page }) => {
+  await login(page, DEMO_USERS[1].email);
+  const businessLink = page.getByRole("navigation", { name: "Navegação da área" }).getByRole("link", { name: "Negócios", exact: true });
+  await expect(businessLink).toHaveAttribute("href", "/email-agente");
+  await businessLink.click();
+  await expect(page).toHaveURL(/\/email-agente(?:\?|$)/);
+  await expect(page.getByRole("heading", { name: "Prospecção Ativa", exact: true })).toBeVisible();
+  const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
+  await expect(pipelineNavigation.getByRole("link", { name: "Prospecção AtivaPrincipal" })).toHaveAttribute("aria-current", "page");
+  await expect(pipelineNavigation.getByRole("link", { name: "Pré-vendasPré-vendas" })).toBeVisible();
 });
 
 test("mantém o pipeline somente leitura para o visualizador", async ({ page }) => {
