@@ -270,6 +270,7 @@ export function OperationalHistoryWorkspace({
   initialScore,
   initialMeetings,
   initialOpportunities,
+  showOpportunities = true,
   initialIntelligence,
   intelligenceForbidden,
   initialContactIdentity,
@@ -286,6 +287,7 @@ export function OperationalHistoryWorkspace({
   initialScore: LeadScoreView;
   initialMeetings: LeadMeetingsScreen;
   initialOpportunities: LeadOpportunityScreen;
+  showOpportunities?: boolean;
   initialIntelligence: LeadIntelligenceScreen | null;
   intelligenceForbidden: boolean;
   initialContactIdentity: LeadContactView | null;
@@ -347,7 +349,7 @@ export function OperationalHistoryWorkspace({
           if (target instanceof HTMLDetailsElement) target.open = true;
           target?.scrollIntoView({ block: "start" });
         }, 0);
-      } else if (window.location.hash === "#oportunidade") {
+      } else if (showOpportunities && window.location.hash === "#oportunidade") {
         setActiveTab("opportunity");
       } else if (window.location.hash === "#reunioes") {
         setActiveTab("meetings");
@@ -356,7 +358,7 @@ export function OperationalHistoryWorkspace({
     openLinkedPanel();
     window.addEventListener("hashchange", openLinkedPanel);
     return () => window.removeEventListener("hashchange", openLinkedPanel);
-  }, []);
+  }, [showOpportunities]);
 
   async function refresh() {
     const [operationsResponse, scoreResponse, pipelineResponse, pactoResponse, contactResponse] = await Promise.all([
@@ -711,7 +713,7 @@ export function OperationalHistoryWorkspace({
     Math.floor((clock - new Date(operations.lead.receivedAt).getTime()) / 1_000),
   );
 
-  const visibleTabs = tabs;
+  const visibleTabs = showOpportunities ? tabs : tabs.filter((tab) => tab.key !== "opportunity");
   const nextQueueLeadLoaded = nextQueueLeadLoadedForId === operations.lead.id;
   const currentNextQueueLead = nextQueueLeadLoaded ? nextQueueLead : null;
   const quickOperationCompleted = quickOperationCompletedForId === operations.lead.id;
@@ -789,7 +791,7 @@ export function OperationalHistoryWorkspace({
           <Button disabled={!pipeline.canWrite} onClick={openStagePanel} size="sm" type="button" variant="secondary">Colocar em nutrição</Button>
           <Button disabled={!pacto.canWrite} key="Qualificar" onClick={() => setActiveTab("pacto")} size="sm" type="button" variant="secondary">Qualificar</Button>
           <Button disabled={!initialMeetings.canSchedule} onClick={() => setActiveTab("meetings")} size="sm" type="button" variant="secondary">Agendar reunião</Button>
-          <Button disabled={!initialOpportunities.canCreate} onClick={() => setActiveTab("opportunity")} size="sm" type="button" variant="secondary">Criar oportunidade</Button>
+          {showOpportunities ? <Button disabled={!initialOpportunities.canCreate} onClick={() => setActiveTab("opportunity")} size="sm" type="button" variant="secondary">Criar oportunidade</Button> : null}
         </div>
         {!operations.permissions.canWrite ? (
           <p className="mt-3 text-sm text-muted-foreground">Seu perfil possui acesso somente para leitura neste lead.</p>
@@ -1236,7 +1238,7 @@ export function OperationalHistoryWorkspace({
 
       {activeTab === "pacto" ? <PactoWorkspace initialPacto={pacto} onCommitted={refresh} onUpdated={setPacto} /> : null}
       {activeTab === "meetings" ? <LeadMeetingsWorkspace initialMeetings={initialMeetings} onCommitted={refresh} /> : null}
-      {activeTab === "opportunity" ? (
+      {showOpportunities && activeTab === "opportunity" ? (
         <div aria-labelledby="tab-opportunity" id="panel-opportunity" role="tabpanel">
           <LeadOpportunitiesWorkspace initialScreen={initialOpportunities} onCommitted={refresh} />
         </div>
@@ -1246,7 +1248,7 @@ export function OperationalHistoryWorkspace({
         <aside className={styles.context}>
           <section><h2>Contexto político</h2><p>{operations.lead.organizationName ?? operations.lead.account?.name ?? "Partido, mandato ou equipe não informado"}</p></section>
           <section><h2>Próxima atividade</h2>{operations.lead.nextAction ? <><strong>{operations.lead.nextAction.title}</strong><p>{formatDate(operations.lead.nextAction.dueAt, operations.timeZone)}</p><Button variant="secondary" size="sm" onClick={() => openOperationalAction("NOTE", "tarefas")}>Ver atividade</Button></> : <p>Nenhuma atividade agendada.</p>}</section>
-          <section><h2>Negócios</h2>{initialOpportunities.canRead ? <Button onClick={() => setActiveTab("opportunity")} size="sm" variant="secondary">Ver negócios do contato</Button> : <p>Acesso restrito ao seu perfil.</p>}</section>
+          {showOpportunities ? <section><h2>Negócios</h2>{initialOpportunities.canRead ? <Button onClick={() => setActiveTab("opportunity")} size="sm" variant="secondary">Ver negócios do contato</Button> : <p>Acesso restrito ao seu perfil.</p>}</section> : null}
           <section><h2>Conversas</h2>{communicationsForbidden ? <p>Acesso restrito ao seu perfil.</p> : <><p>{initialCommunications?.conversationCount ?? 0} conversas vinculadas</p><Link href={initialCommunications?.recent[0] ? `/inbox?conversationId=${initialCommunications.recent[0].id}` : "/inbox"}>Abrir conversa <Icon name="seta-direita" size={14} /></Link></>}</section>
           <section><h2>Privacidade</h2><span className="status-badge" data-tone={initialPrivacy?.outcome === "ALLOW" ? "success" : initialPrivacy?.outcome === "DENY" ? "danger" : "warning"}>{privacyForbidden ? "Acesso restrito" : initialPrivacy?.outcome === "ALLOW" ? "Autorizado" : initialPrivacy?.outcome === "DENY" ? "Contato bloqueado" : "Revisão necessária"}</span></section>
         </aside>
