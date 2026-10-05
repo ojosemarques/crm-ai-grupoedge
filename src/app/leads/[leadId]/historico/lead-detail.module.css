@@ -24,6 +24,11 @@
 .facts > div { grid-column: auto; min-width: 0; }
 .facts dt { font-size: 9px; color: var(--text-muted); }
 .facts dd { font-size: 11px; overflow-wrap: anywhere; }
+.sellerAssignment { border: 1px solid var(--border); border-radius: 7px; background: var(--surface); padding: 10px 11px; }
+.sellerAssignment summary { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; cursor: pointer; font-size: 11px; font-weight: 600; color: var(--primary); }
+.sellerAssignment summary small { max-width: 105px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 9px; font-weight: 500; }
+.sellerAssignment label { color: var(--text-muted); }
+.sellerAssignment select { font-size: 11px; }
 .content { min-width: 0; padding: 20px; background: var(--surface-muted); border-left: 1px solid var(--border); border-right: 1px solid var(--border); min-height: 600px; }
 .content > [role="tabpanel"] { display: flex; flex-direction: column; gap: 20px; }
 .content :global(.surface-panel) { border-radius: 7px; box-shadow: none; background: var(--surface); border-color: var(--border); padding: 18px; }

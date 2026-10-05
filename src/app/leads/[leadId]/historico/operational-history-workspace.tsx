@@ -313,6 +313,7 @@ export function OperationalHistoryWorkspace({
   const [quickStageId, setQuickStageId] = useState("");
   const [quickOperationCompletedForId, setQuickOperationCompletedForId] = useState<string | null>(null);
   const [quickFlowOpen, setQuickFlowOpen] = useState(false);
+  const [sellerMemberId, setSellerMemberId] = useState(initialOperations.lead.ownerMemberId ?? "");
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
@@ -372,6 +373,7 @@ export function OperationalHistoryWorkspace({
     const pipelineResult = (await readResponse(pipelineResponse)) as LeadPipelineState;
     const pactoResult = (await readResponse(pactoResponse)) as PactoQualificationView;
     setOperations(result);
+    setSellerMemberId(result.lead.ownerMemberId ?? "");
     setScore(scoreResult);
     setPipeline(pipelineResult);
     setPacto(pactoResult);
@@ -578,6 +580,15 @@ export function OperationalHistoryWorkspace({
     });
   }
 
+  async function submitSellerAssignment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!sellerMemberId || sellerMemberId === operations.lead.ownerMemberId) return;
+    await mutate("REDISTRIBUTE", {
+      target: { type: "MEMBER", memberId: sellerMemberId },
+      reason: "Vendedor alterado no card do pipeline.",
+    });
+  }
+
   async function submitActivity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const element = event.currentTarget;
@@ -772,7 +783,7 @@ export function OperationalHistoryWorkspace({
           <Button disabled={!operations.permissions.canWrite} onClick={() => openOperationalAction("MESSAGE_SENT")} size="sm" type="button" variant="secondary">Registrar mensagem</Button>
           <Button disabled={!operations.permissions.canWrite} onClick={() => openOperationalAction("NOTE")} size="sm" type="button" variant="secondary">Adicionar nota</Button>
           <Button disabled={!operations.permissions.canManageTasks} onClick={() => openOperationalAction("NOTE", "criar-tarefa")} size="sm" type="button" variant="secondary">Criar tarefa</Button>
-          <Button disabled={!operations.permissions.canAssign} onClick={() => { setActiveTab("summary"); window.setTimeout(() => document.getElementById("alterar-responsavel")?.scrollIntoView({ behavior: "smooth" }), 0); }} size="sm" type="button" variant="secondary">Alterar responsável</Button>
+          <Button disabled={!operations.permissions.canAssign} onClick={() => { const panel = document.getElementById("vendedor-do-lead"); if (panel instanceof HTMLDetailsElement) panel.open = true; panel?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }} size="sm" type="button" variant="secondary">Alterar vendedor</Button>
           <Button disabled={!pipeline.canWrite} onClick={openStagePanel} size="sm" type="button" variant="secondary">Alterar etapa</Button>
           <Button disabled={!pipeline.canWrite} onClick={openStagePanel} size="sm" type="button" variant="secondary">Desqualificar</Button>
           <Button disabled={!pipeline.canWrite} onClick={openStagePanel} size="sm" type="button" variant="secondary">Colocar em nutrição</Button>
@@ -890,7 +901,45 @@ export function OperationalHistoryWorkspace({
           <div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">Próxima atividade</dt><dd className="mt-1 font-medium">{operations.lead.nextAction ? `${operations.lead.nextAction.title} · ${formatDate(operations.lead.nextAction.dueAt, operations.timeZone)}` : "Nenhuma próxima ação ativa"}</dd></div>
         </dl>
 
-          <Button onClick={() => setActiveTab("summary")} size="sm" type="button" variant="secondary">Editar informações</Button>
+          <div className="grid gap-3">
+            <Button onClick={() => setActiveTab("summary")} size="sm" type="button" variant="secondary">Editar informações</Button>
+            {operations.permissions.canAssign ? (
+              <details className={styles.sellerAssignment} id="vendedor-do-lead">
+                <summary>
+                  <span>Vendedor</span>
+                  <small>{operations.lead.operationalOwner}</small>
+                </summary>
+                <form className="mt-3 grid gap-3" onSubmit={submitSellerAssignment}>
+                  <label className="text-xs">
+                    Dono do card
+                    <select
+                      aria-label="Vendedor dono do card"
+                      className={inputClass}
+                      disabled={pending || operations.assignmentTargets.length === 0}
+                      onChange={(event) => setSellerMemberId(event.target.value)}
+                      required
+                      value={sellerMemberId}
+                    >
+                      <option disabled value="">Selecione um vendedor</option>
+                      {operations.assignmentTargets.map((target) => (
+                        <option key={target.id} value={target.id}>{target.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {operations.assignmentTargets.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Nenhum vendedor ativo está disponível na equipe deste pipeline.</p>
+                  ) : null}
+                  <Button
+                    disabled={pending || !sellerMemberId || sellerMemberId === operations.lead.ownerMemberId}
+                    size="sm"
+                    type="submit"
+                  >
+                    {pending ? "Salvando…" : operations.lead.ownerMemberId ? "Alterar vendedor" : "Vincular vendedor"}
+                  </Button>
+                </form>
+              </details>
+            ) : null}
+          </div>
         </aside>
         <div className={styles.content}>
       {activeTab === "summary" ? (

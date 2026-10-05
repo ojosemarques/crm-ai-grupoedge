@@ -155,10 +155,9 @@ test("edita o resumo, qualifica por PACTO e mantém integrações futuras honest
   await expect(page.getByText(/Organização atualizada/).first()).toBeVisible();
   await expect(page.locator("li").filter({ hasText: "Cargo ou atuação" })).toBeVisible();
 
-  const assignment = page.locator("article").filter({
-    has: page.getByRole("heading", { name: "Alterar responsável" }),
-  });
-  const destination = assignment.getByLabel("Destino");
+  const assignment = page.locator("#vendedor-do-lead");
+  await assignment.getByText("Vendedor", { exact: true }).click();
+  const destination = assignment.getByLabel("Vendedor dono do card");
   const currentDestination = await destination.inputValue();
   const alternative = await destination.locator("option").evaluateAll(
     (options, current) => options
@@ -166,13 +165,12 @@ test("edita o resumo, qualifica por PACTO e mantém integrações futuras honest
         value: (option as HTMLOptionElement).value,
         label: option.textContent ?? "",
       }))
-      .find((option) => option.value.startsWith("member:") && option.value !== current),
+      .find((option) => option.value && option.value !== current),
     currentDestination,
   );
   expect(alternative).toBeTruthy();
   await destination.selectOption(alternative!.value);
-  await assignment.getByLabel("Motivo").fill("Redistribuição validada no cartão CRM-11.");
-  await assignment.getByRole("button", { name: "Redistribuir" }).click();
+  await assignment.getByRole("button", { name: "Alterar vendedor" }).click();
   await expect(page.getByRole("status")).toContainText("Operação registrada com sucesso.");
   await expect(page.getByText(alternative!.label, { exact: true }).first()).toBeVisible();
 
