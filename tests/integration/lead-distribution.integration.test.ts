@@ -624,7 +624,7 @@ describe("distribuição operacional e SLA imediato", () => {
         memberId: fixture.sdrs[0]!.memberId,
         reason: "Destino ainda está pausado",
       }),
-    ).rejects.toMatchObject({ code: "SDR_UNAVAILABLE" });
+    ).rejects.toMatchObject({ code: "COMMERCIAL_OWNER_UNAVAILABLE" });
 
     await distribution.setReceivingPause(fixture.manager.context, {
       memberId: fixture.sdrs[0]!.memberId,
@@ -648,16 +648,12 @@ describe("distribuição operacional e SLA imediato", () => {
       }),
     ).rejects.toBeInstanceOf(AccessDeniedError);
 
-    await distribution.setReceivingPause(fixture.manager.context, {
-      memberId: fixture.sdrs[1]!.memberId,
-      paused: false,
-    });
     const redistributed = await distribution.redistribute(
       fixture.manager.context,
       {
         leadId: result.leadId,
         target: { type: "MEMBER", memberId: fixture.sdrs[1]!.memberId },
-        reason: "Equilibrar a carga da equipe",
+        reason: "Atribuição explícita mesmo com recebimento automático pausado",
       },
     );
     expect(redistributed.ownerMemberId).toBe(fixture.sdrs[1]!.memberId);

@@ -299,6 +299,7 @@ export function OperationalHistoryWorkspace({
   const [quickOperationCompletedForId, setQuickOperationCompletedForId] = useState<string | null>(null);
   const [quickFlowOpen, setQuickFlowOpen] = useState(false);
   const [sellerMemberId, setSellerMemberId] = useState(initialOperations.lead.ownerMemberId ?? "");
+  const [sellerTargetsLoading, setSellerTargetsLoading] = useState(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
@@ -363,6 +364,28 @@ export function OperationalHistoryWorkspace({
       setContactIdentity((await readResponse(contactResponse)) as LeadContactView);
     }
     setClock(new Date(result.generatedAt).getTime());
+  }
+
+  async function refreshSellerTargets() {
+    setSellerTargetsLoading(true);
+    try {
+      const response = await fetch(
+        `/api/leads/${operations.lead.id}/operations?pageSize=20`,
+        { cache: "no-store" },
+      );
+      const result = (await readResponse(response)) as LeadCardOperations;
+      setOperations(result);
+      setSellerMemberId(result.lead.ownerMemberId ?? "");
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        message: error instanceof Error
+          ? error.message
+          : "Não foi possível atualizar a lista de vendedores.",
+      });
+    } finally {
+      setSellerTargetsLoading(false);
+    }
   }
 
   async function resolveIdentityReview(reviewId: string, decision: "KEEP_SEPARATE" | "DISMISS") {
@@ -879,7 +902,13 @@ export function OperationalHistoryWorkspace({
           <div className="grid gap-3">
             <Button onClick={openContactEditor} size="sm" type="button" variant="secondary">Editar informações</Button>
             {operations.permissions.canAssign ? (
-              <details className={styles.sellerAssignment} id="vendedor-do-lead">
+              <details
+                className={styles.sellerAssignment}
+                id="vendedor-do-lead"
+                onToggle={(event) => {
+                  if (event.currentTarget.open) void refreshSellerTargets();
+                }}
+              >
                 <summary>
                   <span>Vendedor</span>
                   <small>{operations.lead.operationalOwner}</small>
@@ -890,22 +919,24 @@ export function OperationalHistoryWorkspace({
                     <select
                       aria-label="Vendedor dono do card"
                       className={inputClass}
-                      disabled={pending || operations.assignmentTargets.length === 0}
+                      disabled={pending || sellerTargetsLoading || operations.assignmentTargets.length === 0}
                       onChange={(event) => setSellerMemberId(event.target.value)}
                       required
                       value={sellerMemberId}
                     >
-                      <option disabled value="">Selecione um vendedor</option>
+                      <option disabled value="">
+                        {sellerTargetsLoading ? "Atualizando vendedores…" : "Selecione um vendedor"}
+                      </option>
                       {operations.assignmentTargets.map((target) => (
                         <option key={target.id} value={target.id}>{target.name}</option>
                       ))}
                     </select>
                   </label>
-                  {operations.assignmentTargets.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">Nenhum vendedor ativo está disponível na equipe deste pipeline.</p>
+                  {!sellerTargetsLoading && operations.assignmentTargets.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Nenhum vendedor ativo está disponível para sua permissão de acesso.</p>
                   ) : null}
                   <Button
-                    disabled={pending || !sellerMemberId || sellerMemberId === operations.lead.ownerMemberId}
+                    disabled={pending || sellerTargetsLoading || !sellerMemberId || sellerMemberId === operations.lead.ownerMemberId}
                     size="sm"
                     type="submit"
                   >

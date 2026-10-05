@@ -255,9 +255,23 @@ describe("fila priorizada do SDR", () => {
       authorization,
       now: () => now,
     }).getLeadOperations(adminContext, { leadId: created.leadId });
+    const closerFromSalesTeam = await database.workspaceMember.findFirstOrThrow({
+      where: {
+        workspaceId,
+        role: { key: "closer", deletedAt: null },
+        teamMemberships: {
+          some: { function: "CLOSER", team: { name: "Vendas", deletedAt: null }, deletedAt: null },
+        },
+      },
+      select: { id: true, user: { select: { displayName: true } } },
+    });
     expect(operations.assignmentTargets).toContainEqual({
       id: legacySellerMemberId,
       name: "Vendedor legado sem equipe",
+    });
+    expect(operations.assignmentTargets).toContainEqual({
+      id: closerFromSalesTeam.id,
+      name: closerFromSalesTeam.user.displayName,
     });
     await distributionService().redistribute(adminContext, {
       leadId: created.leadId,
@@ -266,6 +280,15 @@ describe("fila priorizada do SDR", () => {
     });
     await expect(database.lead.findUniqueOrThrow({ where: { id: created.leadId } })).resolves.toMatchObject({
       ownerMemberId: legacySellerMemberId,
+      queueId: null,
+    });
+    await distributionService().redistribute(adminContext, {
+      leadId: created.leadId,
+      target: { type: "MEMBER", memberId: closerFromSalesTeam.id },
+      reason: "Validação da atribuição entre equipes pelo administrador.",
+    });
+    await expect(database.lead.findUniqueOrThrow({ where: { id: created.leadId } })).resolves.toMatchObject({
+      ownerMemberId: closerFromSalesTeam.id,
       queueId: null,
     });
   });

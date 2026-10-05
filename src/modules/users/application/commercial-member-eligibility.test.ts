@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 
 describe("elegibilidade operacional de membros comerciais", () => {
-  it("inclui vendedor legado sem equipe pelo papel do workspace", () => {
+  it("inclui vendedor pelo papel do workspace mesmo com outro vínculo de equipe", () => {
     const where = commercialMemberWhere({
       workspaceId: "00000000-0000-4000-8000-000000000001",
       functions: ["CLOSER"],
@@ -15,7 +15,6 @@ describe("elegibilidade operacional de membros comerciais", () => {
       OR: expect.arrayContaining([
         {
           role: { key: { in: ["closer"] }, deletedAt: null },
-          teamMemberships: { none: { deletedAt: null } },
         },
       ]),
     });

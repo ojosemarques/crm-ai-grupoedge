@@ -32,12 +32,11 @@ export function commercialMemberWhere(input: Readonly<{
     { teamMemberships: { some: teamMembership } },
   ];
 
-  // A função explícita da equipe prevalece. O papel cobre cadastros legados
-  // criados com "Sem equipe", que antes ficavam invisíveis na operação.
+  // O papel comercial também caracteriza o vendedor no workspace. A função da
+  // equipe continua sendo a única origem válida quando há recorte por equipe.
   if (!input.teamIds) {
     eligibility.push({
       role: { key: { in: roleKeys }, deletedAt: null },
-      teamMemberships: { none: { deletedAt: null } },
     });
   }
 

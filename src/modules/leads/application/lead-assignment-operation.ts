@@ -23,6 +23,8 @@ export type LeadAssignmentOperationInput = Readonly<{
   type: LeadAssignmentType;
   requireGeneralQueueOrigin: boolean;
   reassignAllOpenTasks?: boolean;
+  requireTargetAvailability?: boolean;
+  targetTeamIds?: readonly string[];
   assignedAt: Date;
 }>;
 
@@ -58,22 +60,19 @@ async function assertEligibleCommercialOwner(
   transaction: Prisma.TransactionClient,
   workspaceId: string,
   memberId: string,
-  teamId: string,
+  options: Readonly<{
+    requireAvailability: boolean;
+    teamIds?: readonly string[];
+  }>,
 ): Promise<void> {
   const eligible = await transaction.workspaceMember.findFirst({
-    where: {
-      id: memberId,
-      ...commercialMemberWhere({
-        workspaceId,
-        functions: ["SDR", "CLOSER"],
-        requireLeadAvailability: true,
-      }),
-      OR: [
-        { teamMemberships: { some: { teamId, function: { in: ["SDR", "CLOSER"] }, deletedAt: null } } },
-        { teamMemberships: { some: { function: "CLOSER", deletedAt: null, team: { deletedAt: null } } } },
-        { role: { key: { in: ["sdr", "closer"] }, deletedAt: null }, teamMemberships: { none: { deletedAt: null } } },
-      ],
-    },
+    where: commercialMemberWhere({
+      workspaceId,
+      memberId,
+      functions: ["SDR", "CLOSER"],
+      requireLeadAvailability: options.requireAvailability,
+      ...(options.teamIds ? { teamIds: options.teamIds } : {}),
+    }),
     select: { id: true },
   });
 
@@ -154,7 +153,10 @@ export async function reassignLeadInTransaction(
       transaction,
       input.workspaceId,
       input.targetMemberId,
-      routingQueue.teamId,
+      {
+        requireAvailability: input.requireTargetAvailability ?? true,
+        ...(input.targetTeamIds ? { teamIds: input.targetTeamIds } : {}),
+      },
     );
   }
 

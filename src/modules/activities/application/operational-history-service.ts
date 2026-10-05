@@ -1520,7 +1520,9 @@ export function createOperationalHistoryService(
             where: commercialMemberWhere({
               workspaceId: context.workspaceId,
               functions: ["SDR", "CLOSER"],
-              requireLeadAvailability: true,
+              // Pausa afeta apenas distribuição automática. Um gestor ainda
+              // pode escolher explicitamente um vendedor ativo para o card.
+              requireLeadAvailability: false,
               ...(assignDecision.scope === "TEAM" && routingTeamId
                 ? { teamIds: [routingTeamId] }
                 : {}),

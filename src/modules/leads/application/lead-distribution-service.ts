@@ -273,21 +273,31 @@ export function createLeadDistributionService(
     }>,
   ): Promise<AssignmentResult> {
     const authorizedLead = await getLeadForAuthorization(context, input.leadId);
-    await options.authorization.assertAuthorized(
+    const resource = {
+      workspaceId: context.workspaceId,
+      resourceType: "Lead",
+      resourceId: authorizedLead.id,
+      ownerMemberId: authorizedLead.ownerMemberId,
+      queueId: authorizedLead.queueId,
+      teamId:
+        authorizedLead.routingQueue?.teamId ??
+        authorizedLead.queue?.teamId ??
+        null,
+    } as const;
+    const assignmentDecision = await options.authorization.authorize(
       context,
       PermissionKeys.LEADS_ASSIGN,
-      {
-        workspaceId: context.workspaceId,
-        resourceType: "Lead",
-        resourceId: authorizedLead.id,
-        ownerMemberId: authorizedLead.ownerMemberId,
-        queueId: authorizedLead.queueId,
-        teamId:
-          authorizedLead.routingQueue?.teamId ??
-          authorizedLead.queue?.teamId ??
-          null,
-      },
+      resource,
     );
+    if (!assignmentDecision.allowed) {
+      await options.authorization.assertAuthorized(
+        context,
+        PermissionKeys.LEADS_ASSIGN,
+        resource,
+      );
+    }
+
+    const routingTeamId = resource.teamId;
 
     const assignedAt = options.now();
     return options.database.$transaction((transaction) =>
@@ -299,6 +309,12 @@ export function createLeadDistributionService(
         reason: input.reason,
         type: input.type,
         requireGeneralQueueOrigin: input.requireGeneralQueueOrigin,
+        requireTargetAvailability: input.type === "MANUAL",
+        ...(assignmentDecision.allowed &&
+        assignmentDecision.scope === "TEAM" &&
+        routingTeamId
+          ? { targetTeamIds: [routingTeamId] }
+          : {}),
         assignedAt,
       }),
     );
