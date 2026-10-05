@@ -46,7 +46,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
     items: [
       { href: "/meu-dia", icon: "meu-dia", label: "Meu Dia", roles: operationalRoles },
       { href: "/pipeline", icon: "pipeline", label: "Pipeline", roles: leadRoles },
-      { href: "/email-agente", icon: "inbox", label: "Email Agente", permission: "inbox.read" },
+      { href: "/email-agente", icon: "inbox", label: "Prospecção Ativa", permission: "inbox.read" },
       { href: "/leads", icon: "leads", label: "Leads", roles: leadRoles },
       { href: "/agenda", icon: "agenda", label: "Agenda" },
       { href: "/inbox", icon: "inbox", label: "Conversas" },
@@ -118,7 +118,7 @@ const sections = [
 
 const labels: Record<string, string> = {
   "/pipeline": "Negócios", "/leads": "Leads",
-  "/email-agente": "Email Agente",
+  "/email-agente": "Prospecção Ativa",
   "/inbox": "Conversas",
   "/atividades": "Fila de atividades",
   "/campanhas": "Campanhas de envio",

@@ -29,7 +29,7 @@ export default async function EmailAgentPage({ searchParams }: Readonly<{ search
     <main className="page-canvas page-canvas-wide">
       <PageHeader
         eyebrow="Negócios · comunicação"
-        title="Email Agente"
+        title="Prospecção Ativa"
         description="Acompanhe, organize e responda as conversas comerciais por e-mail em uma fila dedicada."
         meta={`Atualizado em ${new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(initial.generatedAt))}`}
       />
