@@ -452,6 +452,24 @@ describe("administração de usuários, equipes e disponibilidade", () => {
     expect(JSON.stringify(audit)).not.toContain(password);
   }, 20_000);
 
+  it("vincula automaticamente o vendedor sem equipe à operação comercial", async () => {
+    const email = `seller.${randomUUID()}@administration.test`;
+    const result = await service().apply(admin, {
+      action: "CREATE_MEMBER",
+      confirmed: true,
+      displayName: "Vendedor criado sem equipe",
+      email,
+      password: "Senha#Local2026",
+      roleId: closerRoleId,
+      teamAssignments: [],
+    });
+
+    expect(result.members.find(({ email: value }) => value === email)).toMatchObject({
+      role: { id: closerRoleId },
+      teamAssignments: [expect.objectContaining({ teamId: salesTeamId, function: "CLOSER" })],
+    });
+  }, 20_000);
+
   it("edita perfil, papel e função comercial sem confundir os conceitos", async () => {
     const initial = (await service().getScreen(admin)).members.find(({ id }) => id === editSdr.memberId)!;
     const email = `edited.${randomUUID()}@administration.test`;

@@ -24,6 +24,7 @@ const now = new Date(period.to);
 let workspaceId: string;
 let sourceId: string;
 let manager: AuthenticatedContext;
+let admin: AuthenticatedContext;
 let sdr1: AuthenticatedContext;
 let sdr2: AuthenticatedContext;
 let viewer: AuthenticatedContext;
@@ -71,9 +72,11 @@ async function createLeadScenario(input: Readonly<{
   connectedSeconds: number | null;
   sourceId?: string;
 }>) {
-  const [pipeline, stage, band, queue, systemActor] = await Promise.all([
-    database.pipeline.findFirstOrThrow({ where: { workspaceId, entityType: "LEAD", isDefault: true, deletedAt: null } }),
-    database.pipelineStage.findFirstOrThrow({ where: { workspaceId, leadStageCode: "NEW", deletedAt: null } }),
+  const pipeline = await database.pipeline.findFirstOrThrow({
+    where: { workspaceId, entityType: "LEAD", isDefault: true, deletedAt: null },
+  });
+  const [stage, band, queue, systemActor] = await Promise.all([
+    database.pipelineStage.findFirstOrThrow({ where: { workspaceId, pipelineId: pipeline.id, leadStageCode: "NEW", deletedAt: null } }),
     database.leadPriorityBand.findFirstOrThrow({ where: { workspaceId, code: input.priority, active: true, deletedAt: null } }),
     database.queue.findFirstOrThrow({ where: { workspaceId, isGeneral: true, deletedAt: null } }),
     database.actor.findFirstOrThrow({ where: { workspaceId, key: "system" } }),
@@ -198,7 +201,7 @@ async function createLeadScenario(input: Readonly<{
 
 async function qualifyLead(lead: Awaited<ReturnType<typeof createLeadScenario>>, qualifiedAt: Date) {
   const [qualifiedStage, openHistory] = await Promise.all([
-    database.pipelineStage.findFirstOrThrow({ where: { workspaceId, leadStageCode: "QUALIFIED", deletedAt: null } }),
+    database.pipelineStage.findFirstOrThrow({ where: { workspaceId, pipelineId: lead.pipelineId, leadStageCode: "QUALIFIED", deletedAt: null } }),
     database.stageHistory.findFirstOrThrow({ where: { workspaceId, leadId: lead.leadId, exitedAt: null } }),
   ]);
   await database.$transaction(async (transaction) => {
@@ -303,8 +306,9 @@ async function addMeeting(input: Readonly<{
 beforeAll(async () => {
   const seeded = await seedDemoDatabase(database);
   workspaceId = seeded.workspaceId;
-  [manager, sdr1, sdr2, viewer] = await Promise.all([
+  [manager, admin, sdr1, sdr2, viewer] = await Promise.all([
     humanContext("gestor@demo.politizai.local"),
+    humanContext("admin@demo.politizai.local"),
     humanContext("sdr1@demo.politizai.local"),
     humanContext("sdr2@demo.politizai.local"),
     humanContext("viewer@demo.politizai.local"),
@@ -328,7 +332,7 @@ beforeAll(async () => {
   await qualifyLead(leadA, at("03T00:00"));
   await qualifyLead(leadB, at("05T00:00"));
   const [disqualifiedStage, disqualificationReason, leadCOpenHistory] = await Promise.all([
-    database.pipelineStage.findFirstOrThrow({ where: { workspaceId, leadStageCode: "DISQUALIFIED", deletedAt: null } }),
+    database.pipelineStage.findFirstOrThrow({ where: { workspaceId, pipelineId: leadC.pipelineId, leadStageCode: "DISQUALIFIED", deletedAt: null } }),
     database.disqualificationReason.findFirstOrThrow({ where: { workspaceId, active: true, deletedAt: null } }),
     database.stageHistory.findFirstOrThrow({ where: { workspaceId, leadId: leadC.leadId, exitedAt: null } }),
   ]);
@@ -611,6 +615,37 @@ function dashboard(context: AuthenticatedContext = manager, input: Record<string
 }
 
 describe("camada confiável de métricas", () => {
+  it("mantém vendedor legado sem equipe visível nos filtros e no desempenho", async () => {
+    const [role, systemActor] = await Promise.all([
+      database.role.findFirstOrThrow({ where: { workspaceId, key: "closer", deletedAt: null } }),
+      database.actor.findFirstOrThrow({ where: { workspaceId, key: "system" } }),
+    ]);
+    const email = `legacy-metrics-${randomUUID()}@metrics.test`;
+    const user = await database.user.create({
+      data: { email, normalizedEmail: email, displayName: "Vendedor legado dos indicadores" },
+    });
+    const member = await database.workspaceMember.create({
+      data: {
+        workspaceId,
+        userId: user.id,
+        roleId: role.id,
+        status: "ACTIVE",
+        joinedAt: now,
+        createdByActorId: systemActor.id,
+        updatedByActorId: systemActor.id,
+      },
+    });
+
+    const result = await dashboard(admin);
+    expect(result.filterOptions.closers).toContainEqual({ id: member.id, name: "Vendedor legado dos indicadores" });
+    expect(result.performance).toContainEqual(expect.objectContaining({
+      id: member.id,
+      name: "Vendedor legado dos indicadores",
+      role: "CLOSER",
+      volume: 0,
+    }));
+  });
+
   it("reconcilia conversões, cancelamentos, SLAs, estágio, aging e valores conhecidos", async () => {
     const result = await metrics();
     expect(result.period).toEqual({ ...period, interval: "HALF_OPEN", timeZone: "America/Sao_Paulo" });
@@ -656,11 +691,12 @@ describe("camada confiável de métricas", () => {
     expect(result.filters.priorityCodes).toEqual(["P1"]);
   });
 
-  it("aplica escopos OWN, TEAM e WORKSPACE e nega ausência de permissão", async () => {
+  it("aplica escopos TEAM e WORKSPACE e mantém indicadores restritos à gestão", async () => {
     expect((await metrics(manager)).scope).toBe("TEAM");
-    expect((await metrics(sdr1)).leadsReceived.value).toBe(3);
-    expect((await metrics(sdr2)).leadsReceived.value).toBe(0);
-    expect((await metrics(viewer)).scope).toBe("WORKSPACE");
+    expect((await metrics(admin)).scope).toBe("WORKSPACE");
+    await expect(metrics(sdr1)).rejects.toBeInstanceOf(AccessDeniedError);
+    await expect(metrics(sdr2)).rejects.toBeInstanceOf(AccessDeniedError);
+    await expect(metrics(viewer)).rejects.toBeInstanceOf(AccessDeniedError);
     await expect(metrics(denied)).rejects.toBeInstanceOf(AccessDeniedError);
   });
 
@@ -854,10 +890,7 @@ describe("camada confiável de métricas", () => {
       expect(previous.drilldown.title).toContain("período anterior");
       expect(previous.period).toMatchObject({ fromDate: "2041-12-22", toDate: "2041-12-31" });
 
-      const ownResult = await service.getScreen(sdr2, input);
-      expect(ownResult.comparisons.find((item) => item.id === "leads")).toMatchObject({
-        current: { value: 0 }, previous: { value: 0 },
-      });
+      await expect(service.getScreen(sdr2, input)).rejects.toBeInstanceOf(AccessDeniedError);
     } finally {
       await database.lead.updateMany({
         where: { workspaceId, sourceId: comparisonSource.id },
@@ -871,8 +904,9 @@ describe("camada confiável de métricas", () => {
   });
 
   it("mantém o universo do dashboard sob RBAC e não permite drilldown por adivinhação", async () => {
-    expect((await dashboard(sdr1)).overview.scope).toBe("OWN");
-    expect((await dashboard(sdr2)).kpis.find((item) => item.id === "leads")?.value).toBe(0);
+    expect((await dashboard(admin)).overview.scope).toBe("WORKSPACE");
+    await expect(dashboard(sdr1)).rejects.toBeInstanceOf(AccessDeniedError);
+    await expect(dashboard(sdr2)).rejects.toBeInstanceOf(AccessDeniedError);
     await expect(dashboard(denied)).rejects.toBeInstanceOf(AccessDeniedError);
     await expect(createDashboardMetricsService({ database, authorization, now: () => now }).getDrilldown(manager, {
       preset: "CUSTOM", fromDate: "2042-01-01", toDate: "2042-01-10", source: [sourceId], view: "kpi.inexistente",
@@ -880,9 +914,9 @@ describe("camada confiável de métricas", () => {
   });
 
   it("mantém resposta operacional com 300 leads sem consultas por linha", async () => {
-    const [pipeline, stage, band, queue, systemActor] = await Promise.all([
-      database.pipeline.findFirstOrThrow({ where: { workspaceId, entityType: "LEAD", isDefault: true, deletedAt: null } }),
-      database.pipelineStage.findFirstOrThrow({ where: { workspaceId, leadStageCode: "NEW", deletedAt: null } }),
+    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId, entityType: "LEAD", isDefault: true, deletedAt: null } });
+    const [stage, band, queue, systemActor] = await Promise.all([
+      database.pipelineStage.findFirstOrThrow({ where: { workspaceId, pipelineId: pipeline.id, leadStageCode: "NEW", deletedAt: null } }),
       database.leadPriorityBand.findFirstOrThrow({ where: { workspaceId, code: "P2", active: true, deletedAt: null } }),
       database.queue.findFirstOrThrow({ where: { workspaceId, isGeneral: true, deletedAt: null } }),
       database.actor.findFirstOrThrow({ where: { workspaceId, key: "system" } }),

@@ -414,4 +414,43 @@ describe("agenda interna e reuniões", () => {
     expect(stored.currentStage.leadStageCode).toBe("QUALIFIED");
     expect(await database.auditLog.count({ where: { workspaceId, action: "meeting.scheduled", changes: { path: ["leadId"], equals: lead.leadId } } })).toBe(0);
   });
+
+  it("exibe e aceita vendedor legado sem equipe na Agenda", async () => {
+    clock = new Date("2035-02-20T12:00:00.000Z");
+    const role = await database.role.findFirstOrThrow({
+      where: { workspaceId, key: "closer", deletedAt: null },
+    });
+    const email = `legacy-closer-${randomUUID()}@meeting.test`;
+    const user = await database.user.create({
+      data: { email, normalizedEmail: email, displayName: "Vendedor legado da agenda" },
+    });
+    const member = await database.workspaceMember.create({
+      data: {
+        workspaceId,
+        userId: user.id,
+        roleId: role.id,
+        status: "ACTIVE",
+        joinedAt: clock,
+        createdByActorId: systemContext.actorId,
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+    sequence += 1;
+    const lead = await createLeadIntakeService({ database, authorization, now: () => clock }).intake({
+      channel: "MANUAL",
+      idempotencyKey: `legacy-closer-agenda:${randomUUID()}`,
+      fullName: `Lead do vendedor legado ${randomUUID().slice(0, 8)}`,
+      phone: `+55119${sequence.toString().slice(-8)}`,
+      sourceKey: "manual",
+      priorityBandCode: "P3",
+      rawPayload: { test: "legacy-closer-agenda" },
+    }, systemContext);
+    if (lead.outcome === "REJECTED") throw new Error(lead.code);
+
+    const agenda = await meetings().getAgenda(adminContext, { view: "day", date: "2035-02-21" });
+    expect(agenda.closerOptions).toContainEqual({ id: member.id, name: "Vendedor legado da agenda" });
+    await expect(schedule(lead.leadId, adminContext, "2035-02-21T10:00", member.id)).resolves.toMatchObject({
+      meetingId: expect.any(String),
+    });
+  });
 });

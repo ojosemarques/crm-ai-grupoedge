@@ -22,6 +22,7 @@ import type {
 } from "@/modules/users/permissions/authorization-service";
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
+import { commercialFunctionForRole } from "@/modules/users/application/commercial-member-eligibility";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
@@ -259,6 +260,38 @@ export function createWorkspaceAdministrationService(
     resourceType: "WorkspaceAdministration",
     resourceId: workspaceId,
   });
+
+  async function effectiveTeamAssignments(
+    database: PrismaClient | Prisma.TransactionClient,
+    workspaceId: string,
+    roleId: string,
+    assignments: readonly Readonly<{ teamId: string; function: TeamFunction }>[],
+  ): Promise<readonly Readonly<{ teamId: string; function: TeamFunction }>[]> {
+    if (assignments.length > 0) return assignments;
+    const role = await database.role.findFirst({
+      where: { id: roleId, workspaceId, deletedAt: null },
+      select: { key: true },
+    });
+    const commercialFunction = role ? commercialFunctionForRole(role.key) : null;
+    if (!commercialFunction) return assignments;
+    const teams = await database.team.findMany({
+      where: { workspaceId, deletedAt: null },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      select: { id: true, name: true },
+    });
+    if (teams.length === 0) return assignments;
+    const terms = commercialFunction === "CLOSER"
+      ? ["venda", "comercial", "closer"]
+      : ["pre-venda", "pré-venda", "sdr", "prospec"];
+    const preferred = teams.find((team) => {
+      const name = team.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
+      const matches = terms.some((term) => name.includes(term.normalize("NFD").replace(/[\u0300-\u036f]/g, "")));
+      return commercialFunction === "CLOSER"
+        ? matches && !name.includes("pre-venda")
+        : matches;
+    }) ?? teams[0]!;
+    return [{ teamId: preferred.id, function: commercialFunction }];
+  }
 
   async function resolveAccess(
     context: AuthenticatedContext,
@@ -762,14 +795,25 @@ export function createWorkspaceAdministrationService(
           command.roleId,
           command.teamAssignments,
         );
+        const assignments = await effectiveTeamAssignments(
+          options.database,
+          context.workspaceId,
+          command.roleId,
+          command.teamAssignments,
+        );
         return {
           action: command.action,
           title: "Criar usuário local",
           summary: `${command.displayName} será criado com acesso ao workspace.`,
           impacts: [
-            { key: "teams", label: "Equipes vinculadas", count: command.teamAssignments.length },
+            { key: "teams", label: "Equipes vinculadas", count: assignments.length },
           ],
-          warnings: ["A senha não será exibida novamente nem registrada na auditoria."],
+          warnings: [
+            "A senha não será exibida novamente nem registrada na auditoria.",
+            ...(command.teamAssignments.length === 0 && assignments.length > 0
+              ? ["A equipe comercial padrão será vinculada conforme o papel escolhido."]
+              : []),
+          ],
           requiresConfirmation: true,
         };
       }
@@ -807,7 +851,7 @@ export function createWorkspaceAdministrationService(
             { key: "permissions_before", label: "Permissões atuais", count: member.role.permissions.length },
             { key: "permissions_after", label: "Permissões após a mudança", count: role._count.permissions },
           ],
-          warnings: ["A função comercial nas equipes não será alterada."],
+          warnings: ["Vínculos existentes serão preservados; se não houver equipe, o papel comercial receberá a equipe padrão."],
           requiresConfirmation: true,
         };
       }
@@ -972,6 +1016,12 @@ export function createWorkspaceAdministrationService(
     const passwordHash = await hashPassword(command.password);
     const occurredAt = clock();
     await options.database.$transaction(async (transaction) => {
+      const assignments = await effectiveTeamAssignments(
+        transaction,
+        context.workspaceId,
+        command.roleId,
+        command.teamAssignments,
+      );
       await transaction.$executeRaw`
         SELECT pg_advisory_xact_lock(
           hashtextextended(${`local-user-email:${command.email}`}, 0)
@@ -1018,9 +1068,9 @@ export function createWorkspaceAdministrationService(
           displayName: command.displayName,
         },
       });
-      if (command.teamAssignments.length) {
+      if (assignments.length) {
         await transaction.teamMember.createMany({
-          data: command.teamAssignments.map((assignment) => ({
+          data: assignments.map((assignment) => ({
             workspaceId: context.workspaceId,
             teamId: assignment.teamId,
             workspaceMemberId: member.id,
@@ -1042,7 +1092,7 @@ export function createWorkspaceAdministrationService(
             displayName: command.displayName,
             email: command.email,
             roleId: command.roleId,
-            teamAssignments: command.teamAssignments,
+            teamAssignments: assignments,
           },
           metadata: { credentialCreated: true, passwordRecorded: false },
         },
@@ -1147,6 +1197,34 @@ export function createWorkspaceAdministrationService(
         where: { id: member.id },
         data: { roleId: role.id, updatedByActorId: context.actorId },
       });
+      const activeTeamAssignments = await transaction.teamMember.count({
+        where: {
+          workspaceId: context.workspaceId,
+          workspaceMemberId: member.id,
+          deletedAt: null,
+          team: { deletedAt: null },
+        },
+      });
+      const automaticAssignments = activeTeamAssignments === 0
+        ? await effectiveTeamAssignments(
+            transaction,
+            context.workspaceId,
+            role.id,
+            [],
+          )
+        : [];
+      if (automaticAssignments.length > 0) {
+        await transaction.teamMember.createMany({
+          data: automaticAssignments.map((assignment) => ({
+            workspaceId: context.workspaceId,
+            teamId: assignment.teamId,
+            workspaceMemberId: member.id,
+            function: assignment.function,
+            createdByActorId: context.actorId,
+            updatedByActorId: context.actorId,
+          })),
+        });
+      }
       await transaction.auditLog.create({
         data: {
           workspaceId: context.workspaceId,
@@ -1158,6 +1236,7 @@ export function createWorkspaceAdministrationService(
           changes: {
             before: { roleId: member.roleId, roleName: member.role.name },
             after: { roleId: role.id, roleName: role.name },
+            automaticTeamAssignments: automaticAssignments,
             reason: command.reason,
           },
         },

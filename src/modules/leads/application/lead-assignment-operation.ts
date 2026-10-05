@@ -4,6 +4,7 @@ import type {
 } from "@/generated/prisma/client";
 import { projectLeadOwnership } from "@/modules/lifecycle/application/lifecycle-projection-writer";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 
 export type LeadAssignmentOperationResult = Readonly<{
   assignmentId: string;
@@ -53,7 +54,7 @@ async function lockLead(
   `;
 }
 
-async function assertEligibleSdr(
+async function assertEligibleCommercialOwner(
   transaction: Prisma.TransactionClient,
   workspaceId: string,
   memberId: string,
@@ -62,22 +63,24 @@ async function assertEligibleSdr(
   const eligible = await transaction.workspaceMember.findFirst({
     where: {
       id: memberId,
-      workspaceId,
-      status: "ACTIVE",
-      deletedAt: null,
-      leadReceivingPausedAt: null,
-      user: { status: "ACTIVE", deletedAt: null },
-      teamMemberships: {
-        some: { teamId, function: "SDR", deletedAt: null },
-      },
+      ...commercialMemberWhere({
+        workspaceId,
+        functions: ["SDR", "CLOSER"],
+        requireLeadAvailability: true,
+      }),
+      OR: [
+        { teamMemberships: { some: { teamId, function: { in: ["SDR", "CLOSER"] }, deletedAt: null } } },
+        { teamMemberships: { some: { function: "CLOSER", deletedAt: null, team: { deletedAt: null } } } },
+        { role: { key: { in: ["sdr", "closer"] }, deletedAt: null }, teamMemberships: { none: { deletedAt: null } } },
+      ],
     },
     select: { id: true },
   });
 
   if (!eligible) {
     conflict(
-      "SDR_UNAVAILABLE",
-      "O SDR de destino está inativo, pausado ou fora da equipe de roteamento.",
+      "COMMERCIAL_OWNER_UNAVAILABLE",
+      "O vendedor de destino está inativo, pausado ou fora da operação comercial.",
     );
   }
 }
@@ -147,7 +150,7 @@ export async function reassignLeadInTransaction(
   }
 
   if (input.targetMemberId) {
-    await assertEligibleSdr(
+    await assertEligibleCommercialOwner(
       transaction,
       input.workspaceId,
       input.targetMemberId,

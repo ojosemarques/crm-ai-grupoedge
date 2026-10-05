@@ -23,6 +23,7 @@ import type {
 } from "@/modules/users/permissions/authorization-service";
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
+import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
@@ -1496,22 +1497,16 @@ export function createOperationalHistoryService(
           },
         },
       }),
-      assignDecision.allowed && routingTeamId
+      assignDecision.allowed
         ? options.database.workspaceMember.findMany({
-            where: {
+            where: commercialMemberWhere({
               workspaceId: context.workspaceId,
-              status: "ACTIVE",
-              deletedAt: null,
-              leadReceivingPausedAt: null,
-              user: { status: "ACTIVE", deletedAt: null },
-              teamMemberships: {
-                some: {
-                  teamId: routingTeamId,
-                  function: "SDR",
-                  deletedAt: null,
-                },
-              },
-            },
+              functions: ["SDR", "CLOSER"],
+              requireLeadAvailability: true,
+              ...(assignDecision.scope === "TEAM" && routingTeamId
+                ? { teamIds: [routingTeamId] }
+                : {}),
+            }),
             orderBy: [{ user: { displayName: "asc" } }, { id: "asc" }],
             select: { id: true, user: { select: { displayName: true } } },
           })

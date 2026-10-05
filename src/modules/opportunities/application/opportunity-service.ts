@@ -38,6 +38,7 @@ import type {
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
+import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import {
@@ -429,18 +430,12 @@ async function referenceOptions(
   const [closers, products, reasons] = await Promise.all([
     database.workspaceMember.findMany({
       where: {
-        workspaceId: context.workspaceId,
-        status: "ACTIVE",
-        deletedAt: null,
-        user: { status: "ACTIVE", deletedAt: null },
+        ...commercialMemberWhere({
+          workspaceId: context.workspaceId,
+          functions: ["CLOSER"],
+          ...(scope === "OWN" ? { memberId: context.memberId } : {}),
+        }),
         ...(scope === "TEAM" ? { id: { in: [...ownerIds] } } : {}),
-        teamMemberships: {
-          some: {
-            function: "CLOSER",
-            deletedAt: null,
-          },
-        },
-        ...(scope === "OWN" ? { id: context.memberId } : {}),
       },
       orderBy: { user: { displayName: "asc" } },
       select: { id: true, user: { select: { displayName: true } } },

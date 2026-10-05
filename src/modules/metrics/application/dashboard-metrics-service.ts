@@ -35,6 +35,10 @@ import type {
 } from "@/modules/users/permissions/authorization-service";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
+import {
+  commercialFunctionForRole,
+  commercialMemberWhere,
+} from "@/modules/users/application/commercial-member-eligibility";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
@@ -311,7 +315,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
         ? { teamId: { in: ownTeams.map((item) => item.teamId) } }
         : { workspaceMemberId: context.memberId };
 
-    const [leads, teamMembers, sources, campaigns, creatives, products, workspaceSettings, failedAutomationRuns] = await Promise.all([
+    const [leads, teamMembers, commercialMembers, sources, campaigns, creatives, products, workspaceSettings, failedAutomationRuns] = await Promise.all([
       options.database.lead.findMany({
         where: { workspaceId: context.workspaceId, id: { in: ids } },
         select: {
@@ -434,6 +438,30 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
           function: true,
           team: { select: { id: true, name: true } },
           member: { select: { id: true, user: { select: { displayName: true } } } },
+        },
+      }),
+      options.database.workspaceMember.findMany({
+        where: commercialMemberWhere({
+          workspaceId: context.workspaceId,
+          functions: ["SDR", "CLOSER"],
+          ...(overview.scope === "TEAM"
+            ? { teamIds: ownTeams.map((item) => item.teamId) }
+            : {}),
+          ...(overview.scope === "OWN" ? { memberId: context.memberId } : {}),
+        }),
+        orderBy: [{ user: { displayName: "asc" } }, { id: "asc" }],
+        select: {
+          id: true,
+          role: { select: { key: true } },
+          user: { select: { displayName: true } },
+          teamMemberships: {
+            where: {
+              function: { in: ["SDR", "CLOSER"] },
+              deletedAt: null,
+              team: { deletedAt: null },
+            },
+            select: { function: true },
+          },
         },
       }),
       options.database.leadSource.findMany({
@@ -805,6 +833,16 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       });
     }).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "pt-BR"));
 
+    const commercialFunctions = commercialMembers.flatMap((member) => {
+      const explicit = [...new Set(member.teamMemberships.map((assignment) => assignment.function))];
+      const fallback = commercialFunctionForRole(member.role.key);
+      const functions = explicit.length > 0 ? explicit : fallback ? [fallback] : [];
+      return functions.map((role) => ({
+        id: member.id,
+        name: member.user.displayName,
+        role,
+      }));
+    });
     const sdrPerformanceRows: DashboardPerformanceRow[] = [...sdrGroups.entries()].map(([id, group]) => {
       const idsForMember = [...group.ids];
       const slaSamples = leads.flatMap((lead) => lead.slaCycles
@@ -830,6 +868,27 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
         drilldownId: `sdr.${id}`,
       });
     });
+    for (const member of commercialFunctions.filter((item) => item.role === "SDR")) {
+      if (sdrPerformanceRows.some((row) => row.id === member.id)) continue;
+      sdrPerformanceRows.push(Object.freeze({
+        id: member.id,
+        name: member.name,
+        role: "SDR" as const,
+        volume: 0,
+        conversionPercentage: null,
+        revenueCents: "0",
+        slaSeconds: null,
+        meetings: 0,
+        showRate: null,
+        drilldownId: addDrilldown(
+          `sdr.${member.id}`,
+          `Leads de ${member.name}`,
+          "Nenhum lead recebido por este SDR no período.",
+          "leads recebidos por atribuição",
+          [],
+        ),
+      }));
+    }
     const closerIds = new Set([
       ...closerGroups.keys(),
       ...periodOpportunities.map(({ item }) => item.owner.id),
@@ -863,6 +922,27 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
         drilldownId,
       });
     });
+    for (const member of commercialFunctions.filter((item) => item.role === "CLOSER")) {
+      if (closerPerformanceRows.some((row) => row.id === member.id)) continue;
+      closerPerformanceRows.push(Object.freeze({
+        id: member.id,
+        name: member.name,
+        role: "CLOSER" as const,
+        volume: 0,
+        conversionPercentage: null,
+        revenueCents: "0",
+        slaSeconds: null,
+        meetings: 0,
+        showRate: null,
+        drilldownId: addDrilldown(
+          `performance.closer.${member.id}`,
+          `Performance de ${member.name}`,
+          "Nenhuma oportunidade ou reunião decidida no período.",
+          "ganhos / oportunidades criadas; show / reuniões decididas",
+          [],
+        ),
+      }));
+    }
     const performance = [...sdrPerformanceRows, ...closerPerformanceRows]
       .sort((left, right) => left.role.localeCompare(right.role) || right.volume - left.volume || left.name.localeCompare(right.name, "pt-BR"));
 
@@ -1079,8 +1159,8 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       [...new Map(rows.map((row) => [row.id, row])).values()],
     );
     const filterOptions = Object.freeze({
-      sdrs: dedupeOptions(teamMembers.filter((item) => item.function === "SDR").map((item) => ({ id: item.member.id, name: item.member.user.displayName }))),
-      closers: dedupeOptions(teamMembers.filter((item) => item.function === "CLOSER").map((item) => ({ id: item.member.id, name: item.member.user.displayName }))),
+      sdrs: dedupeOptions(commercialFunctions.filter((item) => item.role === "SDR").map((item) => ({ id: item.id, name: item.name }))),
+      closers: dedupeOptions(commercialFunctions.filter((item) => item.role === "CLOSER").map((item) => ({ id: item.id, name: item.name }))),
       teams: dedupeOptions(teamMembers.map((item) => item.team)),
       sources: optionSort(sources), campaigns: optionSort(campaigns), creatives: optionSort(creatives), products: optionSort(products),
       priorities: Object.freeze([

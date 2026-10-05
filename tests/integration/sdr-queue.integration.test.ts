@@ -27,10 +27,12 @@ let sequence = 40_000_000;
 let workspaceId: string;
 let systemContext: ServiceActorContext;
 let managerContext: AuthenticatedContext;
+let adminContext: AuthenticatedContext;
 let sdr1Context: AuthenticatedContext;
 let sdr2Context: AuthenticatedContext;
 let sdr3Context: AuthenticatedContext;
 let isolatedSdrContext: AuthenticatedContext;
+let legacySellerMemberId: string;
 
 function nextPhone() {
   sequence += 1;
@@ -160,13 +162,30 @@ beforeAll(async () => {
     actorKey: "system",
     actorType: "SYSTEM",
   });
-  [managerContext, sdr1Context, sdr2Context, sdr3Context] = await Promise.all([
+  [managerContext, adminContext, sdr1Context, sdr2Context, sdr3Context] = await Promise.all([
     humanContext("gestor@demo.politizai.local"),
+    humanContext("admin@demo.politizai.local"),
     humanContext("sdr1@demo.politizai.local"),
     humanContext("sdr2@demo.politizai.local"),
     humanContext("sdr3@demo.politizai.local"),
   ]);
   const sdrRole = await database.role.findFirstOrThrow({ where: { workspaceId, key: "sdr", deletedAt: null } });
+  const closerRole = await database.role.findFirstOrThrow({ where: { workspaceId, key: "closer", deletedAt: null } });
+  const legacySellerEmail = `legacy-seller-${randomUUID()}@local.test`;
+  const legacySellerUser = await database.user.create({
+    data: { email: legacySellerEmail, normalizedEmail: legacySellerEmail, displayName: "Vendedor legado sem equipe" },
+  });
+  legacySellerMemberId = (await database.workspaceMember.create({
+    data: {
+      workspaceId,
+      userId: legacySellerUser.id,
+      roleId: closerRole.id,
+      status: "ACTIVE",
+      joinedAt: now,
+      createdByActorId: systemContext.actorId,
+      updatedByActorId: systemContext.actorId,
+    },
+  })).id;
   const isolatedEmail = `crm10-isolated-${randomUUID()}@local.test`;
   const isolatedUser = await database.user.create({
     data: { email: isolatedEmail, normalizedEmail: isolatedEmail, displayName: "SDR isolado CRM-10" },
@@ -222,6 +241,35 @@ afterAll(async () => {
 });
 
 describe("fila priorizada do SDR", () => {
+  it("exibe vendedor legado sem equipe no Meu Dia e na atribuição do card", async () => {
+    const screen = await queueService().getScreen(adminContext, {});
+    expect(screen.sdrOptions).toContainEqual({
+      id: legacySellerMemberId,
+      name: "Vendedor legado sem equipe",
+      active: true,
+    });
+
+    const created = await createLead("Lead para atribuição ao vendedor legado");
+    const operations = await createOperationalHistoryService({
+      database,
+      authorization,
+      now: () => now,
+    }).getLeadOperations(adminContext, { leadId: created.leadId });
+    expect(operations.assignmentTargets).toContainEqual({
+      id: legacySellerMemberId,
+      name: "Vendedor legado sem equipe",
+    });
+    await distributionService().redistribute(adminContext, {
+      leadId: created.leadId,
+      target: { type: "MEMBER", memberId: legacySellerMemberId },
+      reason: "Validação da atribuição de vendedor no card.",
+    });
+    await expect(database.lead.findUniqueOrThrow({ where: { id: created.leadId } })).resolves.toMatchObject({
+      ownerMemberId: legacySellerMemberId,
+      queueId: null,
+    });
+  });
+
   it("mantém as dez filas honestamente vazias quando o SDR não possui leads", async () => {
     const screen = await queueService().getScreen(isolatedSdrContext, {});
     await database.workspaceMember.update({

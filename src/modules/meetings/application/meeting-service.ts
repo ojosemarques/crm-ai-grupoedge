@@ -37,6 +37,7 @@ import type {
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
+import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import {
@@ -376,18 +377,12 @@ export function createMeetingService(options: MeetingServiceOptions) {
     const teams = scope === "TEAM" ? await teamIds(context) : [];
     const rows = await options.database.workspaceMember.findMany({
       where: {
-        workspaceId: context.workspaceId,
-        status: "ACTIVE",
-        deletedAt: null,
-        user: { status: "ACTIVE", deletedAt: null },
-        ...(scope === "OWN" ? { id: context.memberId } : {}),
-        teamMemberships: {
-          some: {
-            function: "CLOSER",
-            deletedAt: null,
-            ...(scope === "TEAM" ? { teamId: { in: teams } } : {}),
-          },
-        },
+        ...commercialMemberWhere({
+          workspaceId: context.workspaceId,
+          functions: ["CLOSER"],
+          ...(scope === "OWN" ? { memberId: context.memberId } : {}),
+          ...(scope === "TEAM" ? { teamIds: teams } : {}),
+        }),
       },
       orderBy: [{ user: { displayName: "asc" } }, { id: "asc" }],
       select: { id: true, user: { select: { displayName: true } } },
@@ -601,11 +596,10 @@ export function createMeetingService(options: MeetingServiceOptions) {
       const closer = await transaction.workspaceMember.findFirst({
         where: {
           id: parsed.data.closerId,
-          workspaceId: context.workspaceId,
-          status: "ACTIVE",
-          deletedAt: null,
-          user: { status: "ACTIVE", deletedAt: null },
-          teamMemberships: { some: { function: "CLOSER", deletedAt: null } },
+          ...commercialMemberWhere({
+            workspaceId: context.workspaceId,
+            functions: ["CLOSER"],
+          }),
         },
         select: { id: true },
       });

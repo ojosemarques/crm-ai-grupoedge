@@ -17,6 +17,7 @@ import { buildDailyGoalProgress } from "@/modules/goals/domain/daily-goal-contra
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
+import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
@@ -153,20 +154,12 @@ function sdrOptionWhere(
   teamIds: readonly string[],
   memberId: string,
 ): Prisma.WorkspaceMemberWhereInput {
-  return {
+  return commercialMemberWhere({
     workspaceId,
-    deletedAt: null,
-    user: { deletedAt: null },
-    ...(scope === "OWN" ? { id: memberId } : {}),
-    teamMemberships: {
-      some: {
-        function: "SDR",
-        deletedAt: null,
-        team: { deletedAt: null },
-        ...(scope === "TEAM" ? { teamId: { in: [...teamIds] } } : {}),
-      },
-    },
-  };
+    functions: ["SDR", "CLOSER"],
+    ...(scope === "OWN" ? { memberId } : {}),
+    ...(scope === "TEAM" ? { teamIds } : {}),
+  });
 }
 
 function drilldownHref(

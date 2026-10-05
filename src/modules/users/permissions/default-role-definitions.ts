@@ -231,6 +231,10 @@ export const defaultRoleDefinitions: ReadonlyArray<
     name: "Closer",
     description: "Condução das próprias reuniões e oportunidades.",
     grants: [
+      [PermissionKeys.LEADS_READ, "OWN"],
+      [PermissionKeys.LEADS_WRITE, "OWN"],
+      [PermissionKeys.TASKS_READ, "OWN"],
+      [PermissionKeys.TASKS_WRITE, "OWN"],
       [PermissionKeys.MEETINGS_READ, "OWN"],
       [PermissionKeys.MEETINGS_WRITE, "OWN"],
       [PermissionKeys.OPPORTUNITIES_READ, "OWN"],
