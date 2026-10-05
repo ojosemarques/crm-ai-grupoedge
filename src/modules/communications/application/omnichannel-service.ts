@@ -263,7 +263,7 @@ export function createOmnichannelService(options: Options) {
       options.database.workspaceMember.findMany({ where: { workspaceId: context.workspaceId, status: "ACTIVE", deletedAt: null }, orderBy: { user: { displayName: "asc" } }, select: { id: true, user: { select: { displayName: true } } } }),
       options.database.queue.findMany({ where: { workspaceId: context.workspaceId, deletedAt: null }, orderBy: { name: "asc" }, select: { id: true, name: true, conversationServiceType: true, conversationSlaSeconds: true } }),
       options.database.messageTemplate.findMany({ where: { workspaceId: context.workspaceId, status: "ACTIVE_LOCAL" }, orderBy: { name: "asc" }, include: { versions: { orderBy: { version: "desc" }, take: 1 } } }),
-      getMetrics(context),
+      getMetrics(context, query.channels),
     ]);
     const hasMore = rows.length > query.take;
     const visible = rows.slice(0, query.take).map((row) => ({
@@ -724,10 +724,15 @@ export function createOmnichannelService(options: Options) {
     };
   }
 
-  async function getMetrics(context: AuthenticatedContext) {
+  async function getMetrics(context: AuthenticatedContext, channels: readonly ConversationChannel[] = []) {
     const scoped = await getScopedWhere(options, context);
     const now = options.now();
-    const base = { workspaceId: context.workspaceId, deletedAt: null, ...scoped } satisfies Prisma.ConversationWhereInput;
+    const base = {
+      workspaceId: context.workspaceId,
+      deletedAt: null,
+      ...scoped,
+      ...(channels.length ? { channel: { in: [...channels] } } : {}),
+    } satisfies Prisma.ConversationWhereInput;
     const [open, unread, overdue, waitingCustomer, reviews, inbound, outbound, responses] = await Promise.all([
       options.database.conversation.count({ where: { ...base, status: { in: ["OPEN", "PENDING_INTERNAL", "WAITING_CUSTOMER"] } } }),
       options.database.conversation.count({ where: { ...base, unreadCount: { gt: 0 } } }),
@@ -738,7 +743,8 @@ export function createOmnichannelService(options: Options) {
       options.database.message.count({ where: { workspaceId: context.workspaceId, direction: "OUTBOUND", conversation: base } }),
       options.database.conversation.aggregate({ where: { ...base, firstResponseSeconds: { not: null } }, _avg: { firstResponseSeconds: true }, _count: { firstResponseSeconds: true } }),
     ]);
-    return { open, unread, overdue, waitingCustomer, identityReview: reviews, inboundMessages: inbound, outboundMessages: outbound, firstResponseAverageSeconds: responses._avg.firstResponseSeconds, firstResponseCount: responses._count.firstResponseSeconds, generatedAt: now.toISOString(), drilldowns: { open: "/inbox?view=ALL", unread: "/inbox?view=UNREAD", overdue: "/inbox?view=OVERDUE", waitingCustomer: "/inbox?view=WAITING_CUSTOMER" } };
+    const channelQuery = channels.length ? `&channels=${channels.join(",")}` : "";
+    return { open, unread, overdue, waitingCustomer, identityReview: reviews, inboundMessages: inbound, outboundMessages: outbound, firstResponseAverageSeconds: responses._avg.firstResponseSeconds, firstResponseCount: responses._count.firstResponseSeconds, generatedAt: now.toISOString(), drilldowns: { open: `/inbox?view=ALL${channelQuery}`, unread: `/inbox?view=UNREAD${channelQuery}`, overdue: `/inbox?view=OVERDUE${channelQuery}`, waitingCustomer: `/inbox?view=WAITING_CUSTOMER${channelQuery}` } };
   }
 
   return Object.freeze({ getInbox, getConversation, getLeadSummary, receiveLocal, composeAndEnqueue, addInternalNote, updateContext, simulateDelivery, command, saveTemplate, getMetrics });

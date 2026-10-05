@@ -46,6 +46,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
     items: [
       { href: "/meu-dia", icon: "meu-dia", label: "Meu Dia", roles: operationalRoles },
       { href: "/pipeline", icon: "pipeline", label: "Pipeline", roles: leadRoles },
+      { href: "/email-agente", icon: "inbox", label: "Email Agente", permission: "inbox.read" },
       { href: "/leads", icon: "leads", label: "Leads", roles: leadRoles },
       { href: "/agenda", icon: "agenda", label: "Agenda" },
       { href: "/inbox", icon: "inbox", label: "Conversas" },
@@ -107,7 +108,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
 ];
 
 const sections = [
-  { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/pipeline", "/oportunidades", "/leads", "/agenda", "/inbox", "/atividades", "/automacoes"] },
+  { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/pipeline", "/oportunidades", "/email-agente", "/leads", "/agenda", "/inbox", "/atividades", "/automacoes"] },
   { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/gestao-equipe", "/metas", "/forecast", "/metricas-receita", "/receita", "/analises"] },
   { key: "finance", label: "Financeiro", icon: "receita", paths: ["/financeiro", "/pagamentos", "/contratos"] },
   { key: "customers", label: "Clientes", icon: "leads", paths: ["/contas", "/onboarding", "/customer-success", "/customer-service", "/farmer"] },
@@ -117,6 +118,7 @@ const sections = [
 
 const labels: Record<string, string> = {
   "/pipeline": "Negócios", "/leads": "Leads",
+  "/email-agente": "Email Agente",
   "/inbox": "Conversas",
   "/atividades": "Fila de atividades",
   "/campanhas": "Campanhas de envio",

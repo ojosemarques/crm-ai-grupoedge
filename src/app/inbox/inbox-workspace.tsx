@@ -57,11 +57,19 @@ async function postAction(action: string, data: unknown) {
   return body.result;
 }
 
-export function InboxWorkspace({ initial }: Readonly<{ initial: InboxScreen }>) {
+export function InboxWorkspace({
+  initial,
+  basePath = "/inbox",
+  lockedChannel,
+}: Readonly<{
+  initial: InboxScreen;
+  basePath?: string;
+  lockedChannel?: string;
+}>) {
   const router = useRouter();
   const [screen, setScreen] = useState(initial);
   const [search, setSearch] = useState(initial.query.search);
-  const [channel, setChannel] = useState(initial.query.channels[0] ?? "");
+  const [channel, setChannel] = useState(lockedChannel ?? initial.query.channels[0] ?? "");
   const [priority, setPriority] = useState(initial.query.priorities[0] ?? "");
   const [status, setStatus] = useState(initial.query.statuses[0] ?? "");
   const [queueId, setQueueId] = useState(initial.query.queueId ?? "");
@@ -84,15 +92,15 @@ export function InboxWorkspace({ initial }: Readonly<{ initial: InboxScreen }>) 
 
   function navigate(next: Record<string, string | null>) {
     const params = new URLSearchParams();
-    const values = { view: screen.query.view, search, channels: channel, priorities: priority, statuses: status, queueId, assigneeMemberId, business, conversationId: selected?.id ?? "", ...next };
+    const values = { view: screen.query.view, search, channels: lockedChannel ?? channel, priorities: priority, statuses: status, queueId, assigneeMemberId, business, conversationId: selected?.id ?? "", ...next };
     for (const [key, value] of Object.entries(values)) if (value) params.set(key, value);
-    startTransition(() => router.push(`/inbox?${params.toString()}`));
+    startTransition(() => router.push(`${basePath}?${params.toString()}`));
   }
 
   async function refresh() {
     const params = new URLSearchParams({ view: screen.query.view });
     if (search) params.set("search", search);
-    if (channel) params.set("channels", channel);
+    if (lockedChannel ?? channel) params.set("channels", lockedChannel ?? channel);
     if (priority) params.set("priorities", priority);
     if (status) params.set("statuses", status);
     if (queueId) params.set("queueId", queueId);
@@ -160,7 +168,7 @@ export function InboxWorkspace({ initial }: Readonly<{ initial: InboxScreen }>) 
               <Button size="sm" type="submit" variant="secondary">Buscar</Button>
             </form>
             <div className={styles.selectFilters}>
-              <label><span>Canal</span><select onChange={(event) => setChannel(event.target.value)} value={channel}><option value="">Todos</option>{screen.capabilityMatrix.map((item) => <option key={item.channel} value={item.channel}>{item.label}</option>)}</select></label>
+              <label><span>Canal</span><select disabled={Boolean(lockedChannel)} onChange={(event) => setChannel(event.target.value)} value={channel}><option value="">Todos</option>{screen.capabilityMatrix.map((item) => <option key={item.channel} value={item.channel}>{item.label}</option>)}</select></label>
               <label><span>Prioridade</span><select onChange={(event) => setPriority(event.target.value)} value={priority}><option value="">Todas</option>{Object.entries(priorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               <label><span>Estado</span><select onChange={(event) => setStatus(event.target.value)} value={status}><option value="">Todos</option>{["OPEN", "PENDING_INTERNAL", "WAITING_CUSTOMER", "RESOLVED", "CLOSED", "ARCHIVED"].map((value) => <option key={value} value={value}>{statusLabels[value]}</option>)}</select></label>
               <label><span>Fila / setor</span><select onChange={(event) => setQueueId(event.target.value)} value={queueId}><option value="">Todas</option>{screen.options.queues.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
