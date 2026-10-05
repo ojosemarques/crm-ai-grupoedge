@@ -87,19 +87,22 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
-test("abre Prospecção Ativa como pipeline principal ao clicar em Negócios", async ({ page }) => {
+test("mantém Prospecção Ativa no seletor de pipelines sem atalho lateral", async ({ page }) => {
   await removeActiveProspectingPipeline();
   await login(page, DEMO_USERS[1].email);
   const leadName = `Prospecção ativa E2E ${randomUUID().slice(0, 8)}`;
-  const businessLink = page.getByRole("navigation", { name: "Navegação da área" }).getByRole("link", { name: "Negócios", exact: true });
+  const areaNavigation = page.getByRole("navigation", { name: "Navegação da área" });
   await expect(page.getByRole("button", { name: /^(Expandir|Recolher) menu$/ })).toHaveCount(0);
-  await expect(businessLink).toBeVisible();
+  await expect(areaNavigation.getByRole("link", { name: "Negócios", exact: true })).toHaveCount(0);
+  await expect(areaNavigation.locator('a[href="/email-agente"]')).toHaveCount(0);
   await expect(page.locator("#menu-principal")).toHaveCSS("width", "208px");
-  await expect(businessLink).toHaveAttribute("href", "/email-agente");
-  await businessLink.click();
+  await page.goto("/pipeline");
+  const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
+  const activeProspectingLink = pipelineNavigation.getByRole("link", { name: "Prospecção AtivaPrincipal" });
+  await expect(activeProspectingLink).toHaveAttribute("href", "/email-agente");
+  await activeProspectingLink.click();
   await expect(page).toHaveURL(/\/email-agente(?:\?|$)/);
   await expect(page.getByRole("heading", { name: "Prospecção Ativa", exact: true })).toBeVisible();
-  const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
   await expect(pipelineNavigation.getByRole("link", { name: "Prospecção AtivaPrincipal" })).toHaveAttribute("aria-current", "page");
   await expect(pipelineNavigation.getByRole("link", { name: "Pré-vendasPré-vendas" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Quadro do pipeline" })).toBeVisible();

@@ -45,7 +45,6 @@ const navigationGroups: ReadonlyArray<Readonly<{
     label: "Trabalho",
     items: [
       { href: "/meu-dia", icon: "meu-dia", label: "Meu Dia", roles: operationalRoles },
-      { href: "/email-agente", icon: "pipeline", label: "Pipeline", permission: "leads.read" },
       { href: "/pipeline", icon: "pipeline", label: "Pré-vendas", roles: leadRoles },
       { href: "/leads", icon: "leads", label: "Leads", roles: leadRoles },
       { href: "/agenda", icon: "agenda", label: "Agenda" },
@@ -108,7 +107,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
 ];
 
 const sections = [
-  { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/email-agente", "/pipeline", "/oportunidades", "/leads", "/agenda", "/inbox", "/atividades", "/automacoes"] },
+  { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/pipeline", "/oportunidades", "/leads", "/agenda", "/inbox", "/atividades", "/automacoes"] },
   { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/gestao-equipe", "/metas", "/forecast", "/metricas-receita", "/receita", "/analises"] },
   { key: "finance", label: "Financeiro", icon: "receita", paths: ["/financeiro", "/pagamentos", "/contratos"] },
   { key: "customers", label: "Clientes", icon: "leads", paths: ["/contas", "/onboarding", "/customer-success", "/customer-service", "/farmer"] },
@@ -118,7 +117,6 @@ const sections = [
 
 const labels: Record<string, string> = {
   "/pipeline": "Pré-vendas", "/leads": "Leads",
-  "/email-agente": "Negócios",
   "/inbox": "Conversas",
   "/atividades": "Fila de atividades",
   "/campanhas": "Campanhas de envio",
@@ -245,7 +243,7 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
   );
   const availableSections = sections.map((section) => ({ ...section, items: section.paths.flatMap((href) => allowedItems.filter((item) => item.href === href)) })).filter((section) => section.items.length > 0);
   const activeSection = availableSections.find((section) => section.items.some((item) => isActive(pathname, item.href))) ?? availableSections.find((section) => section.key === "work");
-  const mobileCriticalItems = ["/meu-dia", "/email-agente", "/inbox", "/atividades", "/dashboard"]
+  const mobileCriticalItems = ["/meu-dia", "/inbox", "/atividades", "/dashboard"]
     .flatMap((href) => allowedItems.filter((item) => item.href === href));
   const isPolitizaiWorkspace = session?.workspace.slug.trim().toLowerCase() === "politizai";
   const workspaceBrandName = isPolitizaiWorkspace ? "Politizai" : "EDGE GROUP";
@@ -316,7 +314,7 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
           {mobileCriticalItems.map((item) => (
             <IntentLink aria-current={isActive(pathname, item.href) ? "page" : undefined} href={item.href} key={item.href} onClick={() => setMenuOpen(false)}>
               <Icon name={item.icon} size={18} />
-              <span>{item.href === "/email-agente" ? "Negócios" : item.href === "/dashboard" ? "Painel" : item.label}</span>
+              <span>{item.href === "/dashboard" ? "Painel" : item.label}</span>
             </IntentLink>
           ))}
         </nav>
