@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ComponentProps,
 
 import { CopilotDrawer } from "@/components/layout/copilot-drawer";
 import { GlobalSearch } from "@/components/layout/global-search";
-import { useCompanySession } from "@/components/layout/use-company-session";
+import { announceCompanySwitch, useCompanySession } from "@/components/layout/use-company-session";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { cn } from "@/shared/core/ui/class-names";
@@ -162,6 +162,8 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
   const [menuOpen, setMenuOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
   const isMobile = useSyncExternalStore(subscribeToMobileLayout, mobileLayoutSnapshot, serverLayoutSnapshot);
   const menuRef = useRef<HTMLElement>(null);
@@ -217,6 +219,20 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
       document.removeEventListener("keydown", closeProfileMenu);
     };
   }, [profileMenuOpen]);
+
+  async function logout() {
+    setLogoutError(false);
+    setLoggingOut(true);
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) throw new Error("logout_failed");
+      announceCompanySwitch();
+      window.location.assign(new URL("/login", window.location.origin).href);
+    } catch {
+      setLogoutError(true);
+      setLoggingOut(false);
+    }
+  }
 
   if (publicRoute) return children;
 
@@ -289,6 +305,8 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
                   <IntentLink href="/hub" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="pipeline" size={18} /><span>{(session?.workspace.count ?? 1) > 1 ? "Trocar de empresa" : "Minhas empresas"}</span></IntentLink>
                   <IntentLink href="/ajuda" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="inbox" size={18} /><span>Ajuda e suporte</span></IntentLink>
                   {availableSections.find((section) => section.key === "settings") ? <IntentLink href="/configuracoes" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="configuracoes" size={18} /><span>Configurações</span></IntentLink> : null}
+                  <button className={styles.profileLogout} disabled={loggingOut} onClick={() => void logout()} type="button"><Icon name="sair" size={18} /><span>{loggingOut ? "Saindo..." : "Sair da conta"}</span></button>
+                  {logoutError ? <span className={styles.profileLogoutError} role="alert">Não foi possível sair. Tente novamente.</span> : null}
                 </nav>
               </section> : null}
             </div>

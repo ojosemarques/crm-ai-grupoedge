@@ -46,8 +46,11 @@
 .profileDetails dt { color: var(--muted-foreground); font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
 .profileDetails dd { font-size: 12px; margin: 0; overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .profileActions { display: grid; gap: 3px; padding: 12px 14px 16px; }
-.profileActions a { align-items: center; border-radius: 10px; color: var(--foreground); display: flex; font-size: 13px; gap: 12px; min-height: 42px; padding: 9px 11px; }
-.profileActions a:hover { background: var(--surface-subtle); }
+.profileActions a, .profileActions button { align-items: center; border-radius: 10px; color: var(--foreground); display: flex; font-size: 13px; gap: 12px; min-height: 42px; padding: 9px 11px; text-align: left; width: 100%; }
+.profileActions a:hover, .profileActions button:hover { background: var(--surface-subtle); }
+.profileLogout { border-top: 1px solid var(--border); color: var(--danger, #c83f49) !important; margin-top: 5px; padding-top: 13px !important; }
+.profileLogout:disabled { cursor: wait; opacity: .65; }
+.profileLogoutError { color: var(--danger, #c83f49); font-size: 11px; padding: 0 11px 5px; }
 .content { margin-left: calc(var(--sidebar-width) + 32px); margin-right: 16px; min-width: 0; padding-top: 88px; }
 .collapsed { --sidebar-width: 62px; }.collapsed .sidebarHeading > span, .collapsed .sidebarHeading > svg, .collapsed .contextLink > span:last-child, .collapsed .sidebarBottom > a > span:last-child, .collapsed .account > span:not(.avatar) { display: none; }.collapsed .sidebarHeading { height: 43px; }.collapsed .contextNav { padding-inline: 8px; }.collapsed .contextLink { justify-content: center; padding: 7px; min-height: 41px; }.collapsed .contextLink[aria-current="page"] { background: var(--primary); box-shadow: 0 3px 7px #0002; color: var(--primary-foreground); border-radius: 50%; }.collapsed .sidebarBottom { padding-inline: 8px; }.collapsed .sidebarBottom > a { justify-content: center; padding-inline: 8px; }.collapsed .sidebarBottom .account { justify-content: center; padding-inline: 0; }
 .backdrop, .mobileBar, .mobileDock { display: none; }.skeleton { display: grid; gap: 12px; padding: 8px; }.skeleton span { animation: ui-pulse 1.5s ease-in-out infinite; background: var(--surface-subtle); border-radius: 10px; height: 30px; }
