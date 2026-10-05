@@ -75,6 +75,9 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
 test("abre Prospecção Ativa como pipeline principal ao clicar em Negócios", async ({ page }) => {
   await login(page, DEMO_USERS[1].email);
   const businessLink = page.getByRole("navigation", { name: "Navegação da área" }).getByRole("link", { name: "Negócios", exact: true });
+  await expect(page.getByRole("button", { name: /^(Expandir|Recolher) menu$/ })).toHaveCount(0);
+  await expect(businessLink).toBeVisible();
+  await expect(page.locator("#menu-principal")).toHaveCSS("width", "208px");
   await expect(businessLink).toHaveAttribute("href", "/email-agente");
   await businessLink.click();
   await expect(page).toHaveURL(/\/email-agente(?:\?|$)/);

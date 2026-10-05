@@ -164,7 +164,6 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState(false);
-  const [collapsed, setCollapsed] = useState(true);
   const isMobile = useSyncExternalStore(subscribeToMobileLayout, mobileLayoutSnapshot, serverLayoutSnapshot);
   const menuRef = useRef<HTMLElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
@@ -253,7 +252,7 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
   return (
     <>
       <a className="skip-link" href="#conteudo-principal">Pular para o conteúdo</a>
-      <div className={cn("app-shell", styles.shell, collapsed && styles.collapsed)}>
+      <div className={cn("app-shell", styles.shell)}>
         <header className={styles.topbar} onKeyDown={(event) => { if (event.key === "Escape" && event.target instanceof HTMLElement) { const details = event.target.closest("details"); details?.removeAttribute("open"); details?.querySelector("summary")?.focus(); } }}>
           <IntentLink aria-label={`${workspaceBrandName}, início`} className={styles.brand} href="/">
             <BrandLogo variant={isPolitizaiWorkspace ? "politizai" : "edge-group"} />
@@ -272,7 +271,7 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
         </header>
         <button aria-label="Fechar navegação" className={cn(styles.backdrop, menuOpen && styles.visible)} onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }} tabIndex={menuOpen ? 0 : -1} type="button" />
         <aside aria-hidden={isMobile && !menuOpen ? true : undefined} className={cn(styles.sidebar, menuOpen && styles.open)} id="menu-principal" inert={isMobile && !menuOpen} ref={menuRef}>
-          <div className={styles.sidebarHeading}><Icon name={activeSection?.icon ?? "dashboard"} size={15} /><span>{activeSection?.label ?? "Workspace"}</span><button aria-label={collapsed ? "Expandir menu" : "Recolher menu"} className={styles.collapseButton} onClick={() => setCollapsed(!collapsed)} type="button">{collapsed ? "›" : "‹"}</button></div>
+          <div className={styles.sidebarHeading}><Icon name={activeSection?.icon ?? "dashboard"} size={15} /><span>{activeSection?.label ?? "Workspace"}</span></div>
           <nav aria-label="Navegação da área" className={styles.contextNav}>
             {activeSection?.items.map((item, index) => (
               <IntentLink aria-current={isActive(pathname, item.href) ? "page" : undefined} aria-label={labels[item.href] ?? item.label} className={styles.contextLink} href={item.href} key={item.href} onClick={() => setMenuOpen(false)} title={labels[item.href] ?? item.label}>
