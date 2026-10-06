@@ -171,6 +171,7 @@ export function createProspectingReleaseService(options: Options) {
         if (intakeResult.outcome === "REJECTED") fail(intakeResult.issues[0]?.message ?? "Intake rejeitou o candidato.", `PROSPECTING_INTAKE_${intakeResult.code}`);
         const lead = await transaction.lead.findUniqueOrThrow({ where: { id: intakeResult.leadId }, select: { id: true, ownerMemberId: true, contactId: true, currentStageId: true } });
         if (lead.ownerMemberId !== member.id) {
+          const reassignedAt = options.now();
           await reassignLeadInTransaction(transaction, {
             workspaceId: release.workspaceId,
             actorId: actor.id,
@@ -181,7 +182,7 @@ export function createProspectingReleaseService(options: Options) {
             requireGeneralQueueOrigin: false,
             reassignAllOpenTasks: true,
             requireTargetAvailability: true,
-            assignedAt: now,
+            assignedAt: reassignedAt,
           });
         }
         await transaction.task.updateMany({
@@ -264,7 +265,6 @@ export function createProspectingReleaseService(options: Options) {
         releaseId: due.id,
         errorName: error instanceof Error ? error.name : "UnknownError",
         prismaCode: error instanceof Prisma.PrismaClientKnownRequestError ? error.code : null,
-        prismaMeta: error instanceof Prisma.PrismaClientKnownRequestError ? error.meta : null,
       }, "Falha ao materializar candidato de prospecção em Lead");
       const failedAttemptCount = due.attemptCount + 1;
       const terminal = failedAttemptCount >= 3;

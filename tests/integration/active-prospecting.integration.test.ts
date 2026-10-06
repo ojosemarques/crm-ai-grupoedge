@@ -202,10 +202,12 @@ describe("staging governado da Prospecção Ativa", () => {
     const planned = await planner.plan(database, { workspaceId: principal.workspaceId, actorId: systemActorId, horizonStart: "2026-10-05", horizonEnd: "2026-11-03" });
     expect(planned.planned).toBeGreaterThanOrEqual(1);
 
-    const release = createProspectingReleaseService({ database, now: () => clock });
+    const releaseBeforeLocalDay = createProspectingReleaseService({ database, now: () => clock });
     clock = new Date("2026-10-05T00:30:00.000Z");
-    await expect(release.processNext("worker-before-local-day")).resolves.toMatchObject({ processed: false, outcome: "EMPTY" });
+    await expect(releaseBeforeLocalDay.processNext("worker-before-local-day")).resolves.toMatchObject({ processed: false, outcome: "EMPTY" });
     clock = new Date("2026-10-05T15:00:00.000Z");
+    let releaseClockOffsetMs = 0;
+    const release = createProspectingReleaseService({ database, now: () => new Date(clock.getTime() + releaseClockOffsetMs++) });
     const firstRace = await Promise.all([release.processNext("worker-a"), release.processNext("worker-b")]);
     expect(firstRace.filter((item) => item.outcome === "RELEASED")).toHaveLength(1);
     for (let index = 0; index < 4; index += 1) {
