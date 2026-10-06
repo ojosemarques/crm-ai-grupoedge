@@ -273,6 +273,45 @@ describe("staging governado da Prospecção Ativa", () => {
     expect(await database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id, status: "CANCELLED" } })).toBe(6);
   });
 
+  it("libera prospect com apenas Instagram validado e suprime canais indisponíveis", async () => {
+    const base = candidate();
+    const payload = candidate({
+      idempotencyKey: "candidate:integration:instagram-only",
+      externalIdentityKey: "tse:2024:3550308:councilor:776",
+      politician: { ...base.politician, name: "Vereadora Somente Instagram" },
+      contact: { phone: null, phoneScope: null, email: null, emailScope: null, instagram: "@somenteinstagram", instagramScope: "POLITICIAN" },
+      sources: [
+        ...base.sources.filter((source) => !["phone", "email", "politician_phone", "politician_email", "advisor_phone", "advisor_email", "whatsapp", "instagram"].includes(source.field)),
+        { field: "instagram", type: "INSTITUTIONAL_PROFILE", url: "https://www.instagram.com/somenteinstagram", observedAt: base.sources[0]!.observedAt, contactScope: "POLITICIAN", validationMethod: "PUBLIC_PROFILE_NAME_ROLE_MUNICIPALITY_MATCH" },
+      ],
+    });
+    const ingested = await database.$transaction((transaction) => service.ingestCandidate(transaction, principal, payload));
+    expect(ingested.candidate.status).toBe("READY");
+
+    const planner = createProspectingPlannerService({ database, now: () => clock });
+    await planner.plan(database, { workspaceId: principal.workspaceId, actorId: systemActorId, horizonStart: "2026-10-06", horizonEnd: "2026-11-04" });
+    let releaseOffset = 0;
+    const release = createProspectingReleaseService({ database, now: () => new Date(clock.getTime() + releaseOffset++) });
+    for (let index = 0; index < 20; index += 1) {
+      const current = await database.prospectCandidate.findUniqueOrThrow({ where: { id: ingested.candidate.id }, select: { status: true } });
+      if (current.status === "RELEASED") break;
+      await release.processNext(`worker-instagram-${index}`);
+    }
+
+    const released = await database.prospectCandidate.findUniqueOrThrow({ where: { id: ingested.candidate.id }, select: { status: true, leadId: true } });
+    expect(released.status).toBe("RELEASED");
+    const lead = await database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { contactId: true, normalizedPhone: true, normalizedEmail: true } });
+    expect(lead).toMatchObject({ normalizedPhone: null, normalizedEmail: null });
+    await expect(database.contactPoint.findMany({ where: { contactId: lead.contactId!, deletedAt: null }, select: { type: true, normalizedValue: true } })).resolves.toEqual([
+      { type: "INSTAGRAM", normalizedValue: "@somenteinstagram" },
+    ]);
+    const cadence = await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { workspaceId_leadId: { workspaceId: principal.workspaceId, leadId: released.leadId! } } });
+    await expect(database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id } })).resolves.toBe(0);
+    await expect(database.prospectingCadenceStep.findUniqueOrThrow({ where: { workspaceId_cadenceInstanceId_stepKey: { workspaceId: principal.workspaceId, cadenceInstanceId: cadence.id, stepKey: "call-1" } }, select: { status: true, resultCode: true } })).resolves.toEqual({ status: "COMPLETED", resultCode: "CHANNEL_UNAVAILABLE" });
+    await expect(database.prospectingCadenceStep.findUniqueOrThrow({ where: { workspaceId_cadenceInstanceId_stepKey: { workspaceId: principal.workspaceId, cadenceInstanceId: cadence.id, stepKey: "email-1" } }, select: { status: true, resultReason: true } })).resolves.toEqual({ status: "SUPPRESSED", resultReason: "CHANNEL_UNAVAILABLE" });
+    await expect(database.task.count({ where: { leadId: released.leadId!, kind: { in: ["INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, status: "OPEN" } })).resolves.toBeGreaterThan(0);
+  });
+
   it("persiste reconciliação diária idempotente, detecta invariantes e mantém RLS fechado", async () => {
     const inconsistent = await database.prospectCandidate.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, status: "REVIEW_REQUIRED", leadId: null }, select: { id: true } });
     await database.prospectCandidate.update({ where: { id: inconsistent.id }, data: { status: "RELEASED" } });

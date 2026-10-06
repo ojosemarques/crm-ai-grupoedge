@@ -30,6 +30,38 @@ describe("prospectCandidateInputSchema", () => {
     expect(prospectCandidateInputSchema.safeParse(validCandidate()).success).toBe(true);
   });
 
+  it("aceita telefone sem e-mail e Instagram validado sem telefone, mas rejeita e-mail isolado", () => {
+    const base = validCandidate();
+    const phoneOnly = {
+      ...base,
+      contact: { ...base.contact, email: null, emailScope: null },
+      sources: base.sources.filter((source) => source.field !== "email"),
+    };
+    expect(prospectCandidateInputSchema.safeParse(phoneOnly).success).toBe(true);
+
+    const instagramOnly = {
+      ...base,
+      contact: { ...base.contact, phone: null, phoneScope: null, email: null, emailScope: null, instagram: "@joaodasilva", instagramScope: "POLITICIAN" },
+      sources: [
+        ...base.sources.filter((source) => !["phone", "email"].includes(source.field)),
+        { field: "instagram", type: "INSTITUTIONAL_PROFILE", url: "https://www.instagram.com/joaodasilva", observedAt: base.sources[0]!.observedAt, contactScope: "POLITICIAN", validationMethod: "PUBLIC_PROFILE_NAME_ROLE_MUNICIPALITY_MATCH" },
+      ],
+    };
+    expect(prospectCandidateInputSchema.safeParse(instagramOnly).success).toBe(true);
+    const genericProfileEvidence = {
+      ...instagramOnly,
+      sources: instagramOnly.sources.map((source) => source.field === "instagram" ? { ...source, url: "https://social.example.org/joaodasilva" } : source),
+    };
+    expect(prospectCandidateInputSchema.safeParse(genericProfileEvidence).success).toBe(false);
+
+    const emailOnly = {
+      ...base,
+      contact: { ...base.contact, phone: null, phoneScope: null },
+      sources: base.sources.filter((source) => source.field !== "phone"),
+    };
+    expect(prospectCandidateInputSchema.safeParse(emailOnly).success).toBe(false);
+  });
+
   it("preserva contatos adicionais somente quando cada dado possui fonte e escopo", () => {
     const candidate = validCandidate();
     Object.assign(candidate.contact, {

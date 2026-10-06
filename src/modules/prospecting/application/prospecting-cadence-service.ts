@@ -124,8 +124,8 @@ export async function stopColdCadenceInTransaction(
             leadId: { not: null },
             NOT: { leadId: input.leadId },
             OR: [
-              ...(candidate.phoneScope === "OFFICE" ? [{ normalizedPhone: candidate.normalizedPhone, phoneScope: "OFFICE" as const }] : []),
-              ...(candidate.emailScope === "OFFICE" ? [{ normalizedEmail: candidate.normalizedEmail, emailScope: "OFFICE" as const }] : []),
+              ...(candidate.phoneScope === "OFFICE" && candidate.normalizedPhone ? [{ normalizedPhone: candidate.normalizedPhone, phoneScope: "OFFICE" as const }] : []),
+              ...(candidate.emailScope === "OFFICE" && candidate.normalizedEmail ? [{ normalizedEmail: candidate.normalizedEmail, emailScope: "OFFICE" as const }] : []),
             ],
           },
           distinct: ["leadId"],

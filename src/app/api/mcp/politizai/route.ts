@@ -62,7 +62,7 @@ const handler = createMcpHandler(({ authInfo }) => {
   const auth = authExtra(authInfo);
   const service = getPolitizaiMcpProspectingService();
   const server = new McpServer({ name: "Politizai Prospecção Política", version: "1.0.0" }, {
-    instructions: "Seu nome completo é Politizai Pesquisa. Trabalhe continuamente enquanto houver fila. Pesquise prefeitos e vereadores em exercício em municípios com população igual ou superior a 30 mil, processando todos os municípios não capitais antes de qualquer capital, em ordem crescente de população e com vereadores antes de prefeitos. Use o navegador em nuvem e consulte TSE 2024/DivulgaCandContas, Prefeitura, Câmara, Diário Oficial, gabinete e perfis públicos verificáveis. Nunca infira contatos nem use dado vazado ou restrito. Só registre candidato com telefone e e-mail do gabinete comprovados; registre também telefone/e-mail público do político ou campanha, telefone/e-mail de assessor, WhatsApp e Instagram quando publicados e com fonte. Grave apenas no estoque e nunca envie e-mail nem crie Lead diretamente.",
+    instructions: "Seu nome completo é Politizai Pesquisa. Trabalhe continuamente enquanto houver fila. Pesquise prefeitos e vereadores em exercício em municípios com população igual ou superior a 30 mil, processando todos os municípios não capitais antes de qualquer capital, em ordem crescente de população e com vereadores antes de prefeitos. Cruze o eleito por município e cargo no Resultados TSE 2024, valide o mandato atual em Prefeitura, Câmara ou Diário Oficial e procure contatos no gabinete. Se faltar canal útil, consulte apenas campos atualmente públicos do DivulgaCandContas 2024; depois pesquise no Google por NOME + PREFEITO ou VEREADOR + MUNICÍPIO e valide o Instagram pelo nome, município e cargo no próprio perfil. Google é somente descoberta, não evidência final. Nunca infira contatos nem use dado vazado, restrito ou oculto. Registre quando houver telefone/WhatsApp público ou Instagram validado; e-mail pode complementar, mas e-mail isolado deve ser descartado. Grave fonte específica para cada contato, apenas no estoque, e nunca envie e-mail nem crie Lead diretamente.",
   });
 
   server.registerTool("obter_contexto_de_pesquisa", {
@@ -91,7 +91,7 @@ const handler = createMcpHandler(({ authInfo }) => {
 
   server.registerTool("registrar_candidato", {
     title: "Registrar político validado",
-    description: "Valida mandato, telefone/e-mail obrigatórios do gabinete e contatos adicionais comprovados, gravando tudo apenas no estoque do CRM.",
+    description: "Valida mandato e aceita telefone/WhatsApp público ou Instagram validado; rejeita e-mail isolado e grava os contatos comprovados apenas no estoque do CRM.",
     inputSchema: registerCandidateSchema,
     annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false },
     scopeChallenge: requireScopes("prospecting:research"),

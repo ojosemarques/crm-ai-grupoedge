@@ -9,6 +9,7 @@ import { getAutomationEngineService } from "@/modules/automations/application/au
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import {
+  D1_GATE_STEP_KEYS,
   PROSPECTING_CADENCE_VERSION,
   scheduleProspectingCadence,
 } from "@/modules/prospecting/domain/prospecting-cadence";
@@ -152,12 +153,33 @@ export function createProspectingReleaseService(options: Options) {
         const source = await transaction.leadSource.findFirst({ where: { workspaceId: release.workspaceId, key: "open-dot-political-prospecting", deletedAt: null }, select: { id: true } })
           ?? await transaction.leadSource.create({ data: { workspaceId: release.workspaceId, key: "open-dot-political-prospecting", name: "Open-Dot — Prospecção política", type: "WEBHOOK", createdByActorId: actor.id, updatedByActorId: actor.id }, select: { id: true } });
         void source;
+        const primaryPhone = candidate.normalizedPhone
+          ?? candidate.normalizedPoliticianPhone
+          ?? candidate.normalizedAdvisorPhone
+          ?? candidate.normalizedWhatsapp;
+        const primaryPhoneScope = candidate.normalizedPhone
+          ? candidate.phoneScope
+          : candidate.normalizedPoliticianPhone
+            ? "POLITICIAN"
+            : candidate.normalizedAdvisorPhone
+              ? "ADVISOR"
+              : candidate.whatsappScope;
+        const primaryEmail = candidate.normalizedEmail
+          ?? candidate.normalizedPoliticianEmail
+          ?? candidate.normalizedAdvisorEmail;
+        const primaryEmailScope = candidate.normalizedEmail
+          ? candidate.emailScope
+          : candidate.normalizedPoliticianEmail
+            ? "POLITICIAN"
+            : candidate.normalizedAdvisorEmail
+              ? "ADVISOR"
+              : null;
         const intakeResult = await intake.intake({
           channel: "OPEN_DOT",
           idempotencyKey: `prospect-release:${candidate.id}`,
           fullName: candidate.politicianName,
-          phone: candidate.phone,
-          email: candidate.normalizedEmail,
+          ...(primaryPhone ? { phone: primaryPhone } : {}),
+          ...(primaryEmail ? { email: primaryEmail } : {}),
           jobTitle: candidate.role === "MAYOR" ? "Prefeito" : "Vereador",
           organizationName: candidate.role === "MAYOR" ? `Prefeitura de ${candidate.municipalityName}` : `Câmara Municipal de ${candidate.municipalityName}`,
           city: candidate.municipalityName,
@@ -166,7 +188,7 @@ export function createProspectingReleaseService(options: Options) {
           sourceKey: "open-dot-political-prospecting",
           pipelineId: pipeline.id,
           submittedAt: now,
-          rawPayload: { candidateId: candidate.id, externalIdentityKey: candidate.externalIdentityKey, fingerprint: candidate.fingerprint },
+          rawPayload: { candidateId: candidate.id, externalIdentityKey: candidate.externalIdentityKey, fingerprint: candidate.fingerprint, instagram: candidate.instagram },
           priorityBandCode: "P3",
         }, {
           workspaceId: release.workspaceId,
@@ -202,8 +224,8 @@ export function createProspectingReleaseService(options: Options) {
         if (lead.contactId) {
           const role = await transaction.accountContactRole.findFirst({ where: { workspaceId: release.workspaceId, accountId: account.id, contactId: lead.contactId, validTo: null }, select: { id: true } });
           if (!role) await transaction.accountContactRole.create({ data: { workspaceId: release.workspaceId, accountId: account.id, contactId: lead.contactId, roleType: "OTHER", roleTitle: candidate.role === "MAYOR" ? "Prefeito" : "Vereador", source: "AI_SUGGESTION", evidence: `Candidato ${candidate.id} com mandato verificado.`, validFrom: candidate.mandateVerifiedAt, createdByActorId: actor.id } });
-          await transaction.contactPoint.updateMany({ where: { workspaceId: release.workspaceId, contactId: lead.contactId, type: "PHONE", normalizedValue: candidate.normalizedPhone, deletedAt: null }, data: { label: contactScopeLabel(candidate.phoneScope), verificationStatus: "VERIFIED", quality: "VALID", verifiedAt: candidate.mandateVerifiedAt, updatedByActorId: actor.id } });
-          await transaction.contactPoint.updateMany({ where: { workspaceId: release.workspaceId, contactId: lead.contactId, type: "EMAIL", normalizedValue: candidate.normalizedEmail, deletedAt: null }, data: { label: contactScopeLabel(candidate.emailScope), verificationStatus: "VERIFIED", quality: "VALID", verifiedAt: candidate.mandateVerifiedAt, updatedByActorId: actor.id } });
+          if (primaryPhone && primaryPhoneScope) await transaction.contactPoint.updateMany({ where: { workspaceId: release.workspaceId, contactId: lead.contactId, type: "PHONE", normalizedValue: primaryPhone, deletedAt: null }, data: { label: contactScopeLabel(primaryPhoneScope), verificationStatus: "VERIFIED", quality: "VALID", verifiedAt: candidate.mandateVerifiedAt, updatedByActorId: actor.id } });
+          if (primaryEmail && primaryEmailScope) await transaction.contactPoint.updateMany({ where: { workspaceId: release.workspaceId, contactId: lead.contactId, type: "EMAIL", normalizedValue: primaryEmail, deletedAt: null }, data: { label: contactScopeLabel(primaryEmailScope), verificationStatus: "VERIFIED", quality: "VALID", verifiedAt: candidate.mandateVerifiedAt, updatedByActorId: actor.id } });
           const extraContactPoints = [
             candidate.politicianPhone && candidate.normalizedPoliticianPhone ? { type: "PHONE" as const, originalValue: candidate.politicianPhone, normalizedValue: candidate.normalizedPoliticianPhone, label: "Político · Público" } : null,
             candidate.politicianEmail && candidate.normalizedPoliticianEmail ? { type: "EMAIL" as const, originalValue: candidate.politicianEmail, normalizedValue: candidate.normalizedPoliticianEmail, label: "Político · Público" } : null,
@@ -228,13 +250,20 @@ export function createProspectingReleaseService(options: Options) {
         for (const step of schedule) {
           let taskId: string | null = null;
           let emailJobId: string | null = null;
-          if (step.executor === "SELLER") {
+          const channelAvailable = step.action === "CALL"
+            ? Boolean(primaryPhone)
+            : step.action === "INSTAGRAM_MESSAGE" || step.action === "INSTAGRAM_FOLLOW"
+              ? Boolean(candidate.instagram)
+              : step.action === "EMAIL"
+                ? Boolean(primaryEmail)
+                : true;
+          if (step.executor === "SELLER" && channelAvailable) {
             const title = actionTitle(step.stepKey);
             const task = await transaction.task.create({ data: { workspaceId: release.workspaceId, leadId: lead.id, assigneeMemberId: member.id, title, description: `${candidate.politicianName} · ${candidate.role === "MAYOR" ? "Prefeito" : "Vereador"} · ${candidate.municipalityName}/${candidate.stateCode}.`, kind: taskKind(step.action), sourceKey: `active-prospecting:${cadence.id}:${step.stepKey}`, status: "OPEN", priority: "MEDIUM", dueAt: step.scheduledAt, createdByActorId: actor.id, updatedByActorId: actor.id }, select: { id: true, dueAt: true, title: true } });
             taskId = task.id;
             firstTask ??= task;
-          } else if (step.executor === "OPEN_DOT") {
-            const job = await transaction.prospectingEmailJob.create({ data: { workspaceId: release.workspaceId, cadenceInstanceId: cadence.id, leadId: lead.id, stepKey: step.stepKey, recipientEmail: candidate.normalizedEmail, recipientEmailHash: createHash("sha256").update(candidate.normalizedEmail).digest("hex"), senderProfileId: seller?.senderProfileId ?? null, status: "BLOCKED", scheduledAt: step.scheduledAt, expiresAt: new Date(step.scheduledAt.getTime() + 24 * 3_600_000), idempotencyKey: `${lead.id}:${cadence.id}:${step.stepKey}:v1`, createdByActorId: actor.id } });
+          } else if (step.executor === "OPEN_DOT" && primaryEmail) {
+            const job = await transaction.prospectingEmailJob.create({ data: { workspaceId: release.workspaceId, cadenceInstanceId: cadence.id, leadId: lead.id, stepKey: step.stepKey, recipientEmail: primaryEmail, recipientEmailHash: createHash("sha256").update(primaryEmail).digest("hex"), senderProfileId: seller?.senderProfileId ?? null, status: "BLOCKED", scheduledAt: step.scheduledAt, expiresAt: new Date(step.scheduledAt.getTime() + 24 * 3_600_000), idempotencyKey: `${lead.id}:${cadence.id}:${step.stepKey}:v1`, createdByActorId: actor.id } });
             emailJobId = job.id;
             await recordCommercialMetricFactInTransaction(transaction, {
               workspaceId: release.workspaceId, eventKey: `prospecting-email-job:${job.id}:scheduled:v1`, eventType: "EMAIL_SCHEDULED",
@@ -244,7 +273,8 @@ export function createProspectingReleaseService(options: Options) {
               executionMode: "AUTOMATION", result: job.status,
             });
           }
-          await transaction.prospectingCadenceStep.create({ data: { workspaceId: release.workspaceId, cadenceInstanceId: cadence.id, leadId: lead.id, stepKey: step.stepKey, dayOffset: step.dayNumber - 1, executor: step.executor, action: step.action, status: step.executor === "OPEN_DOT" ? "BLOCKED" : step.executor === "CRM_WORKER" ? "SCHEDULED" : "OPEN", scheduledAt: step.scheduledAt, taskId, emailJobId, createdByActorId: actor.id } });
+          const unavailableD1 = !channelAvailable && D1_GATE_STEP_KEYS.includes(step.stepKey as (typeof D1_GATE_STEP_KEYS)[number]);
+          await transaction.prospectingCadenceStep.create({ data: { workspaceId: release.workspaceId, cadenceInstanceId: cadence.id, leadId: lead.id, stepKey: step.stepKey, dayOffset: step.dayNumber - 1, executor: step.executor, action: step.action, status: unavailableD1 ? "COMPLETED" : !channelAvailable ? "SUPPRESSED" : step.executor === "OPEN_DOT" ? "BLOCKED" : step.executor === "CRM_WORKER" ? "SCHEDULED" : "OPEN", scheduledAt: step.scheduledAt, taskId, emailJobId, resultCode: unavailableD1 ? "CHANNEL_UNAVAILABLE" : null, resultReason: !channelAvailable ? "CHANNEL_UNAVAILABLE" : null, completedAt: unavailableD1 ? now : null, createdByActorId: actor.id } });
         }
         const initialStage = await transaction.pipelineStage.findFirst({ where: { workspaceId: release.workspaceId, pipelineId: pipeline.id, stableKey: "active-prospecting.initial-outreach", deletedAt: null }, select: { id: true } });
         if (!initialStage || !firstTask) fail("Etapa inicial ou tarefas D1 indisponíveis.", "PROSPECTING_CADENCE_CONFIGURATION_INVALID", 503);

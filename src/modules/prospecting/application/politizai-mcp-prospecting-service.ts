@@ -10,8 +10,8 @@ import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const LEASE_MINUTES = 45;
-const AGENT_VERSION = "politizai-dot-mcp/1.2.0";
-const PROMPT_VERSION = "political-prospect-production/v3";
+const AGENT_VERSION = "politizai-dot-mcp/1.3.0";
+const PROMPT_VERSION = "political-prospect-production/v4";
 const BRAZILIAN_CAPITALS = [
   "Aracaju", "Belém", "Belo Horizonte", "Boa Vista", "Campo Grande", "Cuiabá", "Curitiba",
   "Florianópolis", "Fortaleza", "Goiânia", "João Pessoa", "Macapá", "Maceió", "Manaus",
@@ -38,10 +38,10 @@ export const registerCandidateSchema = z.object({
     mandateVerifiedAt: z.string().datetime({ offset: true }),
   }).strict(),
   contact: z.object({
-    phone: z.string().trim().min(8).max(80),
-    phoneScope: z.literal("OFFICE"),
-    email: z.string().trim().toLowerCase().email().max(320),
-    emailScope: z.literal("OFFICE"),
+    phone: z.string().trim().min(8).max(80).nullable().default(null),
+    phoneScope: z.literal("OFFICE").nullable().default(null),
+    email: z.string().trim().toLowerCase().email().max(320).nullable().default(null),
+    emailScope: z.literal("OFFICE").nullable().default(null),
     politicianPhone: z.string().trim().min(8).max(80).nullable().default(null),
     politicianEmail: z.string().trim().toLowerCase().email().max(320).nullable().default(null),
     advisorPhone: z.string().trim().min(8).max(80).nullable().default(null),
@@ -127,10 +127,12 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         roles: ["MAYOR", "COUNCILOR"],
         minimumPopulation: 30_000,
         currentMandateRequired: true,
-        requiredContacts: ["officePhone", "officeEmail"],
-        optionalContactsWhenAvailable: ["politicianPhone", "politicianEmail", "advisorPhone", "advisorEmail", "whatsapp", "instagram"],
+        acceptanceRule: "PUBLIC_PHONE_OR_WHATSAPP_OR_VALIDATED_INSTAGRAM",
+        rejectWhen: "EMAIL_ONLY_OR_NO_USABLE_PUBLIC_CHANNEL",
+        optionalContactsWhenAvailable: ["officePhone", "officeEmail", "politicianPhone", "politicianEmail", "advisorPhone", "advisorEmail", "whatsapp", "instagram"],
         queuePriority: ["allNonCapitalsBeforeCapitals", "smallerMunicipalityPopulation", "councilorBeforeMayor"],
         publicContactSources: ["TSE_2024", "DIVULGACANDCONTAS", "CITY_HALL", "CITY_COUNCIL", "OFFICIAL_GAZETTE", "INSTITUTIONAL_PROFILE"],
+        researchSequence: ["TSE_2024_ELECTED_MATCH", "CURRENT_MUNICIPAL_MANDATE", "MUNICIPAL_CONTACT", "DIVULGACANDCONTAS_PUBLIC_FIELDS", "GOOGLE_TO_VALIDATED_INSTAGRAM"],
         inferContactData: false,
         directLeadCreation: false,
         emailSending: false,
@@ -206,7 +208,7 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         data: { status: "CLAIMED", leaseOwner, leaseExpiresAt, attemptCount: { increment: 1 }, lastReasonCode: null },
         select: { id: true, batchId: true, tseCandidateId: true, externalIdentityKey: true, role: true, politicianName: true, ballotName: true, municipalityName: true, municipalityIbgeCode: true, stateCode: true, population: true },
       });
-      return { target: { ...claimed, leaseOwner, leaseExpiresAt: leaseExpiresAt.toISOString(), instructions: "Valide o mandato atual em fonte municipal oficial. Só cadastre com telefone e e-mail do gabinete comprovados. Pesquise também no TSE 2024/DivulgaCandContas e registre telefone/e-mail público do político ou campanha, telefone/e-mail de assessor, WhatsApp e Instagram quando publicados, cada um com fonte. Nunca use dado vazado, restrito ou inferido." }, queueEmpty: false };
+      return { target: { ...claimed, leaseOwner, leaseExpiresAt: leaseExpiresAt.toISOString(), instructions: "Cruze o eleito no Resultados TSE 2024 por município e cargo com a identidade do candidato. Valide o mandato atual em fonte municipal oficial. Procure primeiro Prefeitura/Câmara/gabinete; se faltar canal útil, consulte somente campos atualmente públicos do DivulgaCandContas 2024 e depois pesquise no Google por NOME + PREFEITO ou VEREADOR + MUNICÍPIO para localizar o Instagram público. O Google serve apenas para descoberta: confirme no perfil nome, município e cargo antes de registrar. Cadastre quando houver ao menos telefone/WhatsApp público ou Instagram validado. E-mail pode complementar, mas e-mail isolado deve ser descartado. Nunca use dado vazado, restrito, oculto ou inferido; registre fonte específica para cada contato." }, queueEmpty: false };
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 20_000 });
   }
 

@@ -83,14 +83,15 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
     if (batch.sourcePopulationEdition !== input.municipality.populationEdition) {
       fail("A edição populacional do candidato difere da edição fixada no lote.", "PROSPECTING_POPULATION_EDITION_MISMATCH");
     }
-    const phone = normalizePhone(input.contact.phone);
-    if (!phone.success) fail(phone.message, "PROSPECTING_PHONE_INVALID", 400);
+    const phone = input.contact.phone ? normalizePhone(input.contact.phone) : null;
+    if (phone && !phone.success) fail(phone.message, "PROSPECTING_PHONE_INVALID", 400);
     const politicianPhone = input.contact.politicianPhone ? normalizePhone(input.contact.politicianPhone) : null;
     if (politicianPhone && !politicianPhone.success) fail(politicianPhone.message, "PROSPECTING_POLITICIAN_PHONE_INVALID", 400);
     const advisorPhone = input.contact.advisorPhone ? normalizePhone(input.contact.advisorPhone) : null;
     if (advisorPhone && !advisorPhone.success) fail(advisorPhone.message, "PROSPECTING_ADVISOR_PHONE_INVALID", 400);
     const whatsapp = input.contact.whatsapp ? normalizePhone(input.contact.whatsapp) : null;
     if (whatsapp && !whatsapp.success) fail(whatsapp.message, "PROSPECTING_WHATSAPP_INVALID", 400);
+    const normalizedInstagram = input.contact.instagram?.trim().toLocaleLowerCase("pt-BR") ?? null;
     const fingerprint = candidateFingerprint(input);
     const idempotent = await database.prospectCandidate.findUnique({
       where: { workspaceId_idempotencyKey: { workspaceId: principal.workspaceId, idempotencyKey: input.idempotencyKey } },
@@ -115,7 +116,7 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
     }
     const [blockedPoint, blockedEmail] = await Promise.all([
       database.contactPoint.findFirst({
-        where: { workspaceId: principal.workspaceId, normalizedValue: { in: [phone.normalizedPhone, input.contact.email, politicianPhone?.success ? politicianPhone.normalizedPhone : null, input.contact.politicianEmail, advisorPhone?.success ? advisorPhone.normalizedPhone : null, input.contact.advisorEmail, whatsapp?.success ? whatsapp.normalizedPhone : null].filter((value): value is string => Boolean(value)) }, doNotContact: true, deletedAt: null },
+        where: { workspaceId: principal.workspaceId, normalizedValue: { in: [phone?.success ? phone.normalizedPhone : null, input.contact.email, politicianPhone?.success ? politicianPhone.normalizedPhone : null, input.contact.politicianEmail, advisorPhone?.success ? advisorPhone.normalizedPhone : null, input.contact.advisorEmail, whatsapp?.success ? whatsapp.normalizedPhone : null, normalizedInstagram].filter((value): value is string => Boolean(value)) }, doNotContact: true, deletedAt: null },
         select: { id: true },
       }),
       database.emailSuppression.findFirst({
@@ -151,7 +152,7 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
         population: input.municipality.population,
         populationEdition: input.municipality.populationEdition,
         phone: input.contact.phone,
-        normalizedPhone: phone.normalizedPhone,
+        normalizedPhone: phone?.success ? phone.normalizedPhone : null,
         phoneScope: input.contact.phoneScope,
         email: input.contact.email,
         normalizedEmail: input.contact.email,
@@ -213,7 +214,7 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
     const input = candidateReviewInputSchema.parse(raw);
     const candidate = await database.prospectCandidate.findFirst({
       where: { id: candidateId, workspaceId: principal.workspaceId },
-      select: { id: true, revision: true, status: true, rejectionReasonCode: true, mandateVerifiedAt: true, role: true, normalizedPhone: true, normalizedEmail: true },
+      select: { id: true, revision: true, status: true, rejectionReasonCode: true, mandateVerifiedAt: true, role: true, normalizedPhone: true, normalizedEmail: true, normalizedPoliticianPhone: true, normalizedPoliticianEmail: true, normalizedAdvisorPhone: true, normalizedAdvisorEmail: true, normalizedWhatsapp: true, instagram: true },
     });
     if (!candidate) fail("Candidato não encontrado.", "PROSPECTING_CANDIDATE_NOT_FOUND", 404);
     if (candidate.revision !== input.expectedRevision) fail("O candidato foi alterado por outra revisão.", "PROSPECTING_REVISION_CONFLICT");
@@ -227,17 +228,20 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
       if (updated.count !== 1) fail("Fonte da revisão não encontrada.", "PROSPECTING_SOURCE_NOT_FOUND", 404);
     }
     if (input.status === "READY") {
+      const normalizedInstagram = candidate.instagram?.trim().toLocaleLowerCase("pt-BR") ?? null;
+      const contactValues = [candidate.normalizedPhone, candidate.normalizedEmail, candidate.normalizedPoliticianPhone, candidate.normalizedPoliticianEmail, candidate.normalizedAdvisorPhone, candidate.normalizedAdvisorEmail, candidate.normalizedWhatsapp, normalizedInstagram].filter((value): value is string => Boolean(value));
+      const emailValues = [candidate.normalizedEmail, candidate.normalizedPoliticianEmail, candidate.normalizedAdvisorEmail].filter((value): value is string => Boolean(value));
       const [sources, blockedPoint, blockedEmail] = await Promise.all([
         database.prospectCandidateSource.findMany({
           where: { candidateId, workspaceId: principal.workspaceId },
           select: { field: true, sourceType: true, validationStatus: true, observedAt: true },
         }),
         database.contactPoint.findFirst({
-          where: { workspaceId: principal.workspaceId, normalizedValue: { in: [candidate.normalizedPhone, candidate.normalizedEmail] }, doNotContact: true, deletedAt: null },
+          where: { workspaceId: principal.workspaceId, normalizedValue: { in: contactValues }, doNotContact: true, deletedAt: null },
           select: { id: true },
         }),
         database.emailSuppression.findFirst({
-          where: { workspaceId: principal.workspaceId, normalizedEmail: candidate.normalizedEmail, action: "APPLIED" },
+          where: { workspaceId: principal.workspaceId, normalizedEmail: { in: emailValues }, action: "APPLIED" },
           orderBy: { effectiveAt: "desc" },
           select: { id: true },
         }),

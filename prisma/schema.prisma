@@ -3520,12 +3520,12 @@ model ProspectCandidate {
   stateCode                 String
   population                Int
   populationEdition         String
-  phone                     String
-  normalizedPhone           String
-  phoneScope                ProspectContactScope
-  email                     String
-  normalizedEmail           String
-  emailScope                ProspectContactScope
+  phone                     String?
+  normalizedPhone           String?
+  phoneScope                ProspectContactScope?
+  email                     String?
+  normalizedEmail           String?
+  emailScope                ProspectContactScope?
   politicianPhone           String?
   normalizedPoliticianPhone String?
   politicianEmail           String?

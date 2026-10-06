@@ -56,7 +56,7 @@ const leadIntakeSchema = z
     idempotencyKey: z.string().trim().min(1).max(160),
     formIdentifier: optionalText(160),
     fullName: z.string().trim().min(2).max(200),
-    phone: z.string().trim().min(1).max(80),
+    phone: optionalText(80),
     email: z
       .string()
       .trim()
@@ -104,6 +104,13 @@ const leadIntakeSchema = z
         message: "Consentimento e não contatar não podem estar ativos juntos.",
       });
     }
+
+    if (!value.phone && value.channel !== "OPEN_DOT") {
+      context.addIssue({ code: "custom", path: ["phone"], message: "Informe o telefone." });
+    }
+    if (!value.phone && value.channel === "OPEN_DOT" && (typeof value.rawPayload.instagram !== "string" || value.rawPayload.instagram.trim().length < 2)) {
+      context.addIssue({ code: "custom", path: ["rawPayload", "instagram"], message: "Lead do Open-Dot sem telefone exige Instagram validado." });
+    }
   });
 
 export type LeadIntakeInput = z.input<typeof leadIntakeSchema>;
@@ -129,7 +136,7 @@ export type LeadIntakeAcceptedResult = Readonly<{
   outcome: "CREATED" | "ATTACHED";
   leadId: string;
   submissionId: string;
-  normalizedPhone: string;
+  normalizedPhone: string | null;
   conversionCount: number;
   reviewId: string | null;
   divergenceFields: readonly LeadDivergenceField[];
@@ -164,7 +171,7 @@ type LeadIntakeServiceOptions = Readonly<{
 
 type ParsedInput = Omit<z.output<typeof leadIntakeSchema>, "budgetCents"> &
   Readonly<{
-    normalizedPhone: string;
+    normalizedPhone: string | null;
     normalizedEmail: string | null;
     budgetCents: bigint | null;
     submittedContactPreference: ContactPreference | null;
@@ -242,14 +249,14 @@ function parseInput(
     };
   }
 
-  const phone = normalizePhone(parsed.data.phone);
-  if (!phone.success) {
+  const phone = parsed.data.phone ? normalizePhone(parsed.data.phone) : null;
+  if (phone && !phone.success) {
     return rejected("INVALID_PHONE", "phone", phone.message);
   }
 
   return {
     ...parsed.data,
-    normalizedPhone: phone.normalizedPhone,
+    normalizedPhone: phone?.success ? phone.normalizedPhone : null,
     normalizedEmail: parsed.data.email ?? null,
     budgetCents:
       parsed.data.budgetCents === undefined
@@ -667,7 +674,7 @@ function submissionData(
     idempotencyKey: input.idempotencyKey,
     submittedFullName: input.fullName,
     submittedEmail: input.email ?? null,
-    submittedPhone: input.phone,
+    submittedPhone: input.phone ?? null,
     normalizedEmail: input.normalizedEmail,
     normalizedPhone: input.normalizedPhone,
     submittedJobTitle: input.jobTitle ?? null,
@@ -706,7 +713,6 @@ function acceptedReplay(
 ): LeadIntakeAcceptedResult | null {
   if (
     submission.lead &&
-    submission.normalizedPhone &&
     submission.slaCycle?.task &&
     (submission.intakeOutcome === "CREATED" ||
       submission.intakeOutcome === "ATTACHED")
@@ -746,7 +752,7 @@ async function lockIntakeIdentity(
 ): Promise<void> {
   const lockKeys = [
     `lead-intake:idempotency:${workspaceId}:${input.idempotencyKey}`,
-    `lead-intake:phone:${workspaceId}:${input.normalizedPhone}`,
+    ...(input.normalizedPhone ? [`lead-intake:phone:${workspaceId}:${input.normalizedPhone}`] : []),
   ].sort();
 
   for (const lockKey of lockKeys) {
@@ -932,13 +938,15 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         );
       }
 
-      const phoneCandidates = await transaction.lead.findMany({
-        where: {
-          workspaceId: context.workspaceId,
-          normalizedPhone: parsed.normalizedPhone,
-          deletedAt: null,
-        },
-      });
+      const phoneCandidates = parsed.normalizedPhone
+        ? await transaction.lead.findMany({
+            where: {
+              workspaceId: context.workspaceId,
+              normalizedPhone: parsed.normalizedPhone,
+              deletedAt: null,
+            },
+          })
+        : [];
       // Telefone é um ponto de contato compartilhável, não uma identidade forte.
       // A associação automática só ocorre quando o e-mail normalizado também coincide;
       // os demais candidatos seguem como pessoas separadas e entram em revisão humana.
@@ -1086,7 +1094,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
               fullName: parsed.fullName,
               jobTitle: parsed.jobTitle ?? null,
               normalizedPhone: parsed.normalizedPhone,
-              originalPhone: parsed.phone,
+              originalPhone: parsed.phone ?? null,
               normalizedEmail: parsed.normalizedEmail,
               originalEmail: parsed.email ?? null,
               doNotContact: contactPreference === "DO_NOT_CONTACT",
@@ -1095,10 +1103,10 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
             },
           },
         );
-        const privacyPoint = await transaction.contactPoint.findFirst({
+        const privacyPoint = parsed.normalizedPhone ? await transaction.contactPoint.findFirst({
           where: { workspaceId: context.workspaceId, contactId: contactIdentity.contactId, type: "PHONE", normalizedValue: parsed.normalizedPhone, deletedAt: null },
           select: { id: true },
-        });
+        }) : null;
         await recordLeadIntakeAttributionInTransaction(transaction, {
           workspaceId: context.workspaceId,
           actorId: context.actorId,
@@ -1378,7 +1386,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
             fullName: parsed.fullName,
             jobTitle: parsed.jobTitle ?? null,
             normalizedPhone: parsed.normalizedPhone,
-            originalPhone: parsed.phone,
+            originalPhone: parsed.phone ?? null,
             normalizedEmail: parsed.normalizedEmail,
             originalEmail: parsed.email ?? null,
             doNotContact: contactPreference === "DO_NOT_CONTACT",
@@ -1388,10 +1396,10 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
           },
         },
       );
-      const privacyPoint = await transaction.contactPoint.findFirst({
+      const privacyPoint = parsed.normalizedPhone ? await transaction.contactPoint.findFirst({
         where: { workspaceId: context.workspaceId, contactId: contactIdentity.contactId, type: "PHONE", normalizedValue: parsed.normalizedPhone, deletedAt: null },
         select: { id: true },
-      });
+      }) : null;
       await recordLeadIntakeAttributionInTransaction(transaction, {
         workspaceId: context.workspaceId,
         actorId: context.actorId,
