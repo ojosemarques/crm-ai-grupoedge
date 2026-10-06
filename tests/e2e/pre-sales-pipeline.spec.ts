@@ -156,12 +156,20 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
   const leadCard = page.locator("article").filter({ hasText: leadName });
   await expect(leadCard).toBeVisible();
   await leadCard.click();
-  await expect(page).toHaveURL(/\/leads\/.+\/historico/);
-  await expect(page.getByRole("heading", { name: leadName, exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Informações do contato", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Atividades", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Resumo", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Tarefas", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/email-agente(?:\?|$)/);
+  const prospectingLeadDialog = page.getByRole("dialog");
+  await expect(prospectingLeadDialog).toBeVisible();
+  await expect(prospectingLeadDialog.getByRole("heading", { name: leadName, exact: true })).toBeVisible();
+  await expect(prospectingLeadDialog.getByRole("heading", { name: "Informações do contato", exact: true })).toBeVisible();
+  await expect(prospectingLeadDialog.getByRole("tab", { name: "Atividades", exact: true })).toBeVisible();
+  await expect(prospectingLeadDialog.getByRole("tab", { name: "Resumo", exact: true })).toBeVisible();
+  await expect(prospectingLeadDialog.getByRole("tab", { name: "Inteligência" })).toHaveCount(0);
+  await expect(prospectingLeadDialog.getByRole("tab", { name: "Negócios" })).toHaveCount(0);
+  await expect(prospectingLeadDialog.getByRole("button", { name: "Criar oportunidade" })).toHaveCount(0);
+  await expect(prospectingLeadDialog.getByRole("heading", { name: "Tarefas", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Fechar ficha e voltar ao pipeline" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Prospecção Ativa", exact: true })).toBeVisible();
 
   const database = getDatabaseClient();
   const seller = await database.workspaceMember.findFirstOrThrow({
