@@ -1,3 +1,7 @@
+SET search_path TO crm, public;
+
+BEGIN;
+
 CREATE TYPE "ProspectingResearchTargetStatus" AS ENUM (
   'PENDING', 'CLAIMED', 'INGESTED', 'REVIEW_REQUIRED', 'SKIPPED', 'FAILED'
 );
@@ -100,7 +104,11 @@ ALTER TABLE "mcp_oauth_refresh_tokens" ENABLE ROW LEVEL SECURITY;
 
 REVOKE ALL ON TABLE "prospecting_research_targets", "mcp_oauth_authorization_codes", "mcp_oauth_refresh_tokens" FROM PUBLIC;
 
-DO $$
+DO $migration$
+DECLARE
+  target_schema TEXT := current_schema();
+  target_table TEXT;
+  active_workspace TEXT;
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     REVOKE ALL ON TABLE "prospecting_research_targets", "mcp_oauth_authorization_codes", "mcp_oauth_refresh_tokens" FROM anon;
@@ -108,16 +116,8 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
     REVOKE ALL ON TABLE "prospecting_research_targets", "mcp_oauth_authorization_codes", "mcp_oauth_refresh_tokens" FROM authenticated;
   END IF;
-END $$;
 
-DO $migration$
-DECLARE
-  target_schema TEXT := current_schema();
-  target_table TEXT;
-  active_workspace TEXT;
-BEGIN
   active_workspace := format('"workspaceId" IN (SELECT id FROM %I.workspaces WHERE status = ''ACTIVE'' AND "deletedAt" IS NULL)', target_schema);
-
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crm_politizai_runtime') THEN
     GRANT SELECT, INSERT, UPDATE ON
       "prospecting_research_targets", "mcp_oauth_authorization_codes", "mcp_oauth_refresh_tokens"
@@ -138,3 +138,5 @@ BEGIN
   END IF;
 END
 $migration$;
+
+COMMIT;
