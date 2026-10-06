@@ -67,9 +67,13 @@ describe("GET /api/oauth/authorize", () => {
       },
     ));
 
-    expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(
-      "https://chatgpt.com/connector/oauth/7q5u9EYDB8WK?state=oauth-state&code=authorization-code",
+    const destination = "https://chatgpt.com/connector/oauth/7q5u9EYDB8WK?state=oauth-state&code=authorization-code";
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("refresh")).toBe(`0;url=${destination}`);
+    expect(await response.text()).toContain(
+      "https://chatgpt.com/connector/oauth/7q5u9EYDB8WK?state=oauth-state&amp;code=authorization-code",
     );
   });
 });

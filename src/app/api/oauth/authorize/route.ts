@@ -27,6 +27,22 @@ function htmlEscape(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
 }
 
+function browserRedirectResponse(destination: URL) {
+  const url = destination.toString();
+  const body = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="refresh" content="0;url=${htmlEscape(url)}"><meta name="viewport" content="width=device-width"><title>Concluindo conexão</title></head><body><p>Concluindo conexão com o Dot…</p></body></html>`;
+  return new NextResponse(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      Pragma: "no-cache",
+      "Referrer-Policy": "no-referrer",
+      Refresh: `0;url=${url}`,
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
 async function authorizeContext(request: NextRequest) {
   const context = await requireApiAuthentication(request);
   await getAuthorizationService().assertAuthorized(context, PermissionKeys.INTEGRATIONS_MANAGE, {
@@ -65,11 +81,11 @@ export async function POST(request: NextRequest) {
     redirect.searchParams.set("state", authorization.state);
     if (decision !== "allow") {
       redirect.searchParams.set("error", OAuthErrorCode.AccessDenied);
-      return NextResponse.redirect(redirect, 302);
+      return browserRedirectResponse(redirect);
     }
     const code = await getPolitizaiMcpOAuthService().createAuthorizationCode(context, authorization);
     redirect.searchParams.set("code", code);
-    return NextResponse.redirect(redirect, 302);
+    return browserRedirectResponse(redirect);
   } catch (error) {
     return oauthErrorResponse(error);
   }
