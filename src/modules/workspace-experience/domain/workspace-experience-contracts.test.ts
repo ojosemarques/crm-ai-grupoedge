@@ -8,6 +8,8 @@ describe("experiência de workspace", () => {
   it("mascara pontos de contato antes da serialização", () => {
     expect(maskContactPoint("PHONE", "+551199998877")).toBe("•••• 8877");
     expect(maskContactPoint("EMAIL", "maria@empresa.com")).toBe("m•••@empresa.com");
+    expect(maskContactPoint("WHATSAPP", "+551199998866")).toBe("•••• 8866");
+    expect(maskContactPoint("INSTAGRAM", "@maria")).toBe("@m•••");
   });
   it("prioriza risco e prazo de forma determinística", () => expect(rankOperationalActions([action("b", "NORMAL", null), action("a", "CRITICAL", "2026-09-13T10:00:00.000Z"), action("c", "ATTENTION", null)]).map((item) => item.entityId)).toEqual(["a", "c", "b"]));
   it("escolhe visão pelo papel e cai para a primeira autorizada", () => {

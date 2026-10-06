@@ -534,6 +534,8 @@ enum ContactQuality {
 enum ContactPointType {
   PHONE
   EMAIL
+  WHATSAPP
+  INSTAGRAM
 }
 
 enum ContactPointVerificationStatus {

@@ -39,14 +39,19 @@ function contactScopeLabel(scope: "POLITICIAN" | "ADVISOR" | "OFFICE"): string {
   return "Gabinete";
 }
 
+function normalizeInstagram(value: string): string {
+  return value.trim().toLocaleLowerCase("pt-BR");
+}
+
 async function ensureVerifiedContactPoint(transaction: Prisma.TransactionClient, input: Readonly<{
   workspaceId: string;
   contactId: string;
   actorId: string;
-  type: "PHONE" | "EMAIL";
+  type: "PHONE" | "EMAIL" | "WHATSAPP" | "INSTAGRAM";
   originalValue: string;
   normalizedValue: string;
   label: string;
+  doNotContact: boolean;
   verifiedAt: Date;
 }>) {
   const existing = await transaction.contactPoint.findFirst({
@@ -54,7 +59,7 @@ async function ensureVerifiedContactPoint(transaction: Prisma.TransactionClient,
     select: { id: true, label: true },
   });
   if (existing) {
-    await transaction.contactPoint.update({ where: { id: existing.id }, data: { label: existing.label ?? input.label, verificationStatus: "VERIFIED", quality: "VALID", verifiedAt: input.verifiedAt, updatedByActorId: input.actorId } });
+    await transaction.contactPoint.update({ where: { id: existing.id }, data: { label: existing.label ?? input.label, verificationStatus: "VERIFIED", quality: "VALID", ...(input.doNotContact ? { doNotContact: true } : {}), verifiedAt: input.verifiedAt, updatedByActorId: input.actorId } });
     return;
   }
   await transaction.contactPoint.create({
@@ -69,6 +74,7 @@ async function ensureVerifiedContactPoint(transaction: Prisma.TransactionClient,
       verificationStatus: "VERIFIED",
       quality: "VALID",
       source: "LEAD_INTAKE",
+      doNotContact: input.doNotContact,
       verifiedAt: input.verifiedAt,
       createdByActorId: input.actorId,
       updatedByActorId: input.actorId,
@@ -169,7 +175,7 @@ export function createProspectingReleaseService(options: Options) {
           actorKey: actor.key,
         }, transaction);
         if (intakeResult.outcome === "REJECTED") fail(intakeResult.issues[0]?.message ?? "Intake rejeitou o candidato.", `PROSPECTING_INTAKE_${intakeResult.code}`);
-        const lead = await transaction.lead.findUniqueOrThrow({ where: { id: intakeResult.leadId }, select: { id: true, ownerMemberId: true, contactId: true, currentStageId: true } });
+        const lead = await transaction.lead.findUniqueOrThrow({ where: { id: intakeResult.leadId }, select: { id: true, ownerMemberId: true, contactId: true, currentStageId: true, contactPreference: true } });
         if (lead.ownerMemberId !== member.id) {
           const reassignedAt = options.now();
           await reassignLeadInTransaction(transaction, {
@@ -204,9 +210,11 @@ export function createProspectingReleaseService(options: Options) {
             candidate.advisorPhone && candidate.normalizedAdvisorPhone ? { type: "PHONE" as const, originalValue: candidate.advisorPhone, normalizedValue: candidate.normalizedAdvisorPhone, label: "Assessor" } : null,
             candidate.advisorEmail && candidate.normalizedAdvisorEmail ? { type: "EMAIL" as const, originalValue: candidate.advisorEmail, normalizedValue: candidate.normalizedAdvisorEmail, label: "Assessor" } : null,
             candidate.whatsapp && candidate.normalizedWhatsapp && candidate.whatsappScope ? { type: "PHONE" as const, originalValue: candidate.whatsapp, normalizedValue: candidate.normalizedWhatsapp, label: `WhatsApp · ${contactScopeLabel(candidate.whatsappScope)}` } : null,
+            candidate.whatsapp && candidate.normalizedWhatsapp && candidate.whatsappScope ? { type: "WHATSAPP" as const, originalValue: candidate.whatsapp, normalizedValue: candidate.normalizedWhatsapp, label: contactScopeLabel(candidate.whatsappScope) } : null,
+            candidate.instagram && candidate.instagramScope ? { type: "INSTAGRAM" as const, originalValue: candidate.instagram, normalizedValue: normalizeInstagram(candidate.instagram), label: contactScopeLabel(candidate.instagramScope) } : null,
           ].filter((point): point is NonNullable<typeof point> => Boolean(point));
           for (const point of extraContactPoints) {
-            await ensureVerifiedContactPoint(transaction, { workspaceId: release.workspaceId, contactId: lead.contactId, actorId: actor.id, verifiedAt: candidate.mandateVerifiedAt, ...point });
+            await ensureVerifiedContactPoint(transaction, { workspaceId: release.workspaceId, contactId: lead.contactId, actorId: actor.id, doNotContact: lead.contactPreference === "DO_NOT_CONTACT", verifiedAt: candidate.mandateVerifiedAt, ...point });
           }
         }
         await transaction.lead.update({ where: { id: lead.id }, data: { accountId: account.id, ownerMemberId: member.id, queueId: null, updatedByActorId: actor.id } });

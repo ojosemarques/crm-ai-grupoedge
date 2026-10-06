@@ -19,7 +19,7 @@ import type { LeadOpportunityScreen } from "@/modules/opportunities/domain/oppor
 import type { FreeQualificationScreen } from "@/modules/qualification/domain/free-qualification-contracts";
 import type { LeadScoreView } from "@/modules/qualification/domain/scoring-contracts";
 import type { LeadPipelineState } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
-import type { LeadContactView } from "@/modules/contacts/domain/contact-contracts";
+import type { ContactPointView, LeadContactView } from "@/modules/contacts/domain/contact-contracts";
 import { JourneyPanel } from "@/components/lifecycle/journey-panel";
 import type { JourneySnapshot } from "@/modules/lifecycle/domain/lifecycle-contracts";
 import type { getOmnichannelService } from "@/modules/communications/application/omnichannel-service";
@@ -129,6 +129,13 @@ const actorLabels: Readonly<Record<string, string>> = {
   SYSTEM: "Sistema",
   AUTOMATION: "Automação",
   AI_AGENT: "Agente de IA",
+};
+
+const contactPointLabels: Readonly<Record<ContactPointView["type"], string>> = {
+  PHONE: "Telefone",
+  EMAIL: "E-mail",
+  WHATSAPP: "WhatsApp",
+  INSTAGRAM: "Instagram",
 };
 
 const tabs: readonly Readonly<{ key: TabKey; label: string }>[] = [
@@ -1049,8 +1056,9 @@ export function OperationalHistoryWorkspace({
                     {contactIdentity.contact.points.map((point) => (
                       <li className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm" key={point.id}>
                         <div>
-                          <p className="font-medium">{point.type === "PHONE" ? "Telefone" : "E-mail"}{point.isPrimary ? " principal" : ""}</p>
+                          <p className="font-medium">{contactPointLabels[point.type]}{point.isPrimary ? " principal" : ""}</p>
                           <p className="mt-0.5 break-all text-muted-foreground">{point.value}</p>
+                          {point.label ? <p className="mt-1 text-xs text-muted-foreground">{point.label}</p> : null}
                         </div>
                         <div className="text-right text-xs text-muted-foreground">
                           <p>{point.verificationStatus === "UNVERIFIED" ? "Não verificado" : point.verificationStatus}</p>

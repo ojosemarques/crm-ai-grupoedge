@@ -82,8 +82,9 @@ export function normalizeGlobalSearchTerm(value: string): string {
   return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim().replace(/\s+/g, " ").toLocaleLowerCase("pt-BR");
 }
 
-export function maskContactPoint(type: "PHONE" | "EMAIL", value: string): string {
-  if (type === "PHONE") return value.length <= 4 ? "••••" : `•••• ${value.slice(-4)}`;
+export function maskContactPoint(type: "PHONE" | "EMAIL" | "WHATSAPP" | "INSTAGRAM", value: string): string {
+  if (type === "PHONE" || type === "WHATSAPP") return value.length <= 4 ? "••••" : `•••• ${value.slice(-4)}`;
+  if (type === "INSTAGRAM") return value.startsWith("@") ? `@${value.slice(1, 2) || "•"}•••` : "••••";
   const [local = "", domain = ""] = value.split("@");
   return `${local.slice(0, 1) || "•"}•••@${domain || "•••"}`;
 }

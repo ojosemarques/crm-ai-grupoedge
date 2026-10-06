@@ -1,8 +1,9 @@
 export type ContactPointView = Readonly<{
   id: string;
-  type: "PHONE" | "EMAIL";
+  type: "PHONE" | "EMAIL" | "WHATSAPP" | "INSTAGRAM";
   value: string;
   normalizedValue: string;
+  label: string | null;
   isPrimary: boolean;
   verificationStatus: "UNVERIFIED" | "VERIFIED" | "INVALID";
   quality: "UNKNOWN" | "VALID" | "SUSPECT" | "INVALID";

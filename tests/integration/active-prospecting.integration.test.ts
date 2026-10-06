@@ -227,6 +227,8 @@ describe("staging governado da Prospecção Ativa", () => {
       expect.objectContaining({ type: "PHONE", label: "Assessor" }),
       expect.objectContaining({ type: "EMAIL", label: "Assessor" }),
       expect.objectContaining({ type: "PHONE", label: "WhatsApp · Gabinete" }),
+      expect.objectContaining({ type: "WHATSAPP", label: "Gabinete", normalizedValue: "+5511999991777" }),
+      expect.objectContaining({ type: "INSTAGRAM", label: "Direto", normalizedValue: "@fluxocompleto" }),
     ]));
     const cadence = await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { workspaceId_leadId: { workspaceId: principal.workspaceId, leadId } } });
     expect(cadence.status).toBe("PENDING_D1");
