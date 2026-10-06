@@ -8,6 +8,10 @@ import { handleRouteError } from "@/shared/core/errors/route-error-handler";
 import { enforceRateLimit, readLimitedBuffer, requestClientKey } from "@/shared/core/http/request-hardening";
 import type { Prisma } from "@/generated/prisma/client";
 
+export function openDotRateLimitNamespace(scope: OpenDotScopeValue): string {
+  return `open-dot:${scope.toLowerCase().replaceAll("_", "-")}`;
+}
+
 export async function signedOpenDotRoute(
   request: NextRequest,
   requiredScope: OpenDotScopeValue,
@@ -20,7 +24,7 @@ export async function signedOpenDotRoute(
   try {
     const claimedClientId = request.headers.get("x-open-dot-client-id") ?? "missing-client";
     await enforceRateLimit(
-      `open-dot:${request.nextUrl.pathname}`,
+      openDotRateLimitNamespace(requiredScope),
       `${claimedClientId.slice(0, 64)}:${requestClientKey(request)}`,
       { limit: 120, windowMs: 60_000 },
     );
