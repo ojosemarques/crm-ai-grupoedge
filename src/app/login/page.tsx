@@ -1,7 +1,21 @@
 import { LoginForm } from "@/app/login/login-form";
 import { BrandLogo } from "@/components/ui/brand-logo";
 
-export default function LoginPage() {
+function safeRedirect(value: string | string[] | undefined): string | undefined {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  if (
+    !candidate
+    || candidate.length > 4_096
+    || !candidate.startsWith("/")
+    || candidate.startsWith("//")
+    || candidate.includes("\\")
+    || /[\u0000-\u001F\u007F]/.test(candidate)
+  ) return undefined;
+  return candidate;
+}
+
+export default async function LoginPage({ searchParams }: Readonly<{ searchParams: Promise<{ next?: string | string[] }> }>) {
+  const redirectTo = safeRedirect((await searchParams).next);
   return (
     <main className="login-shell">
       <div className="login-card">
@@ -21,7 +35,7 @@ export default function LoginPage() {
             <p>Entre com e-mail e senha. Depois, escolha sua empresa.</p>
           </header>
 
-          <LoginForm />
+          <LoginForm {...(redirectTo ? { redirectTo } : {})} />
         </section>
       </div>
     </main>

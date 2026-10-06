@@ -6,7 +6,7 @@ type LoginErrorResponse = {
   error?: { message?: string };
 };
 
-export function LoginForm() {
+export function LoginForm({ redirectTo }: Readonly<{ redirectTo?: string }>) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -34,7 +34,7 @@ export function LoginForm() {
         return;
       }
 
-      window.location.assign(new URL("/hub", window.location.origin).href);
+      window.location.assign(new URL(redirectTo ?? "/hub", window.location.origin).href);
     } catch {
       setErrorMessage("Não foi possível conectar à aplicação. Tente novamente.");
     } finally {

@@ -4,7 +4,15 @@ import { SESSION_COOKIE_NAME } from "@/modules/auth/http/session-cookie";
 import { resolveCorrelationId } from "@/shared/core/http/correlation";
 import { buildContentSecurityPolicy } from "@/shared/core/security/security-headers";
 
-const PUBLIC_ROUTES = new Set(["/login", "/acesso-negado", "/sessao-expirada", "/politizai-analytics.js"]);
+const PUBLIC_ROUTES = new Set([
+  "/login",
+  "/acesso-negado",
+  "/sessao-expirada",
+  "/politizai-analytics.js",
+  "/.well-known/oauth-authorization-server",
+  "/.well-known/oauth-protected-resource",
+  "/.well-known/oauth-protected-resource/api/mcp/politizai",
+]);
 
 export function proxy(request: NextRequest): NextResponse {
   const correlationId = resolveCorrelationId(request.headers);
@@ -33,7 +41,7 @@ export function proxy(request: NextRequest): NextResponse {
   const response = remote && !trustedHosts.has(requestedHost)
     ? new NextResponse("Host não permitido.", { status: 421 })
     : !apiRoute && !PUBLIC_ROUTES.has(request.nextUrl.pathname) && !request.cookies.has(SESSION_COOKIE_NAME)
-      ? NextResponse.redirect(new URL("/login", request.url))
+      ? NextResponse.redirect(new URL(`/login?next=${encodeURIComponent(`${request.nextUrl.pathname}${request.nextUrl.search}`)}`, request.url))
       : NextResponse.next({ request: { headers: requestHeaders } });
 
   response.headers.set("Content-Security-Policy", policy);

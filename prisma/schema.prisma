@@ -14143,3 +14143,86 @@ model Commission {
   @@index([workspaceId, status, paidAt])
   @@map("commissions")
 }
+
+enum ProspectingResearchTargetStatus {
+  PENDING
+  CLAIMED
+  INGESTED
+  REVIEW_REQUIRED
+  SKIPPED
+  FAILED
+}
+
+model ProspectingResearchTarget {
+  id                  String                          @id @default(uuid()) @db.Uuid
+  workspaceId         String                          @db.Uuid
+  batchId             String                          @db.Uuid
+  externalIdentityKey String
+  tseCandidateId      String
+  role                ProspectingRole
+  politicianName      String
+  ballotName          String?
+  municipalityName    String
+  municipalityIbgeCode String
+  stateCode           String
+  population          Int
+  status              ProspectingResearchTargetStatus @default(PENDING)
+  candidateId         String?                         @db.Uuid
+  leaseOwner          String?
+  leaseExpiresAt      DateTime?                       @db.Timestamptz(3)
+  attemptCount        Int                             @default(0)
+  lastReasonCode      String?
+  lastEvidence        Json?
+  completedAt         DateTime?                       @db.Timestamptz(3)
+  createdAt           DateTime                        @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime                        @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, externalIdentityKey])
+  @@index([workspaceId, batchId, status, leaseExpiresAt])
+  @@index([workspaceId, municipalityIbgeCode, role])
+  @@index([workspaceId, candidateId])
+  @@map("prospecting_research_targets")
+}
+
+model McpOAuthAuthorizationCode {
+  id                  String    @id @default(uuid()) @db.Uuid
+  workspaceId         String    @db.Uuid
+  userId              String    @db.Uuid
+  workspaceMemberId   String    @db.Uuid
+  authorizingActorId  String    @db.Uuid
+  clientId            String
+  redirectUri         String
+  resource            String
+  scope               String
+  codeHash            String    @unique @db.Char(64)
+  codeChallenge       String
+  expiresAt           DateTime  @db.Timestamptz(3)
+  consumedAt          DateTime? @db.Timestamptz(3)
+  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([workspaceId, expiresAt, consumedAt])
+  @@index([clientId, expiresAt, consumedAt])
+  @@map("mcp_oauth_authorization_codes")
+}
+
+model McpOAuthRefreshToken {
+  id                  String    @id @default(uuid()) @db.Uuid
+  workspaceId         String    @db.Uuid
+  userId              String    @db.Uuid
+  workspaceMemberId   String    @db.Uuid
+  authorizingActorId  String    @db.Uuid
+  clientId            String
+  resource            String
+  scope               String
+  tokenHash            String    @unique @db.Char(64)
+  expiresAt           DateTime  @db.Timestamptz(3)
+  lastUsedAt          DateTime? @db.Timestamptz(3)
+  revokedAt           DateTime? @db.Timestamptz(3)
+  rotatedToId         String?   @db.Uuid
+  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([workspaceId, expiresAt, revokedAt])
+  @@index([clientId, expiresAt, revokedAt])
+  @@map("mcp_oauth_refresh_tokens")
+}
