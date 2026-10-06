@@ -60,6 +60,15 @@ const populationEditionSchema = z
     "Use a edição populacional oficial do IBGE de 2026.",
   );
 
+const electionEditionSchema = z
+  .string()
+  .trim()
+  .max(120)
+  .refine(
+    (value) => /^TSE[_ -]RESULTADOS?[_ -]2024$/i.test(value),
+    "Use o snapshot oficial de resultados do TSE de 2024.",
+  );
+
 function publicHttpsUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -196,6 +205,10 @@ export const researchBatchInputSchema = z.object({
   horizonEnd: isoDateSchema,
   sourcePopulationEdition: populationEditionSchema,
   sourcePopulationHash: z.string().trim().regex(/^[a-f0-9]{64}$/),
+  sourcePopulationImportedAt: z.string().datetime({ offset: true }),
+  sourceElectionEdition: electionEditionSchema,
+  sourceElectionHash: z.string().trim().regex(/^[a-f0-9]{64}$/),
+  sourceElectionImportedAt: z.string().datetime({ offset: true }),
   agentVersion: z.string().trim().min(1).max(120),
   promptVersion: z.string().trim().min(1).max(120),
 }).strict().superRefine((value, context) => {

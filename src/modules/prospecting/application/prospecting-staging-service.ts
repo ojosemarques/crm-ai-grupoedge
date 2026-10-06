@@ -25,9 +25,14 @@ function dateOnly(value: string): Date {
 export function createProspectingStagingService(options: Readonly<{ database: PrismaClient; now: () => Date }>) {
   async function createResearchBatch(database: Prisma.TransactionClient, principal: OpenDotPrincipal, raw: unknown) {
     const input = researchBatchInputSchema.parse(raw);
+    const populationImportedAt = new Date(input.sourcePopulationImportedAt);
+    const electionImportedAt = new Date(input.sourceElectionImportedAt);
+    if (populationImportedAt > options.now() || electionImportedAt > options.now()) {
+      fail("A data de importação das fontes não pode estar no futuro.", "PROSPECTING_SOURCE_IMPORT_IN_FUTURE", 400);
+    }
     const existing = await database.prospectingResearchBatch.findUnique({
       where: { workspaceId_idempotencyKey: { workspaceId: principal.workspaceId, idempotencyKey: input.idempotencyKey } },
-      select: { id: true, status: true, horizonStart: true, horizonEnd: true, sourcePopulationEdition: true, sourcePopulationHash: true, agentVersion: true, promptVersion: true },
+      select: { id: true, status: true, horizonStart: true, horizonEnd: true, sourcePopulationEdition: true, sourcePopulationHash: true, sourcePopulationImportedAt: true, sourceElectionEdition: true, sourceElectionHash: true, sourceElectionImportedAt: true, agentVersion: true, promptVersion: true },
     });
     if (existing) {
       if (
@@ -35,6 +40,10 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
         || existing.horizonEnd.toISOString().slice(0, 10) !== input.horizonEnd
         || existing.sourcePopulationEdition !== input.sourcePopulationEdition
         || existing.sourcePopulationHash !== input.sourcePopulationHash
+        || existing.sourcePopulationImportedAt?.toISOString() !== populationImportedAt.toISOString()
+        || existing.sourceElectionEdition !== input.sourceElectionEdition
+        || existing.sourceElectionHash !== input.sourceElectionHash
+        || existing.sourceElectionImportedAt?.toISOString() !== electionImportedAt.toISOString()
         || existing.agentVersion !== input.agentVersion
         || existing.promptVersion !== input.promptVersion
       ) fail("A chave idempotente do lote já foi usada por outro payload.", "PROSPECTING_IDEMPOTENCY_CONFLICT");
@@ -48,6 +57,10 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
         horizonEnd: dateOnly(input.horizonEnd),
         sourcePopulationEdition: input.sourcePopulationEdition,
         sourcePopulationHash: input.sourcePopulationHash,
+        sourcePopulationImportedAt: populationImportedAt,
+        sourceElectionEdition: input.sourceElectionEdition,
+        sourceElectionHash: input.sourceElectionHash,
+        sourceElectionImportedAt: electionImportedAt,
         agentVersion: input.agentVersion,
         promptVersion: input.promptVersion,
         idempotencyKey: input.idempotencyKey,

@@ -16,6 +16,7 @@ import { getPaymentWorkerService } from "@/modules/payments/application/payment-
 import { getProspectingReleaseService } from "@/modules/prospecting/application/prospecting-release-service";
 import { getProspectingCadenceService } from "@/modules/prospecting/application/prospecting-cadence-service";
 import { getProspectingPlannerService } from "@/modules/prospecting/application/prospecting-planner-service";
+import { getProspectingReconciliationService } from "@/modules/prospecting/application/prospecting-reconciliation-service";
 import type { ApplicationConfig } from "@/shared/core/config/application-config";
 import { getDatabaseClient } from "@/shared/core/database/client";
 
@@ -46,6 +47,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
   const prospectingReleaseWorker = getProspectingReleaseService();
   const prospectingCadenceWorker = getProspectingCadenceService();
   const prospectingPlannerWorker = getProspectingPlannerService();
+  const prospectingReconciliationWorker = getProspectingReconciliationService();
 
   return Object.freeze({
     database,
@@ -58,6 +60,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
           return { status: result.processed ? result.outcome : "IDLE" };
         } },
         { key: "prospecting-cadence", processNext: prospectingCadenceWorker.processDue },
+        { key: "prospecting-reconciliation", processNext: prospectingReconciliationWorker.processNext },
         { key: "payments", processNext: paymentWorker.processNext },
         { key: "calendar", processNext: calendarWorker.processNext },
         { key: "telephony", processNext: telephonyWorker.processNext },

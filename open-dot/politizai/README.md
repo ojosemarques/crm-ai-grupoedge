@@ -30,6 +30,8 @@ node client.mjs claim-email --idempotency-key claim.2026-10-05T1200 --body claim
 
 O corpo nunca deve ser passado na linha de comando. Use arquivo privado ou `--body -` para stdin. O cliente assina método, path, timestamp, nonce e SHA-256 do corpo; rejeita comandos fora do papel; limita o corpo a 256 KiB; aceita somente a origem canônica (ou loopback explicitamente habilitado); não segue redirects; não registra segredo, payload nem corpo de erro.
 
+O `batch.json` deve identificar os dois snapshots efetivamente importados: `sourcePopulationEdition`, `sourcePopulationHash`, `sourcePopulationImportedAt`, `sourceElectionEdition`, `sourceElectionHash` e `sourceElectionImportedAt`. Os hashes são SHA-256 em hexadecimal minúsculo e as datas usam ISO 8601 com offset.
+
 ## Regras obrigatórias por Dot
 
 - `never`: usar comando fora da lista do papel;

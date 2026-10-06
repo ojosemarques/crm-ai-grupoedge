@@ -91,14 +91,20 @@ describe("researchBatchInputSchema", () => {
     horizonEnd: "2026-11-03",
     sourcePopulationEdition: "IBGE-2026",
     sourcePopulationHash: "a".repeat(64),
+    sourcePopulationImportedAt: "2026-10-04T15:00:00.000Z",
+    sourceElectionEdition: "TSE-RESULTADOS-2024",
+    sourceElectionHash: "b".repeat(64),
+    sourceElectionImportedAt: "2026-10-04T16:00:00.000Z",
     agentVersion: "open-dot/1",
     promptVersion: "politizai-research/1",
   };
 
-  it("exige hash da edição IBGE e horizonte exato de 30 dias", () => {
+  it("exige snapshots versionados do IBGE e TSE e horizonte exato de 30 dias", () => {
     expect(researchBatchInputSchema.safeParse(valid).success).toBe(true);
     expect(researchBatchInputSchema.safeParse({ ...valid, sourcePopulationHash: undefined }).success).toBe(false);
     expect(researchBatchInputSchema.safeParse({ ...valid, horizonEnd: "2026-11-04" }).success).toBe(false);
     expect(researchBatchInputSchema.safeParse({ ...valid, sourcePopulationEdition: "fonte-2026" }).success).toBe(false);
+    expect(researchBatchInputSchema.safeParse({ ...valid, sourceElectionHash: undefined }).success).toBe(false);
+    expect(researchBatchInputSchema.safeParse({ ...valid, sourceElectionEdition: "TSE-2022" }).success).toBe(false);
   });
 });

@@ -7,6 +7,7 @@ import { createOpenDotRequestService } from "@/modules/prospecting/application/o
 import { applyProspectingTaskCompletionInTransaction } from "@/modules/prospecting/application/prospecting-cadence-service";
 import { createProspectingEmailService } from "@/modules/prospecting/application/prospecting-email-service";
 import { createProspectingPlannerService } from "@/modules/prospecting/application/prospecting-planner-service";
+import { createProspectingReconciliationService } from "@/modules/prospecting/application/prospecting-reconciliation-service";
 import { createProspectingReleaseService } from "@/modules/prospecting/application/prospecting-release-service";
 import { createProspectingStagingService } from "@/modules/prospecting/application/prospecting-staging-service";
 import { PROSPECTING_CADENCE } from "@/modules/prospecting/domain/prospecting-cadence";
@@ -55,7 +56,7 @@ beforeAll(async () => {
   systemActorId = systemActor.id;
   const actor = await database.actor.create({ data: { workspaceId: workspace.id, type: "AI_AGENT", key: "open-dot-research", displayName: "Open-Dot Pesquisa" } });
   principal = { clientId: "research-agent", workspaceId: workspace.id, actorId: actor.id, scopes: ["RESEARCH_WRITE", "RESEARCH_READ", "RESEARCH_REVIEW", "EMAIL_CLAIM", "EMAIL_RECEIPT", "EMAIL_EVENT_WRITE"] };
-  const created = await database.$transaction((transaction) => service.createResearchBatch(transaction, principal, { idempotencyKey: "batch:integration:2026-10", horizonStart: "2026-10-05", horizonEnd: "2026-11-03", sourcePopulationEdition: "IBGE-2026", sourcePopulationHash: "a".repeat(64), agentVersion: "open-dot/integration", promptVersion: "politizai-research/1" }));
+  const created = await database.$transaction((transaction) => service.createResearchBatch(transaction, principal, { idempotencyKey: "batch:integration:2026-10", horizonStart: "2026-10-05", horizonEnd: "2026-11-03", sourcePopulationEdition: "IBGE-2026", sourcePopulationHash: "a".repeat(64), sourcePopulationImportedAt: "2026-10-04T15:00:00.000Z", sourceElectionEdition: "TSE-RESULTADOS-2024", sourceElectionHash: "b".repeat(64), sourceElectionImportedAt: "2026-10-04T16:00:00.000Z", agentVersion: "open-dot/integration", promptVersion: "politizai-research/1" }));
   batchId = created.batch.id;
 
   const seller = await database.workspaceMember.findFirstOrThrow({ where: { workspaceId: workspace.id, user: { normalizedEmail: "sdr1@demo.politizai.local" } } });
@@ -80,6 +81,28 @@ describe("staging governado da Prospecção Ativa", () => {
     expect(replay).toMatchObject({ duplicate: true, candidate: { id: first.candidate.id } });
     await expect(database.prospectCandidateSource.count({ where: { candidateId: first.candidate.id } })).resolves.toBe(6);
     await expect(database.lead.count({ where: { workspaceId: principal.workspaceId } })).resolves.toBe(0);
+    await expect(database.prospectingResearchBatch.findUniqueOrThrow({ where: { id: batchId }, select: { sourcePopulationImportedAt: true, sourceElectionEdition: true, sourceElectionHash: true, sourceElectionImportedAt: true } })).resolves.toEqual({
+      sourcePopulationImportedAt: new Date("2026-10-04T15:00:00.000Z"),
+      sourceElectionEdition: "TSE-RESULTADOS-2024",
+      sourceElectionHash: "b".repeat(64),
+      sourceElectionImportedAt: new Date("2026-10-04T16:00:00.000Z"),
+    });
+  });
+
+  it("rejeita data de importação de snapshot no futuro", async () => {
+    await expect(database.$transaction((transaction) => service.createResearchBatch(transaction, principal, {
+      idempotencyKey: "batch:integration:future-source",
+      horizonStart: "2026-10-05",
+      horizonEnd: "2026-11-03",
+      sourcePopulationEdition: "IBGE-2026",
+      sourcePopulationHash: "c".repeat(64),
+      sourcePopulationImportedAt: "2026-10-06T15:00:00.000Z",
+      sourceElectionEdition: "TSE-RESULTADOS-2024",
+      sourceElectionHash: "d".repeat(64),
+      sourceElectionImportedAt: "2026-10-04T16:00:00.000Z",
+      agentVersion: "open-dot/integration",
+      promptVersion: "politizai-research/1",
+    }))).rejects.toMatchObject({ code: "PROSPECTING_SOURCE_IMPORT_IN_FUTURE" });
   });
 
   it("rejeita conflito de identidade e de chave idempotente", async () => {
@@ -226,5 +249,31 @@ describe("staging governado da Prospecção Ativa", () => {
     expect(await database.lead.findUniqueOrThrow({ where: { id: leadId } })).toMatchObject({ awaitingHumanResponse: true });
     expect(await database.task.count({ where: { workspaceId: principal.workspaceId, leadId, sourceKey: `active-prospecting:${cadence.id}:respond-human`, status: "OPEN" } })).toBe(1);
     expect(await database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id, status: "CANCELLED" } })).toBe(6);
+  });
+
+  it("persiste reconciliação diária idempotente, detecta invariantes e mantém RLS fechado", async () => {
+    const inconsistent = await database.prospectCandidate.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, status: "REVIEW_REQUIRED", leadId: null }, select: { id: true } });
+    await database.prospectCandidate.update({ where: { id: inconsistent.id }, data: { status: "RELEASED" } });
+    const reconciliation = createProspectingReconciliationService({ database, now: () => clock });
+    await expect(reconciliation.reconcileWorkspace(principal.workspaceId, "integration:reconciliation", true)).resolves.toMatchObject({ status: "RECONCILED", health: "CRITICAL" });
+    const state = await database.prospectingReconciliationState.findUniqueOrThrow({ where: { workspaceId: principal.workspaceId } });
+    expect(state.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "RELEASED_CANDIDATE_WITHOUT_LEAD", severity: "CRITICAL", entityId: inconsistent.id, count: 1 }),
+    ]));
+    const auditCount = await database.auditLog.count({ where: { workspaceId: principal.workspaceId, action: "prospecting.reconciliation.changed", entityId: state.id } });
+    await reconciliation.reconcileWorkspace(principal.workspaceId, "integration:reconciliation:replay", true);
+    await expect(database.auditLog.count({ where: { workspaceId: principal.workspaceId, action: "prospecting.reconciliation.changed", entityId: state.id } })).resolves.toBe(auditCount);
+    await expect(reconciliation.processNext("integration:daily-worker")).resolves.toEqual({ status: "IDLE" });
+    const [security] = await database.$queryRaw<Array<{ rowSecurity: boolean; anonPrivileges: boolean; authenticatedPrivileges: boolean }>>`
+      SELECT c.relrowsecurity AS "rowSecurity",
+             CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+               THEN has_table_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,DELETE') ELSE FALSE END AS "anonPrivileges",
+             CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated')
+               THEN has_table_privilege('authenticated', c.oid, 'SELECT,INSERT,UPDATE,DELETE') ELSE FALSE END AS "authenticatedPrivileges"
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = current_schema() AND c.relname = 'prospecting_reconciliation_states'
+    `;
+    expect(security).toEqual({ rowSecurity: true, anonPrivileges: false, authenticatedPrivileges: false });
   });
 });

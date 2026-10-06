@@ -21,6 +21,20 @@ const querySchema = z.object({
 type AuthorizationPort = Pick<ReturnType<typeof getAuthorizationService>, "assertAuthorized" | "authorize">;
 type CapacityTaskRow = Readonly<{ memberId: string; localDate: Date; realized: bigint; scheduled: bigint }>;
 
+function persistedReconciliationAlerts(value: Prisma.JsonValue | null | undefined) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const code = typeof item.code === "string" ? item.code : null;
+    const severity = item.severity === "CRITICAL" || item.severity === "ATTENTION" ? item.severity : null;
+    const message = typeof item.message === "string" ? item.message : null;
+    const action = typeof item.action === "string" ? item.action : null;
+    const count = typeof item.count === "number" && Number.isSafeInteger(item.count) && item.count > 0 ? item.count : 1;
+    if (!code || !severity || !message || !action) return [];
+    return [{ level: severity === "CRITICAL" ? "CRITICAL" : "WARNING", code, message: `${count} ocorrência(s): ${message}`, action }];
+  });
+}
+
 function dateKey(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
@@ -76,6 +90,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
 
     const [
       settings,
+      reconciliationState,
       candidateCounts,
       candidateTotal,
       candidates,
@@ -107,6 +122,10 @@ export function createProspectingWorkspaceService(options: Readonly<{
       latestSourceObservation,
     ] = await Promise.all([
       options.database.prospectingSettings.findUnique({ where: { workspaceId: context.workspaceId } }),
+      manageDecision.allowed ? options.database.prospectingReconciliationState.findUnique({
+        where: { workspaceId: context.workspaceId },
+        select: { status: true, findings: true, lastRunAt: true },
+      }) : Promise.resolve(null),
       options.database.prospectCandidate.groupBy({ by: ["status"], where: candidateScopeWhere, _count: { _all: true } }),
       options.database.prospectCandidate.count({ where: candidateWhere }),
       options.database.prospectCandidate.findMany({
@@ -238,6 +257,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       }
     }
     const alerts = [
+      ...persistedReconciliationAlerts(reconciliationState?.findings),
       ...(coverageDays < (settings?.coverageCriticalDays ?? 5) ? [{ level: "CRITICAL", code: "LOW_STOCK", message: `Estoque cobre aproximadamente ${coverageDays} dia(s).`, action: "Acionar pesquisa Open-Dot." }] : coverageDays < (settings?.coverageWarningDays ?? 10) ? [{ level: "WARNING", code: "LOW_STOCK", message: `Estoque cobre aproximadamente ${coverageDays} dia(s).`, action: "Programar reposição." }] : []),
       ...(overdueJobs > 0 ? [{ level: "CRITICAL", code: "OVERDUE_EMAIL_JOBS", message: `${overdueJobs} ordem(ns) de e-mail vencida(s).`, action: "Verificar Open-Dot e revalidar a fila." }] : []),
       ...(overdueD1 > 0 ? [{ level: "WARNING", code: "OVERDUE_D1_GATE", message: `${overdueD1} cadência(s) com gate D1 vencido.`, action: "Abrir Meu Dia e resolver exceções." }] : []),
@@ -257,7 +277,9 @@ export function createProspectingWorkspaceService(options: Readonly<{
         pipeline: pipeline ? { id: pipeline.id, stages: pipeline.stages.map((stage) => ({ ...stage, leads: stage._count.currentLeads })) } : null,
         cadenceCounts: cadenceCounts.map((row) => ({ status: row.status, count: row._count._all })),
         emailCounts: jobCounts.map((row) => ({ status: row.status, count: row._count._all })),
-        alerts, lastResearch: lastResearch ? { ...lastResearch, receivedAt: lastResearch.receivedAt.toISOString() } : null, lastEmailClient: lastEmailClient ? { ...lastEmailClient, receivedAt: lastEmailClient.receivedAt.toISOString() } : null,
+        alerts,
+        reconciliation: reconciliationState ? { status: reconciliationState.status, lastRunAt: reconciliationState.lastRunAt.toISOString() } : null,
+        lastResearch: lastResearch ? { ...lastResearch, receivedAt: lastResearch.receivedAt.toISOString() } : null, lastEmailClient: lastEmailClient ? { ...lastEmailClient, receivedAt: lastEmailClient.receivedAt.toISOString() } : null,
       },
       stock: {
         filters: query, total: candidateTotal, page: query.page, pageSize,
