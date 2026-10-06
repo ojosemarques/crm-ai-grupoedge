@@ -30,6 +30,27 @@ describe("prospectCandidateInputSchema", () => {
     expect(prospectCandidateInputSchema.safeParse(validCandidate()).success).toBe(true);
   });
 
+  it("preserva contatos adicionais somente quando cada dado possui fonte e escopo", () => {
+    const candidate = validCandidate();
+    Object.assign(candidate.contact, {
+      advisorPhone: "+551140001001",
+      advisorEmail: "assessor@example.gov.br",
+      whatsapp: "+5511999990001",
+      whatsappScope: "ADVISOR",
+      instagram: "@vereador",
+      instagramScope: "POLITICIAN",
+    });
+    candidate.sources.push(
+      { field: "advisor_phone", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/contato/123", observedAt: candidate.sources[0]!.observedAt, contactScope: "ADVISOR", validationMethod: "OFFICIAL_SOURCE_CHECK" },
+      { field: "advisor_email", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/contato/123", observedAt: candidate.sources[0]!.observedAt, contactScope: "ADVISOR", validationMethod: "OFFICIAL_SOURCE_CHECK" },
+      { field: "whatsapp", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/contato/123", observedAt: candidate.sources[0]!.observedAt, contactScope: "ADVISOR", validationMethod: "OFFICIAL_SOURCE_CHECK" },
+      { field: "instagram", type: "INSTITUTIONAL_PROFILE", url: "https://www.instagram.com/vereador", observedAt: candidate.sources[0]!.observedAt, contactScope: "POLITICIAN", validationMethod: "PUBLIC_PROFILE_CHECK" },
+    );
+    expect(prospectCandidateInputSchema.safeParse(candidate).success).toBe(true);
+    candidate.sources = candidate.sources.filter((source) => source.field !== "advisor_email");
+    expect(prospectCandidateInputSchema.safeParse(candidate).success).toBe(false);
+  });
+
   it("rejeita município com 29.999 habitantes", () => {
     const candidate = validCandidate();
     candidate.municipality.population = 29_999;

@@ -71,6 +71,10 @@ describe("MCP privado Politizai", () => {
     const opened = await prospecting.openBatch({ workspaceId: context.workspaceId, userId: context.userId, memberId: context.memberId, authorizingActorId: context.actorId });
     const batchId = opened.batch.id;
     await database.prospectingResearchTarget.create({ data: { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:integration-mayor-1", tseCandidateId: "integration-mayor-1", role: "MAYOR", politicianName: "Prefeita Integração", ballotName: "Prefeita Integração", municipalityName: "Cidade Integração", municipalityIbgeCode: "3550308", stateCode: "SP", population: 1_000_000 } });
+    const [leadCountBefore, emailJobCountBefore] = await Promise.all([
+      database.lead.count({ where: { workspaceId: context.workspaceId } }),
+      database.prospectingEmailJob.count({ where: { workspaceId: context.workspaceId } }),
+    ]);
     const auth = { workspaceId: context.workspaceId, userId: context.userId, memberId: context.memberId, authorizingActorId: context.actorId };
     const claim = await prospecting.claimNextTarget(auth, batchId);
     expect(claim).toMatchObject({ queueEmpty: false, target: { politicianName: "Prefeita Integração" } });
@@ -88,9 +92,25 @@ describe("MCP privado Politizai", () => {
       ],
     });
     expect(ingested).toMatchObject({ duplicate: false, candidate: { status: "READY" } });
-    await expect(database.lead.count({ where: { workspaceId: context.workspaceId } })).resolves.toBe(0);
-    await expect(database.prospectingEmailJob.count({ where: { workspaceId: context.workspaceId } })).resolves.toBe(0);
-    await expect(database.prospectingSettings.findUniqueOrThrow({ where: { workspaceId: context.workspaceId }, select: { emailEgressEnabled: true } })).resolves.toEqual({ emailEgressEnabled: false });
+    await expect(database.lead.count({ where: { workspaceId: context.workspaceId } })).resolves.toBe(leadCountBefore);
+    await expect(database.prospectingEmailJob.count({ where: { workspaceId: context.workspaceId } })).resolves.toBe(emailJobCountBefore);
+  });
+
+  it("prioriza cidade menor e vereador e consulta o lote sem exigir argumento", async () => {
+    const auth = { workspaceId: context.workspaceId, userId: context.userId, memberId: context.memberId, authorizingActorId: context.actorId };
+    const opened = await prospecting.openBatch(auth);
+    const batchId = opened.batch.id;
+    await database.prospectingResearchTarget.createMany({ data: [
+      { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:priority-capital", tseCandidateId: "priority-capital", role: "COUNCILOR", politicianName: "Vereador Capital", municipalityName: "Capital", municipalityIbgeCode: "3550308", stateCode: "SP", population: 12_000_000 },
+      { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:priority-mayor", tseCandidateId: "priority-mayor", role: "MAYOR", politicianName: "Prefeito Cidade Menor", municipalityName: "Cidade Menor", municipalityIbgeCode: "3500105", stateCode: "SP", population: 30_001 },
+      { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:priority-councilor", tseCandidateId: "priority-councilor", role: "COUNCILOR", politicianName: "Vereador Cidade Menor", municipalityName: "Cidade Menor", municipalityIbgeCode: "3500105", stateCode: "SP", population: 30_001 },
+    ] });
+    await expect(prospecting.getBatch(auth)).resolves.toMatchObject({ batch: { id: batchId } });
+    const councilor = await prospecting.claimNextTarget(auth, batchId);
+    expect(councilor).toMatchObject({ target: { politicianName: "Vereador Cidade Menor", role: "COUNCILOR", population: 30_001 } });
+    await prospecting.markInconclusive(auth, { targetId: councilor.target!.id, leaseOwner: councilor.target!.leaseOwner, reasonCode: "CONTACT_NOT_FOUND", evidence: [] });
+    const mayor = await prospecting.claimNextTarget(auth, batchId);
+    expect(mayor).toMatchObject({ target: { politicianName: "Prefeito Cidade Menor", role: "MAYOR", population: 30_001 } });
   });
 
   it("mantém RLS e privilégios fechados nas três tabelas novas", async () => {

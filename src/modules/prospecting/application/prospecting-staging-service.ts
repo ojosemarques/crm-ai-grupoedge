@@ -85,6 +85,10 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
     }
     const phone = normalizePhone(input.contact.phone);
     if (!phone.success) fail(phone.message, "PROSPECTING_PHONE_INVALID", 400);
+    const advisorPhone = input.contact.advisorPhone ? normalizePhone(input.contact.advisorPhone) : null;
+    if (advisorPhone && !advisorPhone.success) fail(advisorPhone.message, "PROSPECTING_ADVISOR_PHONE_INVALID", 400);
+    const whatsapp = input.contact.whatsapp ? normalizePhone(input.contact.whatsapp) : null;
+    if (whatsapp && !whatsapp.success) fail(whatsapp.message, "PROSPECTING_WHATSAPP_INVALID", 400);
     const fingerprint = candidateFingerprint(input);
     const idempotent = await database.prospectCandidate.findUnique({
       where: { workspaceId_idempotencyKey: { workspaceId: principal.workspaceId, idempotencyKey: input.idempotencyKey } },
@@ -109,11 +113,11 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
     }
     const [blockedPoint, blockedEmail] = await Promise.all([
       database.contactPoint.findFirst({
-        where: { workspaceId: principal.workspaceId, normalizedValue: { in: [phone.normalizedPhone, input.contact.email] }, doNotContact: true, deletedAt: null },
+        where: { workspaceId: principal.workspaceId, normalizedValue: { in: [phone.normalizedPhone, input.contact.email, advisorPhone?.success ? advisorPhone.normalizedPhone : null, input.contact.advisorEmail, whatsapp?.success ? whatsapp.normalizedPhone : null].filter((value): value is string => Boolean(value)) }, doNotContact: true, deletedAt: null },
         select: { id: true },
       }),
       database.emailSuppression.findFirst({
-        where: { workspaceId: principal.workspaceId, normalizedEmail: input.contact.email, action: "APPLIED" },
+        where: { workspaceId: principal.workspaceId, normalizedEmail: { in: [input.contact.email, input.contact.advisorEmail].filter((value): value is string => Boolean(value)) }, action: "APPLIED" },
         orderBy: { effectiveAt: "desc" },
         select: { id: true },
       }),
@@ -150,6 +154,13 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
         email: input.contact.email,
         normalizedEmail: input.contact.email,
         emailScope: input.contact.emailScope,
+        advisorPhone: input.contact.advisorPhone,
+        normalizedAdvisorPhone: advisorPhone?.success ? advisorPhone.normalizedPhone : null,
+        advisorEmail: input.contact.advisorEmail,
+        normalizedAdvisorEmail: input.contact.advisorEmail,
+        whatsapp: input.contact.whatsapp,
+        normalizedWhatsapp: whatsapp?.success ? whatsapp.normalizedPhone : null,
+        whatsappScope: input.contact.whatsappScope,
         instagram: input.contact.instagram,
         instagramScope: input.contact.instagramScope,
         mandateVerifiedAt,

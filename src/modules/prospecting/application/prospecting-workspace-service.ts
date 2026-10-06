@@ -136,7 +136,8 @@ export function createProspectingWorkspaceService(options: Readonly<{
         select: {
           id: true, politicianName: true, role: true, municipalityName: true, stateCode: true,
           population: true, phone: true, normalizedEmail: true, phoneScope: true, emailScope: true,
-          instagram: true, status: true, reviewReasonCode: true, rejectionReasonCode: true,
+          advisorPhone: true, advisorEmail: true, whatsapp: true, whatsappScope: true,
+          instagram: true, instagramScope: true, status: true, reviewReasonCode: true, rejectionReasonCode: true,
           mandateVerifiedAt: true, plannedReleaseDate: true, releasedAt: true, leadId: true,
         },
       }),
@@ -283,7 +284,10 @@ export function createProspectingWorkspaceService(options: Readonly<{
       },
       stock: {
         filters: query, total: candidateTotal, page: query.page, pageSize,
-        items: candidates.map((candidate) => ({ ...candidate, phone: sensitiveDecision.allowed && sensitiveDecision.scope === "WORKSPACE" ? candidate.phone : null, normalizedEmail: sensitiveDecision.allowed && sensitiveDecision.scope === "WORKSPACE" ? candidate.normalizedEmail : null, mandateVerifiedAt: candidate.mandateVerifiedAt.toISOString(), plannedReleaseDate: candidate.plannedReleaseDate?.toISOString().slice(0, 10) ?? null, releasedAt: candidate.releasedAt?.toISOString() ?? null, sourceCount: candidateSourceCounts.find((row) => row.candidateId === candidate.id)?._count._all ?? 0 })),
+        items: candidates.map((candidate) => {
+          const canViewContact = sensitiveDecision.allowed && sensitiveDecision.scope === "WORKSPACE";
+          return { ...candidate, phone: canViewContact ? candidate.phone : null, normalizedEmail: canViewContact ? candidate.normalizedEmail : null, advisorPhone: canViewContact ? candidate.advisorPhone : null, advisorEmail: canViewContact ? candidate.advisorEmail : null, whatsapp: canViewContact ? candidate.whatsapp : null, instagram: canViewContact ? candidate.instagram : null, mandateVerifiedAt: candidate.mandateVerifiedAt.toISOString(), plannedReleaseDate: candidate.plannedReleaseDate?.toISOString().slice(0, 10) ?? null, releasedAt: candidate.releasedAt?.toISOString() ?? null, sourceCount: candidateSourceCounts.find((row) => row.candidateId === candidate.id)?._count._all ?? 0 };
+        }),
         releases: releases.map((release) => ({ ...release, plannedDate: release.plannedDate.toISOString().slice(0, 10) })),
       },
       sellers: sellers.map((seller) => { const member = memberById.get(seller.memberId); return { ...seller, name: member?.user.displayName ?? "Membro indisponível", available: seller.active && member?.status === "ACTIVE" && member.user.status === "ACTIVE" && !member.leadReceivingPausedAt }; }),

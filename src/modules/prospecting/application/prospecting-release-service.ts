@@ -38,6 +38,43 @@ function contactScopeLabel(scope: "POLITICIAN" | "ADVISOR" | "OFFICE"): string {
   return "Gabinete";
 }
 
+async function ensureVerifiedContactPoint(transaction: Prisma.TransactionClient, input: Readonly<{
+  workspaceId: string;
+  contactId: string;
+  actorId: string;
+  type: "PHONE" | "EMAIL";
+  originalValue: string;
+  normalizedValue: string;
+  label: string;
+  verifiedAt: Date;
+}>) {
+  const existing = await transaction.contactPoint.findFirst({
+    where: { workspaceId: input.workspaceId, contactId: input.contactId, type: input.type, normalizedValue: input.normalizedValue, deletedAt: null },
+    select: { id: true, label: true },
+  });
+  if (existing) {
+    await transaction.contactPoint.update({ where: { id: existing.id }, data: { label: existing.label ?? input.label, verificationStatus: "VERIFIED", quality: "VALID", verifiedAt: input.verifiedAt, updatedByActorId: input.actorId } });
+    return;
+  }
+  await transaction.contactPoint.create({
+    data: {
+      workspaceId: input.workspaceId,
+      contactId: input.contactId,
+      type: input.type,
+      originalValue: input.originalValue,
+      normalizedValue: input.normalizedValue,
+      label: input.label,
+      isPrimary: false,
+      verificationStatus: "VERIFIED",
+      quality: "VALID",
+      source: "LEAD_INTAKE",
+      verifiedAt: input.verifiedAt,
+      createdByActorId: input.actorId,
+      updatedByActorId: input.actorId,
+    },
+  });
+}
+
 function fail(message: string, code: string, statusCode = 409): never {
   throw new ApplicationError(message, { code, statusCode, expose: true });
 }
@@ -159,6 +196,14 @@ export function createProspectingReleaseService(options: Options) {
           if (!role) await transaction.accountContactRole.create({ data: { workspaceId: release.workspaceId, accountId: account.id, contactId: lead.contactId, roleType: "OTHER", roleTitle: candidate.role === "MAYOR" ? "Prefeito" : "Vereador", source: "AI_SUGGESTION", evidence: `Candidato ${candidate.id} com mandato verificado.`, validFrom: candidate.mandateVerifiedAt, createdByActorId: actor.id } });
           await transaction.contactPoint.updateMany({ where: { workspaceId: release.workspaceId, contactId: lead.contactId, type: "PHONE", normalizedValue: candidate.normalizedPhone, deletedAt: null }, data: { label: contactScopeLabel(candidate.phoneScope), verificationStatus: "VERIFIED", quality: "VALID", verifiedAt: candidate.mandateVerifiedAt, updatedByActorId: actor.id } });
           await transaction.contactPoint.updateMany({ where: { workspaceId: release.workspaceId, contactId: lead.contactId, type: "EMAIL", normalizedValue: candidate.normalizedEmail, deletedAt: null }, data: { label: contactScopeLabel(candidate.emailScope), verificationStatus: "VERIFIED", quality: "VALID", verifiedAt: candidate.mandateVerifiedAt, updatedByActorId: actor.id } });
+          const extraContactPoints = [
+            candidate.advisorPhone && candidate.normalizedAdvisorPhone ? { type: "PHONE" as const, originalValue: candidate.advisorPhone, normalizedValue: candidate.normalizedAdvisorPhone, label: "Assessor" } : null,
+            candidate.advisorEmail && candidate.normalizedAdvisorEmail ? { type: "EMAIL" as const, originalValue: candidate.advisorEmail, normalizedValue: candidate.normalizedAdvisorEmail, label: "Assessor" } : null,
+            candidate.whatsapp && candidate.normalizedWhatsapp && candidate.whatsappScope ? { type: "PHONE" as const, originalValue: candidate.whatsapp, normalizedValue: candidate.normalizedWhatsapp, label: `WhatsApp · ${contactScopeLabel(candidate.whatsappScope)}` } : null,
+          ].filter((point): point is NonNullable<typeof point> => Boolean(point));
+          for (const point of extraContactPoints) {
+            await ensureVerifiedContactPoint(transaction, { workspaceId: release.workspaceId, contactId: lead.contactId, actorId: actor.id, verifiedAt: candidate.mandateVerifiedAt, ...point });
+          }
         }
         await transaction.lead.update({ where: { id: lead.id }, data: { accountId: account.id, ownerMemberId: member.id, queueId: null, updatedByActorId: actor.id } });
         const workspace = await transaction.workspace.findUniqueOrThrow({ where: { id: release.workspaceId }, select: { timeZone: true } });

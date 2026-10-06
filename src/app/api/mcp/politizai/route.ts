@@ -32,6 +32,10 @@ const reviewSchema = z.object({
 }).strict();
 
 const completeSchema = z.object({ batchId: z.string().uuid(), status: z.enum(["COMPLETED", "CANCELLED", "FAILED"]).default("COMPLETED") }).strict();
+const batchLookupSchema = z.object({
+  batchId: z.string().uuid().optional(),
+  batch_id: z.string().uuid().optional(),
+});
 
 function authExtra(authInfo: AuthInfo | undefined): McpAuthExtra {
   const parsed = z.object({ workspaceId: z.string().uuid(), userId: z.string().uuid(), memberId: z.string().uuid(), authorizingActorId: z.string().uuid() }).strict().safeParse(authInfo?.extra);
@@ -58,7 +62,7 @@ const handler = createMcpHandler(({ authInfo }) => {
   const auth = authExtra(authInfo);
   const service = getPolitizaiMcpProspectingService();
   const server = new McpServer({ name: "Politizai Prospecção Política", version: "1.0.0" }, {
-    instructions: "Pesquise somente prefeitos e vereadores em exercício em municípios com população igual ou superior a 30 mil. Nunca infira telefone ou e-mail. Exija fonte municipal oficial atual para o mandato, registre resultados apenas no estoque e nunca envie e-mail nem crie Lead diretamente.",
+    instructions: "Seu nome completo é Politizai Pesquisa. Pesquise somente prefeitos e vereadores em exercício em municípios com população igual ou superior a 30 mil, começando pelos menores municípios e por vereadores antes de prefeitos. Use o navegador em nuvem para consultar fontes oficiais e públicas verificáveis. Nunca infira contatos. Só registre candidato com telefone e e-mail do gabinete comprovados; registre também telefone/e-mail de assessor, WhatsApp e Instagram quando existirem e tiverem fonte. Grave apenas no estoque e nunca envie e-mail nem crie Lead diretamente.",
   });
 
   server.registerTool("obter_contexto_de_pesquisa", {
@@ -79,7 +83,7 @@ const handler = createMcpHandler(({ authInfo }) => {
 
   server.registerTool("obter_proximo_alvo_de_pesquisa", {
     title: "Reservar próximo político",
-    description: "Reserva por 45 minutos um político elegível da fila oficial, priorizando municípios maiores.",
+    description: "Reserva por 45 minutos um político elegível, priorizando municípios menores e vereadores antes de prefeitos.",
     inputSchema: z.object({ batchId: z.string().uuid().optional() }).strict(),
     annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: false, openWorldHint: false },
     scopeChallenge: requireScopes("prospecting:research"),
@@ -87,7 +91,7 @@ const handler = createMcpHandler(({ authInfo }) => {
 
   server.registerTool("registrar_candidato", {
     title: "Registrar político validado",
-    description: "Valida fontes, contato e mandato e grava o candidato apenas no estoque de prospecção.",
+    description: "Valida mandato, telefone/e-mail obrigatórios do gabinete e contatos adicionais comprovados, gravando tudo apenas no estoque do CRM.",
     inputSchema: registerCandidateSchema,
     annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false },
     scopeChallenge: requireScopes("prospecting:research"),
@@ -104,10 +108,10 @@ const handler = createMcpHandler(({ authInfo }) => {
   server.registerTool("consultar_pendencias_do_lote", {
     title: "Consultar lote e pendências",
     description: "Retorna contagens do lote, alvos pendentes e candidatos que exigem auditoria.",
-    inputSchema: z.object({ batchId: z.string().uuid() }).strict(),
+    inputSchema: batchLookupSchema,
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     scopeChallenge: requireScopes("prospecting:read"),
-  }, async ({ batchId }) => safeTool(() => service.getBatch(auth, batchId)));
+  }, async ({ batchId, batch_id }) => safeTool(() => service.getBatch(auth, batchId ?? batch_id)));
 
   server.registerTool("aprovar_ou_rejeitar_candidato", {
     title: "Auditar candidato",

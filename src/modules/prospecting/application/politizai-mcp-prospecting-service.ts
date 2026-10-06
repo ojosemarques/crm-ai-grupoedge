@@ -10,11 +10,11 @@ import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const LEASE_MINUTES = 45;
-const AGENT_VERSION = "politizai-dot-mcp/1.0.0";
-const PROMPT_VERSION = "political-prospect-production/v1";
+const AGENT_VERSION = "politizai-dot-mcp/1.1.0";
+const PROMPT_VERSION = "political-prospect-production/v2";
 
 const researchSourceSchema = z.object({
-  field: z.enum(["role", "mandate", "phone", "email", "instagram"]),
+  field: z.enum(["role", "mandate", "phone", "email", "advisor_phone", "advisor_email", "whatsapp", "instagram"]),
   type: z.enum(["CITY_HALL", "CITY_COUNCIL", "OFFICIAL_GAZETTE", "INSTITUTIONAL_PROFILE"]),
   url: z.string().url().max(2_000),
   observedAt: z.string().datetime({ offset: true }),
@@ -33,9 +33,13 @@ export const registerCandidateSchema = z.object({
   }).strict(),
   contact: z.object({
     phone: z.string().trim().min(8).max(80),
-    phoneScope: z.enum(["POLITICIAN", "ADVISOR", "OFFICE"]),
+    phoneScope: z.literal("OFFICE"),
     email: z.string().trim().toLowerCase().email().max(320),
-    emailScope: z.enum(["POLITICIAN", "ADVISOR", "OFFICE"]),
+    emailScope: z.literal("OFFICE"),
+    advisorPhone: z.string().trim().min(8).max(80).nullable().default(null),
+    advisorEmail: z.string().trim().toLowerCase().email().max(320).nullable().default(null),
+    whatsapp: z.string().trim().min(8).max(80).nullable().default(null),
+    whatsappScope: z.enum(["POLITICIAN", "ADVISOR", "OFFICE"]).nullable().default(null),
     instagram: z.string().trim().min(2).max(160).nullable().default(null),
     instagramScope: z.enum(["POLITICIAN", "ADVISOR", "OFFICE"]).nullable().default(null),
   }).strict(),
@@ -115,7 +119,9 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         roles: ["MAYOR", "COUNCILOR"],
         minimumPopulation: 30_000,
         currentMandateRequired: true,
-        verifiedPhoneAndEmailRequired: true,
+        requiredContacts: ["officePhone", "officeEmail"],
+        optionalContactsWhenAvailable: ["advisorPhone", "advisorEmail", "whatsapp", "instagram"],
+        queuePriority: ["smallerMunicipalityPopulation", "councilorBeforeMayor", "capitalLastByPopulation"],
         inferContactData: false,
         directLeadCreation: false,
         emailSending: false,
@@ -178,7 +184,7 @@ export function createPolitizaiMcpProspectingService(options: Options) {
           batchId: batch.id,
           OR: [{ status: "PENDING" }, { status: "CLAIMED", leaseExpiresAt: { lte: now } }],
         },
-        orderBy: [{ population: "desc" }, { stateCode: "asc" }, { municipalityName: "asc" }, { role: "asc" }],
+        orderBy: [{ population: "asc" }, { role: "desc" }, { stateCode: "asc" }, { municipalityName: "asc" }, { politicianName: "asc" }],
       });
       if (!target) return { target: null, queueEmpty: true };
       const leaseOwner = `dot:${auth.authorizingActorId}:${crypto.randomUUID()}`;
@@ -188,7 +194,7 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         data: { status: "CLAIMED", leaseOwner, leaseExpiresAt, attemptCount: { increment: 1 }, lastReasonCode: null },
         select: { id: true, batchId: true, tseCandidateId: true, externalIdentityKey: true, role: true, politicianName: true, ballotName: true, municipalityName: true, municipalityIbgeCode: true, stateCode: true, population: true },
       });
-      return { target: { ...claimed, leaseOwner, leaseExpiresAt: leaseExpiresAt.toISOString(), instructions: "Localize telefone e e-mail institucionais, sem inferir; valide o mandato atual em fonte municipal oficial e informe todas as fontes." }, queueEmpty: false };
+      return { target: { ...claimed, leaseOwner, leaseExpiresAt: leaseExpiresAt.toISOString(), instructions: "Valide o mandato atual em fonte municipal oficial. Só cadastre com telefone e e-mail do gabinete comprovados. Procure e registre também telefone/e-mail de assessor, WhatsApp e Instagram quando existirem, cada um com sua fonte, sem inferir nenhum dado." }, queueEmpty: false };
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 20_000 });
   }
 
@@ -241,15 +247,40 @@ export function createPolitizaiMcpProspectingService(options: Options) {
     });
   }
 
-  async function getBatch(auth: McpAuthExtra, batchId: string) {
+  async function getBatch(auth: McpAuthExtra, batchId?: string) {
     return options.database.$transaction(async (transaction) => {
       const researchPrincipal = await principal(transaction, auth, "open-dot-research");
+      const resolvedBatchId = batchId ?? (await transaction.prospectingResearchBatch.findFirst({
+        where: { workspaceId: auth.workspaceId, status: { in: ["DRAFT", "RUNNING"] } },
+        orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }],
+        select: { id: true },
+      }))?.id;
+      if (!resolvedBatchId) fail("Nenhum lote de pesquisa ativo foi encontrado.", "PROSPECTING_BATCH_NOT_FOUND", 404);
       const [batch, targets, reviews] = await Promise.all([
-        staging.getResearchBatch(transaction, researchPrincipal, batchId),
-        transaction.prospectingResearchTarget.groupBy({ by: ["status"], where: { workspaceId: auth.workspaceId, batchId }, _count: { _all: true } }),
-        transaction.prospectCandidate.findMany({ where: { workspaceId: auth.workspaceId, batchId, status: "REVIEW_REQUIRED" }, select: { id: true, politicianName: true, role: true, municipalityName: true, stateCode: true, revision: true, reviewReasonCode: true, sources: { select: { id: true, field: true, sourceUrl: true, sourceType: true, validationStatus: true, observedAt: true } } }, take: 25, orderBy: { createdAt: "asc" } }),
+        staging.getResearchBatch(transaction, researchPrincipal, resolvedBatchId),
+        transaction.prospectingResearchTarget.groupBy({ by: ["status"], where: { workspaceId: auth.workspaceId, batchId: resolvedBatchId }, _count: { _all: true } }),
+        transaction.prospectCandidate.findMany({ where: { workspaceId: auth.workspaceId, batchId: resolvedBatchId, status: "REVIEW_REQUIRED" }, select: { id: true, politicianName: true, role: true, municipalityName: true, stateCode: true, revision: true, reviewReasonCode: true }, take: 25, orderBy: { createdAt: "asc" } }),
       ]);
-      return { ...batch, targetsByStatus: Object.fromEntries(targets.map((item) => [item.status, item._count._all])), reviewQueue: reviews };
+      const reviewSources = reviews.length === 0 ? [] : await transaction.prospectCandidateSource.findMany({
+        where: { workspaceId: auth.workspaceId, candidateId: { in: reviews.map((candidate) => candidate.id) } },
+        select: { id: true, candidateId: true, field: true, sourceUrl: true, sourceType: true, validationStatus: true, observedAt: true },
+        orderBy: [{ observedAt: "desc" }, { id: "asc" }],
+      });
+      return {
+        ...batch,
+        targetsByStatus: Object.fromEntries(targets.map((item) => [item.status, item._count._all])),
+        reviewQueue: reviews.map((candidate) => ({
+          ...candidate,
+          sources: reviewSources.filter((source) => source.candidateId === candidate.id).map((source) => ({
+            id: source.id,
+            field: source.field,
+            sourceUrl: source.sourceUrl,
+            sourceType: source.sourceType,
+            validationStatus: source.validationStatus,
+            observedAt: source.observedAt,
+          })),
+        })),
+      };
     });
   }
 

@@ -109,7 +109,7 @@ function officialSourceDomain(type: z.infer<typeof sourceTypeSchema>, value: str
 }
 
 export const prospectCandidateSourceSchema = z.object({
-  field: z.enum(["role", "population", "phone", "email", "instagram", "mandate"]),
+  field: z.enum(["role", "population", "phone", "email", "advisor_phone", "advisor_email", "whatsapp", "instagram", "mandate"]),
   type: sourceTypeSchema,
   url: z.string().trim().max(2_000).refine(publicHttpsUrl, "A fonte deve ser uma URL HTTPS pública."),
   observedAt: z.string().datetime({ offset: true }),
@@ -156,12 +156,22 @@ export const prospectCandidateInputSchema = z.object({
   }).strict(),
   contact: z.object({
     phone: z.string().trim().min(8).max(80),
-    phoneScope: contactScopeSchema,
+    phoneScope: z.literal("OFFICE"),
     email: z.string().trim().toLowerCase().email().max(320),
-    emailScope: contactScopeSchema,
+    emailScope: z.literal("OFFICE"),
+    advisorPhone: z.string().trim().min(8).max(80).nullable().default(null),
+    advisorEmail: z.string().trim().toLowerCase().email().max(320).nullable().default(null),
+    whatsapp: z.string().trim().min(8).max(80).nullable().default(null),
+    whatsappScope: contactScopeSchema.nullable().default(null),
     instagram: z.string().trim().min(2).max(160).nullable().default(null),
     instagramScope: contactScopeSchema.nullable().default(null),
   }).strict().superRefine((value, context) => {
+    if (value.whatsapp && !value.whatsappScope) {
+      context.addIssue({ code: "custom", path: ["whatsappScope"], message: "O escopo do WhatsApp é obrigatório quando o número é informado." });
+    }
+    if (!value.whatsapp && value.whatsappScope) {
+      context.addIssue({ code: "custom", path: ["whatsappScope"], message: "Não informe escopo sem WhatsApp." });
+    }
     if (value.instagram && !value.instagramScope) {
       context.addIssue({ code: "custom", path: ["instagramScope"], message: "O escopo do Instagram é obrigatório quando o perfil é informado." });
     }
@@ -177,10 +187,28 @@ export const prospectCandidateInputSchema = z.object({
   if (!phone.success) {
     context.addIssue({ code: "custom", path: ["contact", "phone"], message: phone.message });
   }
+  for (const [field, raw] of [["advisorPhone", value.contact.advisorPhone], ["whatsapp", value.contact.whatsapp]] as const) {
+    if (!raw) continue;
+    const normalized = normalizePhone(raw);
+    if (!normalized.success) context.addIssue({ code: "custom", path: ["contact", field], message: normalized.message });
+  }
   const requiredFields = ["role", "mandate", "population", "phone", "email"] as const;
   for (const field of requiredFields) {
     if (!value.sources.some((source) => source.field === field)) {
       context.addIssue({ code: "custom", path: ["sources"], message: `Falta fonte verificável para ${field}.` });
+    }
+  }
+  const optionalEvidence = [
+    ["phone", "phone", "OFFICE", value.contact.phone],
+    ["email", "email", "OFFICE", value.contact.email],
+    ["advisorPhone", "advisor_phone", "ADVISOR", value.contact.advisorPhone],
+    ["advisorEmail", "advisor_email", "ADVISOR", value.contact.advisorEmail],
+    ["whatsapp", "whatsapp", value.contact.whatsappScope, value.contact.whatsapp],
+    ["instagram", "instagram", value.contact.instagramScope, value.contact.instagram],
+  ] as const;
+  for (const [contactField, sourceField, scope, raw] of optionalEvidence) {
+    if (raw && !value.sources.some((source) => source.field === sourceField && source.contactScope === scope)) {
+      context.addIssue({ code: "custom", path: ["sources"], message: `Falta fonte verificável para ${contactField}.` });
     }
   }
   const officialRoleTypes = value.politician.role === "MAYOR"
@@ -273,6 +301,8 @@ export const openDotHeadersSchema = z.object({
 
 export function candidateFingerprint(value: ProspectCandidateInput): string {
   const phone = normalizePhone(value.contact.phone);
+  const advisorPhone = value.contact.advisorPhone ? normalizePhone(value.contact.advisorPhone) : null;
+  const whatsapp = value.contact.whatsapp ? normalizePhone(value.contact.whatsapp) : null;
   return createHash("sha256").update(JSON.stringify({
     identity: value.externalIdentityKey,
     role: value.politician.role,
@@ -280,6 +310,12 @@ export function candidateFingerprint(value: ProspectCandidateInput): string {
     municipality: value.municipality.ibgeCode,
     phone: phone.success ? phone.normalizedPhone : value.contact.phone,
     email: value.contact.email,
+    advisorPhone: advisorPhone?.success ? advisorPhone.normalizedPhone : value.contact.advisorPhone,
+    advisorEmail: value.contact.advisorEmail,
+    whatsapp: whatsapp?.success ? whatsapp.normalizedPhone : value.contact.whatsapp,
+    whatsappScope: value.contact.whatsappScope,
+    instagram: value.contact.instagram,
+    instagramScope: value.contact.instagramScope,
   })).digest("hex");
 }
 

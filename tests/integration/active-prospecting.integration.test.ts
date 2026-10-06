@@ -24,6 +24,7 @@ const service = createProspectingStagingService({ database, now: () => clock });
 let principal: OpenDotPrincipal;
 let batchId: string;
 let systemActorId: string;
+let initialLeadCount: number;
 
 function candidate(overrides: Record<string, unknown> = {}) {
   const observedAt = "2026-10-05T12:00:00-03:00";
@@ -34,7 +35,7 @@ function candidate(overrides: Record<string, unknown> = {}) {
     externalIdentityKey: "tse:2024:3550308:councilor:123",
     politician: { name: "Vereadora Integração", role: "COUNCILOR", term: "2025-2028", mandateStatus: "CURRENT", mandateVerifiedAt: observedAt },
     municipality: { ibgeCode: "3550308", name: "São Paulo", stateCode: "SP", population: 12_000_000, populationEdition: "IBGE-2026" },
-    contact: { phone: "+551140001000", phoneScope: "OFFICE", email: "gabinete@camara.example.test", emailScope: "OFFICE", instagram: "@vereadora", instagramScope: "POLITICIAN" },
+    contact: { phone: "+551140001000", phoneScope: "OFFICE", email: "gabinete@camara.example.test", emailScope: "OFFICE", advisorPhone: "+551140001001", advisorEmail: "assessor@camara.example.test", whatsapp: "+5511999991000", whatsappScope: "OFFICE", instagram: "@vereadora", instagramScope: "POLITICIAN" },
     sources: [
       { field: "role", type: "TSE", url: "https://resultados.tse.jus.br/oficial/2024/3550308/123", observedAt, validationMethod: "TSE_2024_RESULT" },
       { field: "role", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/vereadores/123", observedAt, validationMethod: "OFFICIAL_SOURCE_CHECK" },
@@ -42,6 +43,10 @@ function candidate(overrides: Record<string, unknown> = {}) {
       { field: "population", type: "IBGE", url: "https://www.ibge.gov.br/cidades-e-estados/sp/sao-paulo.html", observedAt, validationMethod: "IBGE_EDITION_CHECK" },
       { field: "phone", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/contato/123", observedAt, contactScope: "OFFICE", validationMethod: "OFFICIAL_SOURCE_CHECK" },
       { field: "email", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/contato/123", observedAt, contactScope: "OFFICE", validationMethod: "OFFICIAL_SOURCE_CHECK" },
+      { field: "advisor_phone", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/contato/123", observedAt, contactScope: "ADVISOR", validationMethod: "OFFICIAL_SOURCE_CHECK" },
+      { field: "advisor_email", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/contato/123", observedAt, contactScope: "ADVISOR", validationMethod: "OFFICIAL_SOURCE_CHECK" },
+      { field: "whatsapp", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/contato/123", observedAt, contactScope: "OFFICE", validationMethod: "OFFICIAL_SOURCE_CHECK" },
+      { field: "instagram", type: "INSTITUTIONAL_PROFILE", url: "https://www.instagram.com/vereadora", observedAt, contactScope: "POLITICIAN", validationMethod: "PUBLIC_PROFILE_CHECK" },
     ],
     agentVersion: "open-dot/integration",
     promptVersion: "politizai-research/1",
@@ -54,8 +59,9 @@ beforeAll(async () => {
   const workspace = await database.workspace.findUniqueOrThrow({ where: { id: seeded.workspaceId } });
   const systemActor = await database.actor.findFirstOrThrow({ where: { workspaceId: workspace.id, type: "SYSTEM", key: "system" } });
   systemActorId = systemActor.id;
-  const actor = await database.actor.create({ data: { workspaceId: workspace.id, type: "AI_AGENT", key: "open-dot-research", displayName: "Open-Dot Pesquisa" } });
+  const actor = await database.actor.create({ data: { workspaceId: workspace.id, type: "AI_AGENT", key: "open-dot-research-active-prospecting-test", displayName: "Open-Dot Pesquisa" } });
   principal = { clientId: "research-agent", workspaceId: workspace.id, actorId: actor.id, scopes: ["RESEARCH_WRITE", "RESEARCH_READ", "RESEARCH_REVIEW", "EMAIL_CLAIM", "EMAIL_RECEIPT", "EMAIL_EVENT_WRITE"] };
+  initialLeadCount = await database.lead.count({ where: { workspaceId: workspace.id } });
   const created = await database.$transaction((transaction) => service.createResearchBatch(transaction, principal, { idempotencyKey: "batch:integration:2026-10", horizonStart: "2026-10-05", horizonEnd: "2026-11-03", sourcePopulationEdition: "IBGE-2026", sourcePopulationHash: "a".repeat(64), sourcePopulationImportedAt: "2026-10-04T15:00:00.000Z", sourceElectionEdition: "TSE-RESULTADOS-2024", sourceElectionHash: "b".repeat(64), sourceElectionImportedAt: "2026-10-04T16:00:00.000Z", agentVersion: "open-dot/integration", promptVersion: "politizai-research/1" }));
   batchId = created.batch.id;
 
@@ -79,8 +85,9 @@ describe("staging governado da Prospecção Ativa", () => {
     const replay = await database.$transaction((transaction) => service.ingestCandidate(transaction, principal, candidate()));
     expect(first).toMatchObject({ duplicate: false, candidate: { status: "READY", revision: 1 } });
     expect(replay).toMatchObject({ duplicate: true, candidate: { id: first.candidate.id } });
-    await expect(database.prospectCandidateSource.count({ where: { candidateId: first.candidate.id } })).resolves.toBe(6);
-    await expect(database.lead.count({ where: { workspaceId: principal.workspaceId } })).resolves.toBe(0);
+    await expect(database.prospectCandidateSource.count({ where: { candidateId: first.candidate.id } })).resolves.toBe(10);
+    await expect(database.prospectCandidate.findUniqueOrThrow({ where: { id: first.candidate.id }, select: { advisorPhone: true, advisorEmail: true, whatsapp: true, whatsappScope: true, instagram: true } })).resolves.toEqual({ advisorPhone: "+551140001001", advisorEmail: "assessor@camara.example.test", whatsapp: "+5511999991000", whatsappScope: "OFFICE", instagram: "@vereadora" });
+    await expect(database.lead.count({ where: { workspaceId: principal.workspaceId } })).resolves.toBe(initialLeadCount);
     await expect(database.prospectingResearchBatch.findUniqueOrThrow({ where: { id: batchId }, select: { sourcePopulationImportedAt: true, sourceElectionEdition: true, sourceElectionHash: true, sourceElectionImportedAt: true } })).resolves.toEqual({
       sourcePopulationImportedAt: new Date("2026-10-04T15:00:00.000Z"),
       sourceElectionEdition: "TSE-RESULTADOS-2024",
@@ -186,7 +193,7 @@ describe("staging governado da Prospecção Ativa", () => {
       idempotencyKey: "candidate:integration:end-to-end",
       externalIdentityKey: "tse:2024:3550308:councilor:777",
       politician: { name: "Vereadora Fluxo Completo", role: "COUNCILOR", term: "2025-2028", mandateStatus: "CURRENT", mandateVerifiedAt: "2026-10-05T12:00:00-03:00" },
-      contact: { phone: "+551140001777", phoneScope: "OFFICE", email: "fluxo@camara.example.test", emailScope: "OFFICE", instagram: "@fluxocompleto", instagramScope: "POLITICIAN" },
+      contact: { phone: "+551140001777", phoneScope: "OFFICE", email: "fluxo@camara.example.test", emailScope: "OFFICE", advisorPhone: "+551140001778", advisorEmail: "assessor.fluxo@camara.example.test", whatsapp: "+5511999991777", whatsappScope: "OFFICE", instagram: "@fluxocompleto", instagramScope: "POLITICIAN" },
     });
     const ingested = await database.$transaction((transaction) => service.ingestCandidate(transaction, principal, payload));
     const planner = createProspectingPlannerService({ database, now: () => clock });
@@ -208,6 +215,13 @@ describe("staging governado da Prospecção Ativa", () => {
     expect(releasedCandidate).toMatchObject({ status: "RELEASED" });
     expect(releasedCandidate.leadId).not.toBeNull();
     const leadId = releasedCandidate.leadId!;
+    const releasedLead = await database.lead.findUniqueOrThrow({ where: { id: leadId }, select: { contactId: true } });
+    const releasedContactPoints = await database.contactPoint.findMany({ where: { workspaceId: principal.workspaceId, contactId: releasedLead.contactId!, deletedAt: null }, select: { type: true, label: true, normalizedValue: true } });
+    expect(releasedContactPoints).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "PHONE", label: "Assessor" }),
+      expect.objectContaining({ type: "EMAIL", label: "Assessor" }),
+      expect.objectContaining({ type: "PHONE", label: "WhatsApp · Gabinete" }),
+    ]));
     const cadence = await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { workspaceId_leadId: { workspaceId: principal.workspaceId, leadId } } });
     expect(cadence.status).toBe("PENDING_D1");
     expect(await database.prospectingCadenceStep.count({ where: { cadenceInstanceId: cadence.id } })).toBe(17);
