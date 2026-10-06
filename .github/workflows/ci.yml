@@ -66,6 +66,22 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Dimensionar locks do PostgreSQL efêmero
+        env:
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$POSTGRES_CONTAINER_ID" \
+            psql -U politizai -d politizai_crm -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET max_locks_per_transaction = 1024"
+          docker restart "$POSTGRES_CONTAINER_ID"
+          for attempt in {1..30}; do
+            if docker exec "$POSTGRES_CONTAINER_ID" pg_isready -U politizai -d politizai_crm; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
       - name: Instalação determinística
         id: install
         run: pnpm install --frozen-lockfile
