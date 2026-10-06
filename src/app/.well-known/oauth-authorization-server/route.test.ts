@@ -14,15 +14,16 @@ vi.mock("@/modules/prospecting/domain/politizai-mcp-config", () => ({
 }));
 
 describe("GET /.well-known/oauth-authorization-server", () => {
-  it("anuncia identificação do emissor porque toda resposta de autorização inclui iss", async () => {
+  it("anuncia o callback específico e os métodos de autenticação aceitos", async () => {
     const { GET } = await import("@/app/.well-known/oauth-authorization-server/route");
     const response = GET();
+    const payload = await response.json();
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    expect(payload).toMatchObject({
       issuer: "https://crm.example",
-      authorization_response_iss_parameter_supported: true,
       token_endpoint_auth_methods_supported: ["private_key_jwt", "none"],
     });
+    expect(payload).not.toHaveProperty("authorization_response_iss_parameter_supported");
   });
 });

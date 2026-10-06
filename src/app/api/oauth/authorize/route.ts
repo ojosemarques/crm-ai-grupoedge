@@ -7,7 +7,6 @@ import { AuthenticationRequiredError, SessionExpiredError } from "@/modules/auth
 import { requireApiAuthentication } from "@/modules/auth/http/authentication-guards";
 import { assertSameOrigin } from "@/modules/auth/http/request-security";
 import { getPolitizaiMcpOAuthService } from "@/modules/prospecting/application/politizai-mcp-oauth-service";
-import { getPolitizaiMcpPublicConfig } from "@/modules/prospecting/domain/politizai-mcp-config";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 
@@ -64,7 +63,6 @@ export async function POST(request: NextRequest) {
     const decision = form.get("decision");
     const redirect = new URL(authorization.redirect_uri);
     redirect.searchParams.set("state", authorization.state);
-    redirect.searchParams.set("iss", getPolitizaiMcpPublicConfig().issuer.href.replace(/\/$/, ""));
     if (decision !== "allow") {
       redirect.searchParams.set("error", OAuthErrorCode.AccessDenied);
       return NextResponse.redirect(redirect, 303);

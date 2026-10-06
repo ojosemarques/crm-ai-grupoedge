@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const parseAuthorizationRequest = vi.fn();
+const createAuthorizationCode = vi.fn();
 const assertAuthorized = vi.fn();
 
 vi.mock("@/modules/auth/http/authentication-guards", () => ({
@@ -21,11 +22,7 @@ vi.mock("@/modules/users/permissions/authorization-service", () => ({
 }));
 
 vi.mock("@/modules/prospecting/application/politizai-mcp-oauth-service", () => ({
-  getPolitizaiMcpOAuthService: () => ({ parseAuthorizationRequest }),
-}));
-
-vi.mock("@/modules/prospecting/domain/politizai-mcp-config", () => ({
-  getPolitizaiMcpPublicConfig: () => ({ issuer: new URL("https://crm.example") }),
+  getPolitizaiMcpOAuthService: () => ({ createAuthorizationCode, parseAuthorizationRequest }),
 }));
 
 const authorization = {
@@ -43,6 +40,7 @@ describe("GET /api/oauth/authorize", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     parseAuthorizationRequest.mockReturnValue(authorization);
+    createAuthorizationCode.mockResolvedValue("authorization-code");
     assertAuthorized.mockResolvedValue(undefined);
   });
 
@@ -56,5 +54,22 @@ describe("GET /api/oauth/authorize", () => {
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(await response.text()).toContain("Conectar o Dot à Politizai");
     expect(parseAuthorizationRequest).toHaveBeenCalledWith(expect.not.objectContaining({ ui_locales: "pt-BR" }));
+  });
+
+  it("retorna código e state ao callback específico sem anunciar issuer estável", async () => {
+    const { POST } = await import("@/app/api/oauth/authorize/route");
+    const response = await POST(new NextRequest(
+      "https://crm.example/api/oauth/authorize?response_type=code&client_id=https%3A%2F%2Fchatgpt.com%2Foauth%2F7q5u9EYDB8WK%2Fclient.json&redirect_uri=https%3A%2F%2Fchatgpt.com%2Fconnector%2Foauth%2F7q5u9EYDB8WK&scope=prospecting%3Aread+prospecting%3Aresearch+prospecting%3Areview&code_challenge=ccccccccccccccccccccccccccccccccccccccccccc&code_challenge_method=S256&resource=https%3A%2F%2Fcrm.example%2Fapi%2Fmcp%2Fpolitizai&state=oauth-state",
+      {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://crm.example" },
+        body: new URLSearchParams({ decision: "allow" }),
+      },
+    ));
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(
+      "https://chatgpt.com/connector/oauth/7q5u9EYDB8WK?state=oauth-state&code=authorization-code",
+    );
   });
 });
