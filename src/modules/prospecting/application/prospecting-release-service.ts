@@ -11,10 +11,8 @@ import {
   PROSPECTING_CADENCE_VERSION,
   scheduleProspectingCadence,
 } from "@/modules/prospecting/domain/prospecting-cadence";
-import { PROSPECTING_TIME_ZONE } from "@/modules/prospecting/domain/prospecting-contracts";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
-import { workspaceDateAt } from "@/shared/core/time/workspace-time";
 
 type Options = Readonly<{ database: PrismaClient; now: () => Date }>;
 
@@ -53,19 +51,17 @@ export function createProspectingReleaseService(options: Options) {
 
   async function processNext(workerId: string) {
     const now = options.now();
-    const localToday = workspaceDateAt(now, PROSPECTING_TIME_ZONE);
-    const due = await options.database.prospectRelease.findFirst({
-      where: {
-        status: { in: ["PLANNED", "CLAIMED"] },
-        plannedDate: { lte: new Date(`${localToday}T00:00:00.000Z`) },
-        AND: [
-          { OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: now } }] },
-          { OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
-        ],
-      },
-      orderBy: [{ plannedDate: "asc" }, { id: "asc" }],
-      select: { id: true, attemptCount: true },
-    });
+    const [due] = await options.database.$queryRaw<Array<{ id: string; attemptCount: number }>>(Prisma.sql`
+      SELECT release."id", release."attemptCount"
+      FROM "prospect_releases" AS release
+      INNER JOIN "workspaces" AS workspace ON workspace."id" = release."workspaceId"
+      WHERE release."status" IN ('PLANNED'::"ProspectReleaseStatus", 'CLAIMED'::"ProspectReleaseStatus")
+        AND release."plannedDate" <= (${now}::timestamptz AT TIME ZONE workspace."timeZone")::date
+        AND (release."leaseExpiresAt" IS NULL OR release."leaseExpiresAt" < ${now})
+        AND (release."nextAttemptAt" IS NULL OR release."nextAttemptAt" <= ${now})
+      ORDER BY release."plannedDate" ASC, release."id" ASC
+      LIMIT 1
+    `);
     if (!due) return { processed: false, outcome: "EMPTY" as const };
     try {
       const result = await options.database.$transaction(async (transaction) => {

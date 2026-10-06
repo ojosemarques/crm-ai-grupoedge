@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { chooseProspectingSeller } from "@/modules/prospecting/application/prospecting-planner-service";
+import {
+  chooseProspectingSeller,
+  createProspectingPlannerService,
+} from "@/modules/prospecting/application/prospecting-planner-service";
 
 const sellers = [
   { memberId: "carlos", dailyCapacity: 75, reservePercent: 0, rotationPosition: 0 },
@@ -10,6 +13,24 @@ const sellers = [
 const dates = ["2026-10-05", "2026-10-12", "2026-10-23"];
 
 describe("planejador de capacidade da Prospecção Ativa", () => {
+  it("não descobre vendedores por nome durante a fundação", async () => {
+    const upsert = vi.fn().mockResolvedValue({ id: "settings", dailyCapacity: 75, reservePercent: 10 });
+    const findMany = vi.fn();
+    const database = {
+      prospectingSettings: { upsert },
+      prospectingSellerConfig: { findMany },
+    };
+    const service = createProspectingPlannerService({
+      database: database as never,
+      now: () => new Date("2026-10-05T12:00:00.000Z"),
+    });
+
+    await expect(service.ensureFoundation(database as never, "workspace-id", "actor-id"))
+      .resolves.toMatchObject({ id: "settings" });
+    expect(upsert).toHaveBeenCalledOnce();
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
   it("escolhe menor carga e usa a rotação como desempate determinístico", () => {
     const loads = new Map<string, number>([
       ["carlos:2026-10-05", 10],

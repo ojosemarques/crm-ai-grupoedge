@@ -50,6 +50,16 @@ const sourceTypeSchema = z.enum([
   "INSTITUTIONAL_PROFILE",
 ]);
 
+const populationEditionSchema = z
+  .string()
+  .trim()
+  .min(4)
+  .max(120)
+  .refine(
+    (value) => /^IBGE(?:[_ -]ESTIMATIVA)?[_ -]2026$/i.test(value),
+    "Use a edição populacional oficial do IBGE de 2026.",
+  );
+
 function publicHttpsUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -68,6 +78,27 @@ function publicHttpsUrl(value: string): boolean {
   }
 }
 
+function isHostOrSubdomain(host: string, domain: string): boolean {
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
+function officialSourceDomain(type: z.infer<typeof sourceTypeSchema>, value: string): boolean {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    if (type === "IBGE") return isHostOrSubdomain(host, "ibge.gov.br");
+    if (type === "TSE") return isHostOrSubdomain(host, "tse.jus.br");
+    if (type === "CITY_HALL" || type === "OFFICIAL_GAZETTE") {
+      return host === "gov.br" || host.endsWith(".gov.br");
+    }
+    if (type === "CITY_COUNCIL") {
+      return host === "gov.br" || host.endsWith(".gov.br") || host === "leg.br" || host.endsWith(".leg.br");
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const prospectCandidateSourceSchema = z.object({
   field: z.enum(["role", "population", "phone", "email", "instagram", "mandate"]),
   type: sourceTypeSchema,
@@ -77,7 +108,23 @@ export const prospectCandidateSourceSchema = z.object({
   originalValue: z.string().trim().max(2_000).optional(),
   normalizedValue: z.string().trim().max(2_000).optional(),
   validationMethod: z.string().trim().min(3).max(160).default("OFFICIAL_SOURCE_CHECK"),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (!officialSourceDomain(value.type, value.url)) {
+    context.addIssue({ code: "custom", path: ["url"], message: "O domínio não corresponde ao tipo de fonte oficial informado." });
+  }
+  if (value.type === "IBGE" && value.field !== "population") {
+    context.addIssue({ code: "custom", path: ["field"], message: "A fonte IBGE só pode comprovar a população." });
+  }
+  if (value.type === "TSE") {
+    if (value.field !== "role") {
+      context.addIssue({ code: "custom", path: ["field"], message: "A fonte TSE 2024 só pode comprovar a identidade eleitoral." });
+    }
+    const sourceVersion = `${value.url} ${value.validationMethod}`;
+    if (!sourceVersion.includes("2024")) {
+      context.addIssue({ code: "custom", path: ["validationMethod"], message: "A fonte eleitoral deve identificar os resultados oficiais do TSE de 2024." });
+    }
+  }
+});
 
 export const prospectCandidateInputSchema = z.object({
   schemaVersion: z.literal(PROSPECTING_CONTRACT_VERSION),
@@ -96,7 +143,7 @@ export const prospectCandidateInputSchema = z.object({
     name: z.string().trim().min(2).max(160),
     stateCode: brazilianStateSchema,
     population: z.number().int().min(30_000).max(20_000_000),
-    populationEdition: z.string().trim().min(4).max(120).refine((value) => value.includes("2026"), "Use a edição populacional oficial do IBGE de 2026."),
+    populationEdition: populationEditionSchema,
   }).strict(),
   contact: z.object({
     phone: z.string().trim().min(8).max(80),
@@ -147,7 +194,7 @@ export const researchBatchInputSchema = z.object({
   idempotencyKey: idempotencyKeySchema,
   horizonStart: isoDateSchema,
   horizonEnd: isoDateSchema,
-  sourcePopulationEdition: z.string().trim().min(4).max(120).refine((value) => value.includes("2026"), "Use a edição populacional oficial do IBGE de 2026."),
+  sourcePopulationEdition: populationEditionSchema,
   sourcePopulationHash: z.string().trim().regex(/^[a-f0-9]{64}$/),
   agentVersion: z.string().trim().min(1).max(120),
   promptVersion: z.string().trim().min(1).max(120),

@@ -4,6 +4,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { getProspectingPlannerService } from "@/modules/prospecting/application/prospecting-planner-service";
 import { loadOpenDotClients } from "@/modules/prospecting/domain/open-dot-policy";
+import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -104,7 +105,10 @@ export function createProspectingAdministrationService(options: Readonly<{ datab
 
       if (input.action === "SAVE_SELLERS") {
         if (new Set(input.sellers.map((seller) => seller.memberId)).size !== input.sellers.length || new Set(input.sellers.map((seller) => seller.rotationPosition)).size !== input.sellers.length) fail("Membro e posição de rotação precisam ser únicos.", "PROSPECTING_SELLERS_DUPLICATED");
-        const eligible = await transaction.workspaceMember.count({ where: { workspaceId: context.workspaceId, id: { in: input.sellers.map((seller) => seller.memberId) }, status: "ACTIVE", deletedAt: null, user: { status: "ACTIVE", deletedAt: null } } });
+        const eligible = await transaction.workspaceMember.count({ where: {
+          ...commercialMemberWhere({ workspaceId: context.workspaceId, functions: ["SDR", "CLOSER"] }),
+          id: { in: input.sellers.map((seller) => seller.memberId) },
+        } });
         if (eligible !== input.sellers.length) fail("Há vendedor inexistente ou inativo na seleção.", "PROSPECTING_SELLER_INELIGIBLE");
         const senderProfileIds = input.sellers.flatMap((seller) => seller.senderProfileId ? [seller.senderProfileId] : []);
         const senderCount = await transaction.emailConnectionProfile.count({ where: { workspaceId: context.workspaceId, id: { in: senderProfileIds } } });

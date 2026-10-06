@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "politizai-open-dot/v1",
+  "compatibleUpstream": {
+    "repository": "https://github.com/composio-community/open-dot",
+    "commit": "f838e17cf5c3a88ade5ceea54680a8145d048c1d"
+  },
+  "crmBaseUrl": "https://crm-ai-grupoedge.vercel.app",
+  "client": "client.mjs",
+  "dots": [
+    {
+      "key": "research",
+      "name": "Politizai Pesquisa Política",
+      "actorKey": "open-dot-research",
+      "purpose": "Pesquisar prefeitos e vereadores em exercício e registrar somente candidatos completos no staging do CRM.",
+      "instructionsFile": "dots/research.md",
+      "scopes": ["RESEARCH_WRITE", "RESEARCH_READ"],
+      "commands": ["create-batch", "submit-candidate", "get-batch", "complete-batch"]
+    },
+    {
+      "key": "auditor",
+      "name": "Politizai Auditor de Pesquisa",
+      "actorKey": "open-dot-auditor",
+      "purpose": "Auditar evidências e registrar decisões tipadas sem criar Lead nem contatar pessoas.",
+      "instructionsFile": "dots/auditor.md",
+      "scopes": ["RESEARCH_REVIEW", "RESEARCH_READ"],
+      "commands": ["get-batch", "review-candidate"]
+    },
+    {
+      "key": "email",
+      "name": "Politizai E-mail de Cadência",
+      "actorKey": "open-dot-email",
+      "purpose": "Executar somente ordens de e-mail já renderizadas e autorizadas pelo CRM.",
+      "instructionsFile": "dots/email.md",
+      "scopes": ["EMAIL_CLAIM", "EMAIL_RECEIPT", "EMAIL_EVENT_WRITE"],
+      "commands": ["claim-email", "revalidate-email", "receipt-email", "ingest-email-event"]
+    }
+  ],
+  "commands": {
+    "create-batch": { "method": "POST", "path": "/api/integrations/open-dot/v1/research-batches", "scope": "RESEARCH_WRITE", "bodyRequired": true, "idRequired": false },
+    "submit-candidate": { "method": "POST", "path": "/api/integrations/open-dot/v1/candidates", "scope": "RESEARCH_WRITE", "bodyRequired": true, "idRequired": false },
+    "get-batch": { "method": "GET", "path": "/api/integrations/open-dot/v1/research-batches/{id}", "scope": "RESEARCH_READ", "bodyRequired": false, "idRequired": true },
+    "complete-batch": { "method": "PATCH", "path": "/api/integrations/open-dot/v1/research-batches/{id}", "scope": "RESEARCH_WRITE", "bodyRequired": true, "idRequired": true },
+    "review-candidate": { "method": "POST", "path": "/api/integrations/open-dot/v1/candidates/{id}/review", "scope": "RESEARCH_REVIEW", "bodyRequired": true, "idRequired": true },
+    "claim-email": { "method": "POST", "path": "/api/integrations/open-dot/v1/email-jobs/claim", "scope": "EMAIL_CLAIM", "bodyRequired": true, "idRequired": false },
+    "revalidate-email": { "method": "POST", "path": "/api/integrations/open-dot/v1/email-jobs/{id}/revalidate", "scope": "EMAIL_CLAIM", "bodyRequired": false, "idRequired": true },
+    "receipt-email": { "method": "POST", "path": "/api/integrations/open-dot/v1/email-jobs/{id}/receipt", "scope": "EMAIL_RECEIPT", "bodyRequired": true, "idRequired": true },
+    "ingest-email-event": { "method": "POST", "path": "/api/integrations/open-dot/v1/email-events", "scope": "EMAIL_EVENT_WRITE", "bodyRequired": true, "idRequired": false }
+  }
+}

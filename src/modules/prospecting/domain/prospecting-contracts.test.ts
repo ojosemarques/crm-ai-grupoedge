@@ -51,6 +51,37 @@ describe("prospectCandidateInputSchema", () => {
     missingTseEvidence.sources = missingTseEvidence.sources.filter((source) => source.type !== "TSE");
     expect(prospectCandidateInputSchema.safeParse(missingTseEvidence).success).toBe(false);
   });
+
+  it("rejeita edição ambígua e fonte que declara órgão oficial em domínio incompatível", () => {
+    const wrongEdition = validCandidate();
+    wrongEdition.municipality.populationEdition = "estimativa privada 2026";
+    expect(prospectCandidateInputSchema.safeParse(wrongEdition).success).toBe(false);
+
+    const forgedIbge = validCandidate();
+    forgedIbge.sources = forgedIbge.sources.map((source) => source.type === "IBGE"
+      ? { ...source, url: "https://dados.example.com/ibge/2026" }
+      : source);
+    expect(prospectCandidateInputSchema.safeParse(forgedIbge).success).toBe(false);
+
+    const forgedTse = validCandidate();
+    forgedTse.sources = forgedTse.sources.map((source) => source.type === "TSE"
+      ? { ...source, url: "https://resultados.example.com/2024/3550308/123" }
+      : source);
+    expect(prospectCandidateInputSchema.safeParse(forgedTse).success).toBe(false);
+
+    const malformedUrl = validCandidate();
+    malformedUrl.sources[0]!.url = "não-é-url";
+    expect(() => prospectCandidateInputSchema.safeParse(malformedUrl)).not.toThrow();
+    expect(prospectCandidateInputSchema.safeParse(malformedUrl).success).toBe(false);
+  });
+
+  it("exige que a evidência do TSE identifique os resultados de 2024", () => {
+    const candidate = validCandidate();
+    candidate.sources = candidate.sources.map((source) => source.type === "TSE"
+      ? { ...source, url: "https://resultados.tse.jus.br/oficial/2022/3550308/123", validationMethod: "TSE_RESULT" }
+      : source);
+    expect(prospectCandidateInputSchema.safeParse(candidate).success).toBe(false);
+  });
 });
 
 describe("researchBatchInputSchema", () => {
@@ -68,5 +99,6 @@ describe("researchBatchInputSchema", () => {
     expect(researchBatchInputSchema.safeParse(valid).success).toBe(true);
     expect(researchBatchInputSchema.safeParse({ ...valid, sourcePopulationHash: undefined }).success).toBe(false);
     expect(researchBatchInputSchema.safeParse({ ...valid, horizonEnd: "2026-11-04" }).success).toBe(false);
+    expect(researchBatchInputSchema.safeParse({ ...valid, sourcePopulationEdition: "fonte-2026" }).success).toBe(false);
   });
 });

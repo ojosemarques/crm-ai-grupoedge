@@ -39,45 +39,11 @@ export function chooseProspectingSeller(input: Readonly<{
 
 export function createProspectingPlannerService(options: Readonly<{ database: PrismaClient; now: () => Date }>) {
   async function ensureFoundation(database: Database, workspaceId: string, actorId: string) {
-    const settings = await database.prospectingSettings.upsert({
+    return database.prospectingSettings.upsert({
       where: { workspaceId },
       create: { workspaceId, createdByActorId: actorId, updatedByActorId: actorId },
       update: {},
     });
-    const targetNames = ["Carlos", "Jhon", "Ede"] as const;
-    const configuredMemberIds = new Set((await database.prospectingSellerConfig.findMany({
-      where: { workspaceId },
-      select: { memberId: true },
-    })).map((item) => item.memberId));
-    let nextRotationPosition = ((await database.prospectingSellerConfig.aggregate({
-      where: { workspaceId },
-      _max: { rotationPosition: true },
-    }))._max.rotationPosition ?? -1) + 1;
-    for (const displayName of targetNames) {
-      const member = await database.workspaceMember.findFirst({
-        where: {
-          ...commercialMemberWhere({ workspaceId, functions: ["SDR", "CLOSER"] }),
-          user: { displayName: { equals: displayName, mode: "insensitive" }, status: "ACTIVE", deletedAt: null },
-        },
-        select: { id: true },
-      });
-      if (member && !configuredMemberIds.has(member.id)) {
-        await database.prospectingSellerConfig.create({
-          data: {
-            workspaceId,
-            memberId: member.id,
-            dailyCapacity: settings.dailyCapacity,
-            reservePercent: settings.reservePercent,
-            rotationPosition: nextRotationPosition,
-            createdByActorId: actorId,
-            updatedByActorId: actorId,
-          },
-        });
-        configuredMemberIds.add(member.id);
-        nextRotationPosition += 1;
-      }
-    }
-    return settings;
   }
 
   async function plan(database: Database, input: Readonly<{
