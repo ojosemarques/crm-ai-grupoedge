@@ -18,6 +18,12 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: [...createStaticSecurityHeaders({ https: useHsts })],
       },
+      {
+        source: "/api/oauth/authorize",
+        headers: [
+          { key: "Cross-Origin-Opener-Policy", value: "unsafe-none" },
+        ],
+      },
     ];
   },
 };
