@@ -13,6 +13,7 @@ export function GET() {
   const config = getPolitizaiMcpPublicConfig();
   return NextResponse.json({
     issuer: config.issuer.href.replace(/\/$/, ""),
+    authorization_response_iss_parameter_supported: true,
     authorization_endpoint: config.authorizationEndpoint.href,
     token_endpoint: config.tokenEndpoint.href,
     revocation_endpoint: config.revocationEndpoint.href,
