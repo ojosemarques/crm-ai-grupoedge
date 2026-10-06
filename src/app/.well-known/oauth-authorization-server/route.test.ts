@@ -22,6 +22,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
     await expect(response.json()).resolves.toMatchObject({
       issuer: "https://crm.example",
       authorization_response_iss_parameter_supported: true,
+      token_endpoint_auth_methods_supported: ["private_key_jwt", "none"],
     });
   });
 });

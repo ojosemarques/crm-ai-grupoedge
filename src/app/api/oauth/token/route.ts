@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import { oauthErrorResponse, readForm, uniqueParam } from "@/app/api/oauth/route-helpers";
+import { getPolitizaiMcpClientAuthenticator } from "@/modules/prospecting/application/politizai-mcp-client-authentication";
 import { getPolitizaiMcpOAuthService } from "@/modules/prospecting/application/politizai-mcp-oauth-service";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +15,13 @@ export async function POST(request: NextRequest) {
     const grantType = uniqueParam(form, "grant_type")!;
     const clientId = uniqueParam(form, "client_id")!;
     const resource = uniqueParam(form, "resource")!;
+    const clientAssertionType = uniqueParam(form, "client_assertion_type", false);
+    const clientAssertion = uniqueParam(form, "client_assertion", false);
+    await getPolitizaiMcpClientAuthenticator().authenticate({
+      clientId,
+      ...(clientAssertionType === undefined ? {} : { clientAssertionType }),
+      ...(clientAssertion === undefined ? {} : { clientAssertion }),
+    });
     const service = getPolitizaiMcpOAuthService();
     const token = grantType === "authorization_code"
       ? await service.exchangeAuthorizationCode({

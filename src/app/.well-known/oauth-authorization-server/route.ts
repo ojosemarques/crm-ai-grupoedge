@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { POLITIZAI_MCP_TOKEN_AUTH_METHODS } from "@/modules/prospecting/application/politizai-mcp-client-authentication";
 import {
   POLITIZAI_MCP_CLIENT_REGISTRATIONS,
   POLITIZAI_MCP_SCOPES,
@@ -20,7 +21,7 @@ export function GET() {
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none"],
+    token_endpoint_auth_methods_supported: POLITIZAI_MCP_TOKEN_AUTH_METHODS,
     revocation_endpoint_auth_methods_supported: ["none"],
     scopes_supported: POLITIZAI_MCP_SCOPES,
     client_id_metadata_document_supported: true,
