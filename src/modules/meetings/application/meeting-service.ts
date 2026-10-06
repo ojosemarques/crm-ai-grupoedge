@@ -26,6 +26,7 @@ import type {
   MeetingListItem,
 } from "@/modules/meetings/domain/meeting-contracts";
 import { recordOpportunityMeetingHeldInTransaction } from "@/modules/opportunities/application/opportunity-service";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { stopColdCadenceInTransaction } from "@/modules/prospecting/application/prospecting-cadence-service";
 import {
   transitionLeadStageInTransaction,
@@ -681,7 +682,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           updatedAt: occurredAt,
         },
       });
-      await transaction.meetingHistory.create({
+      const meetingHistory = await transaction.meetingHistory.create({
         data: {
           workspaceId: context.workspaceId,
           meetingId: meeting.id,
@@ -724,6 +725,37 @@ export function createMeetingService(options: MeetingServiceOptions) {
           createdAt: occurredAt,
           updatedAt: occurredAt,
         },
+      });
+      const meetingFactDimensions = {
+        workspaceId: context.workspaceId,
+        occurredAt,
+        leadId: currentLead.id,
+        opportunityId,
+        meetingId: meeting.id,
+        activityId: activity.id,
+        creditedMemberId: context.memberId,
+        performedByMemberId: context.memberId,
+        bookedByMemberId: context.memberId,
+        meetingOwnerMemberIdAtEvent: closer.id,
+        leadOwnerMemberIdAtEvent: currentLead.ownerMemberId,
+        executionMode: "MANUAL" as const,
+      };
+      await recordCommercialMetricFactInTransaction(transaction, {
+        ...meetingFactDimensions,
+        eventKey: `meeting-history:${meetingHistory.id}:scheduled:v1`,
+        eventType: "MEETING_SCHEDULED",
+        sourceEntityType: "MeetingHistory",
+        sourceEntityId: meetingHistory.id,
+      });
+      await recordCommercialMetricFactInTransaction(transaction, {
+        ...meetingFactDimensions,
+        eventKey: `task:${task.id}:created:v1`,
+        eventType: "TASK_CREATED",
+        sourceEntityType: "Task",
+        sourceEntityId: task.id,
+        taskId: task.id,
+        creditedMemberId: closer.id,
+        taskKind: "MEETING",
       });
       await transaction.auditLog.create({
         data: {
@@ -879,7 +911,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         },
       });
 
-      await transaction.meetingHistory.create({
+      const meetingHistory = await transaction.meetingHistory.create({
         data: {
           workspaceId: context.workspaceId,
           meetingId: meeting.id,
@@ -1006,6 +1038,77 @@ export function createMeetingService(options: MeetingServiceOptions) {
           updatedAt: now,
         },
       });
+      const meetingEventType = ({
+        CONFIRM: "MEETING_CONFIRMED",
+        RESCHEDULE: "MEETING_RESCHEDULED",
+        CANCEL: "MEETING_CANCELLED",
+        ATTENDED: "MEETING_COMPLETED",
+        NO_SHOW: "MEETING_NO_SHOW",
+      } as const)[parsed.data.action];
+      await recordCommercialMetricFactInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        eventKey: `meeting-history:${meetingHistory.id}:${meetingEventType.toLowerCase()}:v1`,
+        eventType: meetingEventType,
+        occurredAt: now,
+        sourceEntityType: "MeetingHistory",
+        sourceEntityId: meetingHistory.id,
+        leadId: meeting.leadId,
+        opportunityId: meeting.opportunityId,
+        meetingId: meeting.id,
+        activityId: activity.id,
+        creditedMemberId: meeting.ownerMemberId,
+        performedByMemberId: context.memberId,
+        leadOwnerMemberIdAtEvent: meeting.lead.ownerMemberId,
+        meetingOwnerMemberIdAtEvent: meeting.ownerMemberId,
+        result: activityResult,
+        executionMode: "MANUAL",
+      });
+      if (parsed.data.action === "ATTENDED" || parsed.data.action === "CANCEL" || parsed.data.action === "NO_SHOW") {
+        const meetingTask = await transaction.task.findFirst({
+          where: { workspaceId: context.workspaceId, meetingId: meeting.id },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          select: { id: true, assigneeMemberId: true, kind: true },
+        });
+        if (meetingTask) {
+          await recordCommercialMetricFactInTransaction(transaction, {
+            workspaceId: context.workspaceId,
+            eventKey: `task:${meetingTask.id}:${parsed.data.action === "ATTENDED" ? "completed" : "cancelled"}:meeting:${meetingHistory.id}:v1`,
+            eventType: parsed.data.action === "ATTENDED" ? "TASK_COMPLETED" : "TASK_CANCELLED",
+            occurredAt: now,
+            sourceEntityType: "Task",
+            sourceEntityId: meetingTask.id,
+            leadId: meeting.leadId,
+            opportunityId: meeting.opportunityId,
+            meetingId: meeting.id,
+            taskId: meetingTask.id,
+            creditedMemberId: meetingTask.assigneeMemberId,
+            performedByMemberId: context.memberId,
+            leadOwnerMemberIdAtEvent: meeting.lead.ownerMemberId,
+            meetingOwnerMemberIdAtEvent: meeting.ownerMemberId,
+            taskKind: meetingTask.kind,
+            result: activityResult,
+            executionMode: "MANUAL",
+          });
+        }
+      }
+      if (recoveryTaskId) {
+        await recordCommercialMetricFactInTransaction(transaction, {
+          workspaceId: context.workspaceId,
+          eventKey: `task:${recoveryTaskId}:created:v1`,
+          eventType: "TASK_CREATED",
+          occurredAt: now,
+          sourceEntityType: "Task",
+          sourceEntityId: recoveryTaskId,
+          leadId: meeting.leadId,
+          opportunityId: meeting.opportunityId,
+          taskId: recoveryTaskId,
+          creditedMemberId: meeting.opportunityId ? meeting.ownerMemberId : meeting.lead.ownerMemberId ?? meeting.ownerMemberId,
+          performedByMemberId: context.memberId,
+          leadOwnerMemberIdAtEvent: meeting.lead.ownerMemberId,
+          taskKind: "FOLLOW_UP",
+          executionMode: "MANUAL",
+        });
+      }
       await transaction.auditLog.create({
         data: {
           workspaceId: context.workspaceId,

@@ -6,6 +6,7 @@ import { normalizeAccountName } from "@/modules/accounts/application/account-ser
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { reassignLeadInTransaction } from "@/modules/leads/application/lead-assignment-operation";
 import { getAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import {
   PROSPECTING_CADENCE_VERSION,
@@ -178,6 +179,13 @@ export function createProspectingReleaseService(options: Options) {
           } else if (step.executor === "OPEN_DOT") {
             const job = await transaction.prospectingEmailJob.create({ data: { workspaceId: release.workspaceId, cadenceInstanceId: cadence.id, leadId: lead.id, stepKey: step.stepKey, recipientEmail: candidate.normalizedEmail, recipientEmailHash: createHash("sha256").update(candidate.normalizedEmail).digest("hex"), senderProfileId: seller?.senderProfileId ?? null, status: "BLOCKED", scheduledAt: step.scheduledAt, expiresAt: new Date(step.scheduledAt.getTime() + 24 * 3_600_000), idempotencyKey: `${lead.id}:${cadence.id}:${step.stepKey}:v1`, createdByActorId: actor.id } });
             emailJobId = job.id;
+            await recordCommercialMetricFactInTransaction(transaction, {
+              workspaceId: release.workspaceId, eventKey: `prospecting-email-job:${job.id}:scheduled:v1`, eventType: "EMAIL_SCHEDULED",
+              occurredAt: job.createdAt, sourceEntityType: "ProspectingEmailJob", sourceEntityId: job.id, leadId: lead.id,
+              creditedMemberId: member.id, leadOwnerMemberIdAtEvent: member.id, cadenceInstanceId: cadence.id,
+              cadenceStepKey: step.stepKey, cadenceDay: step.dayNumber, channel: "EMAIL", direction: "OUTBOUND",
+              executionMode: "AUTOMATION", result: job.status,
+            });
           }
           await transaction.prospectingCadenceStep.create({ data: { workspaceId: release.workspaceId, cadenceInstanceId: cadence.id, leadId: lead.id, stepKey: step.stepKey, dayOffset: step.dayNumber - 1, executor: step.executor, action: step.action, status: step.executor === "OPEN_DOT" ? "BLOCKED" : step.executor === "CRM_WORKER" ? "SCHEDULED" : "OPEN", scheduledAt: step.scheduledAt, taskId, emailJobId, createdByActorId: actor.id } });
         }

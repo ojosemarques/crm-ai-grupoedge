@@ -273,11 +273,10 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     input: unknown,
   ): Promise<DashboardScreen> {
     const query = await parseQuery(context, input);
-    const overview = await metrics.getOverview(context, {
-      from: query.from,
-      to: query.to,
-      filters: query.filters,
-    });
+    const [overview, integrated] = await Promise.all([
+      metrics.getOverview(context, { from: query.from, to: query.to, filters: query.filters }),
+      metrics.getIntegratedOverview(context, { from: query.from, to: query.to, filters: query.filters }),
+    ]);
     const comparisonPeriod = resolveDashboardComparisonPeriod(
       query,
       overview.period.timeZone,
@@ -1169,7 +1168,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     });
 
     return Object.freeze({
-      query, comparisonPeriod, overview, kpis: Object.freeze(kpis),
+      query, comparisonPeriod, overview, integrated, kpis: Object.freeze(kpis),
       comparisons: Object.freeze(comparisons), timeSeries, previousTimeSeries,
       funnel: Object.freeze(funnel), fullFunnel, attention: Object.freeze(attention),
       stageConversion: Object.freeze(stageConversion), stageTime: Object.freeze(stageTime),

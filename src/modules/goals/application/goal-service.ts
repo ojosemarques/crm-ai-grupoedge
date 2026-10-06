@@ -26,12 +26,14 @@ async function withSerializableRetry<T>(database: PrismaClient, operation: (tx: 
 }
 
 function drilldown(metricKey: GoalMetricKey, memberIds: readonly string[], from: Date, to: Date) {
-  const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
-  if (memberIds.length === 1) params.set("ownerMemberId", memberIds[0]!);
-  if (metricKey === "MEETINGS_HELD") return `/agenda?${params}`;
-  if (["OPPORTUNITIES_WON", "REVENUE_WON_CENTS", "NEW_MRR_CENTS"].includes(metricKey)) return `/oportunidades?${params}`;
-  if (metricKey === "EXPANSION_MRR_CENTS" || metricKey === "RENEWALS_COMPLETED") return `/farmer?${params}`;
-  return `/leads?${params}`;
+  const integratedMetric = {
+    LEADS_ASSIGNED: "contacts.leads_created", HUMAN_ATTEMPTS: "outreach.calls_attempted", MEETINGS_HELD: "meetings.completed",
+    OPPORTUNITIES_WON: "sales.won", REVENUE_WON_CENTS: "sales.won_value", NEW_MRR_CENTS: "revenue.mrr_movements",
+    EXPANSION_MRR_CENTS: "revenue.mrr_movements", RENEWALS_COMPLETED: "revenue.mrr_movements", LEAD_TO_SALE_BPS: "sales.won",
+  } satisfies Record<GoalMetricKey, string>;
+  const params = new URLSearchParams({ metricId: integratedMetric[metricKey], from: from.toISOString(), to: to.toISOString() });
+  for (const memberId of memberIds) params.append("closerMemberIds", memberId);
+  return `/api/metrics/integrated/drilldown?${params.toString()}`;
 }
 
 export function createGoalService(options: Options) {
@@ -159,39 +161,33 @@ export function createGoalService(options: Options) {
     const memberIds = await memberIdsForQuota(workspaceId, quota);
     if (to <= periodStart) return { value: 0n, state: "ZERO" as GoalProgressState, evidenceCount: 0, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
     if (memberIds.length === 0) return { value: null, state: "PARTIAL" as GoalProgressState, evidenceCount: 0, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
-    const interval = { gte: periodStart, lt: to };
-    if (quota.metricKey === "LEADS_ASSIGNED") {
-      const rows = await options.database.lead.findMany({ where: { workspaceId, ownerMemberId: { in: memberIds }, createdAt: interval, deletedAt: null }, select: { id: true } });
-      return { value: BigInt(rows.length), state: rows.length ? "VALUE" as const : "ZERO" as const, evidenceCount: rows.length, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
+    const typeMap = {
+      LEADS_ASSIGNED: ["LEAD_CREATED"], HUMAN_ATTEMPTS: ["CALL_ATTEMPTED", "EMAIL_SENT", "INSTAGRAM_MESSAGE_SENT"], MEETINGS_HELD: ["MEETING_COMPLETED"],
+      OPPORTUNITIES_WON: ["SALE_WON"], REVENUE_WON_CENTS: ["SALE_WON"], NEW_MRR_CENTS: ["REVENUE_MOVEMENT_POSTED"],
+      EXPANSION_MRR_CENTS: ["REVENUE_MOVEMENT_POSTED"], RENEWALS_COMPLETED: ["REVENUE_MOVEMENT_POSTED"], LEAD_TO_SALE_BPS: ["SALE_WON"],
+    } as const;
+    const eventTypes = [...typeMap[quota.metricKey]];
+    const facts = await options.database.commercialMetricFact.findMany({
+      where: {
+        workspaceId, creditedMemberId: { in: memberIds }, occurredAt: { gte: periodStart, lt: to }, eventType: { in: eventTypes },
+        ...(quota.metricKey === "NEW_MRR_CENTS" ? { result: "NEW" } : {}),
+        ...(quota.metricKey === "EXPANSION_MRR_CENTS" ? { result: "EXPANSION" } : {}),
+        ...(quota.metricKey === "RENEWALS_COMPLETED" ? { result: "RENEWAL" } : {}),
+      },
+      select: { leadId: true, valueCents: true, quantity: true },
+    });
+    const evidenceCount = facts.reduce((sum, fact) => sum + fact.quantity, 0);
+    const href = drilldown(quota.metricKey, memberIds, periodStart, to);
+    if (quota.metricKey === "LEAD_TO_SALE_BPS") {
+      const leads = await options.database.commercialMetricFact.findMany({ where: { workspaceId, creditedMemberId: { in: memberIds }, occurredAt: { gte: periodStart, lt: to }, eventType: "LEAD_CREATED", leadId: { not: null } }, distinct: ["leadId"], select: { leadId: true } });
+      if (leads.length === 0) return { value: null, state: "NO_DENOMINATOR" as const, evidenceCount: 0, href };
+      const wonLeadIds = new Set(facts.flatMap((fact) => fact.leadId ? [fact.leadId] : []));
+      return { value: BigInt(Math.round(wonLeadIds.size * 10_000 / leads.length)), state: wonLeadIds.size ? "VALUE" as const : "ZERO" as const, evidenceCount: wonLeadIds.size, href };
     }
-    if (quota.metricKey === "HUMAN_ATTEMPTS") {
-      const users = await options.database.workspaceMember.findMany({ where: { workspaceId, id: { in: memberIds } }, select: { userId: true } });
-      const actors = await options.database.actor.findMany({ where: { workspaceId, type: "HUMAN", userId: { in: users.map((item) => item.userId) } }, select: { id: true } });
-      const count = await options.database.activity.count({ where: { workspaceId, createdByActorId: { in: actors.map((item) => item.id) }, occurredAt: interval, deletedAt: null, type: { in: ["CALL", "CALL_CONNECTED", "CALL_UNANSWERED", "MESSAGE_SENT", "EMAIL"] } } });
-      return { value: BigInt(count), state: count ? "VALUE" as const : "ZERO" as const, evidenceCount: count, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
-    }
-    if (quota.metricKey === "MEETINGS_HELD") {
-      const count = await options.database.meeting.count({ where: { workspaceId, ownerMemberId: { in: memberIds }, status: "COMPLETED", completedAt: interval, deletedAt: null } });
-      return { value: BigInt(count), state: count ? "VALUE" as const : "ZERO" as const, evidenceCount: count, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
-    }
-    if (["OPPORTUNITIES_WON", "REVENUE_WON_CENTS", "NEW_MRR_CENTS", "LEAD_TO_SALE_BPS"].includes(quota.metricKey)) {
-      const won = await options.database.opportunity.findMany({ where: { workspaceId, ownerMemberId: { in: memberIds }, status: "WON", closedAt: interval, deletedAt: null }, select: { id: true, leadId: true, amountCents: true, mrrCents: true } });
-      if (quota.metricKey === "OPPORTUNITIES_WON") return { value: BigInt(won.length), state: won.length ? "VALUE" as const : "ZERO" as const, evidenceCount: won.length, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
-      if (quota.metricKey === "REVENUE_WON_CENTS") return { value: won.reduce((sum, item) => sum + item.amountCents, 0n), state: won.length ? "VALUE" as const : "ZERO" as const, evidenceCount: won.length, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
-      if (quota.metricKey === "NEW_MRR_CENTS") return { value: won.reduce((sum, item) => sum + item.mrrCents, 0n), state: won.length ? "VALUE" as const : "ZERO" as const, evidenceCount: won.length, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
-      const leads = await options.database.lead.count({ where: { workspaceId, ownerMemberId: { in: memberIds }, createdAt: interval, deletedAt: null } });
-      if (leads === 0) return { value: null, state: "NO_DENOMINATOR" as const, evidenceCount: 0, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
-      return { value: BigInt(Math.round((new Set(won.map((item) => item.leadId)).size / leads) * 10_000)), state: won.length ? "VALUE" as const : "ZERO" as const, evidenceCount: won.length, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
-    }
-    if (quota.metricKey === "RENEWALS_COMPLETED") {
-      const count = await options.database.renewal.count({ where: { workspaceId, ownerMemberId: { in: memberIds }, status: { in: ["RENEWED", "NOT_RENEWED", "CANCELLED"] }, decidedAt: interval } });
-      return { value: BigInt(count), state: count ? "VALUE" as const : "ZERO" as const, evidenceCount: count, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
-    }
-    const assignments = await options.database.ownershipAssignment.findMany({ where: { workspaceId, memberId: { in: memberIds }, accountId: { not: null }, status: "ACTIVE" }, distinct: ["accountId"], select: { accountId: true } });
-    const accountIds = assignments.flatMap((item) => item.accountId ? [item.accountId] : []);
-    if (accountIds.length === 0) return { value: null, state: "PARTIAL" as const, evidenceCount: 0, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
-    const movements = await options.database.revenueMovement.findMany({ where: { workspaceId, accountId: { in: accountIds }, type: "EXPANSION", effectiveAt: interval, deltaMrrCents: { gt: 0 } }, select: { id: true, deltaMrrCents: true } });
-    return { value: movements.reduce((sum, item) => sum + item.deltaMrrCents, 0n), state: movements.length ? "VALUE" as const : "ZERO" as const, evidenceCount: movements.length, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
+    const value = ["REVENUE_WON_CENTS", "NEW_MRR_CENTS", "EXPANSION_MRR_CENTS"].includes(quota.metricKey)
+      ? facts.reduce((sum, fact) => sum + (fact.valueCents ?? 0n) * BigInt(fact.quantity), 0n)
+      : BigInt(evidenceCount);
+    return { value, state: value === 0n ? "ZERO" as const : "VALUE" as const, evidenceCount, href };
   }
   async function screen(context: AuthenticatedContext, raw: unknown = {}) {
     const query = goalQuerySchema.parse(raw);

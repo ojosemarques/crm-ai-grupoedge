@@ -6,6 +6,7 @@ import {
 import type {
   AuthenticatedContext,
 } from "@/modules/auth/application/authenticated-context";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import type { ServiceActorContext } from "@/modules/auth/application/service-actor-context";
 import {
   getActiveScoringRule,
@@ -438,7 +439,7 @@ async function mutateQualification(
       }
     }
 
-    await transaction.activity.create({
+    const activity = await transaction.activity.create({
       data: {
         workspaceId: context.workspaceId,
         leadId: lead.id,
@@ -467,6 +468,26 @@ async function mutateQualification(
         updatedAt: occurredAt,
       },
     });
+    if (kind === "VALIDATED") {
+      await recordCommercialMetricFactInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        eventKey: `pacto-revision:${history.id}:validated:v1`,
+        eventType: "PACTO_VALIDATED",
+        occurredAt,
+        sourceEntityType: "PactoRevision",
+        sourceEntityId: history.id,
+        leadId: lead.id,
+        activityId: activity.id,
+        teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null,
+        creditedMemberId: lead.ownerMemberId,
+        performedByMemberId: context.memberId,
+        leadOwnerMemberIdAtEvent: lead.ownerMemberId,
+        activityType: "STATUS_CHANGE",
+        result: isQualificationReady ? "READY" : "VALIDATED_WITH_GAPS",
+        executionMode: "MANUAL",
+        safeMetadata: { revision, investigatedDimensions, hasDisqualifyingDimension, minimumRequiredDimensions: workspace.pactoMinimumInvestigatedDimensions },
+      });
+    }
     await transaction.lead.update({
       where: { id: lead.id },
       data: {

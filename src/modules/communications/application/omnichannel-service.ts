@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { Prisma, type ConversationChannel, type MessageStatus, type PrismaClient } from "@/generated/prisma/client";
+import { Prisma, type CommercialMetricEventType, type ConversationChannel, type MessageStatus, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import {
   channelCapabilities,
@@ -30,6 +30,7 @@ import { getAuthorizationService } from "@/modules/users/permissions/authorizati
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 
 type Tx = Prisma.TransactionClient;
 type Authorization = ReturnType<typeof getAuthorizationService>;
@@ -43,6 +44,21 @@ type Options = Readonly<{
 
 const MESSAGE_JOB_MAX_ATTEMPTS = 5;
 const RETRY_DELAY_SECONDS = 30;
+const emailStatusFactTypes: Readonly<Partial<Record<MessageStatus, CommercialMetricEventType>>> = Object.freeze({
+  QUEUED: "EMAIL_SCHEDULED",
+  SENT: "EMAIL_SENT",
+  DELIVERED: "EMAIL_DELIVERED",
+  REPLIED: "EMAIL_REPLIED",
+  BOUNCED: "EMAIL_BOUNCED",
+  SOFT_BOUNCE: "EMAIL_BOUNCED",
+  HARD_BOUNCE: "EMAIL_BOUNCED",
+  COMPLAINT: "EMAIL_COMPLAINT",
+  UNSUBSCRIBED: "EMAIL_UNSUBSCRIBED",
+  CANCELLED: "EMAIL_CANCELLED",
+  FAILED: "EMAIL_FAILED",
+  FAILED_PERMANENT: "EMAIL_FAILED",
+  FAILED_TRANSIENT: "EMAIL_FAILED",
+});
 const SERIALIZABLE_MAX_ATTEMPTS = 4;
 
 function fail(message: string, code: string, statusCode = 400): never {
@@ -124,7 +140,7 @@ async function appendStatus(
     });
     if (existing) return { event: existing, idempotent: true, projected: false };
   }
-  const message = await tx.message.findFirst({ where: { id: input.messageId, workspaceId: input.workspaceId } });
+  const message = await tx.message.findFirst({ where: { id: input.messageId, workspaceId: input.workspaceId }, include: { conversation: true } });
   if (!message) fail("Mensagem não encontrada.", "MESSAGE_NOT_FOUND", 404);
   const event = await tx.messageStatusEvent.create({
     data: {
@@ -155,6 +171,35 @@ async function appendStatus(
         ...(input.status === "READ" ? { readAt: input.now } : {}),
         ...(input.providerReported ? { lastProviderStatusAt: input.providerOccurredAt ?? input.now } : {}),
       },
+    });
+  }
+  const emailType = message.conversation.channel === "EMAIL" ? emailStatusFactTypes[input.status] : undefined;
+  const instagramType = (message.conversation.channel === "INSTAGRAM" || message.conversation.channel === "INSTAGRAM_MESSAGING") && input.status === "SENT"
+    ? "INSTAGRAM_MESSAGE_SENT" as const
+    : undefined;
+  const metricType = emailType ?? instagramType;
+  if (metricType) {
+    const actor = input.actorId ? await tx.actor.findFirst({ where: { id: input.actorId, workspaceId: input.workspaceId }, select: { type: true, userId: true } }) : null;
+    const member = actor?.userId ? await tx.workspaceMember.findFirst({ where: { workspaceId: input.workspaceId, userId: actor.userId, deletedAt: null }, select: { id: true } }) : null;
+    await recordCommercialMetricFactInTransaction(tx, {
+      workspaceId: input.workspaceId,
+      eventKey: `message-status:${event.id}:${metricType.toLowerCase()}:v1`,
+      eventType: metricType,
+      occurredAt: input.providerOccurredAt ?? input.now,
+      sourceEntityType: "MessageStatusEvent",
+      sourceEntityId: event.id,
+      leadId: message.conversation.leadId,
+      contactId: message.conversation.contactId,
+      accountId: message.conversation.accountId,
+      messageId: message.id,
+      opportunityId: message.conversation.opportunityId,
+      meetingId: message.conversation.meetingId,
+      creditedMemberId: message.conversation.assigneeMemberId,
+      performedByMemberId: member?.id ?? null,
+      channel: message.conversation.channel,
+      direction: message.direction,
+      result: input.status,
+      executionMode: actor?.type === "HUMAN" ? "MANUAL" : actor?.type === "AUTOMATION" ? "AUTOMATION" : "SYSTEM",
     });
   }
   return { event, idempotent: false, projected };
@@ -475,7 +520,53 @@ export function createOmnichannelService(options: Options) {
         await tx.messageIdentityReview.create({ data: { workspaceId: context.workspaceId, conversationId: conversation.id, messageId: message.id, contactId: exact?.contactId ?? null, contactPointId: exact?.id ?? null, reason: !normalized.success ? "INVALID_ADDRESS" : points.length > 1 ? "MULTIPLE_CONTACT_MATCHES" : exact && !lead ? "CONTACT_WITHOUT_LEAD" : "CONTACT_NOT_FOUND", normalizedAddressHash: normalized.success ? normalized.hash : sha256(input.address), channel: input.channel, evidence: json({ exactMatches: points.length, leadCreated: false, intakeRequiredForCreation: true }), createdByActorId: foundation.actor.id } });
       }
       if (lead) {
-        await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: lead.id, opportunityId: conversation.opportunityId, messageId: message.id, type: "MESSAGE_RECEIVED", direction: "INBOUND", result: "RECEIVED", subject: "Mensagem recebida no inbox", description: "Fato canônico de comunicação; conteúdo disponível na conversa.", occurredAt: new Date(input.occurredAt), createdByActorId: foundation.actor.id, updatedByActorId: foundation.actor.id } });
+        const activity = await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: lead.id, opportunityId: conversation.opportunityId, messageId: message.id, type: "MESSAGE_RECEIVED", direction: "INBOUND", result: "RECEIVED", subject: "Mensagem recebida no inbox", description: "Fato canônico de comunicação; conteúdo disponível na conversa.", occurredAt: new Date(input.occurredAt), createdByActorId: foundation.actor.id, updatedByActorId: foundation.actor.id } });
+        const responseDimensions = {
+          workspaceId: context.workspaceId,
+          occurredAt: new Date(input.occurredAt),
+          leadId: lead.id,
+          contactId: exact?.contactId ?? null,
+          accountId: lead.accountId,
+          activityId: activity.id,
+          messageId: message.id,
+          opportunityId: conversation.opportunityId,
+          creditedMemberId: ownerMemberId,
+          leadOwnerMemberIdAtEvent: ownerMemberId,
+          sourceId: lead.sourceId,
+          campaignId: lead.campaignId,
+          creativeId: lead.creativeId,
+          channel: input.channel,
+          direction: "INBOUND",
+          result: input.scenario,
+          executionMode: "SYSTEM" as const,
+        };
+        await recordCommercialMetricFactInTransaction(tx, {
+          ...responseDimensions,
+          eventKey: `message:${message.id}:inbound-received:v1`,
+          eventType: "INBOUND_MESSAGE_RECEIVED",
+          sourceEntityType: "Message",
+          sourceEntityId: message.id,
+        });
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`commercial-metric:first-human-response:${context.workspaceId}:${lead.id}`}, 0))`;
+        const firstHumanResponse = await tx.commercialMetricFact.findFirst({ where: { workspaceId: context.workspaceId, leadId: lead.id, eventType: "HUMAN_RESPONSE_CONFIRMED" }, select: { id: true } });
+        if (!firstHumanResponse) {
+          await recordCommercialMetricFactInTransaction(tx, {
+            ...responseDimensions,
+            eventKey: `lead:${lead.id}:first-human-response:${message.id}:v1`,
+            eventType: "HUMAN_RESPONSE_CONFIRMED",
+            sourceEntityType: "Message",
+            sourceEntityId: message.id,
+          });
+        }
+        if (input.channel === "EMAIL") {
+          await recordCommercialMetricFactInTransaction(tx, {
+            ...responseDimensions,
+            eventKey: `message:${message.id}:email-replied:v1`,
+            eventType: "EMAIL_REPLIED",
+            sourceEntityType: "Message",
+            sourceEntityId: message.id,
+          });
+        }
         await tx.lead.update({ where: { id: lead.id }, data: { awaitingHumanResponse: true, lastInboundResponseAt: new Date(input.occurredAt), lastActivityAt: new Date(input.occurredAt), updatedByActorId: foundation.actor.id } });
         await cancelIncompatibleAccountPlanActionsForLeadInTransaction(tx, { workspaceId: context.workspaceId, leadId: lead.id, actorId: foundation.actor.id, at: now, event: input.scenario === "OPT_OUT" ? "OPT_OUT" : "RESPONSE" });
         if (input.scenario === "OPT_OUT") {

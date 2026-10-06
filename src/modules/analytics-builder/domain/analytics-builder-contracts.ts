@@ -1,6 +1,7 @@
 import type { RevenueMetricDefinition } from "@/modules/metrics/domain/revenue-metrics-contracts";
 import { dashboardPeriodPresets } from "@/modules/metrics/domain/dashboard-contracts";
 import { getRevenueMetricDefinition, revenueMetricRegistry } from "@/modules/metrics/domain/revenue-metric-registry";
+import { integratedMetricRegistry } from "@/modules/metrics/domain/integrated-metric-registry";
 import { z } from "zod";
 
 export const analyticsWidgetTypes = ["LINE", "AREA", "BAR", "PIE", "DONUT", "FUNNEL", "TABLE", "NUMBER", "KPI"] as const;
@@ -41,8 +42,18 @@ export const updateAnalyticsDashboardSchema = z.object({
 const timeSeriesMetrics = new Set(["revenue.closing_mrr", "revenue.net_new_mrr", "sales.bookings", "cash.received", "sales.leads"]);
 const dimensionalTypes = new Set(["BAR", "PIE", "DONUT", "FUNNEL"]);
 
-export function validateWidgetCompatibility(widget: z.infer<typeof analyticsWidgetInputSchema>): RevenueMetricDefinition {
-  const metric = getRevenueMetricDefinition(widget.metricKey);
+type AnalyticsMetricDefinition = Pick<RevenueMetricDefinition, "id" | "version" | "name" | "description" | "formula" | "unit" | "factTimestamp" | "supportedDateBases" | "supportedDimensions">;
+
+export function getAnalyticsMetricDefinition(metricKey: string): AnalyticsMetricDefinition | null {
+  const revenue = getRevenueMetricDefinition(metricKey);
+  if (revenue) return revenue;
+  const integrated = integratedMetricRegistry.find((metric) => metric.id === metricKey);
+  if (!integrated) return null;
+  return Object.freeze({ id: integrated.id, version: 1, name: integrated.label, description: integrated.description, formula: integrated.denominatorEventTypes ? `${integrated.eventTypes.join(" + ")} / ${integrated.denominatorEventTypes.join(" + ")}` : `${integrated.aggregation}(${integrated.eventTypes.join(" + ")})`, unit: integrated.unit, factTimestamp: "occurredAt", supportedDateBases: ["occurredAt"], supportedDimensions: [] });
+}
+
+export function validateWidgetCompatibility(widget: z.infer<typeof analyticsWidgetInputSchema>): AnalyticsMetricDefinition {
+  const metric = getAnalyticsMetricDefinition(widget.metricKey);
   if (!metric) throw new Error("Métrica não registrada.");
   if (!metric.supportedDateBases.includes(widget.dateBasis)) throw new Error("Data-base incompatível com a métrica.");
   if (widget.dimensionKey && !metric.supportedDimensions.includes(widget.dimensionKey)) throw new Error("Dimensão incompatível com a métrica.");
@@ -56,10 +67,11 @@ export function validateWidgetCompatibility(widget: z.infer<typeof analyticsWidg
 }
 
 export function analyticsCatalog() {
+  const metrics = [...revenueMetricRegistry, ...integratedMetricRegistry.map((metric) => ({ id: metric.id, version: 1, name: metric.label, description: metric.description, formula: metric.denominatorEventTypes ? `${metric.eventTypes.join(" + ")} / ${metric.denominatorEventTypes.join(" + ")}` : `${metric.aggregation}(${metric.eventTypes.join(" + ")})`, unit: metric.unit, supportedDimensions: [] as string[], factTimestamp: "occurredAt", supportedDateBases: ["occurredAt"] }))];
   return Object.freeze({
-    metrics: revenueMetricRegistry.map((metric) => ({ metricKey: metric.id, label: metric.name, description: metric.description, unit: metric.unit, dimensions: metric.supportedDimensions, dateBasis: metric.factTimestamp, dateBases: metric.supportedDateBases, version: metric.version })),
-    dimensions: [...new Set(revenueMetricRegistry.flatMap((metric) => metric.supportedDimensions))].sort().map((key) => ({ key, label: key })),
-    dateBases: [...new Set(revenueMetricRegistry.flatMap((metric) => metric.supportedDateBases))].sort().map((key) => ({ key, label: key })),
+    metrics: metrics.map((metric) => ({ metricKey: metric.id, label: metric.name, description: metric.description, unit: metric.unit, dimensions: metric.supportedDimensions, dateBasis: metric.factTimestamp, dateBases: metric.supportedDateBases, version: metric.version })),
+    dimensions: [...new Set(metrics.flatMap((metric) => [...metric.supportedDimensions]))].sort().map((key) => ({ key, label: key })),
+    dateBases: [...new Set(metrics.flatMap((metric) => [...metric.supportedDateBases]))].sort().map((key) => ({ key, label: key })),
     filterFields: ["sdr", "closer", "team", "source", "campaign", "creative", "priority", "product"],
     aggregations: analyticsAggregations,
     widgetTypes: analyticsWidgetTypes,

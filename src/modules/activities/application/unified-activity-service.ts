@@ -4,6 +4,7 @@ import { getAuthorizationService } from "@/modules/users/permissions/authorizati
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { z } from "zod";
 
 type Options = Readonly<{
@@ -138,7 +139,48 @@ export function createUnifiedActivityService(options: Options) {
             const opportunityNext = await tx.task.findFirst({ where: { workspaceId: context.workspaceId, opportunityId: task.opportunityId, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null }, orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }], select: { id: true, dueAt: true, title: true } });
             await tx.opportunity.update({ where: { id: task.opportunityId }, data: { nextActionTaskId: opportunityNext?.id ?? null, nextActionAt: opportunityNext?.dueAt ?? null, nextActionDescription: opportunityNext?.title ?? null, revision: { increment: 1 }, updatedByActorId: context.actorId, updatedAt: at } });
           }
-          await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: task.leadId, ...(task.opportunityId ? { opportunityId: task.opportunityId } : {}), type: "TASK", direction: "INTERNAL", result: "COMPLETED", subject: `Tarefa concluída: ${task.title}`, description: parsed.data.result, occurredAt: at, previousValues: json({ taskId: task.id, status: task.status }), newValues: json({ taskId: task.id, status: "COMPLETED", completedAt: at.toISOString() }), createdByActorId: context.actorId, updatedByActorId: context.actorId, createdAt: at, updatedAt: at } });
+          const activity = await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: task.leadId, ...(task.opportunityId ? { opportunityId: task.opportunityId } : {}), type: "TASK", direction: "INTERNAL", result: "COMPLETED", subject: `Tarefa concluída: ${task.title}`, description: parsed.data.result, occurredAt: at, previousValues: json({ taskId: task.id, status: task.status }), newValues: json({ taskId: task.id, status: "COMPLETED", completedAt: at.toISOString() }), createdByActorId: context.actorId, updatedByActorId: context.actorId, createdAt: at, updatedAt: at } });
+          await recordCommercialMetricFactInTransaction(tx, {
+            workspaceId: context.workspaceId,
+            eventKey: `task:${task.id}:completed:v1`,
+            eventType: "TASK_COMPLETED",
+            occurredAt: at,
+            sourceEntityType: "Task",
+            sourceEntityId: task.id,
+            leadId: task.leadId,
+            opportunityId: task.opportunityId,
+            taskId: task.id,
+            activityId: activity.id,
+            creditedMemberId: task.assigneeMemberId,
+            performedByMemberId: context.memberId,
+            leadOwnerMemberIdAtEvent: task.lead.ownerMemberId,
+            taskKind: task.kind,
+            activityType: "TASK",
+            result: parsed.data.result,
+            executionMode: "MANUAL",
+            safeMetadata: { dueAt: task.dueAt.toISOString(), completedOnTime: at <= task.dueAt },
+          });
+          if (task.kind === "INSTAGRAM_FOLLOW") {
+            await recordCommercialMetricFactInTransaction(tx, {
+              workspaceId: context.workspaceId,
+              eventKey: `task:${task.id}:instagram-follow-completed:v1`,
+              eventType: "INSTAGRAM_FOLLOW_COMPLETED",
+              occurredAt: at,
+              sourceEntityType: "Task",
+              sourceEntityId: task.id,
+              leadId: task.leadId,
+              opportunityId: task.opportunityId,
+              taskId: task.id,
+              activityId: activity.id,
+              creditedMemberId: task.assigneeMemberId,
+              performedByMemberId: context.memberId,
+              leadOwnerMemberIdAtEvent: task.lead.ownerMemberId,
+              taskKind: task.kind,
+              channel: "INSTAGRAM",
+              result: parsed.data.result,
+              executionMode: "MANUAL",
+            });
+          }
           await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "task.bulk_completed", entityType: "Task", entityId: task.id, occurredAt: at, changes: json({ fromStatus: task.status, result: parsed.data.result }) } });
         }
       } else if (parsed.data.action === "REASSIGN") {

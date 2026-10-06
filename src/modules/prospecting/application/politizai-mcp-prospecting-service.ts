@@ -98,9 +98,17 @@ export function createPolitizaiMcpProspectingService(options: Options) {
     if (!workspace) fail("Workspace MCP não encontrado.", "MCP_WORKSPACE_NOT_FOUND", 404);
     const activeSellerMembers = await options.database.workspaceMember.findMany({
       where: { id: { in: sellerConfigs.map((seller) => seller.memberId) }, workspaceId: auth.workspaceId, status: "ACTIVE", deletedAt: null, user: { deletedAt: null, status: "ACTIVE" } },
-      select: { id: true, user: { select: { displayName: true } } },
+      select: { id: true, userId: true },
     });
-    const sellersById = new Map(activeSellerMembers.map((seller) => [seller.id, seller.user.displayName]));
+    const activeSellerUsers = await options.database.user.findMany({
+      where: { id: { in: activeSellerMembers.map((seller) => seller.userId) }, status: "ACTIVE", deletedAt: null },
+      select: { id: true, displayName: true },
+    });
+    const namesByUserId = new Map(activeSellerUsers.map((user) => [user.id, user.displayName]));
+    const sellersById = new Map(activeSellerMembers.flatMap((seller) => {
+      const name = namesByUserId.get(seller.userId);
+      return name ? [[seller.id, name] as const] : [];
+    }));
     return {
       workspace,
       rules: {

@@ -13,6 +13,8 @@ import type {
   DashboardSegment,
   DashboardTimeSeries,
 } from "@/modules/metrics/domain/dashboard-contracts";
+import type { CanonicalMetricValue } from "@/modules/metrics/domain/metrics-contracts";
+import { integratedMetricRegistry } from "@/modules/metrics/domain/integrated-metric-registry";
 
 function paramsFor(query: DashboardQuery, extras: Record<string, string> = {}) {
   const params = new URLSearchParams({ preset: query.preset, fromDate: query.fromDate, toDate: query.toDate, ...extras });
@@ -54,6 +56,24 @@ function formatValue(kind: DashboardKpi["kind"], value: number | string | null) 
   if (kind === "DURATION") return formatDuration(typeof value === "number" ? value : null);
   if (kind === "RATE") return value === null ? "—" : `${Number(value).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
   return new Intl.NumberFormat("pt-BR").format(Number(value ?? 0));
+}
+
+function integratedValue(metric: CanonicalMetricValue) {
+  if (metric.state === "NO_DENOMINATOR") return "Sem base";
+  if (metric.unit === "CENTS") return formatMoney(typeof metric.value === "string" ? metric.value : null);
+  if (metric.unit === "BASIS_POINTS") return metric.value === null ? "—" : `${(Number(metric.value) / 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
+  if (metric.unit === "SECONDS") return formatDuration(typeof metric.value === "number" ? metric.value : null);
+  return Number(metric.value ?? 0).toLocaleString("pt-BR");
+}
+
+function integratedHref(query: DashboardQuery, metricId: string) {
+  const params = new URLSearchParams({ metricId, from: query.from, to: query.to });
+  const mappings = [
+    ["sdrMemberIds", query.filters.sdrMemberIds], ["closerMemberIds", query.filters.closerMemberIds], ["teamIds", query.filters.teamIds],
+    ["sourceIds", query.filters.sourceIds], ["campaignIds", query.filters.campaignIds], ["creativeIds", query.filters.creativeIds],
+  ] as const;
+  for (const [key, values] of mappings) for (const value of values) params.append(key, value);
+  return `/api/metrics/integrated/drilldown?${params.toString()}`;
 }
 
 function metricValue(metric: DashboardKpi) {
@@ -196,6 +216,9 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
   const primaryComparisons = ["revenue", "sales", "lead-to-sale", "sla-median"].flatMap((id) => comparisonById.get(id) ?? []);
   const kpiById = new Map(screen.kpis.map((metric) => [metric.id, metric]));
   const operationalPulse = ["leads", "connected", "qualified", "scheduled", "opportunities", "proposals"].flatMap((id) => kpiById.get(id) ?? []);
+  const integratedMetricIds = ["work.tasks_completed", "outreach.calls_attempted", "outreach.call_connection_rate", "email.sent", "email.delivery_rate", "outreach.inbound_responses", "meetings.completed", "sales.bookings", "cash.received"];
+  const integratedPulse = integratedMetricIds.flatMap((id) => screen.integrated.values.find((metric) => metric.metricId === id) ?? []);
+  const integratedLabelById = new Map(integratedMetricRegistry.map((metric) => [metric.id, metric.label]));
   const ticketKpi = kpiById.get("ticket");
   const scopeLabel = { WORKSPACE: "Todo o workspace", TEAM: "Minha equipe", OWN: "Meus registros" }[screen.overview.scope];
   const focusAction = roleKey === "closer" ? { href: "/agenda", label: "Abrir agenda" } : roleKey === "viewer" ? { href: "/leads", label: "Explorar registros" } : { href: "/meu-dia", label: roleKey === "sdr" ? "Atender agora" : "Ver operação" };
@@ -243,6 +266,12 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
       </div>
 
       <PerformancePanel screen={screen} />
+
+      <section className={`${styles.panel} ${styles.integratedPanel}`}>
+        <header className={styles.panelHeader}><div><h2>Operação integrada</h2><p>Atividade, contato, e-mail, reuniões e receita na mesma base auditável.</p></div><span className={styles.qualityBadge} data-state={screen.integrated.quality.reconciliationState}>{screen.integrated.quality.coverageBasisPoints === null ? "Cobertura pendente" : `${(screen.integrated.quality.coverageBasisPoints / 100).toLocaleString("pt-BR")}% atribuída`}</span></header>
+        <div className={styles.integratedGrid}>{integratedPulse.map((metric) => <a href={integratedHref(q, metric.metricId)} key={metric.metricId}><span>{integratedLabelById.get(metric.metricId) ?? metric.metricId}</span><strong>{integratedValue(metric)}</strong><small data-state={metric.state}>{metric.state === "NO_DENOMINATOR" ? "Sem denominador elegível" : metric.reason}</small></a>)}</div>
+        <p className={styles.qualityNote}>{screen.integrated.quality.reason} · {screen.integrated.quality.totalFacts.toLocaleString("pt-BR")} fatos no recorte.</p>
+      </section>
 
       <section className={`${styles.panel} ${styles.flowPanel}`}><header className={styles.panelHeader}><div><h2>Atividade ao longo do período</h2><p>Entradas, qualificações, agendamentos e vendas.</p></div></header><CommercialFlowChart series={screen.timeSeries} /></section>
 

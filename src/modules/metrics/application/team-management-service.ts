@@ -6,7 +6,7 @@ import type { TeamManagementPerson, TeamManagementScreen } from "@/modules/metri
 import { getDatabaseClient } from "@/shared/core/database/client";
 
 const EMPTY_UUID = "00000000-0000-0000-0000-000000000000";
-const contactTypes = ["CALL", "CALL_CONNECTED", "CALL_UNANSWERED", "EMAIL", "MESSAGE", "MESSAGE_SENT", "MESSAGE_RECEIVED", "MEETING", "PROPOSAL"] as const;
+const teamEventTypes = ["TASK_CREATED", "TASK_COMPLETED", "CALL_ATTEMPTED", "CALL_CONNECTED", "EMAIL_SENT", "INSTAGRAM_MESSAGE_SENT", "INBOUND_MESSAGE_RECEIVED", "HUMAN_RESPONSE_CONFIRMED", "MEETING_SCHEDULED", "MEETING_COMPLETED"] as const;
 
 type MutablePerson = {
   id: string; name: string; roles: Set<"SDR" | "CLOSER">; contacts: number; meetings: number;
@@ -38,18 +38,11 @@ export async function getTeamManagementScreen(
     ...dashboard.overview.evidence.stalledLeadIds,
   ])];
 
-  const [activities, tasks, meetings, alertLeads] = await Promise.all([
-    database.activity.findMany({
-      where: { workspaceId: context.workspaceId, leadId: { in: [...scopedLeadIds] }, occurredAt: { gte: from, lt: to }, type: { in: [...contactTypes] }, deletedAt: null },
-      select: { createdByActorId: true },
-    }),
-    database.task.findMany({
-      where: { workspaceId: context.workspaceId, leadId: { in: [...scopedLeadIds] }, dueAt: { gte: from, lt: to }, deletedAt: null, status: { not: "CANCELLED" } },
-      select: { assigneeMemberId: true, status: true },
-    }),
-    database.meeting.findMany({
-      where: { workspaceId: context.workspaceId, leadId: { in: [...scopedLeadIds] }, startsAt: { gte: from, lt: to }, deletedAt: null, status: { not: "CANCELLED" } },
-      select: { ownerMemberId: true },
+  const [metricFacts, alertLeads] = await Promise.all([
+    database.commercialMetricFact.groupBy({
+      by: ["creditedMemberId", "eventType"],
+      where: { workspaceId: context.workspaceId, leadId: { in: [...scopedLeadIds] }, occurredAt: { gte: from, lt: to }, creditedMemberId: { not: null }, eventType: { in: [...teamEventTypes] } },
+      _sum: { quantity: true },
     }),
     database.lead.findMany({
       where: { workspaceId: context.workspaceId, id: { in: alertIds.length ? alertIds : [EMPTY_UUID] }, deletedAt: null },
@@ -57,30 +50,18 @@ export async function getTeamManagementScreen(
     }),
   ]);
 
-  const actorIds = [...new Set(activities.map((activity) => activity.createdByActorId))];
-  const actors = await database.actor.findMany({
-    where: { workspaceId: context.workspaceId, id: { in: actorIds } },
-    select: { id: true, userId: true },
-  });
-  const actorUserById = new Map(actors.map((actor) => [actor.id, actor.userId]));
-  const actorUserIds = [...new Set(actors.flatMap((actor) => actor.userId ? [actor.userId] : []))];
-  const extraMemberIds = [...new Set([
-    ...tasks.flatMap((task) => task.assigneeMemberId ? [task.assigneeMemberId] : []),
-    ...meetings.map((meeting) => meeting.ownerMemberId),
-  ])];
+  const extraMemberIds = [...new Set(metricFacts.flatMap((fact) => fact.creditedMemberId ? [fact.creditedMemberId] : []))];
   const members = await database.workspaceMember.findMany({
     where: {
       workspaceId: context.workspaceId,
       deletedAt: null,
       OR: [
         { id: { in: [...new Set([...dashboard.performance.map((row) => row.id), ...extraMemberIds])] } },
-        { userId: { in: actorUserIds } },
       ],
     },
     select: { id: true, userId: true, user: { select: { displayName: true } } },
   });
   const membersById = new Map(members.map((member) => [member.id, member]));
-  const membersByUserId = new Map(members.map((member) => [member.userId, member]));
   const people = new Map<string, MutablePerson>();
   const ensure = (id: string, name: string) => {
     const current = people.get(id) ?? { id, name, roles: new Set<"SDR" | "CLOSER">(), contacts: 0, meetings: 0, averageFirstResponseSeconds: null, sdrConversionPercentage: null, sellerConversionPercentage: null, tasksTotal: 0, tasksCompleted: 0, leadsWithoutNextAction: 0, forgottenLeads: 0 };
@@ -89,22 +70,16 @@ export async function getTeamManagementScreen(
   };
 
   for (const row of dashboard.performance) addPerformance(ensure(row.id, row.name), row);
-  for (const activity of activities) {
-    const userId = actorUserById.get(activity.createdByActorId);
-    const member = userId ? membersByUserId.get(userId) : undefined;
-    if (member) ensure(member.id, member.user.displayName).contacts += 1;
-  }
-  for (const task of tasks) {
-    if (!task.assigneeMemberId) continue;
-    const member = membersById.get(task.assigneeMemberId);
+  for (const fact of metricFacts) {
+    if (!fact.creditedMemberId) continue;
+    const member = membersById.get(fact.creditedMemberId);
     if (!member) continue;
     const person = ensure(member.id, member.user.displayName);
-    person.tasksTotal += 1;
-    if (task.status === "COMPLETED") person.tasksCompleted += 1;
-  }
-  for (const meeting of meetings) {
-    const member = membersById.get(meeting.ownerMemberId);
-    if (member) ensure(member.id, member.user.displayName).meetings += 1;
+    const quantity = fact._sum.quantity ?? 0;
+    if (fact.eventType === "TASK_CREATED") person.tasksTotal += quantity;
+    else if (fact.eventType === "TASK_COMPLETED") person.tasksCompleted += quantity;
+    else if (fact.eventType === "MEETING_SCHEDULED") person.meetings += quantity;
+    else if (["CALL_ATTEMPTED", "CALL_CONNECTED", "EMAIL_SENT", "INSTAGRAM_MESSAGE_SENT", "INBOUND_MESSAGE_RECEIVED", "HUMAN_RESPONSE_CONFIRMED"].includes(fact.eventType)) person.contacts += quantity;
   }
   const withoutNextAction = new Set(dashboard.overview.evidence.leadsWithoutNextActionIds);
   const forgotten = new Set(dashboard.overview.evidence.stalledLeadIds);
@@ -150,7 +125,7 @@ export async function getTeamManagementScreen(
       { label: "Primeira resposta", formula: "Média do tempo entre recebimento e primeira tentativa humana nos ciclos de SLA atribuídos ao SDR." },
       { label: "Conversão SDR", formula: "Leads qualificados ÷ leads recebidos atribuídos ao SDR no período." },
       { label: "Conversão vendedor", formula: "Oportunidades ganhas ÷ oportunidades criadas para o vendedor no período." },
-      { label: "Contatos", formula: "Ligações, e-mails, mensagens, reuniões e propostas registrados pelo usuário no período." },
+      { label: "Contatos", formula: "Fatos canônicos de ligação, e-mail, Instagram e resposta humana creditados à pessoa no período." },
     ]),
   });
 }

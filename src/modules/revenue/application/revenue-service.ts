@@ -5,6 +5,7 @@ import { getAuthorizationService } from "@/modules/users/permissions/authorizati
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 
 function fail(message: string, code="INVALID_REVENUE_OPERATION", statusCode=409): never { throw new ApplicationError(message,{code,statusCode,expose:true}); }
 const resource = (workspaceId:string,id?:string,ownerMemberId?:string) => ({workspaceId,resourceType:"Subscription",...(id ? {resourceId:id} : {}),...(ownerMemberId ? {ownerMemberId} : {})});
@@ -20,11 +21,16 @@ export function createRevenueService(database: PrismaClient=getDatabaseClient(),
     await tx.subscriptionHistory.create({data:{workspaceId:s.workspaceId,subscriptionId:s.id,sequence:count+1,event,previousStatus:previous,newStatus:s.status,reason,actorId,...(payload ? {payload} : {})}});
     await tx.auditLog.create({data:{workspaceId:s.workspaceId,actorId,action:`subscription.${event.toLowerCase()}`,origin:"API",entityType:"Subscription",entityId:s.id,changes:{previousStatus:previous,newStatus:s.status,reason},metadata:{appendOnlyHistory:true}}});
   }
-  async function movement(tx:Prisma.TransactionClient,s:{id:string;workspaceId:string;accountId:string},input:{type:RevenueMovementType;delta:bigint;effectiveAt:Date;actorId:string;reason:string;idempotencyKey:string;source?:RevenueMovementSource;reversesMovementId?:string;correlationId?:string}) {
+  async function movement(tx:Prisma.TransactionClient,s:{id:string;workspaceId:string;accountId:string;ownerMemberId?:string;contractId?:string},input:{type:RevenueMovementType;delta:bigint;effectiveAt:Date;actorId:string;reason:string;idempotencyKey:string;source?:RevenueMovementSource;reversesMovementId?:string;correlationId?:string}) {
     const replay=await tx.revenueMovement.findUnique({where:{workspaceId_idempotencyKey:{workspaceId:s.workspaceId,idempotencyKey:input.idempotencyKey}}}); if(replay) return replay;
     const last=await tx.revenueMovement.findFirst({where:{workspaceId:s.workspaceId,subscriptionId:s.id},orderBy:{sequence:"desc"}});
     const row=await tx.revenueMovement.create({data:{workspaceId:s.workspaceId,subscriptionId:s.id,accountId:s.accountId,sequence:(last?.sequence??0)+1,type:input.type,deltaMrrCents:input.delta,currency:"BRL",effectiveAt:input.effectiveAt,actorId:input.actorId,reason:input.reason,source:input.source??"HUMAN_ACTION",idempotencyKey:input.idempotencyKey,correlationId:input.correlationId??input.idempotencyKey,...(input.reversesMovementId ? {reversesMovementId:input.reversesMovementId} : {})}});
     const balance=await tx.revenueMovement.aggregate({where:{workspaceId:s.workspaceId,subscriptionId:s.id,effectiveAt:{lte:new Date()}},_sum:{deltaMrrCents:true}}); if((balance._sum.deltaMrrCents??0n)<0n) fail("O movimento produziria MRR negativo.");
+    const actor=await tx.actor.findFirst({where:{id:input.actorId,workspaceId:s.workspaceId},select:{type:true,userId:true}});
+    const performedByMemberId=actor?.userId? (await tx.workspaceMember.findFirst({where:{workspaceId:s.workspaceId,userId:actor.userId,deletedAt:null},select:{id:true}}))?.id??null:null;
+    const executionMode=actor?.type==="AUTOMATION"?"AUTOMATION" as const:actor?.type==="HUMAN"?"MANUAL" as const:"SYSTEM" as const;
+    await recordCommercialMetricFactInTransaction(tx,{workspaceId:s.workspaceId,eventKey:`revenue-movement:${row.id}:posted:v1`,eventType:"REVENUE_MOVEMENT_POSTED",occurredAt:row.effectiveAt,sourceEntityType:"RevenueMovement",sourceEntityId:row.id,accountId:s.accountId,contractId:s.contractId??null,creditedMemberId:s.ownerMemberId??null,performedByMemberId,valueCents:row.deltaMrrCents,result:row.type,executionMode,safeMetadata:{subscriptionId:s.id,currency:row.currency}});
+    if(input.type==="NEW"||input.type==="CHURN") await recordCommercialMetricFactInTransaction(tx,{workspaceId:s.workspaceId,eventKey:`revenue-movement:${row.id}:${input.type==="NEW"?"subscription-activated":"churn-confirmed"}:v1`,eventType:input.type==="NEW"?"SUBSCRIPTION_ACTIVATED":"CHURN_CONFIRMED",occurredAt:row.effectiveAt,sourceEntityType:"RevenueMovement",sourceEntityId:row.id,accountId:s.accountId,contractId:s.contractId??null,creditedMemberId:s.ownerMemberId??null,performedByMemberId,valueCents:row.deltaMrrCents,result:row.type,executionMode,safeMetadata:{subscriptionId:s.id,currency:row.currency}});
     return row;
   }
   return {

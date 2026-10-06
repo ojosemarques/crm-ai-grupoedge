@@ -33,6 +33,10 @@ test("dashboard reconcilia KPI, filtros e drilldown com dados persistidos", asyn
     result: { kpis: { id: string; value: number }[] };
   };
   const baselineLeads = baselinePayload.result.kpis.find(({ id }) => id === "leads")?.value ?? 0;
+  const integratedBaselineResponse = await request.get("/api/metrics/integrated");
+  expect(integratedBaselineResponse.ok()).toBe(true);
+  const integratedBaseline = await integratedBaselineResponse.json() as { result: { values: { metricId: string; value: number | string | null }[] } };
+  const baselineCanonicalLeads = Number(integratedBaseline.result.values.find(({ metricId }) => metricId === "contacts.leads_created")?.value ?? 0);
   const leadName = `Lead dashboard E2E ${randomUUID().slice(0, 8)}`;
   await page.goto("/leads/entrada");
   await page.getByLabel("Nome", { exact: true }).fill(leadName);
@@ -43,10 +47,20 @@ test("dashboard reconcilia KPI, filtros e drilldown com dados persistidos", asyn
   await page.getByRole("button", { name: "Cadastrar lead" }).click();
   await expect(page.getByText("Entrada processada", { exact: true })).toBeVisible();
 
+  const integratedResponse = await request.get("/api/metrics/integrated");
+  expect(integratedResponse.ok()).toBe(true);
+  const integrated = await integratedResponse.json() as { result: { values: { metricId: string; value: number | string | null }[] } };
+  expect(Number(integrated.result.values.find(({ metricId }) => metricId === "contacts.leads_created")?.value)).toBe(baselineCanonicalLeads + 1);
+  const integratedDrilldown = await request.get("/api/metrics/integrated/drilldown?metricId=contacts.leads_created&limit=100");
+  expect(integratedDrilldown.ok()).toBe(true);
+  const integratedRecords = await integratedDrilldown.json() as { result: { records: { eventType: string; sourceEntityType: string }[] } };
+  expect(integratedRecords.result.records.some((record) => record.eventType === "LEAD_CREATED" && record.sourceEntityType === "Lead")).toBe(true);
+
   await page.goto("/dashboard?preset=MONTH");
-  await expect(page.getByRole("heading", { name: "Dashboard comercial" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Indicadores acionáveis" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Funil comercial" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bom trabalho, Gestor." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Evolução comercial" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Seu funil, do primeiro contato à venda" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Operação integrada" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Qualidade do PACTO" })).toBeVisible();
 
   const leadsKpi = page.getByRole("link", { name: /Leads recebidos/ });
@@ -75,6 +89,6 @@ test("dashboard exibe estado vazio honesto para período sem dados", async ({ pa
   await login(page);
   await page.goto("/dashboard?preset=CUSTOM&fromDate=2000-01-01&toDate=2000-01-02");
   await expect(page.getByRole("heading", { name: "Nenhum dado no período" })).toBeVisible();
-  await expect(page.getByText("Nenhum segmento foi inventado.").first()).toBeVisible();
+  await expect(page.getByText("Sem dados para este recorte.").first()).toBeVisible();
   await expect(page.getByRole("link", { name: /Leads recebidos/ })).toContainText("0");
 });

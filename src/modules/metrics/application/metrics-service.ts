@@ -1,4 +1,5 @@
 import type {
+  CommercialMetricEventType,
   PermissionScope,
   Prisma,
   PrismaClient,
@@ -6,12 +7,15 @@ import type {
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import {
   type AverageMoneyMetric,
+  type CanonicalMetricValue,
+  type IntegratedMetricsOverview,
   type MetricsFilters,
   type MetricsOverview,
   type MetricsQuery,
   metricsPriorityCodes,
   type StageDurationMetric,
 } from "@/modules/metrics/domain/metrics-contracts";
+import { INTEGRATED_METRIC_REGISTRY_VERSION, integratedMetricRegistry } from "@/modules/metrics/domain/integrated-metric-registry";
 import {
   countMetric,
   durationStatistics,
@@ -58,6 +62,14 @@ const filtersSchema = z.object({
   creativeIds: uuidListSchema,
   priorityCodes: z.array(z.enum(metricsPriorityCodes)).max(3).default([]),
   productIds: uuidListSchema,
+  pipelineIds: uuidListSchema,
+  stageIds: uuidListSchema,
+  channels: z.array(z.string().trim().min(1).max(80)).max(50).default([]),
+  municipality: z.array(z.string().trim().min(1).max(120)).max(100).default([]),
+  stateCodes: z.array(z.string().trim().length(2).transform((value) => value.toUpperCase())).max(27).default([]),
+  politicalRoles: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  cadenceStepKeys: z.array(z.string().trim().min(1).max(160)).max(100).default([]),
+  executionModes: z.array(z.enum(["MANUAL", "AUTOMATION", "SYSTEM"])).max(3).default([]),
 }).strict();
 const emptyFilters = {
   sdrMemberIds: [],
@@ -68,11 +80,25 @@ const emptyFilters = {
   creativeIds: [],
   priorityCodes: [],
   productIds: [],
+  pipelineIds: [],
+  stageIds: [],
+  channels: [],
+  municipality: [],
+  stateCodes: [],
+  politicalRoles: [],
+  cadenceStepKeys: [],
+  executionModes: [],
 };
 const querySchema = z.object({
   from: z.string().datetime({ offset: true }),
   to: z.string().datetime({ offset: true }),
   filters: filtersSchema.optional().default(emptyFilters),
+}).strict();
+const integratedDrilldownSchema = z.object({
+  metricId: z.string().trim().min(1).max(120),
+  query: querySchema,
+  cursor: z.string().uuid().optional(),
+  limit: z.number().int().min(1).max(100).default(50),
 }).strict();
 
 function invalidInput(value: z.ZodError | string): never {
@@ -106,6 +132,14 @@ export function parseMetricsQuery(input: unknown): MetricsQuery {
       creativeIds: uniqueSorted(parsed.data.filters.creativeIds),
       priorityCodes: uniqueSorted(parsed.data.filters.priorityCodes),
       productIds: uniqueSorted(parsed.data.filters.productIds),
+      pipelineIds: uniqueSorted(parsed.data.filters.pipelineIds),
+      stageIds: uniqueSorted(parsed.data.filters.stageIds),
+      channels: uniqueSorted(parsed.data.filters.channels),
+      municipality: uniqueSorted(parsed.data.filters.municipality),
+      stateCodes: uniqueSorted(parsed.data.filters.stateCodes),
+      politicalRoles: uniqueSorted(parsed.data.filters.politicalRoles),
+      cadenceStepKeys: uniqueSorted(parsed.data.filters.cadenceStepKeys),
+      executionModes: uniqueSorted(parsed.data.filters.executionModes),
     }),
   });
 }
@@ -171,6 +205,50 @@ function relationalVisibility(
     );
   }
   return { OR: relations };
+}
+
+async function integratedFactWhere(
+  database: PrismaClient,
+  context: AuthenticatedContext,
+  scope: Readonly<{ scope: PermissionScope; teamIds: readonly string[] }>,
+  query: MetricsQuery,
+): Promise<Prisma.CommercialMetricFactWhereInput> {
+  const scopeMemberships = scope.scope === "TEAM" ? await database.teamMember.findMany({
+    where: { workspaceId: context.workspaceId, teamId: { in: [...scope.teamIds] }, deletedAt: null },
+    select: { workspaceMemberId: true },
+  }) : [];
+  const scopedMembers = uniqueSorted(scopeMemberships.map((item) => item.workspaceMemberId));
+  const selectedMembers = uniqueSorted([...query.filters.sdrMemberIds, ...query.filters.closerMemberIds]);
+  const visibility: Prisma.CommercialMetricFactWhereInput = scope.scope === "WORKSPACE" ? {} : scope.scope === "OWN" ? {
+    OR: [
+      { creditedMemberId: context.memberId }, { performedByMemberId: context.memberId },
+      { leadOwnerMemberIdAtEvent: context.memberId }, { meetingOwnerMemberIdAtEvent: context.memberId },
+      { opportunityOwnerMemberIdAtEvent: context.memberId }, { bookedByMemberId: context.memberId }, { originatingSdrMemberId: context.memberId },
+    ],
+  } : {
+    OR: [
+      { teamId: { in: [...scope.teamIds] } }, { creditedMemberId: { in: scopedMembers } }, { performedByMemberId: { in: scopedMembers } },
+      { leadOwnerMemberIdAtEvent: { in: scopedMembers } }, { meetingOwnerMemberIdAtEvent: { in: scopedMembers } }, { opportunityOwnerMemberIdAtEvent: { in: scopedMembers } },
+    ],
+  };
+  return {
+    workspaceId: context.workspaceId,
+    occurredAt: { gte: new Date(query.from), lt: new Date(query.to) },
+    AND: [visibility],
+    ...(selectedMembers.length ? { creditedMemberId: { in: selectedMembers } } : {}),
+    ...(query.filters.teamIds.length ? { teamId: { in: [...query.filters.teamIds] } } : {}),
+    ...(query.filters.sourceIds.length ? { sourceId: { in: [...query.filters.sourceIds] } } : {}),
+    ...(query.filters.campaignIds.length ? { campaignId: { in: [...query.filters.campaignIds] } } : {}),
+    ...(query.filters.creativeIds.length ? { creativeId: { in: [...query.filters.creativeIds] } } : {}),
+    ...(query.filters.pipelineIds?.length ? { pipelineId: { in: [...query.filters.pipelineIds] } } : {}),
+    ...(query.filters.stageIds?.length ? { stageId: { in: [...query.filters.stageIds] } } : {}),
+    ...(query.filters.channels?.length ? { channel: { in: [...query.filters.channels] } } : {}),
+    ...(query.filters.cadenceStepKeys?.length ? { cadenceStepKey: { in: [...query.filters.cadenceStepKeys] } } : {}),
+    ...(query.filters.executionModes?.length ? { executionMode: { in: [...query.filters.executionModes] } } : {}),
+    ...(query.filters.municipality?.length ? { municipality: { in: [...query.filters.municipality] } } : {}),
+    ...(query.filters.stateCodes?.length ? { stateCode: { in: [...query.filters.stateCodes] } } : {}),
+    ...(query.filters.politicalRoles?.length ? { politicalRole: { in: [...query.filters.politicalRoles] } } : {}),
+  };
 }
 
 function dimensionFilters(
@@ -887,7 +965,140 @@ export function createMetricsService(options: MetricsServiceOptions) {
     });
   }
 
-  return Object.freeze({ getOverview });
+  async function getIntegratedOverview(
+    context: AuthenticatedContext,
+    input: unknown,
+  ): Promise<IntegratedMetricsOverview> {
+    const query = parseMetricsQuery(input);
+    const to = new Date(query.to);
+    const scope = await resolveMetricsScope(options.database, options.authorization, context);
+    const workspace = await options.database.workspace.findFirst({ where: { id: context.workspaceId, status: "ACTIVE", deletedAt: null }, select: { timeZone: true } });
+    if (!workspace) invalidInput("Workspace não encontrado.");
+    const where = await integratedFactWhere(options.database, context, scope, query);
+    const [groups, leadFacts, latestBackfill, latestReconciliation] = await Promise.all([
+      options.database.commercialMetricFact.groupBy({ by: ["eventType"], where, _sum: { quantity: true, valueCents: true }, _max: { occurredAt: true } }),
+      options.database.commercialMetricFact.findMany({ where: { ...where, leadId: { not: null } }, select: { eventType: true, leadId: true, quantity: true } }),
+      options.database.commercialMetricBackfillRun.findFirst({ where: { workspaceId: context.workspaceId }, orderBy: [{ startedAt: "desc" }, { id: "desc" }] }),
+      options.database.commercialMetricReconciliationRun.findFirst({ where: { workspaceId: context.workspaceId }, orderBy: [{ startedAt: "desc" }, { id: "desc" }] }),
+    ]);
+    const byType = new Map(groups.map((group) => [group.eventType, group]));
+    const balances = new Map<string, number>();
+    for (const fact of leadFacts) {
+      const key = `${fact.eventType}:${fact.leadId}`;
+      balances.set(key, (balances.get(key) ?? 0) + fact.quantity);
+    }
+    const count = (types: readonly CommercialMetricEventType[]) => types.reduce((sum, type) => sum + Number(byType.get(type)?._sum.quantity ?? 0), 0);
+    const distinct = (types: readonly CommercialMetricEventType[]) => {
+      const leads = new Set<string>();
+      for (const [key, balance] of balances) if (balance > 0 && types.some((type) => key.startsWith(`${type}:`))) leads.add(key.slice(key.indexOf(":") + 1));
+      return leads.size;
+    };
+    const cents = (types: readonly CommercialMetricEventType[]) => types.reduce((sum, type) => sum + (byType.get(type)?._sum.valueCents ?? 0n), 0n);
+    const newest = groups.flatMap((group) => group._max.occurredAt ? [group._max.occurredAt] : []).sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
+    const period = Object.freeze({ from: query.from, to: query.to, timeZone: workspace.timeZone, interval: "HALF_OPEN" as const });
+    const values: CanonicalMetricValue[] = integratedMetricRegistry.map((definition) => {
+      const numerator = definition.aggregation === "DISTINCT_LEAD" ? distinct(definition.eventTypes) : definition.aggregation === "SUM_CENTS" ? cents(definition.eventTypes) : count(definition.eventTypes);
+      const denominator = definition.denominatorEventTypes
+        ? definition.denominatorAggregation === "DISTINCT_LEAD" ? distinct(definition.denominatorEventTypes) : count(definition.denominatorEventTypes)
+        : null;
+      const noDenominator = definition.aggregation === "RATE" && denominator === 0;
+      const value = definition.aggregation === "RATE" ? noDenominator ? null : Math.round(Number(numerator) * 10_000 / Number(denominator)) : definition.aggregation === "SUM_CENTS" ? (numerator as bigint).toString() : Number(numerator);
+      const numericZero = definition.aggregation === "SUM_CENTS" ? numerator === 0n : Number(numerator) === 0;
+      return Object.freeze({
+        metricId: definition.id,
+        definitionVersion: 1,
+        state: noDenominator ? "NO_DENOMINATOR" as const : numericZero ? "ZERO" as const : "AVAILABLE" as const,
+        value,
+        unit: definition.unit,
+        numerator: definition.aggregation === "SUM_CENTS" ? (numerator as bigint).toString() : Number(numerator),
+        denominator,
+        sampleCount: definition.aggregation === "RATE" ? denominator : definition.aggregation === "DISTINCT_LEAD" ? Number(numerator) : null,
+        coverageBasisPoints: latestBackfill?.status === "COMPLETED" ? 10_000 : null,
+        period,
+        asOf: to.toISOString(),
+        filters: query.filters,
+        scope: scope.scope,
+        freshnessAt: newest?.toISOString() ?? null,
+        reason: noDenominator ? "Não há denominador elegível no período." : numericZero ? "Nenhum fato elegível no período." : definition.description,
+        limitations: definition.limitations,
+        drilldownId: `integrated:${definition.id}`,
+      });
+    });
+    const totalFacts = count(groups.map((group) => group.eventType));
+    const unattributed = await options.database.commercialMetricFact.aggregate({ where: { ...where, creditedMemberId: null }, _sum: { quantity: true } });
+    const unattributedFacts = Number(unattributed._sum.quantity ?? 0);
+    const coverageBasisPoints = totalFacts === 0 ? null : Math.max(0, Math.round((totalFacts - unattributedFacts) * 10_000 / totalFacts));
+    const reconciliationState = latestReconciliation?.status === "RUNNING" ? "DELAYED" as const
+      : latestReconciliation?.status === "COMPLETED" && latestReconciliation.divergentCheckCount === 0 ? "AVAILABLE" as const
+        : latestReconciliation?.status === "COMPLETED" ? "PARTIAL" as const
+          : "UNAVAILABLE" as const;
+    const reconciliationReason = latestReconciliation?.status === "COMPLETED"
+      ? latestReconciliation.divergentCheckCount === 0
+        ? `Reconciliação ${latestReconciliation.id} sem divergências.`
+        : `Reconciliação ${latestReconciliation.id} encontrou ${latestReconciliation.divergentCheckCount} divergência(s).`
+      : latestReconciliation ? `Reconciliação mais recente: ${latestReconciliation.status}.` : "Reconciliação ainda não executada neste workspace.";
+    return Object.freeze({
+      registryVersion: INTEGRATED_METRIC_REGISTRY_VERSION,
+      generatedAt: options.now().toISOString(),
+      values: Object.freeze(values),
+      quality: Object.freeze({
+        totalFacts, unattributedFacts, coverageBasisPoints, freshnessAt: newest?.toISOString() ?? null,
+        reconciliationState, reconciliationRunId: latestReconciliation?.id ?? null,
+        reconciliationExpectedCount: latestReconciliation?.expectedCount ?? null,
+        reconciliationActualCount: latestReconciliation?.actualCount ?? null,
+        divergentCheckCount: latestReconciliation?.divergentCheckCount ?? null,
+        reason: `${latestBackfill ? `Último backfill: ${latestBackfill.status}.` : "Backfill ainda não executado."} ${reconciliationReason}`,
+      }),
+    });
+  }
+
+  async function getIntegratedDrilldown(context: AuthenticatedContext, raw: unknown) {
+    const parsed = integratedDrilldownSchema.safeParse(raw);
+    if (!parsed.success) invalidInput(parsed.error);
+    const query = parseMetricsQuery(parsed.data.query);
+    const definition = integratedMetricRegistry.find((item) => item.id === parsed.data.metricId);
+    if (!definition) invalidInput("Métrica integrada desconhecida.");
+    const scope = await resolveMetricsScope(options.database, options.authorization, context);
+    const baseWhere = await integratedFactWhere(options.database, context, scope, query);
+    const cursorFact = parsed.data.cursor ? await options.database.commercialMetricFact.findFirst({
+      where: { id: parsed.data.cursor, workspaceId: context.workspaceId },
+      select: { id: true, occurredAt: true },
+    }) : null;
+    if (parsed.data.cursor && !cursorFact) invalidInput("Cursor de drill-down inválido.");
+    const rows = await options.database.commercialMetricFact.findMany({
+      where: {
+        ...baseWhere,
+        eventType: { in: [...definition.eventTypes] },
+        ...(cursorFact ? { OR: [{ occurredAt: { lt: cursorFact.occurredAt } }, { occurredAt: cursorFact.occurredAt, id: { lt: cursorFact.id } }] } : {}),
+      },
+      orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+      take: parsed.data.limit + 1,
+      select: {
+        id: true, eventKey: true, eventType: true, occurredAt: true, sourceEntityType: true, sourceEntityId: true,
+        leadId: true, contactId: true, accountId: true, taskId: true, activityId: true, messageId: true, phoneCallId: true,
+        meetingId: true, opportunityId: true, contractId: true, paymentId: true, pipelineId: true, stageId: true,
+        creditedMemberId: true, performedByMemberId: true, teamId: true, sourceId: true, campaignId: true, creativeId: true,
+        politicalRole: true, municipality: true, stateCode: true, channel: true, direction: true, taskKind: true, result: true,
+        executionMode: true, valueCents: true, durationSeconds: true, quantity: true, producerVersion: true, definitionVersion: true,
+      },
+    });
+    const hasMore = rows.length > parsed.data.limit;
+    const page = rows.slice(0, parsed.data.limit).map((row) => Object.freeze({
+      ...row,
+      occurredAt: row.occurredAt.toISOString(),
+      valueCents: row.valueCents?.toString() ?? null,
+    }));
+    return Object.freeze({
+      metric: Object.freeze({ id: definition.id, label: definition.label, description: definition.description, unit: definition.unit }),
+      period: Object.freeze({ from: query.from, to: query.to, interval: "HALF_OPEN" as const }),
+      scope: scope.scope,
+      records: Object.freeze(page),
+      nextCursor: hasMore ? page.at(-1)?.id ?? null : null,
+      limitations: definition.limitations,
+    });
+  }
+
+  return Object.freeze({ getOverview, getIntegratedOverview, getIntegratedDrilldown });
 }
 
 let metricsService: ReturnType<typeof createMetricsService> | undefined;

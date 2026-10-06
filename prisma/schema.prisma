@@ -14144,6 +14144,223 @@ model Commission {
   @@map("commissions")
 }
 
+enum CommercialMetricEventType {
+  LEAD_CREATED
+  LEAD_SUBMISSION_ATTACHED
+  CONTACT_CREATED
+  CONTACT_POINT_VERIFIED
+  ACCOUNT_CREATED
+  ADVISOR_LINKED
+  LEAD_ASSIGNED
+  LEAD_REASSIGNED
+  STAGE_ENTERED
+  STAGE_EXITED
+  LEAD_DISQUALIFIED
+  LEAD_CLOSED_NO_RESPONSE
+  LEAD_REOPENED
+  OPPORTUNITY_CREATED
+  PROPOSAL_REACHED
+  OPPORTUNITY_WON
+  OPPORTUNITY_LOST
+  OPPORTUNITY_REOPENED
+  TASK_CREATED
+  TASK_STARTED
+  TASK_COMPLETED
+  TASK_CANCELLED
+  CALL_ATTEMPTED
+  CALL_CONNECTED
+  CALL_UNANSWERED
+  CALL_FAILED
+  INSTAGRAM_MESSAGE_SENT
+  INSTAGRAM_FOLLOW_COMPLETED
+  INBOUND_MESSAGE_RECEIVED
+  HUMAN_RESPONSE_CONFIRMED
+  AUTO_RESPONSE_RECEIVED
+  EMAIL_SCHEDULED
+  EMAIL_CLAIMED
+  EMAIL_SENT
+  EMAIL_DELIVERED
+  EMAIL_REPLIED
+  EMAIL_BOUNCED
+  EMAIL_COMPLAINT
+  EMAIL_UNSUBSCRIBED
+  EMAIL_CANCELLED
+  EMAIL_EXPIRED
+  EMAIL_FAILED
+  LEAD_QUALIFIED
+  PACTO_VALIDATED
+  MEETING_SCHEDULED
+  MEETING_RESCHEDULED
+  MEETING_CONFIRMED
+  MEETING_COMPLETED
+  MEETING_NO_SHOW
+  MEETING_CANCELLED
+  SALE_WON
+  CONTRACT_ACCEPTED
+  SUBSCRIPTION_ACTIVATED
+  REVENUE_MOVEMENT_POSTED
+  INVOICE_ISSUED
+  PAYMENT_CONFIRMED
+  PAYMENT_REVERSED
+  CHURN_CONFIRMED
+  RENEWAL_DECIDED
+}
+
+enum CommercialMetricExecutionMode {
+  MANUAL
+  AUTOMATION
+  SYSTEM
+}
+
+enum CommercialMetricBackfillMode {
+  DRY_RUN
+  APPLY
+}
+
+enum CommercialMetricBackfillStatus {
+  RUNNING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum CommercialMetricBackfillOutcome {
+  CREATED
+  ALREADY_PRESENT
+  REVIEW_REQUIRED
+  SKIPPED
+  FAILED
+}
+
+enum CommercialMetricReconciliationStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum CommercialMetricReconciliationState {
+  MATCHED
+  DIVERGENT
+}
+
+model CommercialMetricFact {
+  id                          String                        @id @default(uuid()) @db.Uuid
+  workspaceId                 String                        @db.Uuid
+  eventKey                    String
+  eventType                   CommercialMetricEventType
+  occurredAt                  DateTime                      @db.Timestamptz(3)
+  recordedAt                  DateTime                      @default(now()) @db.Timestamptz(3)
+  sourceEntityType            String
+  sourceEntityId              String                        @db.Uuid
+  sourceRevision              Int                           @default(1)
+  leadId                      String?                       @db.Uuid
+  contactId                   String?                       @db.Uuid
+  accountId                   String?                       @db.Uuid
+  taskId                      String?                       @db.Uuid
+  activityId                  String?                       @db.Uuid
+  messageId                   String?                       @db.Uuid
+  phoneCallId                 String?                       @db.Uuid
+  meetingId                   String?                       @db.Uuid
+  opportunityId               String?                       @db.Uuid
+  contractId                  String?                       @db.Uuid
+  paymentId                   String?                       @db.Uuid
+  pipelineId                  String?                       @db.Uuid
+  stageId                     String?                       @db.Uuid
+  fromStageId                 String?                       @db.Uuid
+  toStageId                   String?                       @db.Uuid
+  teamId                      String?                       @db.Uuid
+  creditedMemberId            String?                       @db.Uuid
+  performedByMemberId         String?                       @db.Uuid
+  leadOwnerMemberIdAtEvent    String?                       @db.Uuid
+  meetingOwnerMemberIdAtEvent String?                       @db.Uuid
+  opportunityOwnerMemberIdAtEvent String?                    @db.Uuid
+  bookedByMemberId            String?                       @db.Uuid
+  originatingSdrMemberId      String?                       @db.Uuid
+  sourceId                    String?                       @db.Uuid
+  campaignId                  String?                       @db.Uuid
+  creativeId                  String?                       @db.Uuid
+  politicalRole               String?
+  municipality                String?
+  stateCode                   String?
+  channel                     String?
+  direction                   String?
+  taskKind                    String?
+  activityType                String?
+  result                      String?
+  cadenceInstanceId           String?                       @db.Uuid
+  cadenceStepKey              String?
+  cadenceDay                  Int?
+  executionMode               CommercialMetricExecutionMode @default(SYSTEM)
+  valueCents                  BigInt?
+  durationSeconds             Int?
+  quantity                    Int                           @default(1)
+  correctionOfFactId          String?                       @db.Uuid
+  reversedAt                  DateTime?                     @db.Timestamptz(3)
+  reversalReason              String?
+  definitionVersion           Int                           @default(1)
+  producerVersion             String                        @default("indicators.v1")
+  inputFingerprint            String
+  safeMetadata                Json?
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, eventKey])
+  @@index([workspaceId, occurredAt])
+  @@index([workspaceId, eventType, occurredAt])
+  @@index([workspaceId, creditedMemberId, occurredAt])
+  @@index([workspaceId, pipelineId, stageId, occurredAt])
+  @@index([workspaceId, channel, occurredAt])
+  @@index([workspaceId, leadId, occurredAt])
+  @@index([workspaceId, cadenceStepKey, occurredAt])
+  @@index([workspaceId, sourceEntityType, sourceEntityId])
+  @@index([workspaceId, stateCode, municipality, occurredAt])
+  @@map("commercial_metric_facts")
+}
+
+model CommercialMetricBackfillRun {
+  id                String                         @id @default(uuid()) @db.Uuid
+  workspaceId       String                         @db.Uuid
+  mode              CommercialMetricBackfillMode
+  status            CommercialMetricBackfillStatus @default(RUNNING)
+  ruleVersion       Int                            @default(1)
+  inputFingerprint  String
+  cursor            String?
+  eligibleCount     Int                            @default(0)
+  createdCount      Int                            @default(0)
+  existingCount     Int                            @default(0)
+  reviewCount       Int                            @default(0)
+  skippedCount      Int                            @default(0)
+  failedCount       Int                            @default(0)
+  requestedByActorId String                        @db.Uuid
+  startedAt         DateTime                       @default(now()) @db.Timestamptz(3)
+  finishedAt        DateTime?                      @db.Timestamptz(3)
+  summary           Json?
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, mode, inputFingerprint])
+  @@index([workspaceId, status, startedAt])
+  @@map("commercial_metric_backfill_runs")
+}
+
+model CommercialMetricBackfillItem {
+  id              String                          @id @default(uuid()) @db.Uuid
+  workspaceId     String                          @db.Uuid
+  runId           String                          @db.Uuid
+  sourceEntityType String
+  sourceEntityId  String                          @db.Uuid
+  eventKey        String
+  outcome         CommercialMetricBackfillOutcome
+  reasonCode      String?
+  factId          String?                         @db.Uuid
+  inputFingerprint String
+  createdAt       DateTime                        @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, runId, eventKey])
+  @@index([workspaceId, runId, outcome])
+  @@index([workspaceId, sourceEntityType, sourceEntityId])
+  @@map("commercial_metric_backfill_items")
+}
+
 enum ProspectingResearchTargetStatus {
   PENDING
   CLAIMED
@@ -14225,4 +14442,45 @@ model McpOAuthRefreshToken {
   @@index([workspaceId, expiresAt, revokedAt])
   @@index([clientId, expiresAt, revokedAt])
   @@map("mcp_oauth_refresh_tokens")
+}
+
+model CommercialMetricReconciliationRun {
+  id                 String                               @id @default(uuid()) @db.Uuid
+  workspaceId        String                               @db.Uuid
+  runKey             String
+  status             CommercialMetricReconciliationStatus @default(RUNNING)
+  ruleVersion        Int                                  @default(1)
+  expectedCount      Int                                  @default(0)
+  actualCount        Int                                  @default(0)
+  gapCount           Int                                  @default(0)
+  matchedCheckCount  Int                                  @default(0)
+  divergentCheckCount Int                                 @default(0)
+  requestedByActorId String                               @db.Uuid
+  startedAt          DateTime                             @default(now()) @db.Timestamptz(3)
+  finishedAt         DateTime?                            @db.Timestamptz(3)
+  summary            Json?
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, runKey])
+  @@index([workspaceId, status, startedAt])
+  @@map("commercial_metric_reconciliation_runs")
+}
+
+model CommercialMetricReconciliationCheck {
+  id               String                              @id @default(uuid()) @db.Uuid
+  workspaceId      String                              @db.Uuid
+  runId            String                              @db.Uuid
+  sourceEntityType String
+  eventType        CommercialMetricEventType
+  state            CommercialMetricReconciliationState
+  expectedCount    Int
+  actualCount      Int
+  gapCount         Int
+  details          Json?
+  createdAt        DateTime                            @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, runId, sourceEntityType, eventType])
+  @@index([workspaceId, runId, state])
+  @@map("commercial_metric_reconciliation_checks")
 }

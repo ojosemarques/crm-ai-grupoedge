@@ -30,3 +30,10 @@ A CRM-57 adiciona o catálogo canônico `crm57.1` e
 renovação, coortes e snapshots de forecast. Zero, ausência de denominador,
 indisponibilidade, não aplicabilidade, parcial e supressão são estados distintos.
 A especificação normativa está em `docs/REVENUE_METRICS.md`.
+
+A camada `indicators.1` adiciona a razão comercial transversal
+`CommercialMetricFact`, o writer transacional idempotente, backfill e
+reconciliação persistida. `getIntegratedOverview` e
+`getIntegratedDrilldown` continuam dentro de `MetricsService`; dashboard,
+metas, gestão de equipe e analytics builder apenas consomem esse contrato. O
+runbook e as regras de estado estão em `docs/METRICS.md`.

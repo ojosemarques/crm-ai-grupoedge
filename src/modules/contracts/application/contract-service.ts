@@ -17,6 +17,7 @@ import type { PermissionKey } from "@/modules/users/permissions/permission-keys"
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 
 type AuthorizationPort = Readonly<{
   authorize(context: AuthenticatedContext, permission: PermissionKey, resource: ResourceScope): Promise<AuthorizationDecision>;
@@ -317,10 +318,31 @@ export function createContractService(options: Options) {
 
       const update = await transaction.commercialContract.updateMany({ where: { id: contract.id, workspaceId: context.workspaceId, revision: input.expectedRevision }, data: { status: toStatus, revision: { increment: 1 }, updatedByActorId: context.actorId, ...(input.action === "ACCEPT_LOCAL" ? { acceptedAt: now, effectiveStartsAt: new Date(input.effectiveStartsAt), effectiveEndsAt: input.effectiveEndsAt ? new Date(input.effectiveEndsAt) : null } : {}) } });
       if (update.count !== 1) fail("O contrato foi alterado em paralelo. Atualize a página.", "STALE_CONTRACT");
-      await transaction.contractEvent.create({ data: { workspaceId: context.workspaceId, contractId, contractVersionId: version.id, eventType, fromStatus: contract.status, toStatus, reason, idempotencyKey: input.idempotencyKey, actorId: context.actorId, occurredAt: now, ...eventExtra } });
+      const contractEvent = await transaction.contractEvent.create({ data: { workspaceId: context.workspaceId, contractId, contractVersionId: version.id, eventType, fromStatus: contract.status, toStatus, reason, idempotencyKey: input.idempotencyKey, actorId: context.actorId, occurredAt: now, ...eventExtra } });
       await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: `contract.${input.action.toLowerCase()}`, entityType: "CommercialContract", entityId: contract.id, reason, changes: { fromStatus: contract.status, toStatus, revision: input.expectedRevision + 1 }, metadata: { versionId: version.id, localOnly: true } } });
-      const opportunity = await transaction.opportunity.findFirst({ where: { id: contract.opportunityId, workspaceId: context.workspaceId }, select: { leadId: true } });
+      const opportunity = await transaction.opportunity.findFirst({ where: { id: contract.opportunityId, workspaceId: context.workspaceId }, select: { leadId: true, ownerMemberId: true } });
       if (opportunity) await transaction.activity.create({ data: { workspaceId: context.workspaceId, leadId: opportunity.leadId, opportunityId: contract.opportunityId, type: "PROPOSAL", direction: "INTERNAL", subject: `Contrato ${contract.contractNumber}: ${input.action}`, description: reason, occurredAt: now, previousValues: { status: contract.status }, newValues: { status: toStatus }, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+      if (input.action === "ACCEPT_LOCAL") {
+        await recordCommercialMetricFactInTransaction(transaction, {
+          workspaceId: context.workspaceId,
+          eventKey: `contract-event:${contractEvent.id}:accepted:v1`,
+          eventType: "CONTRACT_ACCEPTED",
+          occurredAt: now,
+          sourceEntityType: "ContractEvent",
+          sourceEntityId: contractEvent.id,
+          leadId: opportunity?.leadId ?? null,
+          accountId: contract.accountId,
+          opportunityId: contract.opportunityId,
+          contractId: contract.id,
+          creditedMemberId: contract.ownerMemberId,
+          performedByMemberId: context.memberId,
+          opportunityOwnerMemberIdAtEvent: opportunity?.ownerMemberId ?? contract.ownerMemberId,
+          valueCents: version.totalCents,
+          result: "ACCEPTED",
+          executionMode: "MANUAL",
+          safeMetadata: { mrrCents: version.mrrCents.toString(), tcvCents: version.tcvCents.toString(), contractVersionId: version.id },
+        });
+      }
       return { contractId, versionId: version.id, status: toStatus, replayed: false };
     }, { isolationLevel: "Serializable" });
   }

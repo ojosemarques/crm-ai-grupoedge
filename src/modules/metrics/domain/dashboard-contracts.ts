@@ -1,4 +1,5 @@
 import type {
+  IntegratedMetricsOverview,
   MetricsFilters,
   MetricsOverview,
 } from "@/modules/metrics/domain/metrics-contracts";
@@ -176,6 +177,7 @@ export type DashboardScreen = Readonly<{
   query: DashboardQuery;
   comparisonPeriod: DashboardPeriodInterval;
   overview: MetricsOverview;
+  integrated: IntegratedMetricsOverview;
   kpis: readonly DashboardKpi[];
   comparisons: readonly DashboardComparison[];
   timeSeries: readonly DashboardTimeSeries[];

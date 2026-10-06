@@ -11,6 +11,7 @@ import {
 import { isBusinessDate, nextBusinessDate } from "@/modules/prospecting/domain/prospecting-cadence";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { addLocalDays, parseWorkspaceLocalDateTime, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 
 type Database = PrismaClient | Prisma.TransactionClient;
@@ -137,6 +138,12 @@ export function createProspectingEmailService(options: Readonly<{ database: Pris
         data: { status: "CLAIMED", claimedByClientId: principal.clientId, claimedAt: now, leaseExpiresAt: new Date(now.getTime() + input.leaseSeconds * 1_000), lastAuthorizedAt: null, renderedSubject, renderedBody, attemptCount: { increment: 1 } },
       });
       if (updated.count !== 1) continue;
+      await recordCommercialMetricFactInTransaction(database, {
+        workspaceId: principal.workspaceId, eventKey: `prospecting-email-job:${state.job.id}:attempt:${state.job.attemptCount + 1}:claimed:v1`, eventType: "EMAIL_CLAIMED",
+        occurredAt: now, sourceEntityType: "ProspectingEmailJob", sourceEntityId: state.job.id, leadId: state.job.leadId,
+        creditedMemberId: state.cadence!.ownerMemberId, cadenceInstanceId: state.job.cadenceInstanceId, cadenceStepKey: state.job.stepKey,
+        channel: "EMAIL", direction: "OUTBOUND", result: "CLAIMED", executionMode: "AUTOMATION",
+      });
       claimed.push({
         id: state.job.id,
         stepKey: state.job.stepKey,
@@ -211,6 +218,25 @@ export function createProspectingEmailService(options: Readonly<{ database: Pris
       select: { id: true, status: true, providerMessageId: true },
     });
     await database.prospectingCadenceStep.updateMany({ where: { workspaceId: principal.workspaceId, emailJobId: job.id }, data: { status: status === "SENT" ? "COMPLETED" : status === "SCHEDULED" ? "SCHEDULED" : status === "EXPIRED" ? "EXPIRED" : "FAILED", resultCode: status, resultReason: input.errorCode ?? null, completedAt: status === "SENT" ? occurredAt : null } });
+    if (status === "SENT" || status === "FAILED" || status === "EXPIRED") {
+      const cadence = await database.prospectingCadenceInstance.findFirst({ where: { id: job.cadenceInstanceId, workspaceId: principal.workspaceId }, select: { ownerMemberId: true } });
+      await recordCommercialMetricFactInTransaction(database, {
+        workspaceId: principal.workspaceId,
+        eventKey: `prospecting-email-job:${job.id}:attempt:${job.attemptCount}:${status.toLowerCase()}:v1`,
+        eventType: status === "SENT" ? "EMAIL_SENT" : status === "EXPIRED" ? "EMAIL_EXPIRED" : "EMAIL_FAILED",
+        occurredAt,
+        sourceEntityType: "ProspectingEmailJob",
+        sourceEntityId: job.id,
+        leadId: job.leadId,
+        creditedMemberId: cadence?.ownerMemberId ?? null,
+        cadenceInstanceId: job.cadenceInstanceId,
+        cadenceStepKey: job.stepKey,
+        channel: "EMAIL",
+        direction: "OUTBOUND",
+        result: status,
+        executionMode: "AUTOMATION",
+      });
+    }
     return { job: updated, duplicate: false, retryScheduled, recordedAt: now.toISOString() };
   }
 
@@ -227,6 +253,17 @@ export function createProspectingEmailService(options: Readonly<{ database: Pris
     if (!job) return { eventId: recorded.id, duplicate: false, matched: false };
     if (!canApplyProviderEvent(job.status, input.type)) return { eventId: recorded.id, duplicate: false, matched: true, applied: false, reason: "NON_MONOTONIC_EVENT" };
     await database.prospectingEmailJob.update({ where: { id: job.id }, data: { status: input.type, finalizedAt: ["BOUNCED", "COMPLAINT", "UNSUBSCRIBED", "REPLIED"].includes(input.type) ? new Date(input.occurredAt) : null } });
+    const cadence = await database.prospectingCadenceInstance.findFirst({ where: { id: job.cadenceInstanceId, workspaceId: principal.workspaceId }, select: { ownerMemberId: true } });
+    const eventType = ({ DELIVERED: "EMAIL_DELIVERED", REPLIED: "EMAIL_REPLIED", BOUNCED: "EMAIL_BOUNCED", COMPLAINT: "EMAIL_COMPLAINT", UNSUBSCRIBED: "EMAIL_UNSUBSCRIBED" } as const)[input.type];
+    const occurredAt = new Date(input.occurredAt);
+    const common = { workspaceId: principal.workspaceId, occurredAt, sourceEntityType: "ProspectingEmailEvent", sourceEntityId: recorded.id, leadId: job.leadId, creditedMemberId: cadence?.ownerMemberId ?? null, cadenceInstanceId: job.cadenceInstanceId, cadenceStepKey: job.stepKey, channel: "EMAIL", direction: "INBOUND", result: input.type, executionMode: "AUTOMATION" as const };
+    await recordCommercialMetricFactInTransaction(database, { ...common, eventKey: `prospecting-email-event:${recorded.id}:${eventType.toLowerCase()}:v1`, eventType });
+    if (input.type === "REPLIED") {
+      const responseType = input.automaticReply ? "AUTO_RESPONSE_RECEIVED" as const : "HUMAN_RESPONSE_CONFIRMED" as const;
+      if (responseType === "HUMAN_RESPONSE_CONFIRMED") await database.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`commercial-metric:first-human-response:${principal.workspaceId}:${job.leadId}`}, 0))`;
+      const existingResponse = responseType === "HUMAN_RESPONSE_CONFIRMED" ? await database.commercialMetricFact.findFirst({ where: { workspaceId: principal.workspaceId, leadId: job.leadId, eventType: responseType }, select: { id: true } }) : null;
+      if (!existingResponse) await recordCommercialMetricFactInTransaction(database, { ...common, eventKey: `prospecting-email-event:${recorded.id}:${responseType.toLowerCase()}:v1`, eventType: responseType });
+    }
     if (input.type === "REPLIED") {
       await stopColdCadenceInTransaction(database, { workspaceId: principal.workspaceId, leadId: job.leadId, actorId: principal.actorId, reason: input.automaticReply ? "AUTO_REPLY" : "HUMAN_REPLY", occurredAt: new Date(input.occurredAt) });
     } else if (input.type === "BOUNCED") {

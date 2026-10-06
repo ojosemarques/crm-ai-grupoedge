@@ -30,6 +30,7 @@ import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { recordLegacySignalInTransaction } from "@/modules/privacy/application/privacy-foundation";
 import { marketingEvidenceInputSchema } from "@/modules/marketing/domain/marketing-contracts";
 import { recordLeadIntakeAttributionInTransaction } from "@/modules/marketing/application/marketing-attribution-service";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
@@ -1046,7 +1047,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
           select: { id: true },
         });
 
-        await transaction.stageHistory.create({
+        const initialStageHistory = await transaction.stageHistory.create({
           data: {
             workspaceId: context.workspaceId,
             pipelineId: references.pipeline.id,
@@ -1058,7 +1059,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
             transitionReason: "Entrada inicial do lead.",
           },
         });
-        await transaction.activity.create({
+        const intakeActivity = await transaction.activity.create({
           data: {
             workspaceId: context.workspaceId,
             leadId: lead.id,
@@ -1133,6 +1134,72 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
           receivedAt: parsed.receivedAt,
           doNotContact: contactPreference === "DO_NOT_CONTACT",
           requestId: parsed.idempotencyKey,
+        });
+        const executionMode = isHumanContext(context) ? "MANUAL" as const : context.actorType === "AUTOMATION" ? "AUTOMATION" as const : "SYSTEM" as const;
+        const performedByMemberId = isHumanContext(context) ? context.memberId : null;
+        const commonDimensions = {
+          workspaceId: context.workspaceId,
+          occurredAt: parsed.receivedAt,
+          leadId: lead.id,
+          contactId: contactIdentity.contactId,
+          pipelineId: references.pipeline.id,
+          stageId: references.stage.id,
+          creditedMemberId: operationalOwner.memberId,
+          performedByMemberId,
+          leadOwnerMemberIdAtEvent: operationalOwner.memberId,
+          sourceId: references.source.id,
+          campaignId: references.campaign?.id ?? null,
+          creativeId: references.creative?.id ?? null,
+          politicalRole: parsed.jobTitle ?? null,
+          municipality: parsed.city ?? null,
+          stateCode: parsed.stateCode ?? null,
+          channel: parsed.channel,
+          executionMode,
+        } as const;
+        await recordCommercialMetricFactInTransaction(transaction, {
+          ...commonDimensions,
+          eventKey: `lead:${lead.id}:created:v1`,
+          eventType: "LEAD_CREATED",
+          sourceEntityType: "Lead",
+          sourceEntityId: lead.id,
+          activityId: intakeActivity.id,
+        });
+        await recordCommercialMetricFactInTransaction(transaction, {
+          ...commonDimensions,
+          eventKey: `submission:${submission.id}:attached:v1`,
+          eventType: "LEAD_SUBMISSION_ATTACHED",
+          sourceEntityType: "LeadFormSubmission",
+          sourceEntityId: submission.id,
+        });
+        await recordCommercialMetricFactInTransaction(transaction, {
+          ...commonDimensions,
+          eventKey: `contact:${contactIdentity.contactId}:created:v1`,
+          eventType: "CONTACT_CREATED",
+          sourceEntityType: "Contact",
+          sourceEntityId: contactIdentity.contactId,
+        });
+        await recordCommercialMetricFactInTransaction(transaction, {
+          ...commonDimensions,
+          eventKey: `stage-history:${initialStageHistory.id}:entered:v1`,
+          eventType: "STAGE_ENTERED",
+          sourceEntityType: "StageHistory",
+          sourceEntityId: initialStageHistory.id,
+        });
+        await recordCommercialMetricFactInTransaction(transaction, {
+          ...commonDimensions,
+          eventKey: `lead:${lead.id}:assigned:${operationalOwner.memberId ?? operationalOwner.queueId}:v1`,
+          eventType: "LEAD_ASSIGNED",
+          sourceEntityType: "Lead",
+          sourceEntityId: lead.id,
+        });
+        await recordCommercialMetricFactInTransaction(transaction, {
+          ...commonDimensions,
+          eventKey: `task:${operations.taskId}:created:v1`,
+          eventType: "TASK_CREATED",
+          sourceEntityType: "Task",
+          sourceEntityId: operations.taskId,
+          taskId: operations.taskId,
+          taskKind: "IMMEDIATE_CALL",
         });
         if (preparedScore) {
           await recordScoreInTransaction(transaction, {

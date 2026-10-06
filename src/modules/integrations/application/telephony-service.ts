@@ -31,6 +31,7 @@ import { getAuthorizationService, type ResourceScope } from "@/modules/users/per
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 
 type Tx = Prisma.TransactionClient;
 type Options = Readonly<{ database: PrismaClient; now: () => Date }>;
@@ -187,7 +188,7 @@ export async function applyTelephonyEventInTransaction(tx: Tx, input: Readonly<{
       legId = primaryLeg.id;
     }
   }
-  await tx.phoneCallStatusEvent.create({ data: { workspaceId: input.workspaceId, callId: call.id, legId, status: input.event.status, sequence: input.event.sequence, source: input.source ?? "LOCAL_SIMULATOR", providerReported: false, providerKey: TELEPHONY_PROVIDER_KEY, externalEventId: input.event.eventId, occurredAt: input.event.occurredAt, reasonCode: input.event.reasonCode ?? null, safeMetadata: json(sanitizeTelephonyMetadata(input.event.metadata) ?? {}), actorId: input.actorId } });
+  const statusEvent = await tx.phoneCallStatusEvent.create({ data: { workspaceId: input.workspaceId, callId: call.id, legId, status: input.event.status, sequence: input.event.sequence, source: input.source ?? "LOCAL_SIMULATOR", providerReported: false, providerKey: TELEPHONY_PROVIDER_KEY, externalEventId: input.event.eventId, occurredAt: input.event.occurredAt, reasonCode: input.event.reasonCode ?? null, safeMetadata: json(sanitizeTelephonyMetadata(input.event.metadata) ?? {}), actorId: input.actorId } });
   const terminalStatus = ["COMPLETED", "BUSY", "NO_ANSWER", "CANCELLED", "FAILED", "VOICEMAIL"].includes(input.event.status);
   if (terminalStatus && legId) {
     const terminalLeg = await tx.phoneCallLeg.findUnique({ where: { id: legId } });
@@ -212,6 +213,36 @@ export async function applyTelephonyEventInTransaction(tx: Tx, input: Readonly<{
   }
   await tx.phoneCall.update({ where: { id: call.id }, data });
   await tx.message.update({ where: { id: call.messageId }, data: { ...(laterTransferLegEvent ? {} : { status: messageStatus(input.event.status) }), lastProviderStatusAt: input.event.occurredAt, revision: { increment: 1 } } });
+  const factEventType = input.event.status === "INITIATED" ? "CALL_ATTEMPTED" as const
+    : input.event.status === "ANSWERED" ? "CALL_CONNECTED" as const
+    : ["BUSY", "NO_ANSWER", "VOICEMAIL"].includes(input.event.status) ? "CALL_UNANSWERED" as const
+    : ["FAILED", "CANCELLED"].includes(input.event.status) ? "CALL_FAILED" as const
+    : null;
+  if (factEventType) {
+    await recordCommercialMetricFactInTransaction(tx, {
+      workspaceId: input.workspaceId,
+      eventKey: `phone-call-status:${statusEvent.id}:${factEventType.toLowerCase()}:v1`,
+      eventType: factEventType,
+      occurredAt: input.event.occurredAt,
+      sourceEntityType: "PhoneCallStatusEvent",
+      sourceEntityId: statusEvent.id,
+      leadId: call.leadId,
+      contactId: call.contactId,
+      accountId: call.accountId,
+      messageId: call.messageId,
+      phoneCallId: call.id,
+      meetingId: call.meetingId,
+      opportunityId: call.opportunityId,
+      teamId: call.teamId,
+      creditedMemberId: call.ownerMemberId,
+      leadOwnerMemberIdAtEvent: call.ownerMemberId,
+      channel: "PHONE",
+      direction: call.direction,
+      result: input.event.status,
+      durationSeconds: terminalStatus ? baseDuration : null,
+      executionMode: input.source === "INTERNAL" ? "MANUAL" : "AUTOMATION",
+    });
+  }
   if (input.event.status === "INITIATED" && call.leadId) await registerTelephonyFirstAttemptInTransaction(tx, { workspaceId: input.workspaceId, leadId: call.leadId, actorId: call.createdByActorId, occurredAt: input.event.occurredAt });
   if (input.event.status === "ANSWERED" && call.leadId) await registerTelephonyConnectedInTransaction(tx, { workspaceId: input.workspaceId, leadId: call.leadId, occurredAt: input.event.occurredAt });
   if (terminalStatus && call.leadId) {

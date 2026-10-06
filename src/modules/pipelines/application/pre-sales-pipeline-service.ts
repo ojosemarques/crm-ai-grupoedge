@@ -18,6 +18,7 @@ import {
 import {
   statusForLeadStage,
 } from "@/modules/pipelines/domain/lead-stage-transition-policy";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import {
   leadStageCodes,
   type LeadPipelineCard,
@@ -316,7 +317,7 @@ export async function transitionLeadStageInTransaction(
     where: { id: currentHistory.id },
     data: { exitedAt: occurredAt, exitedByActorId: context.actorId },
   });
-  await transaction.stageHistory.create({
+  const enteredHistory = await transaction.stageHistory.create({
     data: {
       workspaceId: context.workspaceId,
       pipelineId: lead.pipelineId,
@@ -392,6 +393,76 @@ export async function transitionLeadStageInTransaction(
     },
     select: { id: true },
   });
+  await recordCommercialMetricFactInTransaction(transaction, {
+    workspaceId: context.workspaceId,
+    eventKey: `stage-history:${currentHistory.id}:exited:v1`,
+    eventType: "STAGE_EXITED",
+    occurredAt,
+    sourceEntityType: "StageHistory",
+    sourceEntityId: currentHistory.id,
+    leadId: lead.id,
+    activityId: activity.id,
+    pipelineId: lead.pipelineId,
+    stageId: lead.currentStage.id,
+    fromStageId: lead.currentStage.id,
+    toStageId: target.id,
+    creditedMemberId: lead.ownerMemberId,
+    performedByMemberId: null,
+    leadOwnerMemberIdAtEvent: lead.ownerMemberId,
+    result: input.managerCorrection ? "MANAGER_CORRECTION" : "TRANSITION",
+    executionMode: input.origin === "AUTOMATION" || input.origin === "SYSTEM" ? "AUTOMATION" : "MANUAL",
+  });
+  await recordCommercialMetricFactInTransaction(transaction, {
+    workspaceId: context.workspaceId,
+    eventKey: `stage-history:${enteredHistory.id}:entered:v1`,
+    eventType: "STAGE_ENTERED",
+    occurredAt,
+    sourceEntityType: "StageHistory",
+    sourceEntityId: enteredHistory.id,
+    leadId: lead.id,
+    activityId: activity.id,
+    pipelineId: lead.pipelineId,
+    stageId: target.id,
+    fromStageId: lead.currentStage.id,
+    toStageId: target.id,
+    creditedMemberId: lead.ownerMemberId,
+    leadOwnerMemberIdAtEvent: lead.ownerMemberId,
+    result: input.managerCorrection ? "MANAGER_CORRECTION" : "TRANSITION",
+    executionMode: input.origin === "AUTOMATION" || input.origin === "SYSTEM" ? "AUTOMATION" : "MANUAL",
+  });
+  if (target.leadStageCode === "QUALIFIED" || target.leadStageCode === "DISQUALIFIED") {
+    await recordCommercialMetricFactInTransaction(transaction, {
+      workspaceId: context.workspaceId,
+      eventKey: `stage-history:${enteredHistory.id}:${target.leadStageCode.toLowerCase()}:v1`,
+      eventType: target.leadStageCode === "QUALIFIED" ? "LEAD_QUALIFIED" : "LEAD_DISQUALIFIED",
+      occurredAt,
+      sourceEntityType: "StageHistory",
+      sourceEntityId: enteredHistory.id,
+      leadId: lead.id,
+      activityId: activity.id,
+      pipelineId: lead.pipelineId,
+      stageId: target.id,
+      creditedMemberId: lead.ownerMemberId,
+      leadOwnerMemberIdAtEvent: lead.ownerMemberId,
+      executionMode: input.origin === "AUTOMATION" || input.origin === "SYSTEM" ? "AUTOMATION" : "MANUAL",
+    });
+  }
+  for (const taskId of cancelledTaskIds) {
+    await recordCommercialMetricFactInTransaction(transaction, {
+      workspaceId: context.workspaceId,
+      eventKey: `task:${taskId}:cancelled:stage:${enteredHistory.id}:v1`,
+      eventType: "TASK_CANCELLED",
+      occurredAt,
+      sourceEntityType: "Task",
+      sourceEntityId: taskId,
+      leadId: lead.id,
+      taskId,
+      creditedMemberId: lead.ownerMemberId,
+      leadOwnerMemberIdAtEvent: lead.ownerMemberId,
+      result: "LEAD_DISQUALIFIED",
+      executionMode: "SYSTEM",
+    });
+  }
   await transaction.auditLog.create({
     data: {
       workspaceId: context.workspaceId,

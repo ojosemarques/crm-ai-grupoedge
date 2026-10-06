@@ -11,6 +11,62 @@ export type MetricsFilters = Readonly<{
   creativeIds: readonly string[];
   priorityCodes: readonly MetricsPriorityCode[];
   productIds: readonly string[];
+  pipelineIds?: readonly string[];
+  stageIds?: readonly string[];
+  channels?: readonly string[];
+  municipality?: readonly string[];
+  stateCodes?: readonly string[];
+  politicalRoles?: readonly string[];
+  cadenceStepKeys?: readonly string[];
+  executionModes?: readonly ("MANUAL" | "AUTOMATION" | "SYSTEM")[];
+}>;
+
+export type CanonicalMetricState =
+  | "AVAILABLE"
+  | "ZERO"
+  | "NO_DENOMINATOR"
+  | "UNAVAILABLE"
+  | "NOT_APPLICABLE"
+  | "PARTIAL"
+  | "SUPPRESSED"
+  | "DELAYED";
+
+export type CanonicalMetricValue = Readonly<{
+  metricId: string;
+  definitionVersion: number;
+  state: CanonicalMetricState;
+  value: string | number | null;
+  unit: "COUNT" | "CENTS" | "BASIS_POINTS" | "SECONDS";
+  numerator: string | number | null;
+  denominator: string | number | null;
+  sampleCount: number | null;
+  coverageBasisPoints: number | null;
+  period: Readonly<{ from: string; to: string; timeZone: string; interval: "HALF_OPEN" }>;
+  asOf: string;
+  filters: MetricsFilters;
+  scope: "WORKSPACE" | "TEAM" | "OWN";
+  freshnessAt: string | null;
+  reason: string;
+  limitations: readonly string[];
+  drilldownId: string | null;
+}>;
+
+export type IntegratedMetricsOverview = Readonly<{
+  registryVersion: string;
+  generatedAt: string;
+  values: readonly CanonicalMetricValue[];
+  quality: Readonly<{
+    totalFacts: number;
+    unattributedFacts: number;
+    coverageBasisPoints: number | null;
+    freshnessAt: string | null;
+    reconciliationState: CanonicalMetricState;
+    reconciliationRunId: string | null;
+    reconciliationExpectedCount: number | null;
+    reconciliationActualCount: number | null;
+    divergentCheckCount: number | null;
+    reason: string;
+  }>;
 }>;
 
 export type MetricsQuery = Readonly<{

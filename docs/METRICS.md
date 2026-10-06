@@ -424,3 +424,48 @@ inferir qualidade de carrier, gravação, transcrição ou entrega PSTN.
 | Divergências | versão corrente inválida ou emitida sem hash/HTML | evidência por contrato |
 
 Valores ficam em centavos. Proposta, ganho, aceite e vigência não são sinônimos.
+
+## Razão comercial integrada — IND-001 a IND-055
+
+O catálogo `indicators.1` amplia `MetricsService` sem substituir as fontes de
+domínio. `CommercialMetricFact` é um read model interno, append-only e
+reconstruível. Writers de entrada, pipeline, tarefa, telefonia, mensagens,
+e-mail, PACTO, reunião, oportunidade, contrato, receita e pagamento persistem o
+fato analítico na mesma transação da mutação operacional.
+
+Regras comuns:
+
+- período sempre semiaberto `[from,to)` no timezone persistido do workspace;
+- crédito histórico usa IDs congelados no fato, nunca nomes ou owner atual;
+- dinheiro usa centavos inteiros e reversão cria contrafato negativo;
+- `ZERO` é valor disponível igual a zero; `NO_DENOMINATOR` não é zero;
+- filtros e escopo `WORKSPACE`, `TEAM` ou `OWN` são aplicados no servidor;
+- drilldown expõe apenas dimensões allowlisted, sem corpo de mensagem, telefone
+  ou e-mail;
+- origem de aquisição (`sourceId`) e canal do evento (`channel`) permanecem
+  dimensões diferentes.
+
+O backfill versionado percorre as fontes com cursor e registra cada candidato
+como `CREATED`, `ALREADY_PRESENT`, `REVIEW_REQUIRED`, `SKIPPED` ou `FAILED`.
+Use primeiro:
+
+```bash
+pnpm db:commercial-metrics:backfill -- --workspace=<slug> --run-key=<chave>
+```
+
+Para aplicar, acrescente `--apply`; banco remoto exige também
+`--allow-production`. Depois execute:
+
+```bash
+pnpm db:commercial-metrics:reconcile -- --workspace=<slug> --run-key=<chave>
+```
+
+A reconciliação compara contagens por fonte e tipo de evento e persiste checks
+`MATCHED`/`DIVERGENT`. O dashboard mostra cobertura, freshness e o estado do
+último relatório. Divergência nunca é silenciosamente convertida em cobertura
+total.
+
+Rollback operacional: republicar a versão anterior do consumidor e manter as
+tabelas aditivas. Os fatos não são apagados; uma reconstrução posterior pode
+reutilizá-los ou gerar correções append-only. Não executar `DROP`, `TRUNCATE` ou
+`DELETE` na razão comercial em produção.

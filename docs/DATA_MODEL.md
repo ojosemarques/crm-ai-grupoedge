@@ -1078,3 +1078,20 @@ erDiagram
 
 Todas as relações novas usam `workspaceId`, FKs `RESTRICT`, índices operacionais
 e timestamps `TIMESTAMPTZ`. A migration não remove nem reescreve fatos.
+
+## Indicadores integrados — razão comercial
+
+`CommercialMetricFact` guarda eventos comerciais tipados, chaves idempotentes,
+timestamps de ocorrência/gravação, snapshots de crédito e dimensões relacionais
+de Lead, contato, conta, tarefa, comunicação, reunião, oportunidade, contrato,
+pagamento, pipeline, etapa, equipe, origem, campanha, geografia e cadência.
+Campos opcionais não autoritativos ficam em `safeMetadata`; dimensões usadas em
+filtro ou crédito não ficam escondidas em JSON.
+
+`CommercialMetricBackfillRun`/`Item` registram reconstruções em dry-run ou
+apply. `CommercialMetricReconciliationRun`/`Check` registram a comparação entre
+fontes de domínio e a projeção por tipo de evento. A migration
+`20261006043000_integrated_commercial_metrics` é aditiva, habilita RLS, revoga
+acesso direto de papéis públicos e instala trigger que bloqueia `UPDATE` e
+`DELETE` em fatos; correções usam `correctionOfFactId`, quantidade/valor
+compensatórios e motivo obrigatório.

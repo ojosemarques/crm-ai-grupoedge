@@ -23,6 +23,7 @@ import { createAuthorizationService, type ResourceScope } from "@/modules/users/
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 
 type Tx = Prisma.TransactionClient;
 type Options = Readonly<{ database: PrismaClient; now: () => Date }>;
@@ -95,7 +96,7 @@ export async function appendPaymentEventInTransaction(
   const last = input.invoiceId
     ? await tx.paymentEvent.findFirst({ where: { workspaceId: input.workspaceId, invoiceId: input.invoiceId }, orderBy: [{ sequence: "desc" }, { id: "desc" }] })
     : null;
-  return tx.paymentEvent.create({
+  const event = await tx.paymentEvent.create({
     data: {
       workspaceId: input.workspaceId,
       invoiceId: input.invoiceId ?? null,
@@ -113,6 +114,34 @@ export async function appendPaymentEventInTransaction(
       safeMetadata: input.safeMetadata ? json(input.safeMetadata) : Prisma.JsonNull,
     },
   });
+  if (input.type === "INVOICE_ISSUED" || input.type === "PAYMENT_CONFIRMED" || input.type === "PAYMENT_REVERSED") {
+    const [invoice, payment, actor] = await Promise.all([
+      input.invoiceId ? tx.invoice.findFirst({ where: { id: input.invoiceId, workspaceId: input.workspaceId }, select: { id: true, accountId: true, contractId: true, ownerMemberId: true, totalCents: true } }) : null,
+      input.paymentId ? tx.payment.findFirst({ where: { id: input.paymentId, workspaceId: input.workspaceId }, select: { id: true, amountCents: true } }) : null,
+      tx.actor.findFirst({ where: { id: input.actorId, workspaceId: input.workspaceId }, select: { type: true, userId: true } }),
+    ]);
+    const member = actor?.userId ? await tx.workspaceMember.findFirst({ where: { workspaceId: input.workspaceId, userId: actor.userId, deletedAt: null }, select: { id: true } }) : null;
+    const metricType = input.type === "INVOICE_ISSUED" ? "INVOICE_ISSUED" as const : input.type === "PAYMENT_CONFIRMED" ? "PAYMENT_CONFIRMED" as const : "PAYMENT_REVERSED" as const;
+    const rawValue = input.type === "INVOICE_ISSUED" ? invoice?.totalCents ?? null : payment?.amountCents ?? null;
+    await recordCommercialMetricFactInTransaction(tx, {
+      workspaceId: input.workspaceId,
+      eventKey: `payment-event:${event.id}:${metricType.toLowerCase()}:v1`,
+      eventType: metricType,
+      occurredAt: input.occurredAt,
+      sourceEntityType: "PaymentEvent",
+      sourceEntityId: event.id,
+      accountId: invoice?.accountId ?? null,
+      contractId: invoice?.contractId ?? null,
+      paymentId: input.paymentId ?? null,
+      creditedMemberId: invoice?.ownerMemberId ?? null,
+      performedByMemberId: member?.id ?? null,
+      valueCents: input.type === "PAYMENT_REVERSED" && rawValue !== null ? -rawValue : rawValue,
+      result: input.type,
+      executionMode: actor?.type === "HUMAN" ? "MANUAL" : actor?.type === "AUTOMATION" ? "AUTOMATION" : "SYSTEM",
+      safeMetadata: { invoiceId: input.invoiceId ?? null, correlationId: input.correlationId },
+    });
+  }
+  return event;
 }
 
 export function createPaymentService(options: Options) {

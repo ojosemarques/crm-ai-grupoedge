@@ -1,7 +1,9 @@
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createAnalyticsDashboardSchema, updateAnalyticsDashboardSchema, analyticsCatalog, validateWidgetCompatibility, recordsCsv } from "@/modules/analytics-builder/domain/analytics-builder-contracts";
+import { createMetricsService, getMetricsService } from "@/modules/metrics/application/metrics-service";
 import { getRevenueMetricsService } from "@/modules/metrics/application/revenue-metrics-service";
+import { integratedMetricRegistry } from "@/modules/metrics/domain/integrated-metric-registry";
 import { getAuthorizationService, type ResourceScope } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -10,7 +12,8 @@ import { z } from "zod";
 
 type AuthorizationPort = ReturnType<typeof getAuthorizationService>;
 type RevenuePort = ReturnType<typeof getRevenueMetricsService>;
-type Options = Readonly<{ database: PrismaClient; authorization: AuthorizationPort; revenue: RevenuePort; now: () => Date }>;
+type MetricsPort = ReturnType<typeof getMetricsService>;
+type Options = Readonly<{ database: PrismaClient; authorization: AuthorizationPort; revenue: RevenuePort; metrics?: MetricsPort; now: () => Date }>;
 const uuid = z.string().uuid();
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
@@ -23,6 +26,7 @@ function widgetQuery(widget: { periodPreset: string; fromDate: string | null; to
 }
 
 export function createAnalyticsBuilderService(options: Options) {
+  const metrics = options.metrics ?? createMetricsService({ database: options.database, authorization: options.authorization, now: options.now });
   async function authorize(context: AuthenticatedContext, id?: string) { await options.authorization.assertAuthorized(context, PermissionKeys.METRICS_READ, resource(context, id)); }
   async function authorizeManage(context: AuthenticatedContext, id?: string) { await options.authorization.assertAuthorized(context, PermissionKeys.OPERATIONS_MANAGE, resource(context, id)); }
 
@@ -71,6 +75,13 @@ export function createAnalyticsBuilderService(options: Options) {
     const query = widgetQuery(widget); const cacheKey = JSON.stringify(query);
     let screen = screenCache.get(cacheKey);
     if (!screen) { screen = await options.revenue.getScreen(context, query); screenCache.set(cacheKey, screen); }
+    if (integratedMetricRegistry.some((definition) => definition.id === widget.metricId)) {
+      const filters = widget.filters && typeof widget.filters === "object" && !Array.isArray(widget.filters) ? widget.filters as Record<string, unknown> : {};
+      const list = (key: string) => Array.isArray(filters[key]) ? (filters[key] as unknown[]).filter((value): value is string => typeof value === "string") : [];
+      const integrated = await metrics.getIntegratedOverview(context, { from: screen.query.period.from, to: screen.query.period.to, filters: { sdrMemberIds: list("sdr"), closerMemberIds: list("closer"), teamIds: list("team"), sourceIds: list("source"), campaignIds: list("campaign"), creativeIds: list("creative"), priorityCodes: list("priority"), productIds: list("product") } });
+      const metric = integrated.values.find((candidate) => candidate.metricId === widget.metricId);
+      return { id: widget.id, title: widget.title, type: widget.visualization, metricKey: widget.metricId, aggregation: widget.aggregation, dimensionKey: widget.dimension, dateBasis: widget.dateField, period: { preset: widget.periodPreset, fromDate: widget.fromDate, toDate: widget.toDate }, filters: widget.filters, revision: widget.revision, state: metric?.state === "AVAILABLE" ? "AVAILABLE" : metric?.state === "ZERO" ? "ZERO" : metric?.state === "PARTIAL" ? "PARTIAL" : metric?.state === "SUPPRESSED" ? "SUPPRESSED" : "MISSING", freshnessAt: integrated.quality.freshnessAt, reason: metric?.reason ?? "A métrica integrada não retornou dados para o recorte.", drilldownHref: metric ? `/api/analytics/widgets/${widget.id}/drilldown` : null, value: metric?.value ?? null, comparisonValue: null, points: [], rows: [], columns: [] };
+    }
     if (widget.metricId === "sales.opportunity_value") {
       const dataset = await opportunityRecords(context, widget, screen); const rows = aggregateRows(dataset.records, widget.aggregation);
       const value = rows.reduce((total, row) => total + BigInt(row.value), 0n).toString();
@@ -171,6 +182,21 @@ export function createAnalyticsBuilderService(options: Options) {
     await authorize(context, widgetId);
     const widget = await options.database.analyticsWidget.findFirst({ where: { id: uuid.parse(widgetId), workspaceId: context.workspaceId, deletedAt: null, dashboard: { archivedAt: null } } });
     if (!widget) fail("Widget não encontrado.", "NOT_FOUND", 404);
+    if (integratedMetricRegistry.some((definition) => definition.id === widget.metricId)) {
+      const period = await options.revenue.getScreen(context, widgetQuery(widget));
+      const filters = widget.filters && typeof widget.filters === "object" && !Array.isArray(widget.filters) ? widget.filters as Record<string, unknown> : {};
+      const list = (key: string) => Array.isArray(filters[key]) ? (filters[key] as unknown[]).filter((value): value is string => typeof value === "string") : [];
+      const query = { from: period.query.period.from, to: period.query.period.to, filters: { sdrMemberIds: list("sdr"), closerMemberIds: list("closer"), teamIds: list("team"), sourceIds: list("source"), campaignIds: list("campaign"), creativeIds: list("creative"), priorityCodes: list("priority"), productIds: list("product") } };
+      const records = []; let cursor: string | undefined; let truncated = false;
+      for (let page = 0; page < 100; page += 1) {
+        const result = await metrics.getIntegratedDrilldown(context, { metricId: widget.metricId, query, ...(cursor ? { cursor } : {}), limit: 100 });
+        records.push(...result.records.map((record) => ({ key: `commercial-metric-fact:${record.id}`, entityType: record.sourceEntityType, entityId: record.sourceEntityId, title: record.eventType, subtitle: record.result ?? record.channel ?? record.sourceEntityType, occurredAt: record.occurredAt, contribution: record.valueCents ?? String(record.quantity), unit: record.valueCents === null ? "COUNT" : "CENTS", href: null, provenance: `CommercialMetricFact/${record.producerVersion}` })));
+        if (!result.nextCursor) { cursor = undefined; break; }
+        cursor = result.nextCursor;
+        if (page === 99) truncated = true;
+      }
+      return { widget: { id: widget.id, title: widget.title, metricKey: widget.metricId, dimensionKey: widget.dimension, aggregation: widget.aggregation }, query, records, total: records.length, truncated, quality: truncated ? { state: "PARTIAL", reason: "Resultado limitado aos primeiros 10.000 fatos autorizados." } : { state: records.length > 0 ? "AVAILABLE" : "MISSING", reason: records.length > 0 ? "Dataset canônico autorizado completo." : "Nenhum fato no recorte." } };
+    }
     if (widget.metricId === "sales.opportunity_value") { const dataset = await opportunityRecords(context, widget); return { widget: { id: widget.id, title: widget.title, metricKey: widget.metricId, dimensionKey: widget.dimension, aggregation: widget.aggregation }, query: dataset.base.query, records: dataset.records, total: dataset.records.length, truncated: false, quality: { state: dataset.records.length > 0 ? "AVAILABLE" : "MISSING", reason: dataset.records.length > 0 ? `Dataset completo pela data-base ${widget.dateField}.` : "Nenhum registro no recorte." } }; }
     const query = { ...widgetQuery(widget), metric: widget.metricId, page: 1, pageSize: 100 };
     const first = await options.revenue.getDrilldown(context, query); const records = [...first.records];
@@ -184,4 +210,4 @@ export function createAnalyticsBuilderService(options: Options) {
 }
 
 let singleton: ReturnType<typeof createAnalyticsBuilderService> | undefined;
-export function getAnalyticsBuilderService() { singleton ??= createAnalyticsBuilderService({ database: getDatabaseClient(), authorization: getAuthorizationService(), revenue: getRevenueMetricsService(), now: () => new Date() }); return singleton; }
+export function getAnalyticsBuilderService() { singleton ??= createAnalyticsBuilderService({ database: getDatabaseClient(), authorization: getAuthorizationService(), revenue: getRevenueMetricsService(), metrics: getMetricsService(), now: () => new Date() }); return singleton; }

@@ -39,6 +39,7 @@ import { getAuthorizationService } from "@/modules/users/permissions/authorizati
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import {
@@ -1117,6 +1118,58 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
           updatedAt: now,
         },
       });
+      await recordCommercialMetricFactInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        eventKey: `opportunity:${opportunity.id}:created:v1`,
+        eventType: "OPPORTUNITY_CREATED",
+        occurredAt: now,
+        sourceEntityType: "Opportunity",
+        sourceEntityId: opportunity.id,
+        leadId: lead.id,
+        activityId: activity.id,
+        meetingId: meeting.id,
+        opportunityId: opportunity.id,
+        pipelineId: pipeline.id,
+        stageId: initialStage.id,
+        creditedMemberId: closer.id,
+        performedByMemberId: context.memberId,
+        leadOwnerMemberIdAtEvent: lead.ownerMemberId,
+        opportunityOwnerMemberIdAtEvent: closer.id,
+        valueCents: opportunity.amountCents,
+        executionMode: "MANUAL",
+      });
+      await recordCommercialMetricFactInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        eventKey: `stage-history:${initialHistory.id}:entered:v1`,
+        eventType: "STAGE_ENTERED",
+        occurredAt: now,
+        sourceEntityType: "StageHistory",
+        sourceEntityId: initialHistory.id,
+        leadId: lead.id,
+        opportunityId: opportunity.id,
+        pipelineId: pipeline.id,
+        stageId: initialStage.id,
+        creditedMemberId: closer.id,
+        performedByMemberId: context.memberId,
+        opportunityOwnerMemberIdAtEvent: closer.id,
+        executionMode: "MANUAL",
+      });
+      await recordCommercialMetricFactInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        eventKey: `task:${task.id}:created:v1`,
+        eventType: "TASK_CREATED",
+        occurredAt: now,
+        sourceEntityType: "Task",
+        sourceEntityId: task.id,
+        leadId: lead.id,
+        opportunityId: opportunity.id,
+        taskId: task.id,
+        creditedMemberId: closer.id,
+        performedByMemberId: context.memberId,
+        opportunityOwnerMemberIdAtEvent: closer.id,
+        taskKind: task.kind,
+        executionMode: "MANUAL",
+      });
       await transaction.auditLog.create({
         data: {
           workspaceId: context.workspaceId,
@@ -1312,8 +1365,9 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
           data: { acceptedAt: effectiveAt, updatedByActorId: context.actorId, updatedAt: effectiveAt },
         });
       }
+      let outcomeSnapshotId: string | null = null;
       if (targetCode === "WON" || targetCode === "LOST") {
-        await transaction.opportunityOutcomeSnapshot.create({
+        const outcomeSnapshot = await transaction.opportunityOutcomeSnapshot.create({
           data: {
             workspaceId: context.workspaceId,
             opportunityId: opportunity.id,
@@ -1332,6 +1386,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
             createdAt: effectiveAt,
           },
         });
+        outcomeSnapshotId = outcomeSnapshot.id;
       }
       const activityType = targetCode === "WON" ? "WON" : targetCode === "LOST" ? "LOST" : "STAGE_CHANGE";
       const activity = await transaction.activity.create({
@@ -1355,6 +1410,75 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
           updatedAt: effectiveAt,
         },
       });
+      const transitionDimensions = {
+        workspaceId: context.workspaceId,
+        occurredAt: effectiveAt,
+        leadId: opportunity.leadId,
+        activityId: activity.id,
+        opportunityId: opportunity.id,
+        pipelineId: opportunity.pipelineId,
+        creditedMemberId: opportunity.ownerMemberId,
+        performedByMemberId: context.memberId,
+        opportunityOwnerMemberIdAtEvent: opportunity.ownerMemberId,
+        executionMode: "MANUAL" as const,
+      };
+      await recordCommercialMetricFactInTransaction(transaction, {
+        ...transitionDimensions,
+        eventKey: `stage-history:${history.id}:exited:v1`,
+        eventType: "STAGE_EXITED",
+        sourceEntityType: "StageHistory",
+        sourceEntityId: history.id,
+        stageId: opportunity.currentStageId,
+        fromStageId: opportunity.currentStageId,
+        toStageId: target.id,
+      });
+      await recordCommercialMetricFactInTransaction(transaction, {
+        ...transitionDimensions,
+        eventKey: `stage-history:${enteredHistory.id}:entered:v1`,
+        eventType: "STAGE_ENTERED",
+        sourceEntityType: "StageHistory",
+        sourceEntityId: enteredHistory.id,
+        stageId: target.id,
+        fromStageId: opportunity.currentStageId,
+        toStageId: target.id,
+      });
+      if (targetCode === "WON" || targetCode === "LOST") {
+        const outcomeEvent = targetCode === "WON" ? "OPPORTUNITY_WON" as const : "OPPORTUNITY_LOST" as const;
+        await recordCommercialMetricFactInTransaction(transaction, {
+          ...transitionDimensions,
+          eventKey: `opportunity-outcome:${outcomeSnapshotId}:${outcomeEvent.toLowerCase()}:v1`,
+          eventType: outcomeEvent,
+          sourceEntityType: "OpportunityOutcomeSnapshot",
+          sourceEntityId: outcomeSnapshotId!,
+          stageId: target.id,
+          valueCents: opportunity.amountCents,
+          result: targetCode,
+        });
+        if (targetCode === "WON") {
+          await recordCommercialMetricFactInTransaction(transaction, {
+            ...transitionDimensions,
+            eventKey: `opportunity-outcome:${outcomeSnapshotId}:sale-won:v1`,
+            eventType: "SALE_WON",
+            sourceEntityType: "OpportunityOutcomeSnapshot",
+            sourceEntityId: outcomeSnapshotId!,
+            stageId: target.id,
+            valueCents: opportunity.amountCents,
+            result: "WON",
+          });
+        }
+      }
+      for (const cancelledTask of cancelledTasks) {
+        await recordCommercialMetricFactInTransaction(transaction, {
+          ...transitionDimensions,
+          eventKey: `task:${cancelledTask.id}:cancelled:opportunity:${enteredHistory.id}:v1`,
+          eventType: "TASK_CANCELLED",
+          sourceEntityType: "Task",
+          sourceEntityId: cancelledTask.id,
+          taskId: cancelledTask.id,
+          result: targetCode,
+          executionMode: "SYSTEM",
+        });
+      }
       await transaction.auditLog.create({
         data: {
           workspaceId: context.workspaceId,
@@ -1560,6 +1684,25 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
           createdAt: effectiveAt,
           updatedAt: effectiveAt,
         },
+      });
+      await recordCommercialMetricFactInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        eventKey: `offer:${offer.id}:proposal-reached:v1`,
+        eventType: "PROPOSAL_REACHED",
+        occurredAt: effectiveAt,
+        sourceEntityType: "Offer",
+        sourceEntityId: offer.id,
+        leadId: opportunity.leadId,
+        activityId: activity.id,
+        opportunityId: opportunity.id,
+        pipelineId: opportunity.pipelineId,
+        stageId: proposalStage.id,
+        creditedMemberId: opportunity.ownerMemberId,
+        performedByMemberId: context.memberId,
+        opportunityOwnerMemberIdAtEvent: opportunity.ownerMemberId,
+        valueCents: totalCents,
+        result: "SENT",
+        executionMode: "MANUAL",
       });
       await transaction.auditLog.create({
         data: {
