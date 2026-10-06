@@ -13,15 +13,13 @@ import {
 } from "@/app/email-agente/prospecting-workspace";
 import { PreSalesPipelineWorkspace } from "@/app/pipeline/pre-sales-pipeline-workspace";
 import { PageHeader } from "@/components/layout/page-header";
-import { BusinessPipelineSwitcher } from "@/components/pipelines/business-pipeline-switcher";
 import { requirePageAuthentication } from "@/modules/auth/http/authentication-guards";
-import {
-  ACTIVE_PROSPECTING_PIPELINE_NAME,
-  listBusinessPipelines,
-} from "@/modules/pipelines/application/business-pipeline-navigation";
+import { ACTIVE_PROSPECTING_PIPELINE_NAME } from "@/modules/pipelines/application/business-pipeline-navigation";
 import { getPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { getProspectingWorkspaceService } from "@/modules/prospecting/application/prospecting-workspace-service";
+import { ensureActiveProspectingPipeline } from "@/modules/settings/application/production-foundation-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
+import { getDatabaseClient } from "@/shared/core/database/client";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +35,6 @@ export default async function ActiveProspectingPage({ searchParams }: Readonly<{
   const requestedView = first(params.view);
   const view: ProspectingView = prospectingViews.includes(requestedView as ProspectingView) ? requestedView as ProspectingView : "overview";
   let pipelineScreen = null;
-  let pipelines: Awaited<ReturnType<typeof listBusinessPipelines>> = [];
   let workspaceScreen;
   try {
     workspaceScreen = await getProspectingWorkspaceService().getScreen(context, {
@@ -49,9 +46,12 @@ export default async function ActiveProspectingPage({ searchParams }: Readonly<{
       ...(first(params.emailPage) ? { emailPage: first(params.emailPage) } : {}),
     });
     if (view === "pipeline") {
-      pipelines = await listBusinessPipelines(context);
-      const activeProspecting = pipelines.find((pipeline) => pipeline.entityType === "PROSPECTING");
-      if (!activeProspecting) redirect("/pipeline");
+      const database = getDatabaseClient();
+      await ensureActiveProspectingPipeline(database, context.workspaceId, context.actorId);
+      const activeProspecting = await database.pipeline.findFirstOrThrow({
+        where: { workspaceId: context.workspaceId, entityType: "LEAD", name: ACTIVE_PROSPECTING_PIPELINE_NAME, deletedAt: null },
+        select: { id: true },
+      });
       pipelineScreen = await getPreSalesPipelineService().getScreen(context, {
         pipelineId: activeProspecting.id,
         q: first(params.q), responsible: first(params.responsible), priority: first(params.priority), stageCode: first(params.stageCode),
@@ -71,7 +71,7 @@ export default async function ActiveProspectingPage({ searchParams }: Readonly<{
       />
       <ProspectingNav active={view} />
       {view === "overview" ? <ProspectingOverview screen={workspaceScreen} /> : null}
-      {view === "pipeline" && pipelineScreen ? <><BusinessPipelineSwitcher pipelines={pipelines} selectedPipelineId={pipelineScreen.pipelineId} /><PreSalesPipelineWorkspace basePath="/email-agente?view=pipeline" fixedQuery={{ view: "pipeline" }} initialView="board" key={pipelineScreen.pipelineId} screen={pipelineScreen} /></> : null}
+      {view === "pipeline" && pipelineScreen ? <PreSalesPipelineWorkspace basePath="/email-agente?view=pipeline" fixedQuery={{ view: "pipeline" }} initialView="board" key={pipelineScreen.pipelineId} screen={pipelineScreen} /> : null}
       {view === "stock" ? <ProspectingStock screen={workspaceScreen} /> : null}
       {view === "activities" ? <ProspectingActivities screen={workspaceScreen} /> : null}
       {view === "emails" ? <ProspectingEmails screen={workspaceScreen} /> : null}

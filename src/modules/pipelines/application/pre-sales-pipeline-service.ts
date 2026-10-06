@@ -110,13 +110,25 @@ function isLeadStageCode(value: LeadPipelineStageCode | null): value is LeadStag
   return value !== null && leadStageCodes.includes(value);
 }
 
-function assertCompleteLeadStages(stages: readonly PipelineStageRecord[]) {
+const activeProspectingPipelineName = "Prospecção Ativa";
+const activeProspectingStageCodes = [
+  "NEW",
+  "TRYING_CONTACT",
+  "CONNECTED",
+  "IN_QUALIFICATION",
+  "MEETING_SCHEDULED",
+  "NURTURING",
+  "DISQUALIFIED",
+] as const satisfies readonly LeadStageCode[];
+
+function assertCompleteLeadStages(pipelineName: string, stages: readonly PipelineStageRecord[]) {
   const configured = new Set(stages.flatMap((stage) => isLeadStageCode(stage.leadStageCode) ? [stage.leadStageCode] : []));
-  const missing = leadStageCodes.filter((code) => !configured.has(code));
+  const required = pipelineName === activeProspectingPipelineName ? activeProspectingStageCodes : leadStageCodes;
+  const missing = required.filter((code) => !configured.has(code));
   if (missing.length > 0) {
     conflict(
       "PIPELINE_CONFIGURATION_INVALID",
-      `O pipeline de pré-vendas está incompleto. Etapas ausentes: ${missing.join(", ")}.`,
+      `O pipeline ${pipelineName} está incompleto. Etapas ausentes: ${missing.join(", ")}.`,
     );
   }
 }
@@ -435,7 +447,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       },
     });
     if (!pipeline) notFound(pipelineId ? "Pipeline de pré-vendas não encontrado." : "Pipeline padrão de pré-vendas não encontrado.");
-    assertCompleteLeadStages(pipeline.stages);
+    assertCompleteLeadStages(pipeline.name, pipeline.stages);
     return pipeline;
   }
 

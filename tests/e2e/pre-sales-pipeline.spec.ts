@@ -57,7 +57,7 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   const card = page.locator("article").filter({ hasText: leadName });
   await expect(card).toBeVisible();
   const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
-  await expect(pipelineNavigation.getByRole("link", { name: "Prospecção AtivaPrincipal" })).toHaveAttribute("href", "/email-agente");
+  await expect(pipelineNavigation.getByText("Prospecção Ativa", { exact: true })).toHaveCount(0);
   await expect(pipelineNavigation.getByRole("link", { name: "Pré-vendasPré-vendas" })).toHaveAttribute("aria-current", "page");
   await expect(pipelineNavigation.getByRole("link", { name: "VendasVendas" })).toBeVisible();
   await expect(page.getByLabel("Etapa").getByRole("option", { name: "Novo (1)" })).toHaveCount(1);
@@ -117,26 +117,34 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
-test("mantém Prospecção Ativa no seletor de pipelines sem atalho lateral", async ({ page }) => {
+test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operação no menu lateral", async ({ page }) => {
   await removeActiveProspectingPipeline();
   await login(page, DEMO_USERS[1].email);
   const leadName = `Prospecção ativa E2E ${randomUUID().slice(0, 8)}`;
   const areaNavigation = page.getByRole("navigation", { name: "Navegação da área" });
   await expect(page.getByRole("button", { name: /^(Expandir|Recolher) menu$/ })).toHaveCount(0);
   await expect(areaNavigation.getByRole("link", { name: "Negócios", exact: true })).toHaveCount(0);
-  await expect(areaNavigation.locator('a[href="/email-agente"]')).toHaveCount(0);
+  const activeProspectingLink = areaNavigation.getByRole("link", { name: "Prospecção Ativa", exact: true });
+  await expect(activeProspectingLink).toHaveAttribute("href", "/email-agente");
   await expect(page.locator("#menu-principal")).toHaveCSS("width", "208px");
   await page.goto("/pipeline");
   const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
-  const activeProspectingLink = pipelineNavigation.getByRole("link", { name: "Prospecção AtivaPrincipal" });
-  await expect(activeProspectingLink).toHaveAttribute("href", "/email-agente");
+  await expect(pipelineNavigation.getByText("Prospecção Ativa", { exact: true })).toHaveCount(0);
   await activeProspectingLink.click();
   await expect(page).toHaveURL(/\/email-agente(?:\?|$)/);
   await expect(page.getByRole("heading", { name: "Prospecção Ativa", exact: true })).toBeVisible();
-  await expect(pipelineNavigation.getByRole("link", { name: "Prospecção AtivaPrincipal" })).toHaveAttribute("aria-current", "page");
-  await expect(pipelineNavigation.getByRole("link", { name: "Pré-vendasPré-vendas" })).toBeVisible();
+  await expect(activeProspectingLink).toHaveAttribute("aria-current", "page");
+  const prospectingAreas = page.getByRole("navigation", { name: "Áreas da Prospecção Ativa" });
+  for (const label of ["Visão geral", "Pipeline", "Estoque", "Atividades", "E-mails", "Métricas", "Configurações"]) {
+    await expect(prospectingAreas.getByRole("link", { name: label, exact: true })).toBeVisible();
+  }
+  await prospectingAreas.getByRole("link", { name: "Pipeline", exact: true }).click();
+  await expect(page).toHaveURL(/\/email-agente\?view=pipeline/);
+  await expect(page.getByRole("navigation", { name: "Selecionar pipeline" })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Quadro do pipeline" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Etapa Novo" })).toBeVisible();
+  for (const stage of ["Novo lead", "Abordagem inicial", "Cadência ativa", "Conversa iniciada", "Reunião marcada", "Encerrado — sem retorno", "Descartado"]) {
+    await expect(page.getByRole("region", { name: `Etapa ${stage}` })).toBeVisible();
+  }
 
   await page.getByRole("button", { name: "Adicionar", exact: true }).click();
   const addLeadDialog = page.getByRole("dialog");
@@ -144,6 +152,18 @@ test("mantém Prospecção Ativa no seletor de pipelines sem atalho lateral", as
   await addLeadDialog.getByLabel("Telefone", { exact: true }).fill(uniquePhone(leadName));
   await addLeadDialog.getByRole("button", { name: "Adicionar lead" }).click();
   await expect(page.locator("article").filter({ hasText: leadName })).toBeVisible();
+
+  for (const [label, heading] of [
+    ["Estoque", "Estoque anterior ao Lead"],
+    ["Atividades", "Atividades manuais da cadência"],
+    ["E-mails", "Ordens de e-mail"],
+    ["Métricas", "Taxa de resposta · 30 dias"],
+    ["Configurações", "Administração operacional"],
+    ["Visão geral", "Pipeline operacional"],
+  ] as const) {
+    await prospectingAreas.getByRole("link", { name: label, exact: true }).click();
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+  }
 });
 
 test("mantém o pipeline somente leitura para o visualizador", async ({ page }) => {

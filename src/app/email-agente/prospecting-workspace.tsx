@@ -8,7 +8,7 @@ export const prospectingViews = ["overview", "pipeline", "stock", "activities", 
 export type ProspectingView = (typeof prospectingViews)[number];
 type Screen = Awaited<ReturnType<ReturnType<typeof getProspectingWorkspaceService>["getScreen"]>>;
 
-const viewLabels: Record<ProspectingView, string> = { overview: "Visão geral", pipeline: "Pipeline", stock: "Estoque", activities: "Atividades", emails: "E-mails", metrics: "Métricas", settings: "Configuração" };
+const viewLabels: Record<ProspectingView, string> = { overview: "Visão geral", pipeline: "Pipeline", stock: "Estoque", activities: "Atividades", emails: "E-mails", metrics: "Métricas", settings: "Configurações" };
 const statusLabels: Record<string, string> = { RECEIVED: "Recebido", REVIEW_REQUIRED: "Revisão", READY: "Pronto", REJECTED: "Rejeitado", PLANNED: "Planejado", RELEASED: "Liberado", PENDING_D1: "Gate D1", ACTIVE: "Ativa", PAUSED: "Pausada", CONVERSATION_STARTED: "Conversa", MEETING_SCHEDULED: "Reunião", CLOSED_NO_RESPONSE: "Sem retorno", DISCARDED: "Descartada" };
 
 function date(value: string | null, timeZone: string) { return value ? new Intl.DateTimeFormat("pt-BR", { timeZone, dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "—"; }
