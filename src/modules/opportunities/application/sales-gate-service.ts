@@ -24,7 +24,7 @@ function json(value: unknown): Prisma.InputJsonValue { return value as Prisma.In
 
 function taskKind(activityType: string): TaskKind {
   const normalized = activityType.trim().toUpperCase();
-  return (["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "EMAIL", "MEETING", "FOLLOW_UP"] as const).includes(normalized as TaskKind)
+  return (["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "EMAIL", "MEETING", "FOLLOW_UP"] as const).includes(normalized as TaskKind)
     ? normalized as TaskKind
     : "GENERAL";
 }

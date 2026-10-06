@@ -20,6 +20,7 @@ export type SdrQueueRecommendation = Readonly<{
     | "EXECUTE_RETURN"
     | "CREATE_NEXT_ACTION"
     | "RECORD_MESSAGE"
+    | "RECORD_INSTAGRAM"
     | "RECORD_EMAIL"
     | "OPEN_MEETING"
     | "OPEN_LEAD";
@@ -100,6 +101,9 @@ export type SdrQueueScreen = Readonly<{
     salesValueTargetCents: string;
   }>[];
   dailyProduction: Readonly<{
+    politiciansTouched: number;
+    politiciansTouchedTarget: number;
+    politiciansTouchedOverCapacity: boolean;
     calls: number;
     callsPending: number;
     messages: number;
@@ -159,15 +163,25 @@ export function getOperationalRank(
   item: Pick<
     SdrQueueItem,
     "awaitingHumanResponse" | "stagePosition" | "priorityCode" | "nextActionAt"
-  >,
+  > & Readonly<{
+    meetingTodayId?: string | null;
+    nextActionSourceKey?: string | null;
+  }>,
   now: Date,
 ): number {
-  if (item.awaitingHumanResponse) return 0;
-  if (item.stagePosition === 0 && item.priorityCode === "P1") return 1;
-  if (item.stagePosition === 0 && item.priorityCode === "P2") return 2;
-  if (item.stagePosition === 0 && item.priorityCode === "P3") return 3;
-  if (item.nextActionAt && new Date(item.nextActionAt) < now) return 4;
-  return 5;
+  if (item.awaitingHumanResponse || item.meetingTodayId) return 0;
+  if (item.nextActionAt && new Date(item.nextActionAt) < now) return 1;
+  if (
+    item.nextActionSourceKey?.startsWith("active-prospecting:") &&
+    !item.nextActionSourceKey.endsWith(":call-1") &&
+    !item.nextActionSourceKey.endsWith(":instagram-message-1") &&
+    !item.nextActionSourceKey.endsWith(":instagram-follow")
+  ) return 2;
+  if (item.nextActionSourceKey?.startsWith("active-prospecting:")) return 3;
+  if (item.stagePosition === 0 && item.priorityCode === "P1") return 4;
+  if (item.stagePosition === 0 && item.priorityCode === "P2") return 5;
+  if (item.stagePosition === 0 && item.priorityCode === "P3") return 6;
+  return 7;
 }
 
 export function getSdrQueueRecommendation(
@@ -224,6 +238,14 @@ export function getSdrQueueRecommendation(
       code: "RECORD_MESSAGE",
       label: "Registrar mensagem",
       reason: "A próxima tarefa persistida é uma mensagem.",
+      href: `${historyHref}#registrar-atividade`,
+    };
+  }
+  if (item.nextActionKind === "INSTAGRAM_MESSAGE" || item.nextActionKind === "INSTAGRAM_FOLLOW") {
+    return {
+      code: "RECORD_INSTAGRAM",
+      label: item.nextActionKind === "INSTAGRAM_FOLLOW" ? "Registrar follow" : "Registrar Instagram",
+      reason: "A próxima tarefa persistida é uma ação manual no Instagram.",
       href: `${historyHref}#registrar-atividade`,
     };
   }

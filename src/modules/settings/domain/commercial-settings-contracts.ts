@@ -34,7 +34,7 @@ export type CommercialSettingsScreen = Readonly<{
     cadenceDayOffsets: readonly number[];
     cadenceSteps: readonly Readonly<{
       dayOffset: number;
-      action: "WHATSAPP" | "CALL" | "EMAIL" | "RECYCLE" | "CLOSE";
+      action: "WHATSAPP" | "CALL" | "EMAIL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW" | "RECYCLE" | "CLOSE";
       timeOfDay: string;
       message: string;
       assigneeMemberId: string | null;

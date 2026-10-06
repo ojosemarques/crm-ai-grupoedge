@@ -8,6 +8,7 @@ export type LeadCardTask = Readonly<{
   dueAt: string;
   completedAt: string | null;
   result: string | null;
+  sourceKey: string | null;
   overdue: boolean;
 }>;
 

@@ -318,11 +318,11 @@ describe("seed estrutural de demonstração", () => {
     expect(snapshot.teamMembers).toHaveLength(7);
     expect(snapshot.queues).toHaveLength(1);
     expect(snapshot.queues[0]).toMatchObject({ isGeneral: true });
-    expect(snapshot.pipelines).toHaveLength(2);
-    expect(snapshot.stages).toHaveLength(15);
+    expect(snapshot.pipelines).toHaveLength(3);
+    expect(snapshot.stages).toHaveLength(22);
     expect(snapshot.commercialSettings).toHaveLength(1);
-    expect(snapshot.cadenceSteps.map(({ dayOffset }) => dayOffset)).toEqual([0, 1, 3, 7, 14, 21, 30]);
-    expect(snapshot.pipelineTransitions).toHaveLength(33);
+    expect(snapshot.cadenceSteps.map(({ dayOffset }) => dayOffset)).toEqual([1, 2, 3, 5, 7]);
+    expect(snapshot.pipelineTransitions).toHaveLength(45);
     expect(snapshot.slaPolicies).toHaveLength(3);
     expect(snapshot.priorityBands.map(({ code }) => code).sort()).toEqual([
       "P1",

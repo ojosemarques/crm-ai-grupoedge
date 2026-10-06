@@ -310,7 +310,7 @@ describe("fila priorizada do SDR", () => {
     expect(screen.sections.every((section) => section.items.length === 0)).toBe(true);
   });
 
-  it("ordena respostas, novos P1/P2/P3, retornos vencidos e demais", async () => {
+  it("ordena respostas, retornos vencidos, novos P1/P2/P3 e demais", async () => {
     const prefix = `CRM10 ordem ${randomUUID().slice(0, 8)}`;
     const responded = await createLead(`${prefix} respondeu`, "P2");
     const p1 = await createLead(`${prefix} P1`, "P1");
@@ -341,7 +341,7 @@ describe("fila priorizada do SDR", () => {
     ]);
 
     const screen = await queueService().getScreen(managerContext, { memberId: isolatedSdrContext.memberId });
-    const expectedIds = [responded.leadId, p1.leadId, p2.leadId, p3.leadId, overdue.leadId, remaining.leadId];
+    const expectedIds = [responded.leadId, overdue.leadId, p1.leadId, p2.leadId, p3.leadId, remaining.leadId];
     const nowIds = screen.sections
       .find((section) => section.key === "NOW")!
       .items.map((item) => item.id)

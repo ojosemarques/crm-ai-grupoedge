@@ -519,6 +519,27 @@ describe("serviço único de entrada de leads", () => {
     await expect(database.leadFormSubmission.count({ where: { leadId: secondLead.id } })).resolves.toBe(1);
   });
 
+  it("nunca mescla políticos Open-Dot por telefone e e-mail institucionais compartilhados", async () => {
+    const fixture = await createFixture("open-dot-shared-office");
+    const shared = {
+      channel: "OPEN_DOT",
+      phone: "+55 11 4000-1000",
+      email: "gabinete@camara.example.test",
+      organizationName: "Câmara Municipal",
+      consent: undefined,
+    };
+    const first = await service().intake(payload(shared.phone, { ...shared, idempotencyKey: "open-dot:politician:1", fullName: "Vereadora Um" }), fixture.systemContext);
+    const second = await service().intake(payload(shared.phone, { ...shared, idempotencyKey: "open-dot:politician:2", fullName: "Vereador Dois" }), fixture.systemContext);
+    expect(first).toMatchObject({ outcome: "CREATED" });
+    expect(second).toMatchObject({ outcome: "CREATED" });
+    if (first.outcome === "REJECTED" || second.outcome === "REJECTED") throw new Error("entrada Open-Dot rejeitada");
+    expect(second.leadId).not.toBe(first.leadId);
+    const leads = await database.lead.findMany({ where: { id: { in: [first.leadId, second.leadId] } }, select: { id: true, contactId: true, normalizedPhone: true, normalizedEmail: true } });
+    expect(new Set(leads.map((lead) => lead.contactId)).size).toBe(2);
+    expect(new Set(leads.map((lead) => lead.normalizedPhone))).toEqual(new Set(["+551140001000"]));
+    expect(new Set(leads.map((lead) => lead.normalizedEmail))).toEqual(new Set([shared.email]));
+  });
+
   it("isola a identidade por workspace mesmo para o mesmo telefone", async () => {
     const [workspaceA, workspaceB] = await Promise.all([
       createFixture("workspace-a"),

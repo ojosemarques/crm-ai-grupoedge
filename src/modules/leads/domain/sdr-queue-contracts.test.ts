@@ -38,13 +38,16 @@ describe("fila determinística do SDR", () => {
     expect(getSlaBand(181, 60, 180)).toBe("CRITICAL");
   });
 
-  it("ordena resposta, novos P1/P2/P3, vencido e demais nessa sequência", () => {
+  it("ordena resposta/reunião, vencido, prospecção, D1, novos P1/P2/P3 e demais", () => {
     expect(getOperationalRank({ awaitingHumanResponse: true, stagePosition: 2, priorityCode: "P3", nextActionAt: null }, now)).toBe(0);
-    expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 0, priorityCode: "P1", nextActionAt: null }, now)).toBe(1);
-    expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 0, priorityCode: "P2", nextActionAt: null }, now)).toBe(2);
-    expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 0, priorityCode: "P3", nextActionAt: null }, now)).toBe(3);
-    expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 1, priorityCode: "P1", nextActionAt: "2033-05-10T14:59:59.000Z" }, now)).toBe(4);
-    expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 1, priorityCode: "P1", nextActionAt: "2033-05-10T16:00:00.000Z" }, now)).toBe(5);
+    expect(getOperationalRank({ awaitingHumanResponse: false, meetingTodayId: "meeting", stagePosition: 2, priorityCode: "P3", nextActionAt: null }, now)).toBe(0);
+    expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 1, priorityCode: "P1", nextActionAt: "2033-05-10T14:59:59.000Z" }, now)).toBe(1);
+    expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:step:follow-up", stagePosition: 1, priorityCode: "P1", nextActionAt: "2033-05-10T16:00:00.000Z" }, now)).toBe(2);
+    expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:step:call-1", stagePosition: 1, priorityCode: "P1", nextActionAt: "2033-05-10T16:00:00.000Z" }, now)).toBe(3);
+    expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 0, priorityCode: "P1", nextActionAt: null }, now)).toBe(4);
+    expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 0, priorityCode: "P2", nextActionAt: null }, now)).toBe(5);
+    expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 0, priorityCode: "P3", nextActionAt: null }, now)).toBe(6);
+    expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 1, priorityCode: "P1", nextActionAt: "2033-05-10T16:00:00.000Z" }, now)).toBe(7);
   });
 
   it("explica resposta, lead novo e retorno vencido", () => {

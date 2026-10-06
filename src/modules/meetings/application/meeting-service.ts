@@ -26,6 +26,7 @@ import type {
   MeetingListItem,
 } from "@/modules/meetings/domain/meeting-contracts";
 import { recordOpportunityMeetingHeldInTransaction } from "@/modules/opportunities/application/opportunity-service";
+import { stopColdCadenceInTransaction } from "@/modules/prospecting/application/prospecting-cadence-service";
 import {
   transitionLeadStageInTransaction,
 } from "@/modules/pipelines/application/pre-sales-pipeline-service";
@@ -775,6 +776,13 @@ export function createMeetingService(options: MeetingServiceOptions) {
           },
         });
       }
+      await stopColdCadenceInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        leadId: currentLead.id,
+        actorId: context.actorId,
+        reason: "MEETING_SCHEDULED",
+        occurredAt,
+      });
       if (opportunityId) {
         await transaction.opportunity.update({ where: { id: opportunityId }, data: { nextActionTaskId: task.id, nextActionAt: startsAt, nextActionDescription: task.title, updatedByActorId: context.actorId, updatedAt: occurredAt } });
       }

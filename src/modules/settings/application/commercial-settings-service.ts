@@ -26,7 +26,7 @@ const keySchema = z.string().trim().min(2).max(80).regex(/^[a-z0-9][a-z0-9-]*$/)
 const centsSchema = z.string().regex(/^\d{1,18}$/).transform((value) => BigInt(value));
 const expectedAtSchema = z.string().datetime({ offset: true });
 const baseCommand = { confirmed: z.boolean().optional().default(false) };
-const cadenceActionSchema = z.enum(["WHATSAPP", "CALL", "EMAIL", "RECYCLE", "CLOSE"]);
+const cadenceActionSchema = z.enum(["WHATSAPP", "CALL", "EMAIL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "RECYCLE", "CLOSE"]);
 const cadenceStepsSchema = z.array(z.object({
   dayOffset: z.number().int().min(0).max(90),
   action: cadenceActionSchema,
@@ -34,7 +34,7 @@ const cadenceStepsSchema = z.array(z.object({
   message: z.string().trim().max(2_000).nullable().optional().default(null),
   assigneeMemberId: idSchema.nullable().optional().default(null),
   targetStageId: idSchema.nullable().optional().default(null),
-}).strict()).min(1).max(15);
+}).strict()).min(1).max(30);
 
 const operationalCommand = z.object({
   action: z.literal("SAVE_OPERATIONAL_POLICY"),
@@ -51,7 +51,7 @@ const operationalCommand = z.object({
   cadenceStopOnMeetingScheduled: z.boolean().optional().default(true),
   cadenceStopOnStageChange: z.boolean().optional().default(false),
   cadenceSteps: cadenceStepsSchema.optional(),
-  cadenceDayOffsets: z.array(z.number().int().min(0).max(90)).min(1).max(15).optional(),
+  cadenceDayOffsets: z.array(z.number().int().min(0).max(90)).min(1).max(30).optional(),
 }).strict().superRefine((value, context) => {
   const steps = value.cadenceSteps ?? value.cadenceDayOffsets?.map((dayOffset) => ({ dayOffset, action: "CALL" as const }));
   if (!steps) {
@@ -59,15 +59,11 @@ const operationalCommand = z.object({
     return;
   }
   const days = steps.map((step) => step.dayOffset);
-  const unique = new Set(days);
-  if (unique.size !== days.length) {
-    context.addIssue({ code: "custom", message: "A cadência não pode repetir dias." });
-  }
   if (days[0] !== 0 && days[0] !== 1) {
     context.addIssue({ code: "custom", message: "A cadência deve começar no dia zero ou no dia um." });
   }
-  if (days.some((day, index, values) => index > 0 && day <= values[index - 1]!)) {
-    context.addIssue({ code: "custom", message: "Os dias da cadência devem estar em ordem crescente." });
+  if (days.some((day, index, values) => index > 0 && day < values[index - 1]!)) {
+    context.addIssue({ code: "custom", message: "Os dias da cadência devem estar em ordem não decrescente." });
   }
 });
 

@@ -25,6 +25,21 @@ const salesTransitions = [
   ["PROPOSAL", "NEGOTIATION"], ["PROPOSAL", "LOST"],
   ["NEGOTIATION", "WON"], ["NEGOTIATION", "LOST"],
 ] as const;
+const activeProspectingStages = [
+  ["active-prospecting.new-lead", "Novo lead", "OPEN", "NEW"],
+  ["active-prospecting.initial-outreach", "Abordagem inicial", "OPEN", "TRYING_CONTACT"],
+  ["active-prospecting.active-cadence", "Cadência ativa", "OPEN", "CONNECTED"],
+  ["active-prospecting.conversation-started", "Conversa iniciada", "OPEN", "IN_QUALIFICATION"],
+  ["active-prospecting.meeting-scheduled", "Reunião marcada", "OPEN", "MEETING_SCHEDULED"],
+  ["active-prospecting.closed-no-response", "Encerrado — sem retorno", "LOST", "NURTURING"],
+  ["active-prospecting.discarded", "Descartado", "LOST", "DISQUALIFIED"],
+] as const;
+const activeProspectingTransitions = [
+  [0, 1], [0, 6],
+  [1, 2], [1, 3], [1, 4], [1, 6],
+  [2, 3], [2, 4], [2, 5], [2, 6],
+  [3, 4], [3, 6],
+] as const;
 const priorityBands = [
   { code: "P1", name: "P1 — atendimento imediato", scoreMin: 70, scoreMax: 100, leadPriority: "URGENT", policyKey: "p1-immediate" },
   { code: "P2", name: "P2 — atendimento prioritário", scoreMin: 40, scoreMax: 69, leadPriority: "HIGH", policyKey: "p2-priority" },
@@ -87,6 +102,40 @@ async function ensureLeadPipeline(
   }
 }
 
+async function ensureActiveProspectingPipelineInTransaction(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  actorId: string,
+  result: Counters,
+) {
+  let pipeline = await tx.pipeline.findFirst({ where: { workspaceId, entityType: "LEAD", name: "Prospecção Ativa", deletedAt: null } });
+  if (!pipeline) {
+    pipeline = await tx.pipeline.create({ data: { workspaceId, name: "Prospecção Ativa", entityType: "LEAD", isDefault: false, createdByActorId: actorId, updatedByActorId: actorId } });
+    result.pipelines += 1;
+  }
+  const ids: string[] = [];
+  for (const [position, [stableKey, name, type, leadStageCode]] of activeProspectingStages.entries()) {
+    let stage = await tx.pipelineStage.findFirst({ where: { workspaceId, pipelineId: pipeline.id, stableKey, deletedAt: null } });
+    if (!stage) {
+      stage = await tx.pipelineStage.create({ data: { workspaceId, pipelineId: pipeline.id, stableKey, name, position, type, leadStageCode, createdByActorId: actorId, updatedByActorId: actorId } });
+      result.stages += 1;
+    } else if (stage.name !== name || stage.position !== position || stage.type !== type || stage.leadStageCode !== leadStageCode) {
+      stage = await tx.pipelineStage.update({ where: { id: stage.id }, data: { name, position, type, leadStageCode, updatedByActorId: actorId } });
+    }
+    ids.push(stage.id);
+  }
+  for (const [from, to] of activeProspectingTransitions) {
+    const fromStageId = ids[from]!;
+    const toStageId = ids[to]!;
+    await tx.pipelineStageTransition.upsert({
+      where: { workspaceId_pipelineId_fromStageId_toStageId: { workspaceId, pipelineId: pipeline.id, fromStageId, toStageId } },
+      create: { workspaceId, pipelineId: pipeline.id, fromStageId, toStageId, createdByActorId: actorId, updatedByActorId: actorId },
+      update: { active: true, updatedByActorId: actorId },
+    });
+  }
+  return pipeline;
+}
+
 export async function ensureActiveProspectingPipeline(
   database: PrismaClient,
   workspaceId: string,
@@ -95,7 +144,7 @@ export async function ensureActiveProspectingPipeline(
   return database.$transaction(async (transaction) => {
     await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`active-prospecting:${workspaceId}`}))`;
     const result: Counters = { settings: 0, cadence: 0, pipelines: 0, stages: 0, transitions: 0, scoringRules: 0, slaPolicies: 0, priorityBands: 0, reasons: 0 };
-    await ensureLeadPipeline(transaction, workspaceId, actorId, result, { name: "Prospecção Ativa", isDefault: false });
+    await ensureActiveProspectingPipelineInTransaction(transaction, workspaceId, actorId, result);
     return result;
   }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 });
 }
@@ -146,6 +195,24 @@ export async function ensureProductionFoundationInTransaction(tx: Prisma.Transac
     const workspaceId = workspace.id;
     const actorId = actor.id;
 
+    for (const definition of [
+      { key: "open-dot-research", displayName: "Open-Dot Pesquisa", type: "AI_AGENT" as const },
+      { key: "open-dot-auditor", displayName: "Open-Dot Auditor", type: "AI_AGENT" as const },
+      { key: "open-dot-email", displayName: "Open-Dot E-mail", type: "AUTOMATION" as const },
+    ]) {
+      await tx.actor.upsert({
+        where: { workspaceId_key: { workspaceId, key: definition.key } },
+        create: { workspaceId, key: definition.key, displayName: definition.displayName, type: definition.type },
+        update: { displayName: definition.displayName, type: definition.type, userId: null },
+      });
+    }
+
+    await tx.prospectingSettings.upsert({
+      where: { workspaceId },
+      create: { workspaceId, createdByActorId: actorId, updatedByActorId: actorId },
+      update: {},
+    });
+
     const currentSettings = await tx.commercialSettingsVersion.findFirst({ where: { workspaceId, revision: workspace.commercialSettingsRevision } });
     if (!currentSettings) {
       await tx.commercialSettingsVersion.create({ data: {
@@ -184,7 +251,7 @@ export async function ensureProductionFoundationInTransaction(tx: Prisma.Transac
     }
 
     await ensureLeadPipeline(tx, workspaceId, actorId, result, { name: "Pré-vendas", isDefault: true });
-    await ensureLeadPipeline(tx, workspaceId, actorId, result, { name: "Prospecção Ativa", isDefault: false });
+    await ensureActiveProspectingPipelineInTransaction(tx, workspaceId, actorId, result);
     await ensureSalesPipeline(tx, workspaceId, actorId, result);
 
     for (const [position, [key, name]] of ([

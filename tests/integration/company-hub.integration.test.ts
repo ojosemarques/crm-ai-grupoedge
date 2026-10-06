@@ -83,7 +83,7 @@ describe("Hub de empresas", () => {
     const response = await hubCommandRoute(api("/api/hub", admin.token, input)); expect(response.status).toBe(200);
     const replays = await Promise.all([hub.execute(admin.context, input), hub.execute(admin.context, input)]);
     expect(replays).toEqual([{ workspaceId: createdId, created: false }, { workspaceId: createdId, created: false }]);
-    expect(await database.pipeline.count({ where: { workspaceId: createdId } })).toBe(2);
+    expect(await database.pipeline.count({ where: { workspaceId: createdId } })).toBe(3);
     expect(await database.role.count({ where: { workspaceId: createdId } })).toBe(5);
     expect(await database.financialCategory.count({ where: { workspaceId: createdId } })).toBe(3);
     expect(await database.financialAccount.count({ where: { workspaceId: createdId } })).toBe(1);

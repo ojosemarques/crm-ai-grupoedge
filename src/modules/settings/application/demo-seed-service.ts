@@ -152,8 +152,21 @@ const pipelineDefinitions = [
     name: "Prospecção Ativa",
     entityType: "LEAD",
     isDefault: false,
-    stages: leadPipelineStages,
-    transitions: leadPipelineTransitions,
+    stages: [
+      ["active-prospecting.new-lead", "Novo lead", "OPEN", "NEW", null],
+      ["active-prospecting.initial-outreach", "Abordagem inicial", "OPEN", "TRYING_CONTACT", null],
+      ["active-prospecting.active-cadence", "Cadência ativa", "OPEN", "CONNECTED", null],
+      ["active-prospecting.conversation-started", "Conversa iniciada", "OPEN", "IN_QUALIFICATION", null],
+      ["active-prospecting.meeting-scheduled", "Reunião marcada", "OPEN", "MEETING_SCHEDULED", null],
+      ["active-prospecting.closed-no-response", "Encerrado — sem retorno", "LOST", "NURTURING", null],
+      ["active-prospecting.discarded", "Descartado", "LOST", "DISQUALIFIED", null],
+    ],
+    transitions: [
+      ["NEW", "TRYING_CONTACT"], ["NEW", "DISQUALIFIED"],
+      ["TRYING_CONTACT", "CONNECTED"], ["TRYING_CONTACT", "IN_QUALIFICATION"], ["TRYING_CONTACT", "MEETING_SCHEDULED"], ["TRYING_CONTACT", "DISQUALIFIED"],
+      ["CONNECTED", "IN_QUALIFICATION"], ["CONNECTED", "MEETING_SCHEDULED"], ["CONNECTED", "NURTURING"], ["CONNECTED", "DISQUALIFIED"],
+      ["IN_QUALIFICATION", "MEETING_SCHEDULED"], ["IN_QUALIFICATION", "DISQUALIFIED"],
+    ],
   },
   {
     key: "sales",
@@ -1088,6 +1101,7 @@ async function ensurePipeline(
           id: stageId,
           workspaceId,
           pipelineId: pipeline.id,
+          stableKey: stageKey,
           name,
           position,
           type,
@@ -1096,6 +1110,18 @@ async function ensurePipeline(
           createdByActorId: actorId,
           updatedByActorId: actorId,
         },
+      });
+    } else if (
+      stage.stableKey !== stageKey
+      || stage.name !== name
+      || stage.position !== position
+      || stage.type !== type
+      || stage.leadStageCode !== leadStageCode
+      || stage.opportunityStageCode !== opportunityStageCode
+    ) {
+      await transaction.pipelineStage.update({
+        where: { id: stage.id },
+        data: { stableKey: stageKey, name, position, type, leadStageCode, opportunityStageCode, updatedByActorId: actorId },
       });
     }
   }

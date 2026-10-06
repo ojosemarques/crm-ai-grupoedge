@@ -42,16 +42,16 @@ const optionalText = (maximum: number) =>
     .optional()
     .transform((value) => (value ? value : undefined));
 
-function privacySource(channel: "MANUAL" | "CSV" | "LOCAL_WEBHOOK" | "SIMULATOR" | "FORM" | "LANDING_PAGE" | "AD") {
+function privacySource(channel: "MANUAL" | "CSV" | "LOCAL_WEBHOOK" | "SIMULATOR" | "FORM" | "LANDING_PAGE" | "AD" | "OPEN_DOT") {
   if (channel === "CSV") return "IMPORT" as const;
   if (channel === "SIMULATOR") return "SIMULATOR" as const;
-  if (channel === "LOCAL_WEBHOOK") return "API" as const;
+  if (channel === "LOCAL_WEBHOOK" || channel === "OPEN_DOT") return "API" as const;
   return "FORM" as const;
 }
 
 const leadIntakeSchema = z
   .object({
-    channel: z.enum(["MANUAL", "CSV", "LOCAL_WEBHOOK", "SIMULATOR", "FORM", "LANDING_PAGE", "AD"]),
+    channel: z.enum(["MANUAL", "CSV", "LOCAL_WEBHOOK", "SIMULATOR", "FORM", "LANDING_PAGE", "AD", "OPEN_DOT"]),
     idempotencyKey: z.string().trim().min(1).max(160),
     formIdentifier: optionalText(160),
     fullName: z.string().trim().min(2).max(200),
@@ -849,11 +849,12 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
   async function intake(
     payload: unknown,
     context: LeadIntakeActorContext,
+    transactionOverride?: Prisma.TransactionClient,
   ): Promise<LeadIntakeResult> {
     const parsed = parseInput(payload, options.now());
     if (isRejectedResult(parsed)) return parsed;
 
-    const generalQueue = await options.database.queue.findFirst({
+    const generalQueue = await (transactionOverride ?? options.database).queue.findFirst({
       where: {
         workspaceId: context.workspaceId,
         isGeneral: true,
@@ -877,7 +878,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       await validateAutomaticActor(options.database, context);
     }
 
-    const result = await options.database.$transaction(async (transaction) => {
+    const executeIntake = async (transaction: Prisma.TransactionClient) => {
       await ensureGeneralQueue(
         transaction,
         context.workspaceId,
@@ -940,7 +941,9 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       // Telefone é um ponto de contato compartilhável, não uma identidade forte.
       // A associação automática só ocorre quando o e-mail normalizado também coincide;
       // os demais candidatos seguem como pessoas separadas e entram em revisão humana.
-      const existingLead = phoneCandidates.find((candidate) => mayAutomaticallyAttachBySharedPhone({ submittedEmail: parsed.normalizedEmail, candidateEmail: candidate.normalizedEmail })) ?? null;
+      const existingLead = parsed.channel === "OPEN_DOT"
+        ? null
+        : phoneCandidates.find((candidate) => mayAutomaticallyAttachBySharedPhone({ submittedEmail: parsed.normalizedEmail, candidateEmail: candidate.normalizedEmail })) ?? null;
       const preparedScore = await prepareFormProvisionalScore(
         transaction,
         context.workspaceId,
@@ -1491,24 +1494,32 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         idempotentReplay: false,
       } satisfies LeadIntakeAcceptedResult;
       return result;
-    });
+    };
+    const result = transactionOverride
+      ? await executeIntake(transactionOverride)
+      : await options.database.$transaction(executeIntake);
 
     if (result.outcome !== "REJECTED" && options.automationPublisher) {
-      try {
-        const persistedLead = await options.database.lead.findFirst({
+      const publish = async (transaction: Prisma.TransactionClient) => {
+        const persistedLead = await transaction.lead.findFirst({
           where: { id: result.leadId, workspaceId: context.workspaceId, deletedAt: null },
           select: { contactPreference: true },
         });
-        await options.database.$transaction((transaction) =>
-          publishAcceptedAutomationEvents(transaction, options.automationPublisher, {
-            workspaceId: context.workspaceId,
-            actorId: context.actorId,
-            result,
-            receivedAt: parsed.receivedAt,
-            channel: parsed.channel,
-            doNotContact: persistedLead?.contactPreference === "DO_NOT_CONTACT",
-          }),
-        );
+        await publishAcceptedAutomationEvents(transaction, options.automationPublisher, {
+          workspaceId: context.workspaceId,
+          actorId: context.actorId,
+          result,
+          receivedAt: parsed.receivedAt,
+          channel: parsed.channel,
+          doNotContact: persistedLead?.contactPreference === "DO_NOT_CONTACT",
+        });
+      };
+      if (transactionOverride) {
+        await publish(transactionOverride);
+        return result;
+      }
+      try {
+        await options.database.$transaction(publish);
       } catch {
         // Automações complementam o cadastro e nunca impedem a persistência do lead.
       }

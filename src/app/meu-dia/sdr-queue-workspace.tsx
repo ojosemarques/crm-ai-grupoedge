@@ -631,6 +631,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         </div>
         <h3 className={styles.operationalDemandTitle}>Demandas operacionais de hoje</h3>
         <div className={styles.productionGrid}>
+          <Link href="/email-agente?view=metrics"><span>Políticos abordados</span><strong>{screen.dailyProduction.politiciansTouched} / {screen.dailyProduction.politiciansTouchedTarget}</strong><small>{screen.dailyProduction.politiciansTouchedOverCapacity ? "Excesso por retornos urgentes" : "Distinct por vendedor no dia"}</small></Link>
           <Link href="/atividades"><span>Ligações para fazer</span><strong>{screen.dailyProduction.callsPending}</strong><small>{screen.dailyProduction.calls} registradas hoje</small></Link>
           <Link href="/atividades"><span>Mensagens para enviar</span><strong>{screen.dailyProduction.messagesPending}</strong><small>{screen.dailyProduction.messages} enviadas hoje</small></Link>
           <button onClick={() => selectSection("OVERDUE")} type="button"><span>Acompanhamentos atrasados</span><strong>{screen.dailyProduction.overdueFollowUps}</strong><small>Abrir fila de atrasados</small></button>

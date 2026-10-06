@@ -133,11 +133,17 @@ function operationalOrderSql(now: Date): Prisma.Sql {
   return Prisma.sql`
     CASE
       WHEN l."awaitingHumanResponse" THEN 0
-      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P1' THEN 1
-      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P2' THEN 2
-      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P3' THEN 3
-      WHEN l."nextActionAt" < ${now} THEN 4
-      ELSE 5
+      WHEN meeting_today."id" IS NOT NULL THEN 0
+      WHEN l."nextActionAt" < ${now} THEN 1
+      WHEN next_task."sourceKey" LIKE 'active-prospecting:%'
+        AND next_task."sourceKey" NOT LIKE '%:call-1'
+        AND next_task."sourceKey" NOT LIKE '%:instagram-message-1'
+        AND next_task."sourceKey" NOT LIKE '%:instagram-follow' THEN 2
+      WHEN next_task."sourceKey" LIKE 'active-prospecting:%' THEN 3
+      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P1' THEN 4
+      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P2' THEN 5
+      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P3' THEN 6
+      ELSE 7
     END ASC,
     CASE WHEN l."awaitingHumanResponse" THEN l."lastInboundResponseAt" END DESC NULLS LAST,
     CASE WHEN stage."position" = 0 THEN latest_cycle."receivedAt" END ASC NULLS LAST,
@@ -392,6 +398,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       meetingsMarked,
       proposals,
       salesValue,
+      politiciansTouchedRows,
       dailyGoalProfiles,
     ] = await Promise.all([
       options.database.activity.groupBy({
@@ -489,6 +496,20 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         },
         _sum: { amountCents: true },
       }),
+      options.database.task.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          assigneeMemberId: { in: productivityMemberIds },
+          completedAt: { gte: today.start, lt: today.end },
+          status: "COMPLETED",
+          kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] },
+          sourceKey: { startsWith: "active-prospecting:" },
+          result: { not: "CHANNEL_UNAVAILABLE" },
+          deletedAt: null,
+        },
+        distinct: ["leadId"],
+        select: { leadId: true },
+      }),
       options.database.dailyGoalProfile.findMany({
         where: { workspaceId: context.workspaceId, memberId: { in: dailyGoalProfileMemberIds } },
         orderBy: { memberId: "asc" },
@@ -504,7 +525,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       .filter((item) => kinds.includes(item.kind) && statuses.includes(item.status))
       .reduce((total, item) => total + item._count._all, 0);
     const openStatuses = ["OPEN", "IN_PROGRESS"];
-    const actionableKinds = ["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "EMAIL", "FOLLOW_UP"];
+    const actionableKinds = ["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "EMAIL", "FOLLOW_UP"];
     const tasksDue = taskCount(actionableKinds, openStatuses);
     const calls = activityCount(["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"]);
     const messages = activityCount(["MESSAGE_SENT"]);
@@ -613,10 +634,13 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         salesValueTargetCents: profile.salesValueTargetCents.toString(),
       })) : [],
       dailyProduction: {
+        politiciansTouched: politiciansTouchedRows.length,
+        politiciansTouchedTarget: productivityMemberIds.length * 75,
+        politiciansTouchedOverCapacity: politiciansTouchedRows.length > productivityMemberIds.length * 75,
         calls,
         callsPending: taskCount(["IMMEDIATE_CALL", "CALL"], openStatuses),
         messages,
-        messagesPending: taskCount(["MESSAGE"], openStatuses),
+        messagesPending: taskCount(["MESSAGE", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"], openStatuses),
         emails: activityCount(["EMAIL"]),
         tasksDue,
         overdueFollowUps: sections.find((section) => section.key === "OVERDUE")?.total ?? 0,

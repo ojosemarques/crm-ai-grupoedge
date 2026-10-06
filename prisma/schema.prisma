@@ -188,6 +188,7 @@ enum LeadIntakeChannel {
   FORM
   LANDING_PAGE
   AD
+  OPEN_DOT
 }
 
 enum LeadIntakeOutcome {
@@ -1254,6 +1255,8 @@ enum TaskKind {
   IMMEDIATE_CALL
   CALL
   MESSAGE
+  INSTAGRAM_MESSAGE
+  INSTAGRAM_FOLLOW
   EMAIL
   MEETING
   FOLLOW_UP
@@ -1268,8 +1271,117 @@ enum CadenceStepAction {
   WHATSAPP
   CALL
   EMAIL
+  INSTAGRAM_MESSAGE
+  INSTAGRAM_FOLLOW
   RECYCLE
   CLOSE
+}
+
+enum ProspectingRole {
+  MAYOR
+  COUNCILOR
+}
+
+enum ProspectContactScope {
+  POLITICIAN
+  ADVISOR
+  OFFICE
+}
+
+enum ProspectingBatchStatus {
+  DRAFT
+  RUNNING
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum ProspectCandidateStatus {
+  RECEIVED
+  REVIEW_REQUIRED
+  READY
+  REJECTED
+  PLANNED
+  RELEASED
+}
+
+enum ProspectSourceType {
+  IBGE
+  TSE
+  CITY_HALL
+  CITY_COUNCIL
+  OFFICIAL_GAZETTE
+  INSTITUTIONAL_PROFILE
+}
+
+enum ProspectSourceValidationStatus {
+  PENDING
+  VALID
+  INVALID
+}
+
+enum ProspectReleaseStatus {
+  PLANNED
+  CLAIMED
+  RELEASED
+  DEFERRED
+  REJECTED
+  FAILED
+}
+
+enum ProspectingCadenceStatus {
+  PENDING_D1
+  ACTIVE
+  PAUSED
+  CONVERSATION_STARTED
+  MEETING_SCHEDULED
+  CLOSED_NO_RESPONSE
+  DISCARDED
+  CANCELLED
+}
+
+enum ProspectingStepExecutor {
+  SELLER
+  OPEN_DOT
+  CRM_WORKER
+}
+
+enum ProspectingStepStatus {
+  BLOCKED
+  SCHEDULED
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  SUPPRESSED
+  EXPIRED
+  FAILED
+}
+
+enum ProspectingEmailJobStatus {
+  BLOCKED
+  SCHEDULED
+  CLAIMED
+  SENT
+  DELIVERED
+  REPLIED
+  BOUNCED
+  COMPLAINT
+  UNSUBSCRIBED
+  CANCELLED
+  SUPPRESSED
+  EXPIRED
+  FAILED
+  RECONCILIATION_REQUIRED
+}
+
+enum OpenDotScope {
+  RESEARCH_WRITE
+  RESEARCH_REVIEW
+  RESEARCH_READ
+  EMAIL_CLAIM
+  EMAIL_RECEIPT
+  EMAIL_EVENT_WRITE
 }
 
 enum AccountPlanEpisodeType {
@@ -2673,98 +2785,98 @@ model Actor {
   transactionalCheckoutsCreated TransactionalCheckout[]      @relation("TransactionalCheckoutCreatedBy")
   transactionalCheckoutEvents   TransactionalCheckoutEvent[] @relation("TransactionalCheckoutEventActor")
 
-  membershipsCreated               WorkspaceMember[]                    @relation("WorkspaceMemberCreatedBy")
-  membershipsUpdated               WorkspaceMember[]                    @relation("WorkspaceMemberUpdatedBy")
-  membershipsPaused                WorkspaceMember[]                    @relation("WorkspaceMemberPausedBy")
-  rolesCreated                     Role[]                               @relation("RoleCreatedBy")
-  rolesUpdated                     Role[]                               @relation("RoleUpdatedBy")
-  roleGrants                       RolePermission[]                     @relation("RolePermissionCreatedBy")
-  teamsCreated                     Team[]                               @relation("TeamCreatedBy")
-  teamsUpdated                     Team[]                               @relation("TeamUpdatedBy")
-  teamMembersCreated               TeamMember[]                         @relation("TeamMemberCreatedBy")
-  teamMembersUpdated               TeamMember[]                         @relation("TeamMemberUpdatedBy")
-  sourcesCreated                   LeadSource[]                         @relation("LeadSourceCreatedBy")
-  sourcesUpdated                   LeadSource[]                         @relation("LeadSourceUpdatedBy")
-  campaignsCreated                 AcquisitionCampaign[]                @relation("CampaignCreatedBy")
-  campaignsUpdated                 AcquisitionCampaign[]                @relation("CampaignUpdatedBy")
-  creativesCreated                 AcquisitionCreative[]                @relation("CreativeCreatedBy")
-  creativesUpdated                 AcquisitionCreative[]                @relation("CreativeUpdatedBy")
-  queuesCreated                    Queue[]                              @relation("QueueCreatedBy")
-  queuesUpdated                    Queue[]                              @relation("QueueUpdatedBy")
-  slaPoliciesCreated               SlaPolicy[]                          @relation("SlaPolicyCreatedBy")
-  slaPoliciesUpdated               SlaPolicy[]                          @relation("SlaPolicyUpdatedBy")
-  priorityBandsCreated             LeadPriorityBand[]                   @relation("PriorityBandCreatedBy")
-  priorityBandsUpdated             LeadPriorityBand[]                   @relation("PriorityBandUpdatedBy")
-  lossReasonsCreated               LossReason[]                         @relation("LossReasonCreatedBy")
-  lossReasonsUpdated               LossReason[]                         @relation("LossReasonUpdatedBy")
-  disqualificationReasonsCreated   DisqualificationReason[]             @relation("DisqualificationReasonCreatedBy")
-  disqualificationReasonsUpdated   DisqualificationReason[]             @relation("DisqualificationReasonUpdatedBy")
-  leadsCreated                     Lead[]                               @relation("LeadCreatedBy")
-  leadsUpdated                     Lead[]                               @relation("LeadUpdatedBy")
-  submissionsCreated               LeadFormSubmission[]                 @relation("SubmissionCreatedBy")
-  identityReviewsCreated           LeadIdentityReview[]                 @relation("IdentityReviewCreatedBy")
-  identityReviewsResolved          LeadIdentityReview[]                 @relation("IdentityReviewResolvedBy")
-  contactsCreated                  Contact[]                            @relation("ContactCreatedBy")
-  contactsUpdated                  Contact[]                            @relation("ContactUpdatedBy")
-  contactPointsCreated             ContactPoint[]                       @relation("ContactPointCreatedBy")
-  contactPointsUpdated             ContactPoint[]                       @relation("ContactPointUpdatedBy")
-  contactIdentityReviewsCreated    ContactIdentityReview[]              @relation("ContactIdentityReviewCreatedBy")
-  contactIdentityReviewsResolved   ContactIdentityReview[]              @relation("ContactIdentityReviewResolvedBy")
-  contactBackfillRunsRequested     ContactBackfillRun[]                 @relation("ContactBackfillRunRequestedBy")
-  contactBackfillRunsUpdated       ContactBackfillRun[]                 @relation("ContactBackfillRunUpdatedBy")
-  accountsCreated                  Account[]                            @relation("AccountCreatedBy")
-  accountsUpdated                  Account[]                            @relation("AccountUpdatedBy")
-  accountRolesCreated              AccountContactRole[]                 @relation("AccountRoleCreatedBy")
-  accountRolesEnded                AccountContactRole[]                 @relation("AccountRoleEndedBy")
-  buyingCommitteesCreated          BuyingCommittee[]                    @relation("BuyingCommitteeCreatedBy")
-  buyingCommitteesUpdated          BuyingCommittee[]                    @relation("BuyingCommitteeUpdatedBy")
-  buyingCommitteeMembersCreated    BuyingCommitteeMember[]              @relation("BuyingCommitteeMemberCreatedBy")
-  buyingCommitteeMembersEnded      BuyingCommitteeMember[]              @relation("BuyingCommitteeMemberEndedBy")
-  accountIdentityReviewsCreated    AccountIdentityReview[]              @relation("AccountIdentityReviewCreatedBy")
-  accountIdentityReviewsResolved   AccountIdentityReview[]              @relation("AccountIdentityReviewResolvedBy")
-  accountBackfillRunsRequested     AccountBackfillRun[]                 @relation("AccountBackfillRunRequestedBy")
-  accountBackfillRunsUpdated       AccountBackfillRun[]                 @relation("AccountBackfillRunUpdatedBy")
-  revenueLifecyclesCreated         RevenueLifecycle[]                   @relation("RevenueLifecycleCreatedBy")
-  revenueLifecyclesUpdated         RevenueLifecycle[]                   @relation("RevenueLifecycleUpdatedBy")
-  lifecycleHistoriesCreated        LifecycleHistory[]                   @relation("LifecycleHistoryCreatedBy")
-  lifecycleRulesCreated            LifecycleRuleVersion[]               @relation("LifecycleRuleCreatedBy")
-  ownershipAssignmentsAssigned     OwnershipAssignment[]                @relation("OwnershipAssignmentAssignedBy")
-  ownershipAssignmentsEnded        OwnershipAssignment[]                @relation("OwnershipAssignmentEndedBy")
-  ownershipTransfersRequested      OwnershipTransfer[]                  @relation("OwnershipTransferRequestedBy")
-  ownershipTransfersResponded      OwnershipTransfer[]                  @relation("OwnershipTransferRespondedBy")
-  lifecycleBackfillRunsRequested   LifecycleBackfillRun[]               @relation("LifecycleBackfillRunRequestedBy")
-  lifecycleBackfillRunsUpdated     LifecycleBackfillRun[]               @relation("LifecycleBackfillRunUpdatedBy")
-  leadSlaCyclesCreated             LeadSlaCycle[]                       @relation("LeadSlaCycleCreatedBy")
-  leadAssignmentsCreated           LeadAssignment[]                     @relation("LeadAssignmentCreatedBy")
-  roundRobinStatesUpdated          RoundRobinState[]                    @relation("RoundRobinStateUpdatedBy")
-  operationalAlertsCreated         OperationalAlert[]                   @relation("OperationalAlertCreatedBy")
-  operationalAlertsResolved        OperationalAlert[]                   @relation("OperationalAlertResolvedBy")
-  qualificationsCreated            LeadQualification[]                  @relation("QualificationCreatedBy")
-  qualificationsUpdated            LeadQualification[]                  @relation("QualificationUpdatedBy")
-  qualificationsValidated          LeadQualification[]                  @relation("QualificationValidatedBy")
-  pactoAssessmentsRecorded         PactoAssessment[]                    @relation("PactoAssessmentRecordedBy")
-  pactoAssessmentsValidated        PactoAssessment[]                    @relation("PactoAssessmentValidatedBy")
-  pactoRevisionsCreated            PactoRevision[]                      @relation("PactoRevisionCreatedBy")
-  pactoRevisionDimensionsRecorded  PactoRevisionDimension[]             @relation("PactoRevisionDimensionRecordedBy")
-  pactoRevisionDimensionsValidated PactoRevisionDimension[]             @relation("PactoRevisionDimensionValidatedBy")
-  pactoSuggestionsCreated          PactoSuggestion[]                    @relation("PactoSuggestionCreatedBy")
-  scoringRulesCreated              ScoringRuleVersion[]                 @relation("ScoringRuleVersionCreatedBy")
-  commercialSettingsCreated        CommercialSettingsVersion[]          @relation("CommercialSettingsVersionCreatedBy")
-  scoresCalculated                 LeadScore[]                          @relation("LeadScoreCalculatedBy")
-  currentScoresUpdated             LeadCurrentScore[]                   @relation("LeadCurrentScoreUpdatedBy")
-  pipelinesCreated                 Pipeline[]                           @relation("PipelineCreatedBy")
-  pipelinesUpdated                 Pipeline[]                           @relation("PipelineUpdatedBy")
-  stagesCreated                    PipelineStage[]                      @relation("PipelineStageCreatedBy")
-  stagesUpdated                    PipelineStage[]                      @relation("PipelineStageUpdatedBy")
-  pipelineTransitionsCreated       PipelineStageTransition[]            @relation("PipelineStageTransitionCreatedBy")
-  pipelineTransitionsUpdated       PipelineStageTransition[]            @relation("PipelineStageTransitionUpdatedBy")
-  stagesEntered                    StageHistory[]                       @relation("StageHistoryEnteredBy")
-  stagesExited                     StageHistory[]                       @relation("StageHistoryExitedBy")
-  opportunityOutcomeSnapshots      OpportunityOutcomeSnapshot[]         @relation("OpportunityOutcomeSnapshotCreatedBy")
-  opportunityEvidenceRecorded      OpportunityEvidence[]                @relation("OpportunityEvidenceRecordedBy")
-  opportunityEvidenceSuperseded    OpportunityEvidence[]                @relation("OpportunityEvidenceSupersededBy")
-  opportunityGateEvaluations       OpportunityGateEvaluation[]          @relation("OpportunityGateEvaluationBy")
-  opportunityDeferralsCreated      OpportunityDeferral[]                @relation("OpportunityDeferralCreatedBy")
+  membershipsCreated                WorkspaceMember[]                    @relation("WorkspaceMemberCreatedBy")
+  membershipsUpdated                WorkspaceMember[]                    @relation("WorkspaceMemberUpdatedBy")
+  membershipsPaused                 WorkspaceMember[]                    @relation("WorkspaceMemberPausedBy")
+  rolesCreated                      Role[]                               @relation("RoleCreatedBy")
+  rolesUpdated                      Role[]                               @relation("RoleUpdatedBy")
+  roleGrants                        RolePermission[]                     @relation("RolePermissionCreatedBy")
+  teamsCreated                      Team[]                               @relation("TeamCreatedBy")
+  teamsUpdated                      Team[]                               @relation("TeamUpdatedBy")
+  teamMembersCreated                TeamMember[]                         @relation("TeamMemberCreatedBy")
+  teamMembersUpdated                TeamMember[]                         @relation("TeamMemberUpdatedBy")
+  sourcesCreated                    LeadSource[]                         @relation("LeadSourceCreatedBy")
+  sourcesUpdated                    LeadSource[]                         @relation("LeadSourceUpdatedBy")
+  campaignsCreated                  AcquisitionCampaign[]                @relation("CampaignCreatedBy")
+  campaignsUpdated                  AcquisitionCampaign[]                @relation("CampaignUpdatedBy")
+  creativesCreated                  AcquisitionCreative[]                @relation("CreativeCreatedBy")
+  creativesUpdated                  AcquisitionCreative[]                @relation("CreativeUpdatedBy")
+  queuesCreated                     Queue[]                              @relation("QueueCreatedBy")
+  queuesUpdated                     Queue[]                              @relation("QueueUpdatedBy")
+  slaPoliciesCreated                SlaPolicy[]                          @relation("SlaPolicyCreatedBy")
+  slaPoliciesUpdated                SlaPolicy[]                          @relation("SlaPolicyUpdatedBy")
+  priorityBandsCreated              LeadPriorityBand[]                   @relation("PriorityBandCreatedBy")
+  priorityBandsUpdated              LeadPriorityBand[]                   @relation("PriorityBandUpdatedBy")
+  lossReasonsCreated                LossReason[]                         @relation("LossReasonCreatedBy")
+  lossReasonsUpdated                LossReason[]                         @relation("LossReasonUpdatedBy")
+  disqualificationReasonsCreated    DisqualificationReason[]             @relation("DisqualificationReasonCreatedBy")
+  disqualificationReasonsUpdated    DisqualificationReason[]             @relation("DisqualificationReasonUpdatedBy")
+  leadsCreated                      Lead[]                               @relation("LeadCreatedBy")
+  leadsUpdated                      Lead[]                               @relation("LeadUpdatedBy")
+  submissionsCreated                LeadFormSubmission[]                 @relation("SubmissionCreatedBy")
+  identityReviewsCreated            LeadIdentityReview[]                 @relation("IdentityReviewCreatedBy")
+  identityReviewsResolved           LeadIdentityReview[]                 @relation("IdentityReviewResolvedBy")
+  contactsCreated                   Contact[]                            @relation("ContactCreatedBy")
+  contactsUpdated                   Contact[]                            @relation("ContactUpdatedBy")
+  contactPointsCreated              ContactPoint[]                       @relation("ContactPointCreatedBy")
+  contactPointsUpdated              ContactPoint[]                       @relation("ContactPointUpdatedBy")
+  contactIdentityReviewsCreated     ContactIdentityReview[]              @relation("ContactIdentityReviewCreatedBy")
+  contactIdentityReviewsResolved    ContactIdentityReview[]              @relation("ContactIdentityReviewResolvedBy")
+  contactBackfillRunsRequested      ContactBackfillRun[]                 @relation("ContactBackfillRunRequestedBy")
+  contactBackfillRunsUpdated        ContactBackfillRun[]                 @relation("ContactBackfillRunUpdatedBy")
+  accountsCreated                   Account[]                            @relation("AccountCreatedBy")
+  accountsUpdated                   Account[]                            @relation("AccountUpdatedBy")
+  accountRolesCreated               AccountContactRole[]                 @relation("AccountRoleCreatedBy")
+  accountRolesEnded                 AccountContactRole[]                 @relation("AccountRoleEndedBy")
+  buyingCommitteesCreated           BuyingCommittee[]                    @relation("BuyingCommitteeCreatedBy")
+  buyingCommitteesUpdated           BuyingCommittee[]                    @relation("BuyingCommitteeUpdatedBy")
+  buyingCommitteeMembersCreated     BuyingCommitteeMember[]              @relation("BuyingCommitteeMemberCreatedBy")
+  buyingCommitteeMembersEnded       BuyingCommitteeMember[]              @relation("BuyingCommitteeMemberEndedBy")
+  accountIdentityReviewsCreated     AccountIdentityReview[]              @relation("AccountIdentityReviewCreatedBy")
+  accountIdentityReviewsResolved    AccountIdentityReview[]              @relation("AccountIdentityReviewResolvedBy")
+  accountBackfillRunsRequested      AccountBackfillRun[]                 @relation("AccountBackfillRunRequestedBy")
+  accountBackfillRunsUpdated        AccountBackfillRun[]                 @relation("AccountBackfillRunUpdatedBy")
+  revenueLifecyclesCreated          RevenueLifecycle[]                   @relation("RevenueLifecycleCreatedBy")
+  revenueLifecyclesUpdated          RevenueLifecycle[]                   @relation("RevenueLifecycleUpdatedBy")
+  lifecycleHistoriesCreated         LifecycleHistory[]                   @relation("LifecycleHistoryCreatedBy")
+  lifecycleRulesCreated             LifecycleRuleVersion[]               @relation("LifecycleRuleCreatedBy")
+  ownershipAssignmentsAssigned      OwnershipAssignment[]                @relation("OwnershipAssignmentAssignedBy")
+  ownershipAssignmentsEnded         OwnershipAssignment[]                @relation("OwnershipAssignmentEndedBy")
+  ownershipTransfersRequested       OwnershipTransfer[]                  @relation("OwnershipTransferRequestedBy")
+  ownershipTransfersResponded       OwnershipTransfer[]                  @relation("OwnershipTransferRespondedBy")
+  lifecycleBackfillRunsRequested    LifecycleBackfillRun[]               @relation("LifecycleBackfillRunRequestedBy")
+  lifecycleBackfillRunsUpdated      LifecycleBackfillRun[]               @relation("LifecycleBackfillRunUpdatedBy")
+  leadSlaCyclesCreated              LeadSlaCycle[]                       @relation("LeadSlaCycleCreatedBy")
+  leadAssignmentsCreated            LeadAssignment[]                     @relation("LeadAssignmentCreatedBy")
+  roundRobinStatesUpdated           RoundRobinState[]                    @relation("RoundRobinStateUpdatedBy")
+  operationalAlertsCreated          OperationalAlert[]                   @relation("OperationalAlertCreatedBy")
+  operationalAlertsResolved         OperationalAlert[]                   @relation("OperationalAlertResolvedBy")
+  qualificationsCreated             LeadQualification[]                  @relation("QualificationCreatedBy")
+  qualificationsUpdated             LeadQualification[]                  @relation("QualificationUpdatedBy")
+  qualificationsValidated           LeadQualification[]                  @relation("QualificationValidatedBy")
+  pactoAssessmentsRecorded          PactoAssessment[]                    @relation("PactoAssessmentRecordedBy")
+  pactoAssessmentsValidated         PactoAssessment[]                    @relation("PactoAssessmentValidatedBy")
+  pactoRevisionsCreated             PactoRevision[]                      @relation("PactoRevisionCreatedBy")
+  pactoRevisionDimensionsRecorded   PactoRevisionDimension[]             @relation("PactoRevisionDimensionRecordedBy")
+  pactoRevisionDimensionsValidated  PactoRevisionDimension[]             @relation("PactoRevisionDimensionValidatedBy")
+  pactoSuggestionsCreated           PactoSuggestion[]                    @relation("PactoSuggestionCreatedBy")
+  scoringRulesCreated               ScoringRuleVersion[]                 @relation("ScoringRuleVersionCreatedBy")
+  commercialSettingsCreated         CommercialSettingsVersion[]          @relation("CommercialSettingsVersionCreatedBy")
+  scoresCalculated                  LeadScore[]                          @relation("LeadScoreCalculatedBy")
+  currentScoresUpdated              LeadCurrentScore[]                   @relation("LeadCurrentScoreUpdatedBy")
+  pipelinesCreated                  Pipeline[]                           @relation("PipelineCreatedBy")
+  pipelinesUpdated                  Pipeline[]                           @relation("PipelineUpdatedBy")
+  stagesCreated                     PipelineStage[]                      @relation("PipelineStageCreatedBy")
+  stagesUpdated                     PipelineStage[]                      @relation("PipelineStageUpdatedBy")
+  pipelineTransitionsCreated        PipelineStageTransition[]            @relation("PipelineStageTransitionCreatedBy")
+  pipelineTransitionsUpdated        PipelineStageTransition[]            @relation("PipelineStageTransitionUpdatedBy")
+  stagesEntered                     StageHistory[]                       @relation("StageHistoryEnteredBy")
+  stagesExited                      StageHistory[]                       @relation("StageHistoryExitedBy")
+  opportunityOutcomeSnapshots       OpportunityOutcomeSnapshot[]         @relation("OpportunityOutcomeSnapshotCreatedBy")
+  opportunityEvidenceRecorded       OpportunityEvidence[]                @relation("OpportunityEvidenceRecordedBy")
+  opportunityEvidenceSuperseded     OpportunityEvidence[]                @relation("OpportunityEvidenceSupersededBy")
+  opportunityGateEvaluations        OpportunityGateEvaluation[]          @relation("OpportunityGateEvaluationBy")
+  opportunityDeferralsCreated       OpportunityDeferral[]                @relation("OpportunityDeferralCreatedBy")
   analyticsDashboardsCreated        AnalyticsDashboard[]                 @relation("AnalyticsDashboardCreatedBy")
   analyticsDashboardsUpdated        AnalyticsDashboard[]                 @relation("AnalyticsDashboardUpdatedBy")
   analyticsWidgetsCreated           AnalyticsWidget[]                    @relation("AnalyticsWidgetCreatedBy")
@@ -2773,118 +2885,118 @@ model Actor {
   consumptionBudgetsCreated         ConsumptionBudget[]                  @relation("ConsumptionBudgetCreatedBy")
   consumptionBudgetsUpdated         ConsumptionBudget[]                  @relation("ConsumptionBudgetUpdatedBy")
   consumptionLedgerEntries          ConsumptionLedgerEntry[]
-  opportunitiesCreated             Opportunity[]                        @relation("OpportunityCreatedBy")
-  opportunitiesUpdated             Opportunity[]                        @relation("OpportunityUpdatedBy")
-  productsCreated                  Product[]                            @relation("ProductCreatedBy")
-  productsUpdated                  Product[]                            @relation("ProductUpdatedBy")
-  offerTemplatesCreated            OfferTemplate[]                      @relation("OfferTemplateCreatedBy")
-  offerTemplatesUpdated            OfferTemplate[]                      @relation("OfferTemplateUpdatedBy")
-  offersCreated                    Offer[]                              @relation("OfferCreatedBy")
-  offersUpdated                    Offer[]                              @relation("OfferUpdatedBy")
-  meetingsCreated                  Meeting[]                            @relation("MeetingCreatedBy")
-  meetingsUpdated                  Meeting[]                            @relation("MeetingUpdatedBy")
-  meetingHistoryRecorded           MeetingHistory[]                     @relation("MeetingHistoryRecordedBy")
-  activitiesCreated                Activity[]                           @relation("ActivityCreatedBy")
-  activitiesUpdated                Activity[]                           @relation("ActivityUpdatedBy")
-  tasksCreated                     Task[]                               @relation("TaskCreatedBy")
-  tasksUpdated                     Task[]                               @relation("TaskUpdatedBy")
-  notesCreated                     Note[]                               @relation("NoteCreatedBy")
-  notesUpdated                     Note[]                               @relation("NoteUpdatedBy")
-  conversationsCreated             Conversation[]                       @relation("ConversationCreatedBy")
-  conversationsUpdated             Conversation[]                       @relation("ConversationUpdatedBy")
-  messagesSent                     Message[]                            @relation("MessageSender")
-  messagesDeleted                  Message[]                            @relation("MessageDeletedBy")
-  messagesRedacted                 Message[]                            @relation("MessageRedactedBy")
-  conversationParticipants         ConversationParticipant[]
-  messageStatusEvents              MessageStatusEvent[]
-  conversationAssignmentsRecorded  ConversationAssignmentHistory[]      @relation("ConversationAssignmentRecordedBy")
-  messageIdentityReviewsCreated    MessageIdentityReview[]              @relation("MessageIdentityReviewCreatedBy")
-  messageIdentityReviewsResolved   MessageIdentityReview[]              @relation("MessageIdentityReviewResolvedBy")
-  attachmentReferencesCreated      AttachmentReference[]                @relation("AttachmentReferenceCreatedBy")
-  messageTemplatesCreated          MessageTemplate[]                    @relation("MessageTemplateCreatedBy")
-  messageTemplatesUpdated          MessageTemplate[]                    @relation("MessageTemplateUpdatedBy")
-  messageTemplateVersionsCreated   MessageTemplateVersion[]             @relation("MessageTemplateVersionCreatedBy")
-  omnichannelBackfillRunsRequested OmnichannelBackfillRun[]             @relation("OmnichannelBackfillRunRequestedBy")
-  whatsappProfilesCreated          WhatsAppConnectionProfile[]          @relation("WhatsAppProfileCreatedBy")
-  whatsappProfilesUpdated          WhatsAppConnectionProfile[]          @relation("WhatsAppProfileUpdatedBy")
-  whatsappPolicyDecisionsRecorded  WhatsAppConnectionProfile[]          @relation("WhatsAppPolicyDecisionBy")
-  whatsappPolicyDecisionFacts      WhatsAppPolicyDecision[]             @relation("WhatsAppPolicyDecisionRecordedBy")
+  opportunitiesCreated              Opportunity[]                        @relation("OpportunityCreatedBy")
+  opportunitiesUpdated              Opportunity[]                        @relation("OpportunityUpdatedBy")
+  productsCreated                   Product[]                            @relation("ProductCreatedBy")
+  productsUpdated                   Product[]                            @relation("ProductUpdatedBy")
+  offerTemplatesCreated             OfferTemplate[]                      @relation("OfferTemplateCreatedBy")
+  offerTemplatesUpdated             OfferTemplate[]                      @relation("OfferTemplateUpdatedBy")
+  offersCreated                     Offer[]                              @relation("OfferCreatedBy")
+  offersUpdated                     Offer[]                              @relation("OfferUpdatedBy")
+  meetingsCreated                   Meeting[]                            @relation("MeetingCreatedBy")
+  meetingsUpdated                   Meeting[]                            @relation("MeetingUpdatedBy")
+  meetingHistoryRecorded            MeetingHistory[]                     @relation("MeetingHistoryRecordedBy")
+  activitiesCreated                 Activity[]                           @relation("ActivityCreatedBy")
+  activitiesUpdated                 Activity[]                           @relation("ActivityUpdatedBy")
+  tasksCreated                      Task[]                               @relation("TaskCreatedBy")
+  tasksUpdated                      Task[]                               @relation("TaskUpdatedBy")
+  notesCreated                      Note[]                               @relation("NoteCreatedBy")
+  notesUpdated                      Note[]                               @relation("NoteUpdatedBy")
+  conversationsCreated              Conversation[]                       @relation("ConversationCreatedBy")
+  conversationsUpdated              Conversation[]                       @relation("ConversationUpdatedBy")
+  messagesSent                      Message[]                            @relation("MessageSender")
+  messagesDeleted                   Message[]                            @relation("MessageDeletedBy")
+  messagesRedacted                  Message[]                            @relation("MessageRedactedBy")
+  conversationParticipants          ConversationParticipant[]
+  messageStatusEvents               MessageStatusEvent[]
+  conversationAssignmentsRecorded   ConversationAssignmentHistory[]      @relation("ConversationAssignmentRecordedBy")
+  messageIdentityReviewsCreated     MessageIdentityReview[]              @relation("MessageIdentityReviewCreatedBy")
+  messageIdentityReviewsResolved    MessageIdentityReview[]              @relation("MessageIdentityReviewResolvedBy")
+  attachmentReferencesCreated       AttachmentReference[]                @relation("AttachmentReferenceCreatedBy")
+  messageTemplatesCreated           MessageTemplate[]                    @relation("MessageTemplateCreatedBy")
+  messageTemplatesUpdated           MessageTemplate[]                    @relation("MessageTemplateUpdatedBy")
+  messageTemplateVersionsCreated    MessageTemplateVersion[]             @relation("MessageTemplateVersionCreatedBy")
+  omnichannelBackfillRunsRequested  OmnichannelBackfillRun[]             @relation("OmnichannelBackfillRunRequestedBy")
+  whatsappProfilesCreated           WhatsAppConnectionProfile[]          @relation("WhatsAppProfileCreatedBy")
+  whatsappProfilesUpdated           WhatsAppConnectionProfile[]          @relation("WhatsAppProfileUpdatedBy")
+  whatsappPolicyDecisionsRecorded   WhatsAppConnectionProfile[]          @relation("WhatsAppPolicyDecisionBy")
+  whatsappPolicyDecisionFacts       WhatsAppPolicyDecision[]             @relation("WhatsAppPolicyDecisionRecordedBy")
   meetingTranscriptArtifactsCreated MeetingTranscriptArtifact[]          @relation("MeetingTranscriptArtifactCreatedBy")
-  whatsappReviewsCreated           WhatsAppEventReview[]                @relation("WhatsAppReviewCreatedBy")
-  whatsappReviewsResolved          WhatsAppEventReview[]                @relation("WhatsAppReviewResolvedBy")
-  emailProfilesCreated             EmailConnectionProfile[]             @relation("EmailProfileCreatedBy")
-  emailProfilesUpdated             EmailConnectionProfile[]             @relation("EmailProfileUpdatedBy")
-  emailDomainObservationsCreated   EmailDomainObservation[]             @relation("EmailDomainObservationCreatedBy")
-  emailSuppressionsCreated         EmailSuppression[]                   @relation("EmailSuppressionCreatedBy")
-  emailReviewsCreated              EmailEventReview[]                   @relation("EmailReviewCreatedBy")
-  emailReviewsResolved             EmailEventReview[]                   @relation("EmailReviewResolvedBy")
-  telephonyProfilesCreated         TelephonyConnectionProfile[]         @relation("TelephonyProfileCreatedBy")
-  telephonyProfilesUpdated         TelephonyConnectionProfile[]         @relation("TelephonyProfileUpdatedBy")
-  phoneCallsCreated                PhoneCall[]                          @relation("PhoneCallCreatedBy")
-  phoneCallsUpdated                PhoneCall[]                          @relation("PhoneCallUpdatedBy")
-  phoneCallsDisposed               PhoneCall[]                          @relation("PhoneCallDispositionBy")
-  phoneCallStatusEvents            PhoneCallStatusEvent[]
-  telephonyReviewsCreated          TelephonyEventReview[]               @relation("TelephonyReviewCreatedBy")
-  telephonyReviewsResolved         TelephonyEventReview[]               @relation("TelephonyReviewResolvedBy")
-  telephonySuppressionsCreated     TelephonySuppression[]               @relation("TelephonySuppressionCreatedBy")
-  telephonyBackfillRunsRequested   TelephonyBackfillRun[]               @relation("TelephonyBackfillRequestedBy")
-  calendarProfilesCreated          CalendarConnectionProfile[]          @relation("CalendarProfileCreatedBy")
-  calendarProfilesUpdated          CalendarConnectionProfile[]          @relation("CalendarProfileUpdatedBy")
-  calendarLinksCreated             CalendarEventLink[]                  @relation("CalendarLinkCreatedBy")
-  calendarLinksUpdated             CalendarEventLink[]                  @relation("CalendarLinkUpdatedBy")
-  calendarSyncEventsCreated        CalendarSyncEvent[]                  @relation("CalendarSyncEventCreatedBy")
-  calendarConflictsCreated         CalendarSyncConflict[]               @relation("CalendarConflictCreatedBy")
-  calendarConflictsResolved        CalendarSyncConflict[]               @relation("CalendarConflictResolvedBy")
-  calendarBackfillRunsRequested    CalendarBackfillRun[]                @relation("CalendarBackfillRequestedBy")
-  tagsCreated                      Tag[]                                @relation("TagCreatedBy")
-  tagsUpdated                      Tag[]                                @relation("TagUpdatedBy")
-  leadTagsCreated                  LeadTag[]                            @relation("LeadTagCreatedBy")
-  leadTagsRemoved                  LeadTag[]                            @relation("LeadTagRemovedBy")
-  automationRulesCreated           AutomationRule[]                     @relation("AutomationRuleCreatedBy")
-  automationRulesUpdated           AutomationRule[]                     @relation("AutomationRuleUpdatedBy")
-  automationRuleVersionsPublished  AutomationRuleVersion[]              @relation("AutomationRuleVersionPublishedBy")
-  automationRuns                   AutomationRun[]                      @relation("AutomationRunActor")
-  notificationsCreated             Notification[]                       @relation("NotificationCreatedBy")
-  insightsCreated                  AIInsight[]                          @relation("AIInsightCreatedBy")
-  insightsRequested                AIInsight[]                          @relation("AIInsightRequestedBy")
-  insightsConfirmed                AIInsight[]                          @relation("AIInsightConfirmedBy")
-  aiUseCaseVersionsCreated         AIUseCaseVersion[]                   @relation("AIUseCaseVersionCreatedBy")
-  aiUseCaseVersionsApproved        AIUseCaseVersion[]                   @relation("AIUseCaseVersionApprovedBy")
-  aiGovernanceEventsCreated        AIGovernanceEvent[]                  @relation("AIGovernanceEventCreatedBy")
-  aiExecutionTracesRequested       AIExecutionTrace[]                   @relation("AIExecutionTraceRequestedBy")
-  aiHumanDecisionsCreated          AIHumanDecision[]                    @relation("AIHumanDecisionCreatedBy")
-  aiEvaluationRunsCreated          AIEvaluationRun[]                    @relation("AIEvaluationRunCreatedBy")
-  auditLogs                        AuditLog[]                           @relation("AuditLogActor")
-  processViolationsDetected        ProcessViolation[]                   @relation("ProcessViolationDetectedBy")
-  processViolationsAcknowledged    ProcessViolation[]                   @relation("ProcessViolationAcknowledgedBy")
-  processViolationsResolved        ProcessViolation[]                   @relation("ProcessViolationResolvedBy")
-  importJobsCreated                ImportJob[]                          @relation("ImportJobCreatedBy")
-  webhookEventsCreated             WebhookEvent[]                       @relation("WebhookEventCreatedBy")
-  handoffsCreated                  CustomerHandoff[]                    @relation("CustomerHandoffCreatedBy")
-  savedViewsCreated                SavedView[]                          @relation("SavedViewCreatedBy")
-  savedViewsUpdated                SavedView[]                          @relation("SavedViewUpdatedBy")
-  jobsCreated                      Job[]                                @relation("JobCreatedBy")
-  jobsUpdated                      Job[]                                @relation("JobUpdatedBy")
-  integrationConnectionsCreated    IntegrationConnection[]              @relation("IntegrationConnectionCreatedBy")
-  n8nMachineActors                 N8nMachineIdentity[]                 @relation("N8nMachineActor")
-  n8nMachinesCreated               N8nMachineIdentity[]                 @relation("N8nMachineCreatedBy")
-  n8nMachinesUpdated               N8nMachineIdentity[]                 @relation("N8nMachineUpdatedBy")
-  n8nRecipesCreated                N8nRecipe[]                          @relation("N8nRecipeCreatedBy")
-  n8nRecipesUpdated                N8nRecipe[]                          @relation("N8nRecipeUpdatedBy")
-  n8nRecipeVersionsCreated         N8nRecipeVersion[]                   @relation("N8nRecipeVersionCreatedBy")
-  n8nProposalsReviewed             N8nActionProposal[]                  @relation("N8nProposalReviewedBy")
-  integrationConnectionsUpdated    IntegrationConnection[]              @relation("IntegrationConnectionUpdatedBy")
-  integrationSecretsCreated        IntegrationSecretReference[]         @relation("IntegrationSecretCreatedBy")
-  integrationSecretsRotated        IntegrationSecretReference[]         @relation("IntegrationSecretRotatedBy")
-  integrationConfigsCreated        IntegrationConnectionConfigVersion[] @relation("IntegrationConfigCreatedBy")
-  integrationOutboxCreated         OutboxEvent[]                        @relation("IntegrationOutboxCreatedBy")
-  integrationSyncsRequested        IntegrationSyncRun[]                 @relation("IntegrationSyncRequestedBy")
-  integrationCursorsUpdated        IntegrationSyncCursor[]              @relation("IntegrationCursorUpdatedBy")
-  externalMappingsCreated          ExternalObjectMapping[]              @relation("ExternalMappingCreatedBy")
-  externalMappingsUpdated          ExternalObjectMapping[]              @relation("ExternalMappingUpdatedBy")
-  mappingConflictsResolved         ExternalMappingConflict[]            @relation("MappingConflictResolvedBy")
-  integrationFieldMappingsCreated  IntegrationFieldMappingVersion[]     @relation("IntegrationFieldMappingCreatedBy")
-  authSessions                     AuthSession[]
+  whatsappReviewsCreated            WhatsAppEventReview[]                @relation("WhatsAppReviewCreatedBy")
+  whatsappReviewsResolved           WhatsAppEventReview[]                @relation("WhatsAppReviewResolvedBy")
+  emailProfilesCreated              EmailConnectionProfile[]             @relation("EmailProfileCreatedBy")
+  emailProfilesUpdated              EmailConnectionProfile[]             @relation("EmailProfileUpdatedBy")
+  emailDomainObservationsCreated    EmailDomainObservation[]             @relation("EmailDomainObservationCreatedBy")
+  emailSuppressionsCreated          EmailSuppression[]                   @relation("EmailSuppressionCreatedBy")
+  emailReviewsCreated               EmailEventReview[]                   @relation("EmailReviewCreatedBy")
+  emailReviewsResolved              EmailEventReview[]                   @relation("EmailReviewResolvedBy")
+  telephonyProfilesCreated          TelephonyConnectionProfile[]         @relation("TelephonyProfileCreatedBy")
+  telephonyProfilesUpdated          TelephonyConnectionProfile[]         @relation("TelephonyProfileUpdatedBy")
+  phoneCallsCreated                 PhoneCall[]                          @relation("PhoneCallCreatedBy")
+  phoneCallsUpdated                 PhoneCall[]                          @relation("PhoneCallUpdatedBy")
+  phoneCallsDisposed                PhoneCall[]                          @relation("PhoneCallDispositionBy")
+  phoneCallStatusEvents             PhoneCallStatusEvent[]
+  telephonyReviewsCreated           TelephonyEventReview[]               @relation("TelephonyReviewCreatedBy")
+  telephonyReviewsResolved          TelephonyEventReview[]               @relation("TelephonyReviewResolvedBy")
+  telephonySuppressionsCreated      TelephonySuppression[]               @relation("TelephonySuppressionCreatedBy")
+  telephonyBackfillRunsRequested    TelephonyBackfillRun[]               @relation("TelephonyBackfillRequestedBy")
+  calendarProfilesCreated           CalendarConnectionProfile[]          @relation("CalendarProfileCreatedBy")
+  calendarProfilesUpdated           CalendarConnectionProfile[]          @relation("CalendarProfileUpdatedBy")
+  calendarLinksCreated              CalendarEventLink[]                  @relation("CalendarLinkCreatedBy")
+  calendarLinksUpdated              CalendarEventLink[]                  @relation("CalendarLinkUpdatedBy")
+  calendarSyncEventsCreated         CalendarSyncEvent[]                  @relation("CalendarSyncEventCreatedBy")
+  calendarConflictsCreated          CalendarSyncConflict[]               @relation("CalendarConflictCreatedBy")
+  calendarConflictsResolved         CalendarSyncConflict[]               @relation("CalendarConflictResolvedBy")
+  calendarBackfillRunsRequested     CalendarBackfillRun[]                @relation("CalendarBackfillRequestedBy")
+  tagsCreated                       Tag[]                                @relation("TagCreatedBy")
+  tagsUpdated                       Tag[]                                @relation("TagUpdatedBy")
+  leadTagsCreated                   LeadTag[]                            @relation("LeadTagCreatedBy")
+  leadTagsRemoved                   LeadTag[]                            @relation("LeadTagRemovedBy")
+  automationRulesCreated            AutomationRule[]                     @relation("AutomationRuleCreatedBy")
+  automationRulesUpdated            AutomationRule[]                     @relation("AutomationRuleUpdatedBy")
+  automationRuleVersionsPublished   AutomationRuleVersion[]              @relation("AutomationRuleVersionPublishedBy")
+  automationRuns                    AutomationRun[]                      @relation("AutomationRunActor")
+  notificationsCreated              Notification[]                       @relation("NotificationCreatedBy")
+  insightsCreated                   AIInsight[]                          @relation("AIInsightCreatedBy")
+  insightsRequested                 AIInsight[]                          @relation("AIInsightRequestedBy")
+  insightsConfirmed                 AIInsight[]                          @relation("AIInsightConfirmedBy")
+  aiUseCaseVersionsCreated          AIUseCaseVersion[]                   @relation("AIUseCaseVersionCreatedBy")
+  aiUseCaseVersionsApproved         AIUseCaseVersion[]                   @relation("AIUseCaseVersionApprovedBy")
+  aiGovernanceEventsCreated         AIGovernanceEvent[]                  @relation("AIGovernanceEventCreatedBy")
+  aiExecutionTracesRequested        AIExecutionTrace[]                   @relation("AIExecutionTraceRequestedBy")
+  aiHumanDecisionsCreated           AIHumanDecision[]                    @relation("AIHumanDecisionCreatedBy")
+  aiEvaluationRunsCreated           AIEvaluationRun[]                    @relation("AIEvaluationRunCreatedBy")
+  auditLogs                         AuditLog[]                           @relation("AuditLogActor")
+  processViolationsDetected         ProcessViolation[]                   @relation("ProcessViolationDetectedBy")
+  processViolationsAcknowledged     ProcessViolation[]                   @relation("ProcessViolationAcknowledgedBy")
+  processViolationsResolved         ProcessViolation[]                   @relation("ProcessViolationResolvedBy")
+  importJobsCreated                 ImportJob[]                          @relation("ImportJobCreatedBy")
+  webhookEventsCreated              WebhookEvent[]                       @relation("WebhookEventCreatedBy")
+  handoffsCreated                   CustomerHandoff[]                    @relation("CustomerHandoffCreatedBy")
+  savedViewsCreated                 SavedView[]                          @relation("SavedViewCreatedBy")
+  savedViewsUpdated                 SavedView[]                          @relation("SavedViewUpdatedBy")
+  jobsCreated                       Job[]                                @relation("JobCreatedBy")
+  jobsUpdated                       Job[]                                @relation("JobUpdatedBy")
+  integrationConnectionsCreated     IntegrationConnection[]              @relation("IntegrationConnectionCreatedBy")
+  n8nMachineActors                  N8nMachineIdentity[]                 @relation("N8nMachineActor")
+  n8nMachinesCreated                N8nMachineIdentity[]                 @relation("N8nMachineCreatedBy")
+  n8nMachinesUpdated                N8nMachineIdentity[]                 @relation("N8nMachineUpdatedBy")
+  n8nRecipesCreated                 N8nRecipe[]                          @relation("N8nRecipeCreatedBy")
+  n8nRecipesUpdated                 N8nRecipe[]                          @relation("N8nRecipeUpdatedBy")
+  n8nRecipeVersionsCreated          N8nRecipeVersion[]                   @relation("N8nRecipeVersionCreatedBy")
+  n8nProposalsReviewed              N8nActionProposal[]                  @relation("N8nProposalReviewedBy")
+  integrationConnectionsUpdated     IntegrationConnection[]              @relation("IntegrationConnectionUpdatedBy")
+  integrationSecretsCreated         IntegrationSecretReference[]         @relation("IntegrationSecretCreatedBy")
+  integrationSecretsRotated         IntegrationSecretReference[]         @relation("IntegrationSecretRotatedBy")
+  integrationConfigsCreated         IntegrationConnectionConfigVersion[] @relation("IntegrationConfigCreatedBy")
+  integrationOutboxCreated          OutboxEvent[]                        @relation("IntegrationOutboxCreatedBy")
+  integrationSyncsRequested         IntegrationSyncRun[]                 @relation("IntegrationSyncRequestedBy")
+  integrationCursorsUpdated         IntegrationSyncCursor[]              @relation("IntegrationCursorUpdatedBy")
+  externalMappingsCreated           ExternalObjectMapping[]              @relation("ExternalMappingCreatedBy")
+  externalMappingsUpdated           ExternalObjectMapping[]              @relation("ExternalMappingUpdatedBy")
+  mappingConflictsResolved          ExternalMappingConflict[]            @relation("MappingConflictResolvedBy")
+  integrationFieldMappingsCreated   IntegrationFieldMappingVersion[]     @relation("IntegrationFieldMappingCreatedBy")
+  authSessions                      AuthSession[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, key])
@@ -3044,7 +3156,7 @@ model WorkspaceMember {
   conversationAssignmentsFrom  ConversationAssignmentHistory[] @relation("ConversationAssignmentPreviousOwner")
   conversationAssignmentsTo    ConversationAssignmentHistory[] @relation("ConversationAssignmentNewOwner")
   transactionalCheckoutsOwned  TransactionalCheckout[]
-  cadenceStepsAssigned         CadenceStep[]                    @relation("CadenceStepAssignee")
+  cadenceStepsAssigned         CadenceStep[]                   @relation("CadenceStepAssignee")
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, userId])
@@ -3186,19 +3298,19 @@ model AcquisitionCreative {
 }
 
 model Queue {
-  id               String    @id @default(uuid()) @db.Uuid
-  workspaceId      String    @db.Uuid
-  teamId           String?   @db.Uuid
-  key              String
-  name             String
-  isGeneral        Boolean   @default(false)
+  id                      String                  @id @default(uuid()) @db.Uuid
+  workspaceId             String                  @db.Uuid
+  teamId                  String?                 @db.Uuid
+  key                     String
+  name                    String
+  isGeneral               Boolean                 @default(false)
   conversationServiceType ConversationServiceType @default(SALES)
-  conversationSlaSeconds Int @default(180)
-  createdByActorId String    @db.Uuid
-  updatedByActorId String    @db.Uuid
-  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
-  deletedAt        DateTime? @db.Timestamptz(3)
+  conversationSlaSeconds  Int                     @default(180)
+  createdByActorId        String                  @db.Uuid
+  updatedByActorId        String                  @db.Uuid
+  createdAt               DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime                @updatedAt @db.Timestamptz(3)
+  deletedAt               DateTime?               @db.Timestamptz(3)
 
   workspace                   Workspace                       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   team                        Team?                           @relation(fields: [workspaceId, teamId], references: [workspaceId, id], onDelete: Restrict)
@@ -3315,17 +3427,17 @@ model CommercialSettingsVersion {
 }
 
 model CadenceStep {
-  id                String   @id @default(uuid()) @db.Uuid
-  workspaceId       String   @db.Uuid
-  settingsVersionId String   @db.Uuid
+  id                String            @id @default(uuid()) @db.Uuid
+  workspaceId       String            @db.Uuid
+  settingsVersionId String            @db.Uuid
   attemptNumber     Int
   dayOffset         Int
   action            CadenceStepAction @default(CALL)
   timeOfDay         String?
   message           String?
-  assigneeMemberId  String?  @db.Uuid
-  targetStageId     String?  @db.Uuid
-  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  assigneeMemberId  String?           @db.Uuid
+  targetStageId     String?           @db.Uuid
+  createdAt         DateTime          @default(now()) @db.Timestamptz(3)
 
   workspace       Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   settingsVersion CommercialSettingsVersion @relation(fields: [workspaceId, settingsVersionId], references: [workspaceId, id], onDelete: Restrict)
@@ -3334,11 +3446,356 @@ model CadenceStep {
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, settingsVersionId, attemptNumber])
-  @@unique([workspaceId, settingsVersionId, dayOffset])
   @@index([workspaceId, settingsVersionId, dayOffset])
   @@index([workspaceId, assigneeMemberId])
   @@index([workspaceId, targetStageId])
   @@map("cadence_steps")
+}
+
+model ProspectingResearchBatch {
+  id                      String                 @id @default(uuid()) @db.Uuid
+  workspaceId             String                 @db.Uuid
+  status                  ProspectingBatchStatus @default(DRAFT)
+  horizonStart            DateTime               @db.Date
+  horizonEnd              DateTime               @db.Date
+  sourcePopulationEdition String
+  sourcePopulationHash    String
+  agentVersion            String
+  promptVersion           String
+  researchedCount         Int                    @default(0)
+  completeCount           Int                    @default(0)
+  rejectedCount           Int                    @default(0)
+  duplicateCount          Int                    @default(0)
+  releasedCount           Int                    @default(0)
+  idempotencyKey          String
+  startedAt               DateTime?              @db.Timestamptz(3)
+  completedAt             DateTime?              @db.Timestamptz(3)
+  createdByActorId        String                 @db.Uuid
+  createdAt               DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime               @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, status, horizonEnd])
+  @@map("prospecting_research_batches")
+}
+
+model ProspectCandidate {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  workspaceId          String                  @db.Uuid
+  batchId              String                  @db.Uuid
+  externalIdentityKey  String
+  idempotencyKey       String
+  status               ProspectCandidateStatus @default(RECEIVED)
+  politicianName       String
+  role                 ProspectingRole
+  mandate              String
+  municipalityName     String
+  municipalityIbgeCode String
+  stateCode            String
+  population           Int
+  populationEdition    String
+  phone                String
+  normalizedPhone      String
+  phoneScope           ProspectContactScope
+  email                String
+  normalizedEmail      String
+  emailScope           ProspectContactScope
+  instagram            String?
+  instagramScope       ProspectContactScope?
+  mandateVerifiedAt    DateTime                @db.Timestamptz(3)
+  fingerprint          String
+  rejectionReasonCode  String?
+  reviewReasonCode     String?
+  plannedReleaseDate   DateTime?               @db.Date
+  releasedAt           DateTime?               @db.Timestamptz(3)
+  leadId               String?                 @db.Uuid
+  revision             Int                     @default(1)
+  createdAt            DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime                @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, externalIdentityKey])
+  @@unique([workspaceId, idempotencyKey])
+  @@unique([workspaceId, leadId])
+  @@index([workspaceId, batchId, status])
+  @@index([workspaceId, status, plannedReleaseDate])
+  @@index([workspaceId, municipalityIbgeCode, role, mandate])
+  @@index([workspaceId, normalizedPhone])
+  @@index([workspaceId, normalizedEmail])
+  @@map("prospect_candidates")
+}
+
+model ProspectCandidateSource {
+  id               String                         @id @default(uuid()) @db.Uuid
+  workspaceId      String                         @db.Uuid
+  candidateId      String                         @db.Uuid
+  field            String
+  sourceUrl        String
+  canonicalUrl     String
+  sourceDomain     String
+  sourceType       ProspectSourceType
+  contactScope     ProspectContactScope?
+  originalValue    String?
+  normalizedValue  String?
+  validationMethod String
+  validationStatus ProspectSourceValidationStatus @default(PENDING)
+  evidenceHash     String
+  observedAt       DateTime                       @db.Timestamptz(3)
+  agentVersion     String
+  promptVersion    String
+  createdAt        DateTime                       @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, candidateId, field, canonicalUrl])
+  @@index([workspaceId, candidateId, validationStatus])
+  @@index([workspaceId, sourceType, observedAt])
+  @@map("prospect_candidate_sources")
+}
+
+model ProspectRelease {
+  id               String                @id @default(uuid()) @db.Uuid
+  workspaceId      String                @db.Uuid
+  candidateId      String                @db.Uuid
+  plannedDate      DateTime              @db.Date
+  plannedMemberId  String?               @db.Uuid
+  planRevision     Int                   @default(1)
+  status           ProspectReleaseStatus @default(PLANNED)
+  claimedBy        String?
+  claimedAt        DateTime?             @db.Timestamptz(3)
+  leaseExpiresAt   DateTime?             @db.Timestamptz(3)
+  attemptCount     Int                    @default(0)
+  nextAttemptAt    DateTime?              @db.Timestamptz(3)
+  lastErrorAt      DateTime?              @db.Timestamptz(3)
+  leadId           String?               @db.Uuid
+  reasonCode       String?
+  idempotencyKey   String
+  releasedAt       DateTime?             @db.Timestamptz(3)
+  createdByActorId String                @db.Uuid
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, candidateId])
+  @@unique([workspaceId, idempotencyKey])
+  @@unique([workspaceId, leadId])
+  @@index([workspaceId, status, nextAttemptAt, plannedDate])
+  @@index([workspaceId, plannedMemberId, plannedDate, status])
+  @@map("prospect_releases")
+}
+
+model ProspectingCadenceInstance {
+  id                String                   @id @default(uuid()) @db.Uuid
+  workspaceId       String                   @db.Uuid
+  leadId            String                   @db.Uuid
+  candidateId       String                   @db.Uuid
+  ownerMemberId     String                   @db.Uuid
+  templateVersion   Int
+  status            ProspectingCadenceStatus @default(PENDING_D1)
+  d1Date            DateTime                 @db.Date
+  deadlineAt        DateTime                 @db.Timestamptz(3)
+  d1GateCompletedAt DateTime?                @db.Timestamptz(3)
+  stoppedAt         DateTime?                @db.Timestamptz(3)
+  stopReasonCode    String?
+  revision          Int                      @default(1)
+  createdByActorId  String                   @db.Uuid
+  createdAt         DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime                 @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, leadId])
+  @@unique([workspaceId, candidateId])
+  @@index([workspaceId, status, deadlineAt])
+  @@index([workspaceId, ownerMemberId, status])
+  @@map("prospecting_cadence_instances")
+}
+
+model ProspectingCadenceStep {
+  id                String                  @id @default(uuid()) @db.Uuid
+  workspaceId       String                  @db.Uuid
+  cadenceInstanceId String                  @db.Uuid
+  leadId            String                  @db.Uuid
+  stepKey           String
+  dayOffset         Int
+  executor          ProspectingStepExecutor
+  action            CadenceStepAction
+  status            ProspectingStepStatus   @default(SCHEDULED)
+  scheduledAt       DateTime                @db.Timestamptz(3)
+  taskId            String?                 @db.Uuid
+  emailJobId        String?                 @db.Uuid
+  resultCode        String?
+  resultReason      String?
+  completedAt       DateTime?               @db.Timestamptz(3)
+  cancelledAt       DateTime?               @db.Timestamptz(3)
+  createdByActorId  String                  @db.Uuid
+  createdAt         DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime                @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, cadenceInstanceId, stepKey])
+  @@unique([workspaceId, taskId])
+  @@unique([workspaceId, emailJobId])
+  @@index([workspaceId, status, scheduledAt])
+  @@index([workspaceId, leadId, status])
+  @@map("prospecting_cadence_steps")
+}
+
+model ProspectingEmailTemplateVersion {
+  id               String    @id @default(uuid()) @db.Uuid
+  workspaceId      String    @db.Uuid
+  stepKey          String
+  version          Int
+  subjectTemplate  String
+  bodyTemplate     String
+  allowedVariables String[]  @default([])
+  contentHash      String
+  published        Boolean   @default(false)
+  publishedAt      DateTime? @db.Timestamptz(3)
+  createdByActorId String    @db.Uuid
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, stepKey, version])
+  @@index([workspaceId, stepKey, published, version])
+  @@map("prospecting_email_template_versions")
+}
+
+model ProspectingEmailJob {
+  id                 String                    @id @default(uuid()) @db.Uuid
+  workspaceId        String                    @db.Uuid
+  cadenceInstanceId  String                    @db.Uuid
+  leadId             String                    @db.Uuid
+  stepKey            String
+  templateVersionId  String?                   @db.Uuid
+  senderProfileId    String?                   @db.Uuid
+  recipientEmail     String
+  recipientEmailHash String
+  renderedSubject    String?
+  renderedBody       String?
+  status             ProspectingEmailJobStatus @default(BLOCKED)
+  scheduledAt        DateTime                  @db.Timestamptz(3)
+  expiresAt          DateTime                  @db.Timestamptz(3)
+  claimedByClientId  String?
+  claimedAt          DateTime?                 @db.Timestamptz(3)
+  leaseExpiresAt     DateTime?                 @db.Timestamptz(3)
+  lastAuthorizedAt   DateTime?                 @db.Timestamptz(3)
+  providerMessageId  String?
+  providerThreadId   String?
+  attemptCount       Int                       @default(0)
+  lastErrorCode      String?
+  idempotencyKey     String
+  sentAt             DateTime?                 @db.Timestamptz(3)
+  finalizedAt        DateTime?                 @db.Timestamptz(3)
+  createdByActorId   String                    @db.Uuid
+  createdAt          DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                  @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, cadenceInstanceId, stepKey])
+  @@unique([workspaceId, idempotencyKey])
+  @@unique([workspaceId, providerMessageId])
+  @@index([workspaceId, status, scheduledAt])
+  @@index([workspaceId, leadId, status])
+  @@map("prospecting_email_jobs")
+}
+
+model ProspectingEmailEvent {
+  id                String                    @id @default(uuid()) @db.Uuid
+  workspaceId       String                    @db.Uuid
+  emailJobId        String?                   @db.Uuid
+  externalEventId   String
+  eventType         ProspectingEmailJobStatus
+  providerMessageId String?
+  payloadHash       String
+  safeMetadata      Json?
+  occurredAt        DateTime                  @db.Timestamptz(3)
+  receivedAt        DateTime                  @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, externalEventId])
+  @@index([workspaceId, emailJobId, occurredAt])
+  @@index([workspaceId, providerMessageId])
+  @@map("prospecting_email_events")
+}
+
+model ProspectingCalendarHoliday {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @db.Uuid
+  localDate        DateTime @db.Date
+  name             String
+  createdByActorId String   @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, localDate])
+  @@map("prospecting_calendar_holidays")
+}
+
+model ProspectingSettings {
+  id                    String   @id @default(uuid()) @db.Uuid
+  workspaceId           String   @unique @db.Uuid
+  releaseEnabled        Boolean  @default(false)
+  emailEgressEnabled    Boolean  @default(false)
+  dailyCapacity         Int      @default(75)
+  reservePercent        Int      @default(10)
+  emailWindowStart      String   @default("09:00")
+  emailWindowEnd        String   @default("17:00")
+  coverageWarningDays   Int      @default(10)
+  coverageCriticalDays  Int      @default(5)
+  privacyApprovedAt     DateTime? @db.Timestamptz(3)
+  canaryApprovedAt      DateTime? @db.Timestamptz(3)
+  revision              Int      @default(1)
+  createdByActorId      String   @db.Uuid
+  updatedByActorId      String   @db.Uuid
+  createdAt             DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@map("prospecting_settings")
+}
+
+model ProspectingSellerConfig {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @db.Uuid
+  memberId         String   @db.Uuid
+  senderProfileId  String?  @db.Uuid
+  active           Boolean  @default(true)
+  dailyCapacity    Int      @default(75)
+  reservePercent   Int      @default(10)
+  dailyEmailLimit  Int?
+  rotationPosition Int
+  pausedReason     String?
+  createdByActorId String   @db.Uuid
+  updatedByActorId String   @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, memberId])
+  @@unique([workspaceId, rotationPosition])
+  @@index([workspaceId, active, rotationPosition])
+  @@index([workspaceId, senderProfileId])
+  @@map("prospecting_seller_configs")
+}
+
+model OpenDotRequestReceipt {
+  id             String       @id @default(uuid()) @db.Uuid
+  workspaceId    String       @db.Uuid
+  clientId       String
+  scope          OpenDotScope
+  endpoint       String
+  idempotencyKey String
+  nonceHash      String
+  requestHash    String
+  responseStatus Int
+  responseBody   Json
+  receivedAt     DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, clientId, idempotencyKey])
+  @@unique([workspaceId, clientId, nonceHash])
+  @@index([workspaceId, clientId, receivedAt])
+  @@map("open_dot_request_receipts")
 }
 
 model LossReason {
@@ -4746,6 +5203,7 @@ model PipelineStage {
   id                   String                        @id @default(uuid()) @db.Uuid
   workspaceId          String                        @db.Uuid
   pipelineId           String                        @db.Uuid
+  stableKey            String?
   name                 String
   position             Int
   type                 StageType                     @default(OPEN)
@@ -4770,6 +5228,7 @@ model PipelineStage {
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, pipelineId, id])
+  @@unique([workspaceId, pipelineId, stableKey])
   @@index([workspaceId, pipelineId, leadStageCode, deletedAt])
   @@index([workspaceId, pipelineId, opportunityStageCode, deletedAt])
   @@index([workspaceId, pipelineId, position, deletedAt])
@@ -5540,7 +5999,7 @@ model Payment {
   reversalReason     String?
   confirmedByActorId String        @db.Uuid
 
-  commissions        Commission[]
+  commissions Commission[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey])
@@ -5991,23 +6450,23 @@ model Meeting {
   updatedAt        DateTime      @updatedAt @db.Timestamptz(3)
   deletedAt        DateTime?     @db.Timestamptz(3)
 
-  workspace         Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  lead              Lead                   @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
-  opportunity       Opportunity?           @relation(fields: [workspaceId, leadId, opportunityId], references: [workspaceId, leadId, id], onDelete: Restrict)
-  owner             WorkspaceMember        @relation(fields: [workspaceId, ownerMemberId], references: [workspaceId, id], onDelete: Restrict)
-  createdBy         Actor                  @relation("MeetingCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
-  updatedBy         Actor                  @relation("MeetingUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
-  activities        Activity[]
-  tasks             Task[]
-  history           MeetingHistory[]
-  automationRuns    AutomationRun[]
-  processViolations ProcessViolation[]
-  conversations     Conversation[]
-  phoneCalls        PhoneCall[]
-  calendarLinks     CalendarEventLink[]
-  calendarEvents    CalendarSyncEvent[]
-  calendarConflicts CalendarSyncConflict[]
-  calendarBackfills CalendarBackfillItem[]
+  workspace           Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  lead                Lead                        @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
+  opportunity         Opportunity?                @relation(fields: [workspaceId, leadId, opportunityId], references: [workspaceId, leadId, id], onDelete: Restrict)
+  owner               WorkspaceMember             @relation(fields: [workspaceId, ownerMemberId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy           Actor                       @relation("MeetingCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy           Actor                       @relation("MeetingUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  activities          Activity[]
+  tasks               Task[]
+  history             MeetingHistory[]
+  automationRuns      AutomationRun[]
+  processViolations   ProcessViolation[]
+  conversations       Conversation[]
+  phoneCalls          PhoneCall[]
+  calendarLinks       CalendarEventLink[]
+  calendarEvents      CalendarSyncEvent[]
+  calendarConflicts   CalendarSyncConflict[]
+  calendarBackfills   CalendarBackfillItem[]
   transcriptArtifacts MeetingTranscriptArtifact[]
 
   @@unique([workspaceId, id])
@@ -6019,18 +6478,18 @@ model Meeting {
 }
 
 model MeetingTranscriptArtifact {
-  id                 String   @id @default(uuid()) @db.Uuid
-  workspaceId        String   @db.Uuid
-  meetingId          String   @db.Uuid
-  version            Int
-  transcriptText     String?  @db.Text
-  summary            String?  @db.Text
-  policyVersion      String
-  consentEvidence    String
-  consentRecordedAt  DateTime @db.Timestamptz(3)
-  retentionUntil     DateTime @db.Timestamptz(3)
-  createdByActorId   String   @db.Uuid
-  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  id                String   @id @default(uuid()) @db.Uuid
+  workspaceId       String   @db.Uuid
+  meetingId         String   @db.Uuid
+  version           Int
+  transcriptText    String?  @db.Text
+  summary           String?  @db.Text
+  policyVersion     String
+  consentEvidence   String
+  consentRecordedAt DateTime @db.Timestamptz(3)
+  retentionUntil    DateTime @db.Timestamptz(3)
+  createdByActorId  String   @db.Uuid
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   meeting   Meeting   @relation(fields: [workspaceId, meetingId], references: [workspaceId, id], onDelete: Restrict)
@@ -6391,46 +6850,46 @@ model Note {
 }
 
 model Conversation {
-  id                     String              @id @default(uuid()) @db.Uuid
-  workspaceId            String              @db.Uuid
-  contactId              String?             @db.Uuid
-  contactPointId         String?             @db.Uuid
-  accountId              String?             @db.Uuid
-  leadId                 String?             @db.Uuid
-  opportunityId          String?             @db.Uuid
-  meetingId              String?             @db.Uuid
-  revenueLifecycleId     String?             @db.Uuid
-  connectionId           String?             @db.Uuid
-  assigneeMemberId       String?             @db.Uuid
-  queueId                String?             @db.Uuid
+  id                     String                  @id @default(uuid()) @db.Uuid
+  workspaceId            String                  @db.Uuid
+  contactId              String?                 @db.Uuid
+  contactPointId         String?                 @db.Uuid
+  accountId              String?                 @db.Uuid
+  leadId                 String?                 @db.Uuid
+  opportunityId          String?                 @db.Uuid
+  meetingId              String?                 @db.Uuid
+  revenueLifecycleId     String?                 @db.Uuid
+  connectionId           String?                 @db.Uuid
+  assigneeMemberId       String?                 @db.Uuid
+  queueId                String?                 @db.Uuid
   channel                ConversationChannel
-  status                 ConversationStatus  @default(OPEN)
+  status                 ConversationStatus      @default(OPEN)
   subject                String?
-  priority               LeadPriority        @default(MEDIUM)
+  priority               LeadPriority            @default(MEDIUM)
   serviceType            ConversationServiceType @default(SALES)
-  slaTargetSeconds       Int                 @default(180)
-  slaDueAt               DateTime?           @db.Timestamptz(3)
+  slaTargetSeconds       Int                     @default(180)
+  slaDueAt               DateTime?               @db.Timestamptz(3)
   externalThreadId       String?
-  unreadCount            Int                 @default(0)
-  firstInboundAt         DateTime?           @db.Timestamptz(3)
-  lastCustomerInboundAt  DateTime?           @db.Timestamptz(3)
-  serviceWindowExpiresAt DateTime?           @db.Timestamptz(3)
-  firstHumanResponseAt   DateTime?           @db.Timestamptz(3)
+  unreadCount            Int                     @default(0)
+  firstInboundAt         DateTime?               @db.Timestamptz(3)
+  lastCustomerInboundAt  DateTime?               @db.Timestamptz(3)
+  serviceWindowExpiresAt DateTime?               @db.Timestamptz(3)
+  firstHumanResponseAt   DateTime?               @db.Timestamptz(3)
   firstResponseSeconds   Int?
-  waitingSince           DateTime?           @db.Timestamptz(3)
-  nextActionAt           DateTime?           @db.Timestamptz(3)
+  waitingSince           DateTime?               @db.Timestamptz(3)
+  nextActionAt           DateTime?               @db.Timestamptz(3)
   nextActionType         String?
-  lastMessageAt          DateTime?           @db.Timestamptz(3)
-  openedAt               DateTime            @default(now()) @db.Timestamptz(3)
-  resolvedAt             DateTime?           @db.Timestamptz(3)
-  closedAt               DateTime?           @db.Timestamptz(3)
-  archivedAt             DateTime?           @db.Timestamptz(3)
-  revision               Int                 @default(1)
-  createdByActorId       String              @db.Uuid
-  updatedByActorId       String              @db.Uuid
-  createdAt              DateTime            @default(now()) @db.Timestamptz(3)
-  updatedAt              DateTime            @updatedAt @db.Timestamptz(3)
-  deletedAt              DateTime?           @db.Timestamptz(3)
+  lastMessageAt          DateTime?               @db.Timestamptz(3)
+  openedAt               DateTime                @default(now()) @db.Timestamptz(3)
+  resolvedAt             DateTime?               @db.Timestamptz(3)
+  closedAt               DateTime?               @db.Timestamptz(3)
+  archivedAt             DateTime?               @db.Timestamptz(3)
+  revision               Int                     @default(1)
+  createdByActorId       String                  @db.Uuid
+  updatedByActorId       String                  @db.Uuid
+  createdAt              DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime                @updatedAt @db.Timestamptz(3)
+  deletedAt              DateTime?               @db.Timestamptz(3)
 
   workspace              Workspace                       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   contact                Contact?                        @relation(fields: [workspaceId, contactId], references: [workspaceId, id], onDelete: Restrict)
@@ -6780,43 +7239,43 @@ model MessageTemplateVersion {
 }
 
 model WhatsAppConnectionProfile {
-  id                        String                    @id @default(uuid()) @db.Uuid
-  workspaceId               String                    @db.Uuid
-  connectionId              String                    @db.Uuid
-  webhookKey                String                    @unique
+  id                        String                           @id @default(uuid()) @db.Uuid
+  workspaceId               String                           @db.Uuid
+  connectionId              String                           @db.Uuid
+  webhookKey                String                           @unique
   phoneNumberId             String?
   businessAccountId         String?
   businessPortfolioId       String?
   displayPhoneMasked        String?
-  graphApiVersion           String                    @default("v26.0")
-  operatingMode             WhatsAppOperatingMode     @default(EXTERNAL_DISABLED)
-  policyEligibility         WhatsAppPolicyEligibility @default(PENDING_POLICY_REVIEW)
+  graphApiVersion           String                           @default("v26.0")
+  operatingMode             WhatsAppOperatingMode            @default(EXTERNAL_DISABLED)
+  policyEligibility         WhatsAppPolicyEligibility        @default(PENDING_POLICY_REVIEW)
   policyDecisionScope       String?
   policyDecisionRationale   String?
   policySourceUrl           String?
-  policySourceObservedAt    DateTime?                 @db.Timestamptz(3)
-  policyDecidedAt           DateTime?                 @db.Timestamptz(3)
-  policyDecidedByActorId    String?                   @db.Uuid
+  policySourceObservedAt    DateTime?                        @db.Timestamptz(3)
+  policyDecidedAt           DateTime?                        @db.Timestamptz(3)
+  policyDecidedByActorId    String?                          @db.Uuid
   policyReviewTrigger       String?
-  alternativeChannel       ConversationChannel?
-  alternativeChannelStatus WhatsAppAlternativeChannelStatus @default(NOT_DEFINED)
-  alternativeChannelDetail String?
-  timeZone                  String                    @default("America/Sao_Paulo")
-  locale                    String                    @default("pt-BR")
-  capabilitySnapshotVersion String                    @default("whatsapp-cloud-api/1.0")
-  lastInboundAt             DateTime?                 @db.Timestamptz(3)
-  lastStatusAt              DateTime?                 @db.Timestamptz(3)
-  createdByActorId          String                    @db.Uuid
-  updatedByActorId          String                    @db.Uuid
-  createdAt                 DateTime                  @default(now()) @db.Timestamptz(3)
-  updatedAt                 DateTime                  @updatedAt @db.Timestamptz(3)
+  alternativeChannel        ConversationChannel?
+  alternativeChannelStatus  WhatsAppAlternativeChannelStatus @default(NOT_DEFINED)
+  alternativeChannelDetail  String?
+  timeZone                  String                           @default("America/Sao_Paulo")
+  locale                    String                           @default("pt-BR")
+  capabilitySnapshotVersion String                           @default("whatsapp-cloud-api/1.0")
+  lastInboundAt             DateTime?                        @db.Timestamptz(3)
+  lastStatusAt              DateTime?                        @db.Timestamptz(3)
+  createdByActorId          String                           @db.Uuid
+  updatedByActorId          String                           @db.Uuid
+  createdAt                 DateTime                         @default(now()) @db.Timestamptz(3)
+  updatedAt                 DateTime                         @updatedAt @db.Timestamptz(3)
 
-  workspace  Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  connection IntegrationConnection @relation(fields: [workspaceId, connectionId], references: [workspaceId, id], onDelete: Restrict)
-  createdBy  Actor                 @relation("WhatsAppProfileCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
-  updatedBy  Actor                 @relation("WhatsAppProfileUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
-  policyDecidedBy Actor?           @relation("WhatsAppPolicyDecisionBy", fields: [workspaceId, policyDecidedByActorId], references: [workspaceId, id], onDelete: Restrict)
-  reviews    WhatsAppEventReview[]
+  workspace       Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  connection      IntegrationConnection    @relation(fields: [workspaceId, connectionId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy       Actor                    @relation("WhatsAppProfileCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy       Actor                    @relation("WhatsAppProfileUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  policyDecidedBy Actor?                   @relation("WhatsAppPolicyDecisionBy", fields: [workspaceId, policyDecidedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  reviews         WhatsAppEventReview[]
   policyDecisions WhatsAppPolicyDecision[]
 
   @@unique([workspaceId, id])
@@ -6845,9 +7304,9 @@ model WhatsAppPolicyDecision {
   decidedAt                DateTime                         @db.Timestamptz(3)
   createdAt                DateTime                         @default(now()) @db.Timestamptz(3)
 
-  workspace Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  profile   WhatsAppConnectionProfile    @relation(fields: [workspaceId, profileId], references: [workspaceId, id], onDelete: Restrict)
-  decidedBy Actor                        @relation("WhatsAppPolicyDecisionRecordedBy", fields: [workspaceId, decidedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  workspace Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  profile   WhatsAppConnectionProfile @relation(fields: [workspaceId, profileId], references: [workspaceId, id], onDelete: Restrict)
+  decidedBy Actor                     @relation("WhatsAppPolicyDecisionRecordedBy", fields: [workspaceId, decidedByActorId], references: [workspaceId, id], onDelete: Restrict)
 
   @@unique([workspaceId, id])
   @@index([workspaceId, profileId, decidedAt])
@@ -7833,33 +8292,33 @@ model LeadTag {
 }
 
 model AutomationRule {
-  id               String                @id @default(uuid()) @db.Uuid
-  workspaceId      String                @db.Uuid
-  key              String                @default(uuid())
-  name             String
-  description      String?
-  isPredefined     Boolean               @default(false)
-  status           AutomationRuleStatus  @default(DRAFT)
-  triggerType      AutomationTriggerType
-  actionType       AutomationActionType
-  conditions       Json
-  actionConfig     Json
-  version          Int                   @default(1)
-  draftDefinition Json?
-  draftRevision   Int                   @default(1)
-  publishedVersionId String?            @db.Uuid
-  createdByActorId String                @db.Uuid
-  updatedByActorId String                @db.Uuid
-  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
-  deletedAt        DateTime?             @db.Timestamptz(3)
+  id                 String                @id @default(uuid()) @db.Uuid
+  workspaceId        String                @db.Uuid
+  key                String                @default(uuid())
+  name               String
+  description        String?
+  isPredefined       Boolean               @default(false)
+  status             AutomationRuleStatus  @default(DRAFT)
+  triggerType        AutomationTriggerType
+  actionType         AutomationActionType
+  conditions         Json
+  actionConfig       Json
+  version            Int                   @default(1)
+  draftDefinition    Json?
+  draftRevision      Int                   @default(1)
+  publishedVersionId String?               @db.Uuid
+  createdByActorId   String                @db.Uuid
+  updatedByActorId   String                @db.Uuid
+  createdAt          DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime              @updatedAt @db.Timestamptz(3)
+  deletedAt          DateTime?             @db.Timestamptz(3)
 
-  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  createdBy Actor           @relation("AutomationRuleCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
-  updatedBy Actor           @relation("AutomationRuleUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
-  runs      AutomationRun[]
-  versions  AutomationRuleVersion[] @relation("AutomationRuleVersions")
-  publishedVersion AutomationRuleVersion? @relation("AutomationRulePublishedVersion", fields: [workspaceId, publishedVersionId], references: [workspaceId, id], onDelete: Restrict)
+  workspace        Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdBy        Actor                   @relation("AutomationRuleCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy        Actor                   @relation("AutomationRuleUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  runs             AutomationRun[]
+  versions         AutomationRuleVersion[] @relation("AutomationRuleVersions")
+  publishedVersion AutomationRuleVersion?  @relation("AutomationRulePublishedVersion", fields: [workspaceId, publishedVersionId], references: [workspaceId, id], onDelete: Restrict)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, key])
@@ -7869,25 +8328,25 @@ model AutomationRule {
 }
 
 model AutomationRuleVersion {
-  id                 String   @id @default(uuid()) @db.Uuid
-  workspaceId        String   @db.Uuid
-  automationRuleId   String   @db.Uuid
-  version            Int
-  graphDefinition    Json
-  graphHash          String
-  validationSnapshot Json
-  rollbackOfVersionId String? @db.Uuid
-  publishedByActorId String   @db.Uuid
-  publishedAt        DateTime @db.Timestamptz(3)
-  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  id                  String   @id @default(uuid()) @db.Uuid
+  workspaceId         String   @db.Uuid
+  automationRuleId    String   @db.Uuid
+  version             Int
+  graphDefinition     Json
+  graphHash           String
+  validationSnapshot  Json
+  rollbackOfVersionId String?  @db.Uuid
+  publishedByActorId  String   @db.Uuid
+  publishedAt         DateTime @db.Timestamptz(3)
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
 
-  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  rule        AutomationRule @relation("AutomationRuleVersions", fields: [workspaceId, automationRuleId], references: [workspaceId, id], onDelete: Restrict)
-  publishedForRules AutomationRule[] @relation("AutomationRulePublishedVersion")
-  rollbackOf  AutomationRuleVersion? @relation("AutomationRuleVersionRollback", fields: [workspaceId, rollbackOfVersionId], references: [workspaceId, id], onDelete: Restrict)
-  rollbacks   AutomationRuleVersion[] @relation("AutomationRuleVersionRollback")
-  publishedBy Actor @relation("AutomationRuleVersionPublishedBy", fields: [workspaceId, publishedByActorId], references: [workspaceId, id], onDelete: Restrict)
-  runs        AutomationRun[]
+  workspace         Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  rule              AutomationRule          @relation("AutomationRuleVersions", fields: [workspaceId, automationRuleId], references: [workspaceId, id], onDelete: Restrict)
+  publishedForRules AutomationRule[]        @relation("AutomationRulePublishedVersion")
+  rollbackOf        AutomationRuleVersion?  @relation("AutomationRuleVersionRollback", fields: [workspaceId, rollbackOfVersionId], references: [workspaceId, id], onDelete: Restrict)
+  rollbacks         AutomationRuleVersion[] @relation("AutomationRuleVersionRollback")
+  publishedBy       Actor                   @relation("AutomationRuleVersionPublishedBy", fields: [workspaceId, publishedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  runs              AutomationRun[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, automationRuleId, version])
@@ -7896,51 +8355,51 @@ model AutomationRuleVersion {
 }
 
 model AutomationRun {
-  id                   String                @id @default(uuid()) @db.Uuid
-  workspaceId          String                @db.Uuid
-  automationRuleId     String                @db.Uuid
-  automationRuleVersionId String?            @db.Uuid
-  leadId               String?               @db.Uuid
-  meetingId            String?               @db.Uuid
-  opportunityId        String?               @db.Uuid
-  actorId              String                @db.Uuid
-  status               RunStatus             @default(PENDING)
-  idempotencyKey       String
-  ruleVersion          Int
-  triggerType          AutomationTriggerType
-  actionType           AutomationActionType
-  conditionsSnapshot   Json
-  actionConfigSnapshot Json
-  graphSnapshot        Json?
-  currentNodeId        String?
-  executionPolicy     String                @default("LEGACY_SINGLE_ACTION")
-  triggeredAt          DateTime              @default(now()) @db.Timestamptz(3)
-  startedAt            DateTime?             @db.Timestamptz(3)
-  finishedAt           DateTime?             @db.Timestamptz(3)
-  inputPayload         Json?
-  outputPayload        Json?
-  errorCode            String?
-  errorMessage         String?
-  cancelledAt          DateTime?             @db.Timestamptz(3)
-  createdAt            DateTime              @default(now()) @db.Timestamptz(3)
+  id                      String                @id @default(uuid()) @db.Uuid
+  workspaceId             String                @db.Uuid
+  automationRuleId        String                @db.Uuid
+  automationRuleVersionId String?               @db.Uuid
+  leadId                  String?               @db.Uuid
+  meetingId               String?               @db.Uuid
+  opportunityId           String?               @db.Uuid
+  actorId                 String                @db.Uuid
+  status                  RunStatus             @default(PENDING)
+  idempotencyKey          String
+  ruleVersion             Int
+  triggerType             AutomationTriggerType
+  actionType              AutomationActionType
+  conditionsSnapshot      Json
+  actionConfigSnapshot    Json
+  graphSnapshot           Json?
+  currentNodeId           String?
+  executionPolicy         String                @default("LEGACY_SINGLE_ACTION")
+  triggeredAt             DateTime              @default(now()) @db.Timestamptz(3)
+  startedAt               DateTime?             @db.Timestamptz(3)
+  finishedAt              DateTime?             @db.Timestamptz(3)
+  inputPayload            Json?
+  outputPayload           Json?
+  errorCode               String?
+  errorMessage            String?
+  cancelledAt             DateTime?             @db.Timestamptz(3)
+  createdAt               DateTime              @default(now()) @db.Timestamptz(3)
 
-  workspace     Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  rule          AutomationRule      @relation(fields: [workspaceId, automationRuleId], references: [workspaceId, id], onDelete: Restrict)
+  workspace           Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  rule                AutomationRule         @relation(fields: [workspaceId, automationRuleId], references: [workspaceId, id], onDelete: Restrict)
   ruleVersionSnapshot AutomationRuleVersion? @relation(fields: [workspaceId, automationRuleVersionId], references: [workspaceId, id], onDelete: Restrict)
-  lead          Lead?               @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
-  meeting       Meeting?            @relation(fields: [workspaceId, meetingId], references: [workspaceId, id], onDelete: Restrict)
-  opportunity   Opportunity?        @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: Restrict)
-  actor         Actor               @relation("AutomationRunActor", fields: [workspaceId, actorId], references: [workspaceId, id], onDelete: Restrict)
-  job           Job?
-  attempts      AutomationAttempt[]
-  effects       AutomationEffect[]
-  activities    Activity[]
-  tasks         Task[]
-  messages      Message[]
-  notifications Notification[]
-  handoffs      CustomerHandoff[]
-  auditLogs     AuditLog[]
-  nodeRuns      AutomationNodeRun[]
+  lead                Lead?                  @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
+  meeting             Meeting?               @relation(fields: [workspaceId, meetingId], references: [workspaceId, id], onDelete: Restrict)
+  opportunity         Opportunity?           @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: Restrict)
+  actor               Actor                  @relation("AutomationRunActor", fields: [workspaceId, actorId], references: [workspaceId, id], onDelete: Restrict)
+  job                 Job?
+  attempts            AutomationAttempt[]
+  effects             AutomationEffect[]
+  activities          Activity[]
+  tasks               Task[]
+  messages            Message[]
+  notifications       Notification[]
+  handoffs            CustomerHandoff[]
+  auditLogs           AuditLog[]
+  nodeRuns            AutomationNodeRun[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey])
@@ -8309,19 +8768,19 @@ model AIEvaluationResult {
 }
 
 model GovernedAgent {
-  id              String   @id @default(uuid()) @db.Uuid
-  workspaceId     String   @db.Uuid
-  key             String
-  name            String
-  objective       String
-  status          String   @default("DRAFT")
-  draftRevision   Int      @default(1)
-  draftDefinition Json
-  activeVersionId String?  @db.Uuid
-  createdByActorId String  @db.Uuid
-  updatedByActorId String  @db.Uuid
-  createdAt       DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @db.Uuid
+  key              String
+  name             String
+  objective        String
+  status           String   @default("DRAFT")
+  draftRevision    Int      @default(1)
+  draftDefinition  Json
+  activeVersionId  String?  @db.Uuid
+  createdByActorId String   @db.Uuid
+  updatedByActorId String   @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, key])
@@ -8368,19 +8827,19 @@ model AgentKnowledgeDocument {
 }
 
 model AgentConversationLease {
-  id                 String   @id @default(uuid()) @db.Uuid
-  workspaceId        String   @db.Uuid
-  conversationId     String   @db.Uuid
-  agentId            String   @db.Uuid
-  agentVersionId     String   @db.Uuid
+  id                 String    @id @default(uuid()) @db.Uuid
+  workspaceId        String    @db.Uuid
+  conversationId     String    @db.Uuid
+  agentId            String    @db.Uuid
+  agentVersionId     String    @db.Uuid
   status             String
   leaseToken         String
   pausedReason       String?
-  humanOwnerMemberId String?  @db.Uuid
+  humanOwnerMemberId String?   @db.Uuid
   lastTriggerKey     String
-  acquiredAt         DateTime @db.Timestamptz(3)
+  acquiredAt         DateTime  @db.Timestamptz(3)
   pausedAt           DateTime? @db.Timestamptz(3)
-  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, conversationId])
@@ -8390,28 +8849,28 @@ model AgentConversationLease {
 }
 
 model AgentConversationTurn {
-  id                    String   @id @default(uuid()) @db.Uuid
-  workspaceId           String   @db.Uuid
-  leaseId               String   @db.Uuid
-  conversationId        String   @db.Uuid
-  agentVersionId        String   @db.Uuid
-  idempotencyKey        String
-  status                String
-  userMessageFingerprint String  @db.Char(64)
-  response              String?  @db.Text
-  summary               String?  @db.Text
-  sources               Json
-  proposedFields        Json
-  confidenceBps         Int
-  sensitiveAction       String?
-  approvalStatus        String?
-  approvalReason        String?
-  approvedByActorId     String?  @db.Uuid
-  corrected             Boolean  @default(false)
-  costCents             Int      @default(0)
-  externalEgress        Boolean  @default(false)
-  createdAt             DateTime @default(now()) @db.Timestamptz(3)
-  completedAt           DateTime? @db.Timestamptz(3)
+  id                     String    @id @default(uuid()) @db.Uuid
+  workspaceId            String    @db.Uuid
+  leaseId                String    @db.Uuid
+  conversationId         String    @db.Uuid
+  agentVersionId         String    @db.Uuid
+  idempotencyKey         String
+  status                 String
+  userMessageFingerprint String    @db.Char(64)
+  response               String?   @db.Text
+  summary                String?   @db.Text
+  sources                Json
+  proposedFields         Json
+  confidenceBps          Int
+  sensitiveAction        String?
+  approvalStatus         String?
+  approvalReason         String?
+  approvedByActorId      String?   @db.Uuid
+  corrected              Boolean   @default(false)
+  costCents              Int       @default(0)
+  externalEgress         Boolean   @default(false)
+  createdAt              DateTime  @default(now()) @db.Timestamptz(3)
+  completedAt            DateTime? @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey])
@@ -9087,14 +9546,14 @@ model CustomerHandoff {
   createdAt         DateTime      @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime      @updatedAt @db.Timestamptz(3)
 
-  workspace     Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  lead          Lead             @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
-  opportunity   Opportunity?     @relation(fields: [workspaceId, leadId, opportunityId], references: [workspaceId, leadId, id], onDelete: Restrict)
-  automationRun AutomationRun?   @relation(fields: [workspaceId, automationRunId], references: [workspaceId, id], onDelete: Restrict)
-  fromMember    WorkspaceMember  @relation("HandoffFromMember", fields: [workspaceId, fromMemberId], references: [workspaceId, id], onDelete: Restrict)
-  toMember      WorkspaceMember? @relation("HandoffToMember", fields: [workspaceId, toMemberId], references: [workspaceId, id], onDelete: Restrict)
-  toQueue       Queue?           @relation(fields: [workspaceId, toQueueId], references: [workspaceId, id], onDelete: Restrict)
-  createdBy     Actor            @relation("CustomerHandoffCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  workspace        Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  lead             Lead                     @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
+  opportunity      Opportunity?             @relation(fields: [workspaceId, leadId, opportunityId], references: [workspaceId, leadId, id], onDelete: Restrict)
+  automationRun    AutomationRun?           @relation(fields: [workspaceId, automationRunId], references: [workspaceId, id], onDelete: Restrict)
+  fromMember       WorkspaceMember          @relation("HandoffFromMember", fields: [workspaceId, fromMemberId], references: [workspaceId, id], onDelete: Restrict)
+  toMember         WorkspaceMember?         @relation("HandoffToMember", fields: [workspaceId, toMemberId], references: [workspaceId, id], onDelete: Restrict)
+  toQueue          Queue?                   @relation(fields: [workspaceId, toQueueId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy        Actor                    @relation("CustomerHandoffCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
   transferVersions HandoffTransferVersion[]
   deliveryPlans    DeliveryPlan[]
 
@@ -10298,35 +10757,35 @@ model WebhookInbox {
 }
 
 model OutboxEvent {
-  id                 String                 @id @default(uuid()) @db.Uuid
-  workspaceId        String                 @db.Uuid
-  connectionId       String?                @db.Uuid
-  eventType          String
-  eventVersion       String
-  aggregateType      String
-  aggregateId        String
-  correlationId      String
-  causationId        String?
-  idempotencyKey     String
-  payload            Json
-  payloadHash        String
-  dataClass          IntegrationDataClass   @default(OPERATIONAL)
-  status             OutboxStatus           @default(PENDING)
-  attempts           Int                    @default(0)
-  maxAttempts        Int                    @default(5)
-  availableAt        DateTime               @default(now()) @db.Timestamptz(3)
-  lockedAt           DateTime?              @db.Timestamptz(3)
-  lockedBy           String?
-  lockExpiresAt      DateTime?              @db.Timestamptz(3)
-  nextRetryAt        DateTime?              @db.Timestamptz(3)
-  errorClass         IntegrationErrorClass?
-  errorCode          String?
-  errorMessage       String?
-  deliveredLocallyAt DateTime?              @db.Timestamptz(3)
-  deliveredExternallyAt DateTime?           @db.Timestamptz(3)
-  createdByActorId   String                 @db.Uuid
-  createdAt          DateTime               @default(now()) @db.Timestamptz(3)
-  messageId          String?                @db.Uuid
+  id                    String                 @id @default(uuid()) @db.Uuid
+  workspaceId           String                 @db.Uuid
+  connectionId          String?                @db.Uuid
+  eventType             String
+  eventVersion          String
+  aggregateType         String
+  aggregateId           String
+  correlationId         String
+  causationId           String?
+  idempotencyKey        String
+  payload               Json
+  payloadHash           String
+  dataClass             IntegrationDataClass   @default(OPERATIONAL)
+  status                OutboxStatus           @default(PENDING)
+  attempts              Int                    @default(0)
+  maxAttempts           Int                    @default(5)
+  availableAt           DateTime               @default(now()) @db.Timestamptz(3)
+  lockedAt              DateTime?              @db.Timestamptz(3)
+  lockedBy              String?
+  lockExpiresAt         DateTime?              @db.Timestamptz(3)
+  nextRetryAt           DateTime?              @db.Timestamptz(3)
+  errorClass            IntegrationErrorClass?
+  errorCode             String?
+  errorMessage          String?
+  deliveredLocallyAt    DateTime?              @db.Timestamptz(3)
+  deliveredExternallyAt DateTime?              @db.Timestamptz(3)
+  createdByActorId      String                 @db.Uuid
+  createdAt             DateTime               @default(now()) @db.Timestamptz(3)
+  messageId             String?                @db.Uuid
 
   workspace               Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   connection              IntegrationConnection?       @relation(fields: [workspaceId, connectionId], references: [workspaceId, id], onDelete: Restrict)
@@ -10840,19 +11299,19 @@ model MarketingFormVersion {
 }
 
 model StrategyFunnel {
-  id               String   @id @default(uuid()) @db.Uuid
-  workspaceId      String   @db.Uuid
+  id               String    @id @default(uuid()) @db.Uuid
+  workspaceId      String    @db.Uuid
   name             String
-  description      String   @default("")
+  description      String    @default("")
   definition       Json
-  status           String   @default("ACTIVE")
-  revision         Int      @default(1)
+  status           String    @default("ACTIVE")
+  revision         Int       @default(1)
   idempotencyKey   String
-  createdByActorId String   @db.Uuid
-  updatedByActorId String   @db.Uuid
+  createdByActorId String    @db.Uuid
+  updatedByActorId String    @db.Uuid
   archivedAt       DateTime? @db.Timestamptz(3)
-  createdAt        DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey])
@@ -12801,21 +13260,21 @@ model GoalBackfillItem {
 }
 
 model DailyGoalProfile {
-  id                       String   @id @default(uuid()) @db.Uuid
-  workspaceId              String   @db.Uuid
-  memberId                 String   @db.Uuid
-  callsTarget              Int      @default(0)
-  messagesTarget           Int      @default(0)
-  effectiveContactsTarget  Int      @default(0)
-  qualificationsTarget     Int      @default(0)
-  meetingsScheduledTarget  Int      @default(0)
-  proposalsTarget          Int      @default(0)
-  salesValueTargetCents    BigInt   @default(0)
-  revision                 Int      @default(1)
-  createdByActorId         String   @db.Uuid
-  updatedByActorId         String   @db.Uuid
-  createdAt                DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt                DateTime @updatedAt @db.Timestamptz(3)
+  id                      String   @id @default(uuid()) @db.Uuid
+  workspaceId             String   @db.Uuid
+  memberId                String   @db.Uuid
+  callsTarget             Int      @default(0)
+  messagesTarget          Int      @default(0)
+  effectiveContactsTarget Int      @default(0)
+  qualificationsTarget    Int      @default(0)
+  meetingsScheduledTarget Int      @default(0)
+  proposalsTarget         Int      @default(0)
+  salesValueTargetCents   BigInt   @default(0)
+  revision                Int      @default(1)
+  createdByActorId        String   @db.Uuid
+  updatedByActorId        String   @db.Uuid
+  createdAt               DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime @updatedAt @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, memberId])
@@ -13102,37 +13561,37 @@ model ForecastBackfillItem {
 // Campaigns below are outbound communication executions. Acquisition/media
 // campaigns remain in the marketing attribution aggregate.
 model OutboundCampaign {
-  id                    String   @id @default(uuid()) @db.Uuid
-  workspaceId           String   @db.Uuid
-  name                  String
-  channel               String
-  providerMode          String   @default("LOCAL_SIMULATOR")
-  purposeKey            String
-  templateBody          String   @db.Text
-  segmentDefinition     Json
-  postActions           Json
-  windowStartMinute     Int
-  windowEndMinute       Int
-  timeZone              String
-  scheduledAt           DateTime? @db.Timestamptz(3)
-  maxRecipients         Int
-  unitCostCents          Int     @default(0)
-  estimatedVolume       Int     @default(0)
-  estimatedCostCents    BigInt  @default(0)
-  status                String  @default("DRAFT")
-  snapshotHash          String?
-  previewedAt           DateTime? @db.Timestamptz(3)
-  approvedAt            DateTime? @db.Timestamptz(3)
-  approvedByActorId     String? @db.Uuid
-  startedAt             DateTime? @db.Timestamptz(3)
-  completedAt           DateTime? @db.Timestamptz(3)
-  cancelledAt           DateTime? @db.Timestamptz(3)
-  cancelledByActorId    String? @db.Uuid
-  cancellationReason    String?
-  createdByActorId      String  @db.Uuid
-  updatedByActorId      String  @db.Uuid
-  createdAt             DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
+  id                 String    @id @default(uuid()) @db.Uuid
+  workspaceId        String    @db.Uuid
+  name               String
+  channel            String
+  providerMode       String    @default("LOCAL_SIMULATOR")
+  purposeKey         String
+  templateBody       String    @db.Text
+  segmentDefinition  Json
+  postActions        Json
+  windowStartMinute  Int
+  windowEndMinute    Int
+  timeZone           String
+  scheduledAt        DateTime? @db.Timestamptz(3)
+  maxRecipients      Int
+  unitCostCents      Int       @default(0)
+  estimatedVolume    Int       @default(0)
+  estimatedCostCents BigInt    @default(0)
+  status             String    @default("DRAFT")
+  snapshotHash       String?
+  previewedAt        DateTime? @db.Timestamptz(3)
+  approvedAt         DateTime? @db.Timestamptz(3)
+  approvedByActorId  String?   @db.Uuid
+  startedAt          DateTime? @db.Timestamptz(3)
+  completedAt        DateTime? @db.Timestamptz(3)
+  cancelledAt        DateTime? @db.Timestamptz(3)
+  cancelledByActorId String?   @db.Uuid
+  cancellationReason String?
+  createdByActorId   String    @db.Uuid
+  updatedByActorId   String    @db.Uuid
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(3)
 
   recipients OutboundCampaignRecipient[]
 
@@ -13142,33 +13601,33 @@ model OutboundCampaign {
 }
 
 model OutboundCampaignRecipient {
-  id                    String   @id @default(uuid()) @db.Uuid
-  workspaceId           String   @db.Uuid
-  campaignId            String   @db.Uuid
-  leadId                String   @db.Uuid
-  contactId             String?  @db.Uuid
-  contactPointId        String?  @db.Uuid
-  addressSnapshot       String
-  templateSnapshot      String   @db.Text
-  status                String   @default("PREVIEWED")
-  suppressionReason     String?
-  overlapReason         String?
-  idempotencyKey        String
-  attemptCount          Int      @default(0)
-  providerReceiptId     String?
-  messageId             String?  @db.Uuid
-  phoneCallId           String?  @db.Uuid
-  acceptedAt            DateTime? @db.Timestamptz(3)
-  deliveredAt           DateTime? @db.Timestamptz(3)
-  respondedAt           DateTime? @db.Timestamptz(3)
-  failedAt              DateTime? @db.Timestamptz(3)
-  lastError             String?
-  costCents             Int      @default(0)
-  nextAttemptAt         DateTime? @db.Timestamptz(3)
-  createdAt             DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
+  id                String    @id @default(uuid()) @db.Uuid
+  workspaceId       String    @db.Uuid
+  campaignId        String    @db.Uuid
+  leadId            String    @db.Uuid
+  contactId         String?   @db.Uuid
+  contactPointId    String?   @db.Uuid
+  addressSnapshot   String
+  templateSnapshot  String    @db.Text
+  status            String    @default("PREVIEWED")
+  suppressionReason String?
+  overlapReason     String?
+  idempotencyKey    String
+  attemptCount      Int       @default(0)
+  providerReceiptId String?
+  messageId         String?   @db.Uuid
+  phoneCallId       String?   @db.Uuid
+  acceptedAt        DateTime? @db.Timestamptz(3)
+  deliveredAt       DateTime? @db.Timestamptz(3)
+  respondedAt       DateTime? @db.Timestamptz(3)
+  failedAt          DateTime? @db.Timestamptz(3)
+  lastError         String?
+  costCents         Int       @default(0)
+  nextAttemptAt     DateTime? @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
 
-  campaign OutboundCampaign @relation(fields: [workspaceId, campaignId], references: [workspaceId, id], onDelete: Restrict)
+  campaign OutboundCampaign          @relation(fields: [workspaceId, campaignId], references: [workspaceId, id], onDelete: Restrict)
   attempts OutboundCampaignAttempt[]
 
   @@unique([workspaceId, id])
@@ -13180,18 +13639,18 @@ model OutboundCampaignRecipient {
 }
 
 model OutboundCampaignAttempt {
-  id                  String   @id @default(uuid()) @db.Uuid
-  workspaceId         String   @db.Uuid
-  recipientId         String   @db.Uuid
-  attemptNumber       Int
-  status              String
-  providerReceiptId   String?
-  errorCode           String?
-  startedAt           DateTime @db.Timestamptz(3)
-  finishedAt          DateTime @db.Timestamptz(3)
-  simulated           Boolean  @default(true)
-  externalEgress      Boolean  @default(false)
-  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+  id                String   @id @default(uuid()) @db.Uuid
+  workspaceId       String   @db.Uuid
+  recipientId       String   @db.Uuid
+  attemptNumber     Int
+  status            String
+  providerReceiptId String?
+  errorCode         String?
+  startedAt         DateTime @db.Timestamptz(3)
+  finishedAt        DateTime @db.Timestamptz(3)
+  simulated         Boolean  @default(true)
+  externalEgress    Boolean  @default(false)
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
 
   recipient OutboundCampaignRecipient @relation(fields: [workspaceId, recipientId], references: [workspaceId, id], onDelete: Restrict)
 
@@ -13317,25 +13776,25 @@ enum ConsumptionLedgerKind {
 }
 
 model ConsumptionBudget {
-  id                 String                  @id @default(uuid()) @db.Uuid
-  workspaceId        String                  @db.Uuid
-  resourceType       ConsumptionResourceType
-  resourceKey        String
-  status             ConsumptionBudgetStatus @default(ACTIVE)
-  currency           String                  @default("BRL")
-  limitCents         BigInt?
-  limitUnits         BigInt?
-  includedCreditCents BigInt                 @default(0)
-  warningBasisPoints Int                     @default(8000)
-  periodStart        DateTime                @db.Timestamptz(3)
-  periodEnd          DateTime                @db.Timestamptz(3)
-  pausedAt           DateTime?               @db.Timestamptz(3)
-  pausedReason       String?
-  revision           Int                     @default(1)
-  createdByActorId   String                  @db.Uuid
-  updatedByActorId   String                  @db.Uuid
-  createdAt          DateTime                @default(now()) @db.Timestamptz(3)
-  updatedAt          DateTime                @updatedAt @db.Timestamptz(3)
+  id                  String                  @id @default(uuid()) @db.Uuid
+  workspaceId         String                  @db.Uuid
+  resourceType        ConsumptionResourceType
+  resourceKey         String
+  status              ConsumptionBudgetStatus @default(ACTIVE)
+  currency            String                  @default("BRL")
+  limitCents          BigInt?
+  limitUnits          BigInt?
+  includedCreditCents BigInt                  @default(0)
+  warningBasisPoints  Int                     @default(8000)
+  periodStart         DateTime                @db.Timestamptz(3)
+  periodEnd           DateTime                @db.Timestamptz(3)
+  pausedAt            DateTime?               @db.Timestamptz(3)
+  pausedReason        String?
+  revision            Int                     @default(1)
+  createdByActorId    String                  @db.Uuid
+  updatedByActorId    String                  @db.Uuid
+  createdAt           DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime                @updatedAt @db.Timestamptz(3)
 
   workspace Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   createdBy Actor                    @relation("ConsumptionBudgetCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
@@ -13349,21 +13808,21 @@ model ConsumptionBudget {
 }
 
 model ConsumptionLedgerEntry {
-  id               String                  @id @default(uuid()) @db.Uuid
-  workspaceId      String                  @db.Uuid
-  budgetId         String                  @db.Uuid
-  resourceType     ConsumptionResourceType
-  resourceKey      String
-  kind             ConsumptionLedgerKind
-  amountCents      BigInt                  @default(0)
-  units            BigInt                  @default(0)
-  idempotencyKey   String
+  id                String                  @id @default(uuid()) @db.Uuid
+  workspaceId       String                  @db.Uuid
+  budgetId          String                  @db.Uuid
+  resourceType      ConsumptionResourceType
+  resourceKey       String
+  kind              ConsumptionLedgerKind
+  amountCents       BigInt                  @default(0)
+  units             BigInt                  @default(0)
+  idempotencyKey    String
   externalReference String?
-  reason           String?
-  metadata         Json                    @default("{}")
-  actorId          String                  @db.Uuid
-  occurredAt       DateTime                @db.Timestamptz(3)
-  createdAt        DateTime                @default(now()) @db.Timestamptz(3)
+  reason            String?
+  metadata          Json                    @default("{}")
+  actorId           String                  @db.Uuid
+  occurredAt        DateTime                @db.Timestamptz(3)
+  createdAt         DateTime                @default(now()) @db.Timestamptz(3)
 
   workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   budget    ConsumptionBudget @relation(fields: [workspaceId, budgetId], references: [workspaceId, id], onDelete: Restrict)
@@ -13375,6 +13834,7 @@ model ConsumptionLedgerEntry {
   @@index([workspaceId, resourceType, resourceKey, occurredAt])
   @@map("consumption_ledger_entries")
 }
+
 enum FinancialCategoryKind {
   INCOME
   EXPENSE
@@ -13477,7 +13937,7 @@ model FinancialEntry {
   customerAccountId  String?                 @db.Uuid
   costCenterId       String?                 @db.Uuid
   recurrenceId       String?                 @db.Uuid
-  installmentNumber Int?
+  installmentNumber  Int?
   direction          FinancialEntryDirection
   status             FinancialEntryStatus    @default(PLANNED)
   description        String
@@ -13605,19 +14065,19 @@ model FinancialAttachment {
 }
 
 model CommissionRule {
-  id               String    @id @default(uuid()) @db.Uuid
-  workspaceId      String    @db.Uuid
-  sellerMemberId   String    @db.Uuid
+  id               String            @id @default(uuid()) @db.Uuid
+  workspaceId      String            @db.Uuid
+  sellerMemberId   String            @db.Uuid
   percentageBps    Int
-  basis            CommissionBasis @default(TCV)
+  basis            CommissionBasis   @default(TCV)
   trigger          CommissionTrigger @default(SALE)
-  active           Boolean   @default(true)
-  effectiveFrom    DateTime  @db.Timestamptz(3)
-  effectiveTo      DateTime? @db.Timestamptz(3)
-  createdByActorId String    @db.Uuid
-  updatedByActorId String    @db.Uuid
-  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+  active           Boolean           @default(true)
+  effectiveFrom    DateTime          @db.Timestamptz(3)
+  effectiveTo      DateTime?         @db.Timestamptz(3)
+  createdByActorId String            @db.Uuid
+  updatedByActorId String            @db.Uuid
+  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@index([workspaceId, sellerMemberId, active, effectiveFrom])
@@ -13649,7 +14109,7 @@ model Commission {
   createdAt         DateTime         @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime         @updatedAt @db.Timestamptz(3)
 
-  payment           Payment?         @relation(fields: [workspaceId, paymentId], references: [workspaceId, id], onDelete: Restrict)
+  payment Payment? @relation(fields: [workspaceId, paymentId], references: [workspaceId, id], onDelete: Restrict)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey])

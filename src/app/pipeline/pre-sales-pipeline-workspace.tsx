@@ -177,7 +177,8 @@ export function PreSalesPipelineWorkspace({
   screen,
   initialView,
   basePath = "/pipeline",
-}: Readonly<{ screen: PreSalesPipelineScreen; initialView: "board" | "list"; basePath?: string }>) {
+  fixedQuery,
+}: Readonly<{ screen: PreSalesPipelineScreen; initialView: "board" | "list"; basePath?: string; fixedQuery?: Readonly<Record<string, string>> }>) {
   const router = useRouter();
   const [stages, setStages] = useState<readonly LeadPipelineStageColumn[]>(screen.stages);
   const [screenVersion, setScreenVersion] = useState(screen.generatedAt);
@@ -429,12 +430,13 @@ export function PreSalesPipelineWorkspace({
   return (
     <div className={styles.workspace}>
       <form className={styles.filters} method="get">
+        {Object.entries(fixedQuery ?? {}).map(([name, value]) => <input key={name} name={name} type="hidden" value={value} />)}
         <input name="pipelineId" type="hidden" value={screen.pipelineId} />
         <label className={styles.search}><span className="sr-only">Pesquisar negócios</span><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg><input defaultValue={screen.filters.q} name="q" placeholder="Buscar negócio..." /></label>
         <label className={styles.filter}>Dono do negócio<select aria-label="Dono do negócio" defaultValue={screen.filters.responsible} name="responsible"><option value="">Todos</option>{screen.responsibleOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
         <label className={styles.filter}>Prioridade<select aria-label="Prioridade" defaultValue={screen.filters.priority} name="priority"><option value="ALL">Todas</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option></select></label>
         <label className={styles.filter}>Etapa<select aria-label="Etapa" defaultValue={screen.filters.stageCode} name="stageCode"><option value="ALL">Todas as etapas</option>{screen.stages.map((stage) => <option key={stage.id} value={stage.code}>{stage.name} ({stage.count})</option>)}</select></label>
-        <input name="view" type="hidden" value={view} />
+        {!fixedQuery?.view ? <input name="view" type="hidden" value={view} /> : null}
         <Button size="sm" type="submit" variant="secondary"><Icon name="filtro" size={14} />Aplicar</Button>
         {screen.canWrite ? <Button onFocus={() => { void loadEntryOptions().catch(() => undefined); }} onMouseEnter={() => { void loadEntryOptions().catch(() => undefined); }} onTouchStart={() => { void loadEntryOptions().catch(() => undefined); }} onClick={() => setQuickCreateOpen(true)} size="sm" type="button"><Icon name="mais" size={14} />Adicionar</Button> : null}
         <Link className={styles.clear} href={basePath}>Limpar filtros</Link>

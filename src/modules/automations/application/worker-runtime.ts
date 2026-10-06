@@ -13,6 +13,9 @@ import { createCalendarWorkerService } from "@/modules/integrations/application/
 import { localCalendarSandbox } from "@/modules/integrations/application/calendar-transport";
 import { getConversionFeedbackService } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { getPaymentWorkerService } from "@/modules/payments/application/payment-worker-service";
+import { getProspectingReleaseService } from "@/modules/prospecting/application/prospecting-release-service";
+import { getProspectingCadenceService } from "@/modules/prospecting/application/prospecting-cadence-service";
+import { getProspectingPlannerService } from "@/modules/prospecting/application/prospecting-planner-service";
 import type { ApplicationConfig } from "@/shared/core/config/application-config";
 import { getDatabaseClient } from "@/shared/core/database/client";
 
@@ -40,12 +43,21 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
   const emailWorker = createEmailMessageWorkerService({ ...common, transport: localEmailSinkTransport });
   const whatsappWorker = createWhatsAppWebhookWorkerService(common);
   const metaConversionWorker = getConversionFeedbackService();
+  const prospectingReleaseWorker = getProspectingReleaseService();
+  const prospectingCadenceWorker = getProspectingCadenceService();
+  const prospectingPlannerWorker = getProspectingPlannerService();
 
   return Object.freeze({
     database,
     runner: createWorkerBatchRunner({
       scanDue: lifecycleScanner.scanDue,
       processors: [
+        { key: "prospecting-planner", processNext: prospectingPlannerWorker.processNext },
+        { key: "prospecting-release", processNext: async (workerId) => {
+          const result = await prospectingReleaseWorker.processNext(workerId);
+          return { status: result.processed ? result.outcome : "IDLE" };
+        } },
+        { key: "prospecting-cadence", processNext: prospectingCadenceWorker.processDue },
         { key: "payments", processNext: paymentWorker.processNext },
         { key: "calendar", processNext: calendarWorker.processNext },
         { key: "telephony", processNext: telephonyWorker.processNext },

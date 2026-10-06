@@ -86,7 +86,7 @@ describe("configurações comerciais seguras", () => {
   });
 
   it("rejeita faixas, pesos e cadência inválidos antes de persistir", async () => {
-    await expect(service().preview(admin, { action: "SAVE_OPERATIONAL_POLICY", expectedRevision: 1, pactoMinimumInvestigatedDimensions: 5, defaultMeetingDurationMinutes: 30, distributionStrategy: "ROUND_ROBIN", maxOpenLeadsPerSdr: null, leadStagnationDays: 7, leadWithoutActivityDays: 3, cadenceDayOffsets: [0, 3, 3] })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(service().preview(admin, { action: "SAVE_OPERATIONAL_POLICY", expectedRevision: 1, pactoMinimumInvestigatedDimensions: 5, defaultMeetingDurationMinutes: 30, distributionStrategy: "ROUND_ROBIN", maxOpenLeadsPerSdr: null, leadStagnationDays: 7, leadWithoutActivityDays: 3, cadenceDayOffsets: [0, 3, 2] })).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(service().preview(admin, { action: "SAVE_SCORING_SLA", expectedScoringVersion: 1, painMaxPoints: 10, capacityMaxPoints: 10, decisionMaxPoints: 10, intentMaxPoints: 10, contextMaxPoints: 10, partialFactorBasisPoints: 5000, noCapacityPenalty: 30, noPainPenalty: 25, curiosityPenalty: 10, invalidContactPenalty: 100, noDecisionAccessPenalty: 15, capacityFullThresholdCents: "500000", p1Minimum: 70, p2Minimum: 40, healthyMaxSeconds: 60, attentionMaxSeconds: 180 })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 

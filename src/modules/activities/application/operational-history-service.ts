@@ -24,6 +24,10 @@ import type {
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
+import {
+  applyProspectingTaskCompletionInTransaction,
+  stopColdCadenceInTransaction,
+} from "@/modules/prospecting/application/prospecting-cadence-service";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
@@ -102,6 +106,8 @@ const taskKinds = [
   "IMMEDIATE_CALL",
   "CALL",
   "MESSAGE",
+  "INSTAGRAM_MESSAGE",
+  "INSTAGRAM_FOLLOW",
   "EMAIL",
   "MEETING",
   "FOLLOW_UP",
@@ -130,10 +136,16 @@ const completeTaskSchema = z
     leadId: z.string().uuid(),
     taskId: z.string().uuid(),
     result: z.string().trim().min(2).max(2_000),
+    resultReason: z.string().trim().min(3).max(2_000).optional(),
+    stopReason: z.enum(["REFUSAL", "DO_NOT_CONTACT"]).optional(),
     completedAt: z.coerce.date().optional(),
     nextTask: nextTaskSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => !value.stopReason || !value.nextTask, {
+    path: ["nextTask"],
+    message: "Não crie próxima ação ao encerrar a cadência por recusa ou não contato.",
+  });
 
 const recordActivitySchema = z
   .object({
@@ -792,8 +804,18 @@ export function createOperationalHistoryService(
           updatedByActorId: context.actorId,
         },
       });
+      const prospectingNext = await applyProspectingTaskCompletionInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        leadId: lead.id,
+        taskId: task.id,
+        result: parsed.data.result,
+        ...(parsed.data.resultReason ? { resultReason: parsed.data.resultReason } : {}),
+        ...(parsed.data.stopReason ? { stopReason: parsed.data.stopReason } : {}),
+        actorId: context.actorId,
+        completedAt,
+      });
       const nextTask = await findNextTask(transaction, context.workspaceId, lead.id);
-      if (requiresNextAction(currentLead.status) && !nextTask) {
+      if (requiresNextAction(currentLead.status) && !nextTask && !prospectingNext) {
         conflict(
           "NEXT_ACTION_REQUIRED",
           "Lead aberto precisa de uma próxima ação antes de concluir esta tarefa.",
@@ -803,7 +825,13 @@ export function createOperationalHistoryService(
       await transaction.lead.update({
         where: { id: lead.id },
         data: {
-          ...taskProjection(nextTask),
+          ...(nextTask
+            ? taskProjection(nextTask)
+            : prospectingNext
+              ? prospectingNext.terminal
+                ? taskProjection(null)
+                : { nextActionTaskId: null, nextActionAt: prospectingNext.nextActionAt, nextActionDescription: prospectingNext.nextActionDescription }
+              : taskProjection(null)),
           ...(completedAt > currentLead.lastActivityAt
             ? { lastActivityAt: completedAt }
             : {}),
@@ -830,7 +858,7 @@ export function createOperationalHistoryService(
           direction: "INTERNAL",
           result: "COMPLETED",
           subject: `Tarefa concluída: ${task.title}`,
-          description: parsed.data.result,
+          description: parsed.data.resultReason ? `${parsed.data.result}: ${parsed.data.resultReason}` : parsed.data.result,
           occurredAt: completedAt,
           nextActionAt: nextTask?.dueAt ?? null,
           nextActionDescription: nextTask?.title ?? null,
@@ -840,6 +868,7 @@ export function createOperationalHistoryService(
             status: "COMPLETED",
             completedAt: completedAt.toISOString(),
             result: parsed.data.result,
+            resultReason: parsed.data.resultReason ?? null,
           },
           createdByActorId: context.actorId,
           updatedByActorId: context.actorId,
@@ -859,6 +888,7 @@ export function createOperationalHistoryService(
             fromStatus: task.status,
             toStatus: "COMPLETED",
             result: parsed.data.result,
+            resultReason: parsed.data.resultReason ?? null,
             nextTaskId: createdNextTask?.id ?? null,
           },
         },
@@ -924,6 +954,17 @@ export function createOperationalHistoryService(
         result,
         occurredAt,
       });
+      const responseRecorded = isConnected(parsed.data.type, result) || isInboundResponse(parsed.data.type);
+      const inboundResponse = isInboundResponse(parsed.data.type);
+      if (responseRecorded) {
+        await stopColdCadenceInTransaction(transaction, {
+          workspaceId: context.workspaceId,
+          leadId: lead.id,
+          actorId: context.actorId,
+          reason: "HUMAN_REPLY",
+          occurredAt,
+        });
+      }
       const nextTask = await findNextTask(transaction, context.workspaceId, lead.id);
       if (requiresNextAction(currentLead.status) && !nextTask) {
         conflict(
@@ -932,8 +973,6 @@ export function createOperationalHistoryService(
         );
       }
 
-      const responseRecorded = isConnected(parsed.data.type, result) || isInboundResponse(parsed.data.type);
-      const inboundResponse = isInboundResponse(parsed.data.type);
       await transaction.lead.update({
         where: { id: lead.id },
         data: {
@@ -1469,6 +1508,7 @@ export function createOperationalHistoryService(
           dueAt: true,
           completedAt: true,
           result: true,
+          sourceKey: true,
         },
       }),
       options.database.activity.findMany({

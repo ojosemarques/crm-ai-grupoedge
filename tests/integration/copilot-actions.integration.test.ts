@@ -248,7 +248,7 @@ describe("ações operacionais do Copilot", () => {
 
 describe("ações por conversa entre módulos", () => {
   it("cadastra lead no pipeline solicitado, preserva contato, inicializa tarefas e move a etapa uma vez", async () => {
-    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId, entityType: "LEAD", deletedAt: null }, include: { stages: { where: { deletedAt: null }, orderBy: { position: "asc" } } } });
+    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId, entityType: "LEAD", isDefault: true, deletedAt: null }, include: { stages: { where: { deletedAt: null }, orderBy: { position: "asc" } } } });
     const action: CopilotAction = { kind: "CREATE_LEAD", pipelineId: pipeline.id, fullName: "Lead Conversa Novo", phone: "+5511987623412", email: "conversa@example.test", organizationName: "Empresa Conversa", sourceKey: "manual", priorityBandCode: "P2" };
     const preview = await actions.preview(admin, action);
     expect(await database.lead.count({ where: { workspaceId, fullName: action.fullName } })).toBe(0);
