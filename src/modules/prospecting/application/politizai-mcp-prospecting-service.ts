@@ -10,12 +10,18 @@ import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const LEASE_MINUTES = 45;
-const AGENT_VERSION = "politizai-dot-mcp/1.1.0";
-const PROMPT_VERSION = "political-prospect-production/v2";
+const AGENT_VERSION = "politizai-dot-mcp/1.2.0";
+const PROMPT_VERSION = "political-prospect-production/v3";
+const BRAZILIAN_CAPITALS = [
+  "Aracaju", "Belém", "Belo Horizonte", "Boa Vista", "Campo Grande", "Cuiabá", "Curitiba",
+  "Florianópolis", "Fortaleza", "Goiânia", "João Pessoa", "Macapá", "Maceió", "Manaus",
+  "Natal", "Palmas", "Porto Alegre", "Porto Velho", "Recife", "Rio Branco", "Rio de Janeiro",
+  "Salvador", "São Luís", "São Paulo", "Teresina", "Vitória",
+];
 
 const researchSourceSchema = z.object({
-  field: z.enum(["role", "mandate", "phone", "email", "advisor_phone", "advisor_email", "whatsapp", "instagram"]),
-  type: z.enum(["CITY_HALL", "CITY_COUNCIL", "OFFICIAL_GAZETTE", "INSTITUTIONAL_PROFILE"]),
+  field: z.enum(["role", "mandate", "phone", "email", "politician_phone", "politician_email", "advisor_phone", "advisor_email", "whatsapp", "instagram"]),
+  type: z.enum(["TSE", "CITY_HALL", "CITY_COUNCIL", "OFFICIAL_GAZETTE", "INSTITUTIONAL_PROFILE"]),
   url: z.string().url().max(2_000),
   observedAt: z.string().datetime({ offset: true }),
   contactScope: z.enum(["POLITICIAN", "ADVISOR", "OFFICE"]).optional(),
@@ -36,6 +42,8 @@ export const registerCandidateSchema = z.object({
     phoneScope: z.literal("OFFICE"),
     email: z.string().trim().toLowerCase().email().max(320),
     emailScope: z.literal("OFFICE"),
+    politicianPhone: z.string().trim().min(8).max(80).nullable().default(null),
+    politicianEmail: z.string().trim().toLowerCase().email().max(320).nullable().default(null),
     advisorPhone: z.string().trim().min(8).max(80).nullable().default(null),
     advisorEmail: z.string().trim().toLowerCase().email().max(320).nullable().default(null),
     whatsapp: z.string().trim().min(8).max(80).nullable().default(null),
@@ -120,8 +128,9 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         minimumPopulation: 30_000,
         currentMandateRequired: true,
         requiredContacts: ["officePhone", "officeEmail"],
-        optionalContactsWhenAvailable: ["advisorPhone", "advisorEmail", "whatsapp", "instagram"],
-        queuePriority: ["smallerMunicipalityPopulation", "councilorBeforeMayor", "capitalLastByPopulation"],
+        optionalContactsWhenAvailable: ["politicianPhone", "politicianEmail", "advisorPhone", "advisorEmail", "whatsapp", "instagram"],
+        queuePriority: ["allNonCapitalsBeforeCapitals", "smallerMunicipalityPopulation", "councilorBeforeMayor"],
+        publicContactSources: ["TSE_2024", "DIVULGACANDCONTAS", "CITY_HALL", "CITY_COUNCIL", "OFFICIAL_GAZETTE", "INSTITUTIONAL_PROFILE"],
         inferContactData: false,
         directLeadCreation: false,
         emailSending: false,
@@ -178,14 +187,17 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         select: { id: true },
       });
       if (!batch) return { target: null, queueEmpty: true };
-      const target = await transaction.prospectingResearchTarget.findFirst({
-        where: {
-          workspaceId: auth.workspaceId,
-          batchId: batch.id,
-          OR: [{ status: "PENDING" }, { status: "CLAIMED", leaseExpiresAt: { lte: now } }],
-        },
-        orderBy: [{ population: "asc" }, { role: "desc" }, { stateCode: "asc" }, { municipalityName: "asc" }, { politicianName: "asc" }],
+      const queueWhere = {
+        workspaceId: auth.workspaceId,
+        batchId: batch.id,
+        OR: [{ status: "PENDING" as const }, { status: "CLAIMED" as const, leaseExpiresAt: { lte: now } }],
+      };
+      const orderBy = [{ population: "asc" as const }, { role: "desc" as const }, { stateCode: "asc" as const }, { municipalityName: "asc" as const }, { politicianName: "asc" as const }];
+      let target = await transaction.prospectingResearchTarget.findFirst({
+        where: { ...queueWhere, municipalityName: { notIn: BRAZILIAN_CAPITALS } },
+        orderBy,
       });
+      target ??= await transaction.prospectingResearchTarget.findFirst({ where: queueWhere, orderBy });
       if (!target) return { target: null, queueEmpty: true };
       const leaseOwner = `dot:${auth.authorizingActorId}:${crypto.randomUUID()}`;
       const leaseExpiresAt = new Date(now.getTime() + LEASE_MINUTES * 60_000);
@@ -194,7 +206,7 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         data: { status: "CLAIMED", leaseOwner, leaseExpiresAt, attemptCount: { increment: 1 }, lastReasonCode: null },
         select: { id: true, batchId: true, tseCandidateId: true, externalIdentityKey: true, role: true, politicianName: true, ballotName: true, municipalityName: true, municipalityIbgeCode: true, stateCode: true, population: true },
       });
-      return { target: { ...claimed, leaseOwner, leaseExpiresAt: leaseExpiresAt.toISOString(), instructions: "Valide o mandato atual em fonte municipal oficial. Só cadastre com telefone e e-mail do gabinete comprovados. Procure e registre também telefone/e-mail de assessor, WhatsApp e Instagram quando existirem, cada um com sua fonte, sem inferir nenhum dado." }, queueEmpty: false };
+      return { target: { ...claimed, leaseOwner, leaseExpiresAt: leaseExpiresAt.toISOString(), instructions: "Valide o mandato atual em fonte municipal oficial. Só cadastre com telefone e e-mail do gabinete comprovados. Pesquise também no TSE 2024/DivulgaCandContas e registre telefone/e-mail público do político ou campanha, telefone/e-mail de assessor, WhatsApp e Instagram quando publicados, cada um com fonte. Nunca use dado vazado, restrito ou inferido." }, queueEmpty: false };
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 20_000 });
   }
 

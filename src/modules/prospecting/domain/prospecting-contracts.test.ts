@@ -33,6 +33,8 @@ describe("prospectCandidateInputSchema", () => {
   it("preserva contatos adicionais somente quando cada dado possui fonte e escopo", () => {
     const candidate = validCandidate();
     Object.assign(candidate.contact, {
+      politicianPhone: "+5511999990000",
+      politicianEmail: "politico.publico@example.org",
       advisorPhone: "+551140001001",
       advisorEmail: "assessor@example.gov.br",
       whatsapp: "+5511999990001",
@@ -41,12 +43,17 @@ describe("prospectCandidateInputSchema", () => {
       instagramScope: "POLITICIAN",
     });
     candidate.sources.push(
+      { field: "politician_phone", type: "TSE", url: "https://divulgacandcontas.tse.jus.br/candidato/123", observedAt: candidate.sources[0]!.observedAt, contactScope: "POLITICIAN", validationMethod: "TSE_2024_PUBLIC_CONTACT_CHECK" },
+      { field: "politician_email", type: "TSE", url: "https://divulgacandcontas.tse.jus.br/candidato/123", observedAt: candidate.sources[0]!.observedAt, contactScope: "POLITICIAN", validationMethod: "TSE_2024_PUBLIC_CONTACT_CHECK" },
       { field: "advisor_phone", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/contato/123", observedAt: candidate.sources[0]!.observedAt, contactScope: "ADVISOR", validationMethod: "OFFICIAL_SOURCE_CHECK" },
       { field: "advisor_email", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/contato/123", observedAt: candidate.sources[0]!.observedAt, contactScope: "ADVISOR", validationMethod: "OFFICIAL_SOURCE_CHECK" },
       { field: "whatsapp", type: "CITY_COUNCIL", url: "https://www.saopaulo.sp.leg.br/contato/123", observedAt: candidate.sources[0]!.observedAt, contactScope: "ADVISOR", validationMethod: "OFFICIAL_SOURCE_CHECK" },
       { field: "instagram", type: "INSTITUTIONAL_PROFILE", url: "https://www.instagram.com/vereador", observedAt: candidate.sources[0]!.observedAt, contactScope: "POLITICIAN", validationMethod: "PUBLIC_PROFILE_CHECK" },
     );
     expect(prospectCandidateInputSchema.safeParse(candidate).success).toBe(true);
+    candidate.sources = candidate.sources.filter((source) => source.field !== "politician_email");
+    expect(prospectCandidateInputSchema.safeParse(candidate).success).toBe(false);
+    candidate.sources.push({ field: "politician_email", type: "TSE", url: "https://divulgacandcontas.tse.jus.br/candidato/123", observedAt: candidate.sources[0]!.observedAt, contactScope: "POLITICIAN", validationMethod: "TSE_2024_PUBLIC_CONTACT_CHECK" });
     candidate.sources = candidate.sources.filter((source) => source.field !== "advisor_email");
     expect(prospectCandidateInputSchema.safeParse(candidate).success).toBe(false);
   });

@@ -109,7 +109,7 @@ function officialSourceDomain(type: z.infer<typeof sourceTypeSchema>, value: str
 }
 
 export const prospectCandidateSourceSchema = z.object({
-  field: z.enum(["role", "population", "phone", "email", "advisor_phone", "advisor_email", "whatsapp", "instagram", "mandate"]),
+  field: z.enum(["role", "population", "phone", "email", "politician_phone", "politician_email", "advisor_phone", "advisor_email", "whatsapp", "instagram", "mandate"]),
   type: sourceTypeSchema,
   url: z.string().trim().max(2_000).refine(publicHttpsUrl, "A fonte deve ser uma URL HTTPS pública."),
   observedAt: z.string().datetime({ offset: true }),
@@ -125,8 +125,8 @@ export const prospectCandidateSourceSchema = z.object({
     context.addIssue({ code: "custom", path: ["field"], message: "A fonte IBGE só pode comprovar a população." });
   }
   if (value.type === "TSE") {
-    if (value.field !== "role") {
-      context.addIssue({ code: "custom", path: ["field"], message: "A fonte TSE 2024 só pode comprovar a identidade eleitoral." });
+    if (!["role", "politician_phone", "politician_email"].includes(value.field)) {
+      context.addIssue({ code: "custom", path: ["field"], message: "A fonte TSE 2024 só pode comprovar identidade eleitoral ou contato público do candidato." });
     }
     const sourceVersion = `${value.url} ${value.validationMethod}`;
     if (!sourceVersion.includes("2024")) {
@@ -159,6 +159,8 @@ export const prospectCandidateInputSchema = z.object({
     phoneScope: z.literal("OFFICE"),
     email: z.string().trim().toLowerCase().email().max(320),
     emailScope: z.literal("OFFICE"),
+    politicianPhone: z.string().trim().min(8).max(80).nullable().default(null),
+    politicianEmail: z.string().trim().toLowerCase().email().max(320).nullable().default(null),
     advisorPhone: z.string().trim().min(8).max(80).nullable().default(null),
     advisorEmail: z.string().trim().toLowerCase().email().max(320).nullable().default(null),
     whatsapp: z.string().trim().min(8).max(80).nullable().default(null),
@@ -187,7 +189,7 @@ export const prospectCandidateInputSchema = z.object({
   if (!phone.success) {
     context.addIssue({ code: "custom", path: ["contact", "phone"], message: phone.message });
   }
-  for (const [field, raw] of [["advisorPhone", value.contact.advisorPhone], ["whatsapp", value.contact.whatsapp]] as const) {
+  for (const [field, raw] of [["politicianPhone", value.contact.politicianPhone], ["advisorPhone", value.contact.advisorPhone], ["whatsapp", value.contact.whatsapp]] as const) {
     if (!raw) continue;
     const normalized = normalizePhone(raw);
     if (!normalized.success) context.addIssue({ code: "custom", path: ["contact", field], message: normalized.message });
@@ -201,6 +203,8 @@ export const prospectCandidateInputSchema = z.object({
   const optionalEvidence = [
     ["phone", "phone", "OFFICE", value.contact.phone],
     ["email", "email", "OFFICE", value.contact.email],
+    ["politicianPhone", "politician_phone", "POLITICIAN", value.contact.politicianPhone],
+    ["politicianEmail", "politician_email", "POLITICIAN", value.contact.politicianEmail],
     ["advisorPhone", "advisor_phone", "ADVISOR", value.contact.advisorPhone],
     ["advisorEmail", "advisor_email", "ADVISOR", value.contact.advisorEmail],
     ["whatsapp", "whatsapp", value.contact.whatsappScope, value.contact.whatsapp],
@@ -301,6 +305,7 @@ export const openDotHeadersSchema = z.object({
 
 export function candidateFingerprint(value: ProspectCandidateInput): string {
   const phone = normalizePhone(value.contact.phone);
+  const politicianPhone = value.contact.politicianPhone ? normalizePhone(value.contact.politicianPhone) : null;
   const advisorPhone = value.contact.advisorPhone ? normalizePhone(value.contact.advisorPhone) : null;
   const whatsapp = value.contact.whatsapp ? normalizePhone(value.contact.whatsapp) : null;
   return createHash("sha256").update(JSON.stringify({
@@ -310,6 +315,8 @@ export function candidateFingerprint(value: ProspectCandidateInput): string {
     municipality: value.municipality.ibgeCode,
     phone: phone.success ? phone.normalizedPhone : value.contact.phone,
     email: value.contact.email,
+    politicianPhone: politicianPhone?.success ? politicianPhone.normalizedPhone : value.contact.politicianPhone,
+    politicianEmail: value.contact.politicianEmail,
     advisorPhone: advisorPhone?.success ? advisorPhone.normalizedPhone : value.contact.advisorPhone,
     advisorEmail: value.contact.advisorEmail,
     whatsapp: whatsapp?.success ? whatsapp.normalizedPhone : value.contact.whatsapp,

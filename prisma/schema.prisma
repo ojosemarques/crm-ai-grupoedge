@@ -3504,45 +3504,49 @@ model ProspectingReconciliationState {
 }
 
 model ProspectCandidate {
-  id                     String                  @id @default(uuid()) @db.Uuid
-  workspaceId            String                  @db.Uuid
-  batchId                String                  @db.Uuid
-  externalIdentityKey    String
-  idempotencyKey         String
-  status                 ProspectCandidateStatus @default(RECEIVED)
-  politicianName         String
-  role                   ProspectingRole
-  mandate                String
-  municipalityName       String
-  municipalityIbgeCode   String
-  stateCode              String
-  population             Int
-  populationEdition      String
-  phone                  String
-  normalizedPhone        String
-  phoneScope             ProspectContactScope
-  email                  String
-  normalizedEmail        String
-  emailScope             ProspectContactScope
-  advisorPhone           String?
-  normalizedAdvisorPhone String?
-  advisorEmail           String?
-  normalizedAdvisorEmail String?
-  whatsapp               String?
-  normalizedWhatsapp     String?
-  whatsappScope          ProspectContactScope?
-  instagram              String?
-  instagramScope         ProspectContactScope?
-  mandateVerifiedAt      DateTime                @db.Timestamptz(3)
-  fingerprint            String
-  rejectionReasonCode    String?
-  reviewReasonCode       String?
-  plannedReleaseDate     DateTime?               @db.Date
-  releasedAt             DateTime?               @db.Timestamptz(3)
-  leadId                 String?                 @db.Uuid
-  revision               Int                     @default(1)
-  createdAt              DateTime                @default(now()) @db.Timestamptz(3)
-  updatedAt              DateTime                @updatedAt @db.Timestamptz(3)
+  id                        String                  @id @default(uuid()) @db.Uuid
+  workspaceId               String                  @db.Uuid
+  batchId                   String                  @db.Uuid
+  externalIdentityKey       String
+  idempotencyKey            String
+  status                    ProspectCandidateStatus @default(RECEIVED)
+  politicianName            String
+  role                      ProspectingRole
+  mandate                   String
+  municipalityName          String
+  municipalityIbgeCode      String
+  stateCode                 String
+  population                Int
+  populationEdition         String
+  phone                     String
+  normalizedPhone           String
+  phoneScope                ProspectContactScope
+  email                     String
+  normalizedEmail           String
+  emailScope                ProspectContactScope
+  politicianPhone           String?
+  normalizedPoliticianPhone String?
+  politicianEmail           String?
+  normalizedPoliticianEmail String?
+  advisorPhone              String?
+  normalizedAdvisorPhone    String?
+  advisorEmail              String?
+  normalizedAdvisorEmail    String?
+  whatsapp                  String?
+  normalizedWhatsapp        String?
+  whatsappScope             ProspectContactScope?
+  instagram                 String?
+  instagramScope            ProspectContactScope?
+  mandateVerifiedAt         DateTime                @db.Timestamptz(3)
+  fingerprint               String
+  rejectionReasonCode       String?
+  reviewReasonCode          String?
+  plannedReleaseDate        DateTime?               @db.Date
+  releasedAt                DateTime?               @db.Timestamptz(3)
+  leadId                    String?                 @db.Uuid
+  revision                  Int                     @default(1)
+  createdAt                 DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt                 DateTime                @updatedAt @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, externalIdentityKey])
@@ -3553,6 +3557,8 @@ model ProspectCandidate {
   @@index([workspaceId, municipalityIbgeCode, role, mandate])
   @@index([workspaceId, normalizedPhone])
   @@index([workspaceId, normalizedEmail])
+  @@index([workspaceId, normalizedPoliticianPhone])
+  @@index([workspaceId, normalizedPoliticianEmail])
   @@index([workspaceId, normalizedAdvisorPhone])
   @@index([workspaceId, normalizedAdvisorEmail])
   @@index([workspaceId, normalizedWhatsapp])

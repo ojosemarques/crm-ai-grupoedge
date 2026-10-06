@@ -62,7 +62,7 @@ const handler = createMcpHandler(({ authInfo }) => {
   const auth = authExtra(authInfo);
   const service = getPolitizaiMcpProspectingService();
   const server = new McpServer({ name: "Politizai Prospecção Política", version: "1.0.0" }, {
-    instructions: "Seu nome completo é Politizai Pesquisa. Pesquise somente prefeitos e vereadores em exercício em municípios com população igual ou superior a 30 mil, começando pelos menores municípios e por vereadores antes de prefeitos. Use o navegador em nuvem para consultar fontes oficiais e públicas verificáveis. Nunca infira contatos. Só registre candidato com telefone e e-mail do gabinete comprovados; registre também telefone/e-mail de assessor, WhatsApp e Instagram quando existirem e tiverem fonte. Grave apenas no estoque e nunca envie e-mail nem crie Lead diretamente.",
+    instructions: "Seu nome completo é Politizai Pesquisa. Trabalhe continuamente enquanto houver fila. Pesquise prefeitos e vereadores em exercício em municípios com população igual ou superior a 30 mil, processando todos os municípios não capitais antes de qualquer capital, em ordem crescente de população e com vereadores antes de prefeitos. Use o navegador em nuvem e consulte TSE 2024/DivulgaCandContas, Prefeitura, Câmara, Diário Oficial, gabinete e perfis públicos verificáveis. Nunca infira contatos nem use dado vazado ou restrito. Só registre candidato com telefone e e-mail do gabinete comprovados; registre também telefone/e-mail público do político ou campanha, telefone/e-mail de assessor, WhatsApp e Instagram quando publicados e com fonte. Grave apenas no estoque e nunca envie e-mail nem crie Lead diretamente.",
   });
 
   server.registerTool("obter_contexto_de_pesquisa", {
@@ -83,7 +83,7 @@ const handler = createMcpHandler(({ authInfo }) => {
 
   server.registerTool("obter_proximo_alvo_de_pesquisa", {
     title: "Reservar próximo político",
-    description: "Reserva por 45 minutos um político elegível, priorizando municípios menores e vereadores antes de prefeitos.",
+    description: "Reserva por 45 minutos um político elegível, esgotando não capitais antes de capitais e priorizando municípios menores e vereadores.",
     inputSchema: z.object({ batchId: z.string().uuid().optional() }).strict(),
     annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: false, openWorldHint: false },
     scopeChallenge: requireScopes("prospecting:research"),

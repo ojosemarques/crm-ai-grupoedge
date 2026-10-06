@@ -85,6 +85,8 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
     }
     const phone = normalizePhone(input.contact.phone);
     if (!phone.success) fail(phone.message, "PROSPECTING_PHONE_INVALID", 400);
+    const politicianPhone = input.contact.politicianPhone ? normalizePhone(input.contact.politicianPhone) : null;
+    if (politicianPhone && !politicianPhone.success) fail(politicianPhone.message, "PROSPECTING_POLITICIAN_PHONE_INVALID", 400);
     const advisorPhone = input.contact.advisorPhone ? normalizePhone(input.contact.advisorPhone) : null;
     if (advisorPhone && !advisorPhone.success) fail(advisorPhone.message, "PROSPECTING_ADVISOR_PHONE_INVALID", 400);
     const whatsapp = input.contact.whatsapp ? normalizePhone(input.contact.whatsapp) : null;
@@ -113,11 +115,11 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
     }
     const [blockedPoint, blockedEmail] = await Promise.all([
       database.contactPoint.findFirst({
-        where: { workspaceId: principal.workspaceId, normalizedValue: { in: [phone.normalizedPhone, input.contact.email, advisorPhone?.success ? advisorPhone.normalizedPhone : null, input.contact.advisorEmail, whatsapp?.success ? whatsapp.normalizedPhone : null].filter((value): value is string => Boolean(value)) }, doNotContact: true, deletedAt: null },
+        where: { workspaceId: principal.workspaceId, normalizedValue: { in: [phone.normalizedPhone, input.contact.email, politicianPhone?.success ? politicianPhone.normalizedPhone : null, input.contact.politicianEmail, advisorPhone?.success ? advisorPhone.normalizedPhone : null, input.contact.advisorEmail, whatsapp?.success ? whatsapp.normalizedPhone : null].filter((value): value is string => Boolean(value)) }, doNotContact: true, deletedAt: null },
         select: { id: true },
       }),
       database.emailSuppression.findFirst({
-        where: { workspaceId: principal.workspaceId, normalizedEmail: { in: [input.contact.email, input.contact.advisorEmail].filter((value): value is string => Boolean(value)) }, action: "APPLIED" },
+        where: { workspaceId: principal.workspaceId, normalizedEmail: { in: [input.contact.email, input.contact.politicianEmail, input.contact.advisorEmail].filter((value): value is string => Boolean(value)) }, action: "APPLIED" },
         orderBy: { effectiveAt: "desc" },
         select: { id: true },
       }),
@@ -154,6 +156,10 @@ export function createProspectingStagingService(options: Readonly<{ database: Pr
         email: input.contact.email,
         normalizedEmail: input.contact.email,
         emailScope: input.contact.emailScope,
+        politicianPhone: input.contact.politicianPhone,
+        normalizedPoliticianPhone: politicianPhone?.success ? politicianPhone.normalizedPhone : null,
+        politicianEmail: input.contact.politicianEmail,
+        normalizedPoliticianEmail: input.contact.politicianEmail,
         advisorPhone: input.contact.advisorPhone,
         normalizedAdvisorPhone: advisorPhone?.success ? advisorPhone.normalizedPhone : null,
         advisorEmail: input.contact.advisorEmail,
