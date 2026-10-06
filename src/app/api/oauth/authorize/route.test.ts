@@ -29,10 +29,10 @@ vi.mock("@/modules/prospecting/domain/politizai-mcp-config", () => ({
 }));
 
 const authorization = {
-  client_id: "https://chatgpt.com/oauth/client.json",
+  client_id: "https://chatgpt.com/oauth/7q5u9EYDB8WK/client.json",
   code_challenge: "c".repeat(43),
   code_challenge_method: "S256" as const,
-  redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+  redirect_uri: "https://chatgpt.com/connector/oauth/7q5u9EYDB8WK",
   resource: "https://crm.example/api/mcp/politizai",
   response_type: "code" as const,
   scopes: ["prospecting:read", "prospecting:research", "prospecting:review"],
@@ -49,7 +49,7 @@ describe("GET /api/oauth/authorize", () => {
   it("aceita ui_locales enviado pelo ChatGPT sem repassá-lo ao contrato OAuth", async () => {
     const { GET } = await import("@/app/api/oauth/authorize/route");
     const response = await GET(new NextRequest(
-      "https://crm.example/api/oauth/authorize?response_type=code&client_id=https%3A%2F%2Fchatgpt.com%2Foauth%2Fclient.json&redirect_uri=https%3A%2F%2Fchatgpt.com%2Fconnector%2Foauth%2Fcallback&scope=prospecting%3Aread+prospecting%3Aresearch+prospecting%3Areview&code_challenge=ccccccccccccccccccccccccccccccccccccccccccc&code_challenge_method=S256&resource=https%3A%2F%2Fcrm.example%2Fapi%2Fmcp%2Fpolitizai&state=oauth-state&ui_locales=pt-BR",
+      "https://crm.example/api/oauth/authorize?response_type=code&client_id=https%3A%2F%2Fchatgpt.com%2Foauth%2F7q5u9EYDB8WK%2Fclient.json&redirect_uri=https%3A%2F%2Fchatgpt.com%2Fconnector%2Foauth%2F7q5u9EYDB8WK&scope=prospecting%3Aread+prospecting%3Aresearch+prospecting%3Areview&code_challenge=ccccccccccccccccccccccccccccccccccccccccccc&code_challenge_method=S256&resource=https%3A%2F%2Fcrm.example%2Fapi%2Fmcp%2Fpolitizai&state=oauth-state&ui_locales=pt-BR",
     ));
 
     expect(response.status).toBe(200);

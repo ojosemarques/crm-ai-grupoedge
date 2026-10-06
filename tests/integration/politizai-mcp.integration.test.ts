@@ -7,7 +7,7 @@ import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createPolitizaiMcpOAuthService } from "@/modules/prospecting/application/politizai-mcp-oauth-service";
 import { createPolitizaiMcpProspectingService } from "@/modules/prospecting/application/politizai-mcp-prospecting-service";
-import { POLITIZAI_MCP_CLIENT_ID, POLITIZAI_MCP_REDIRECT_URI, getPolitizaiMcpPublicConfig } from "@/modules/prospecting/domain/politizai-mcp-config";
+import { POLITIZAI_MCP_CALLBACK_CLIENT_ID, POLITIZAI_MCP_CALLBACK_REDIRECT_URI, getPolitizaiMcpPublicConfig } from "@/modules/prospecting/domain/politizai-mcp-config";
 import { ensureProductionFoundationInTransaction } from "@/modules/settings/application/production-foundation-service";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
@@ -49,8 +49,8 @@ describe("MCP privado Politizai", () => {
     const resource = getPolitizaiMcpPublicConfig().resource.href;
     const request = oauth.parseAuthorizationRequest({
       response_type: "code",
-      client_id: POLITIZAI_MCP_CLIENT_ID,
-      redirect_uri: POLITIZAI_MCP_REDIRECT_URI,
+      client_id: POLITIZAI_MCP_CALLBACK_CLIENT_ID,
+      redirect_uri: POLITIZAI_MCP_CALLBACK_REDIRECT_URI,
       code_challenge: createHash("sha256").update(verifier).digest("base64url"),
       code_challenge_method: "S256",
       state: "integration-state",
@@ -58,13 +58,13 @@ describe("MCP privado Politizai", () => {
       scope: "prospecting:read prospecting:research prospecting:review",
     });
     const code = await oauth.createAuthorizationCode(context, request);
-    const first = await oauth.exchangeAuthorizationCode({ code, codeVerifier: verifier, clientId: POLITIZAI_MCP_CLIENT_ID, redirectUri: POLITIZAI_MCP_REDIRECT_URI, resource });
-    await expect(oauth.exchangeAuthorizationCode({ code, codeVerifier: verifier, clientId: POLITIZAI_MCP_CLIENT_ID, redirectUri: POLITIZAI_MCP_REDIRECT_URI, resource })).rejects.toMatchObject({ code: OAuthErrorCode.InvalidGrant });
-    await expect(oauth.verifyAccessToken(first.access_token)).resolves.toMatchObject({ clientId: POLITIZAI_MCP_CLIENT_ID, scopes: ["prospecting:read", "prospecting:research", "prospecting:review"] });
-    const rotated = await oauth.refreshAccessToken({ refreshToken: first.refresh_token, clientId: POLITIZAI_MCP_CLIENT_ID, resource });
-    await expect(oauth.refreshAccessToken({ refreshToken: first.refresh_token, clientId: POLITIZAI_MCP_CLIENT_ID, resource })).rejects.toMatchObject({ code: OAuthErrorCode.InvalidGrant });
+    const first = await oauth.exchangeAuthorizationCode({ code, codeVerifier: verifier, clientId: POLITIZAI_MCP_CALLBACK_CLIENT_ID, redirectUri: POLITIZAI_MCP_CALLBACK_REDIRECT_URI, resource });
+    await expect(oauth.exchangeAuthorizationCode({ code, codeVerifier: verifier, clientId: POLITIZAI_MCP_CALLBACK_CLIENT_ID, redirectUri: POLITIZAI_MCP_CALLBACK_REDIRECT_URI, resource })).rejects.toMatchObject({ code: OAuthErrorCode.InvalidGrant });
+    await expect(oauth.verifyAccessToken(first.access_token)).resolves.toMatchObject({ clientId: POLITIZAI_MCP_CALLBACK_CLIENT_ID, scopes: ["prospecting:read", "prospecting:research", "prospecting:review"] });
+    const rotated = await oauth.refreshAccessToken({ refreshToken: first.refresh_token, clientId: POLITIZAI_MCP_CALLBACK_CLIENT_ID, resource });
+    await expect(oauth.refreshAccessToken({ refreshToken: first.refresh_token, clientId: POLITIZAI_MCP_CALLBACK_CLIENT_ID, resource })).rejects.toMatchObject({ code: OAuthErrorCode.InvalidGrant });
     await expect(oauth.verifyAccessToken(rotated.access_token)).resolves.toMatchObject({ resource: new URL(resource) });
-    await expect(oauth.refreshAccessToken({ refreshToken: rotated.refresh_token, clientId: POLITIZAI_MCP_CLIENT_ID, resource: "https://outro.example/mcp" })).rejects.toMatchObject({ code: OAuthErrorCode.InvalidGrant });
+    await expect(oauth.refreshAccessToken({ refreshToken: rotated.refresh_token, clientId: POLITIZAI_MCP_CALLBACK_CLIENT_ID, resource: "https://outro.example/mcp" })).rejects.toMatchObject({ code: OAuthErrorCode.InvalidGrant });
   });
 
   it("concede um alvo por vez e registra apenas no estoque, sem Lead nem e-mail", async () => {

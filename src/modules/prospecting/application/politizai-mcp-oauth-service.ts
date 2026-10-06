@@ -5,10 +5,10 @@ import { z } from "zod";
 
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import {
-  POLITIZAI_MCP_CLIENT_ID,
-  POLITIZAI_MCP_REDIRECT_URI,
   getPolitizaiMcpPublicConfig,
   getPolitizaiMcpSigningSecret,
+  isAllowedPolitizaiMcpClientId,
+  isAllowedPolitizaiMcpClientRegistration,
   normalizeMcpScopes,
 } from "@/modules/prospecting/domain/politizai-mcp-config";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -24,20 +24,23 @@ const codeVerifierSchema = z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/);
 
 const authorizationRequestSchema = z.object({
   response_type: z.literal("code"),
-  client_id: z.literal(POLITIZAI_MCP_CLIENT_ID),
-  redirect_uri: z.literal(POLITIZAI_MCP_REDIRECT_URI),
+  client_id: z.string().url(),
+  redirect_uri: z.string().url(),
   code_challenge: codeChallengeSchema,
   code_challenge_method: z.literal("S256"),
   state: stateSchema,
   resource: z.string().url(),
   scope: z.string().max(500).optional(),
-}).strict();
+}).strict().refine(
+  (request) => isAllowedPolitizaiMcpClientRegistration(request.client_id, request.redirect_uri),
+  { message: "Cliente OAuth ou URI de retorno não permitido." },
+);
 
 const accessClaimsSchema = z.object({
   iss: z.string().url(),
   aud: z.string().url(),
   sub: z.string().uuid(),
-  client_id: z.literal(POLITIZAI_MCP_CLIENT_ID),
+  client_id: z.string().url().refine(isAllowedPolitizaiMcpClientId),
   workspace_id: z.string().uuid(),
   member_id: z.string().uuid(),
   actor_id: z.string().uuid(),
@@ -253,7 +256,7 @@ export function createPolitizaiMcpOAuthService(options: OAuthServiceOptions) {
     resource: string;
   }>) {
     const codeVerifier = codeVerifierSchema.safeParse(input.codeVerifier);
-    if (!codeVerifier.success || input.clientId !== POLITIZAI_MCP_CLIENT_ID || input.redirectUri !== POLITIZAI_MCP_REDIRECT_URI) invalidGrant();
+    if (!codeVerifier.success || !isAllowedPolitizaiMcpClientRegistration(input.clientId, input.redirectUri)) invalidGrant();
     const config = getPolitizaiMcpPublicConfig();
     if (input.resource !== config.resource.href) invalidGrant();
     return options.database.$transaction(async (transaction) => {
@@ -293,7 +296,7 @@ export function createPolitizaiMcpOAuthService(options: OAuthServiceOptions) {
   }
 
   async function refreshAccessToken(input: Readonly<{ refreshToken: string; clientId: string; resource: string; scope?: string }>) {
-    if (input.clientId !== POLITIZAI_MCP_CLIENT_ID || input.resource !== getPolitizaiMcpPublicConfig().resource.href) invalidGrant();
+    if (!isAllowedPolitizaiMcpClientId(input.clientId) || input.resource !== getPolitizaiMcpPublicConfig().resource.href) invalidGrant();
     return options.database.$transaction(async (transaction) => {
       const tokenHash = sha256(input.refreshToken);
       await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`mcp-oauth-refresh:${tokenHash}`}, 0))`;
@@ -326,7 +329,7 @@ export function createPolitizaiMcpOAuthService(options: OAuthServiceOptions) {
   }
 
   async function revokeRefreshToken(token: string, clientId: string) {
-    if (clientId !== POLITIZAI_MCP_CLIENT_ID) return;
+    if (!isAllowedPolitizaiMcpClientId(clientId)) return;
     await options.database.$transaction(async (transaction) => {
       const row = await transaction.mcpOAuthRefreshToken.findUnique({ where: { tokenHash: sha256(token) } });
       if (!row || row.clientId !== clientId || row.revokedAt) return;

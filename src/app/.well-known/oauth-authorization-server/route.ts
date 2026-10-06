@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
-  POLITIZAI_MCP_CLIENT_ID,
+  POLITIZAI_MCP_CLIENT_REGISTRATIONS,
   POLITIZAI_MCP_SCOPES,
   getPolitizaiMcpPublicConfig,
 } from "@/modules/prospecting/domain/politizai-mcp-config";
@@ -24,6 +24,6 @@ export function GET() {
     scopes_supported: POLITIZAI_MCP_SCOPES,
     client_id_metadata_document_supported: true,
     client_registration_types_supported: ["client_id_metadata_document"],
-    client_metadata_documents_supported: [POLITIZAI_MCP_CLIENT_ID],
+    client_metadata_documents_supported: POLITIZAI_MCP_CLIENT_REGISTRATIONS.map(({ clientId }) => clientId),
   }, { headers: { "Cache-Control": "public, max-age=300" } });
 }

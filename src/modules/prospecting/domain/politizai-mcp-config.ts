@@ -11,6 +11,12 @@ export const POLITIZAI_MCP_SCOPES = [
 
 export const POLITIZAI_MCP_CLIENT_ID = "https://chatgpt.com/oauth/client.json";
 export const POLITIZAI_MCP_REDIRECT_URI = "https://chatgpt.com/connector_platform_oauth_redirect";
+export const POLITIZAI_MCP_CALLBACK_CLIENT_ID = "https://chatgpt.com/oauth/7q5u9EYDB8WK/client.json";
+export const POLITIZAI_MCP_CALLBACK_REDIRECT_URI = "https://chatgpt.com/connector/oauth/7q5u9EYDB8WK";
+export const POLITIZAI_MCP_CLIENT_REGISTRATIONS = Object.freeze([
+  Object.freeze({ clientId: POLITIZAI_MCP_CLIENT_ID, redirectUri: POLITIZAI_MCP_REDIRECT_URI }),
+  Object.freeze({ clientId: POLITIZAI_MCP_CALLBACK_CLIENT_ID, redirectUri: POLITIZAI_MCP_CALLBACK_REDIRECT_URI }),
+]);
 export const POLITIZAI_MCP_PATH = "/api/mcp/politizai";
 
 export const PROSPECTING_SOURCE_SNAPSHOTS = Object.freeze({
@@ -78,4 +84,14 @@ export function normalizeMcpScopes(raw: string | null | undefined): string[] {
     });
   }
   return unique;
+}
+
+export function isAllowedPolitizaiMcpClientId(clientId: string): boolean {
+  return POLITIZAI_MCP_CLIENT_REGISTRATIONS.some((registration) => registration.clientId === clientId);
+}
+
+export function isAllowedPolitizaiMcpClientRegistration(clientId: string, redirectUri: string): boolean {
+  return POLITIZAI_MCP_CLIENT_REGISTRATIONS.some(
+    (registration) => registration.clientId === clientId && registration.redirectUri === redirectUri,
+  );
 }
