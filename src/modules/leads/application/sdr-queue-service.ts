@@ -61,6 +61,7 @@ type RawQueueRow = Readonly<{
   priorityReason: string | null;
   responsibleName: string | null;
   responsibleType: string;
+  pipelineName: string;
   stageName: string;
   stagePosition: number;
   receivedAt: Date;
@@ -266,6 +267,8 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       JOIN "workspaces" workspace ON workspace."id" = l."workspaceId"
       JOIN "pipeline_stages" stage
         ON stage."workspaceId" = l."workspaceId" AND stage."id" = l."currentStageId"
+      JOIN "pipelines" pipeline
+        ON pipeline."workspaceId" = l."workspaceId" AND pipeline."id" = l."pipelineId"
       LEFT JOIN "workspace_members" owner
         ON owner."workspaceId" = l."workspaceId" AND owner."id" = l."ownerMemberId"
       LEFT JOIN "users" owner_user ON owner_user."id" = owner."userId"
@@ -348,6 +351,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
             COALESCE(latest_score."reason", latest_cycle."priorityName") AS "priorityReason",
             COALESCE(owner_user."displayName", responsible_queue."name") AS "responsibleName",
             CASE WHEN owner."id" IS NULL THEN 'QUEUE' ELSE 'MEMBER' END AS "responsibleType",
+            pipeline."name" AS "pipelineName",
             stage."name" AS "stageName",
             stage."position" AS "stagePosition",
             COALESCE(latest_cycle."receivedAt", l."createdAt") AS "receivedAt",
@@ -567,6 +571,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           priorityReason: row.priorityReason,
           responsibleName: row.responsibleName ?? "Responsável não identificado",
           responsibleType: row.responsibleType === "QUEUE" ? "QUEUE" as const : "MEMBER" as const,
+          pipelineName: row.pipelineName,
           stageName: row.stageName,
           stagePosition: row.stagePosition,
           receivedAt: row.receivedAt.toISOString(),

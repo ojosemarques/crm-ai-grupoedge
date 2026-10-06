@@ -2,11 +2,8 @@ import { redirect } from "next/navigation";
 
 import {
   ProspectingActivities,
-  ProspectingEmails,
   ProspectingMetrics,
   ProspectingNav,
-  ProspectingOverview,
-  ProspectingSettings,
   ProspectingStock,
   prospectingViews,
   type ProspectingView,
@@ -33,7 +30,7 @@ export default async function ActiveProspectingPage({ searchParams }: Readonly<{
   const context = await requirePageAuthentication();
   const params = await searchParams;
   const requestedView = first(params.view);
-  const view: ProspectingView = prospectingViews.includes(requestedView as ProspectingView) ? requestedView as ProspectingView : "overview";
+  const view: ProspectingView = prospectingViews.includes(requestedView as ProspectingView) ? requestedView as ProspectingView : "pipeline";
   let pipelineScreen = null;
   let workspaceScreen;
   try {
@@ -65,18 +62,15 @@ export default async function ActiveProspectingPage({ searchParams }: Readonly<{
   return (
     <main className="page-canvas">
       <PageHeader
-        description="Estoque validado, liberação por capacidade, cadência manual e e-mails governados pelo CRM."
+        description="Pipeline comercial integrado aos leads, ao Meu Dia, às atividades e aos indicadores do CRM."
         eyebrow="Negócios"
         title={ACTIVE_PROSPECTING_PIPELINE_NAME}
       />
       <ProspectingNav active={view} />
-      {view === "overview" ? <ProspectingOverview screen={workspaceScreen} /> : null}
       {view === "pipeline" && pipelineScreen ? <PreSalesPipelineWorkspace basePath="/email-agente?view=pipeline" fixedQuery={{ view: "pipeline" }} initialView="board" key={pipelineScreen.pipelineId} screen={pipelineScreen} /> : null}
       {view === "stock" ? <ProspectingStock screen={workspaceScreen} /> : null}
       {view === "activities" ? <ProspectingActivities screen={workspaceScreen} /> : null}
-      {view === "emails" ? <ProspectingEmails screen={workspaceScreen} /> : null}
       {view === "metrics" ? <ProspectingMetrics screen={workspaceScreen} /> : null}
-      {view === "settings" ? <ProspectingSettings screen={workspaceScreen} /> : null}
     </main>
   );
 }

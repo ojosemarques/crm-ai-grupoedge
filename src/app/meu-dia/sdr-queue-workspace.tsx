@@ -157,7 +157,7 @@ function QueueRow({
           <span aria-hidden="true" className={styles.rowAvatar}>{item.fullName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("")}</span>{item.fullName}
         </Link>
         <p className={styles.rowMeta}>
-          {item.jobTitle ?? "Atuação não informada"} · {item.stageName}
+          {item.jobTitle ?? "Atuação não informada"} · {item.pipelineName} · {item.stageName}
         </p>
         <p className={styles.rowPain}>
           {item.pain ? `Dor: ${item.pain}` : "Dor não informada"}

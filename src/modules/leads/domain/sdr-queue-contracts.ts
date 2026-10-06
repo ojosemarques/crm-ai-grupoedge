@@ -39,6 +39,7 @@ export type SdrQueueItem = Readonly<{
   priorityReason: string | null;
   responsibleName: string;
   responsibleType: "MEMBER" | "QUEUE";
+  pipelineName: string;
   stageName: string;
   stagePosition: number;
   receivedAt: string;

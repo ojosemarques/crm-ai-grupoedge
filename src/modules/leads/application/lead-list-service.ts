@@ -436,6 +436,8 @@ function effectiveSourceSql(): Prisma.Sql {
     FROM "leads" l
     JOIN "pipeline_stages" stage
       ON stage."workspaceId" = l."workspaceId" AND stage."id" = l."currentStageId"
+    JOIN "pipelines" pipeline
+      ON pipeline."workspaceId" = l."workspaceId" AND pipeline."id" = l."pipelineId"
     JOIN "lead_sources" source
       ON source."workspaceId" = l."workspaceId"
       AND source."id" = COALESCE(l."latestSourceId", l."sourceId")
@@ -958,6 +960,7 @@ export function createLeadListService(options: LeadListServiceOptions) {
         campaign."name" AS "campaignName",
         creative."id"::text AS "creativeId",
         creative."name" AS "creativeName",
+        pipeline."name" AS "pipelineName",
         stage."id"::text AS "stageId",
         stage."name" AS "stageName",
         CASE WHEN latest_cycle."id" IS NULL THEN NULL ELSE ${seconds} END AS "slaSeconds",

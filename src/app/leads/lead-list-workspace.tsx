@@ -224,7 +224,7 @@ function cellValue(column: LeadListColumnKey, row: LeadListRow, screen: LeadList
     case "source": return <span className={styles.sourceTag}>{row.sourceName}</span>;
     case "campaign": return row.campaignName ?? "Sem campanha";
     case "creative": return row.creativeName ?? "Sem criativo";
-    case "stage": return <span className="stage-badge">{row.stageName}</span>;
+    case "stage": return <span className="stage-badge">{row.pipelineName} · {row.stageName}</span>;
     case "status": return <span className={styles.status} data-status={row.status}>{statusLabels[row.status] ?? row.status}</span>;
     case "sla": return <span data-sla-band={row.slaBand}>{slaLabel(row)}</span>;
     case "age": return formatElapsed(row.receivedAt, screen.list.generatedAt);

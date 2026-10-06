@@ -24,17 +24,12 @@ test("administrador consulta a Prospecção Ativa com os gates externos fechados
 
     await expect(page.getByRole("heading", { name: "Prospecção Ativa", level: 1 })).toBeVisible();
     const navigation = page.getByRole("navigation", { name: "Áreas da Prospecção Ativa" });
-    await expect(navigation.getByRole("link")).toHaveCount(7);
-    await expect(page.getByRole("heading", { name: "Estoque pronto" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Saúde e bloqueios" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Capacidade projetada" })).toBeVisible();
-
-    await navigation.getByRole("link", { name: "Configuração" }).click();
-    await expect(page).toHaveURL(/\/email-agente\?view=settings$/);
-    await expect(page.getByText("Pausada por padrão seguro", { exact: true })).toBeVisible();
-    await expect(page.getByText("Bloqueado", { exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Templates" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Remetentes", exact: true })).toBeVisible();
+    await expect(navigation.getByRole("link")).toHaveCount(4);
+    await expect(navigation.getByRole("link", { name: "Pipeline", exact: true })).toHaveAttribute("data-active", "true");
+    await expect(page.getByRole("region", { name: "Quadro do pipeline" })).toBeVisible();
+    for (const removedLabel of ["Visão geral", "E-mails", "Configurações"]) {
+      await expect(navigation.getByRole("link", { name: removedLabel, exact: true })).toHaveCount(0);
+    }
 
     const dimensions = await page.evaluate(() => ({
       clientWidth: document.documentElement.clientWidth,

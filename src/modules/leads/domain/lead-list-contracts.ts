@@ -97,6 +97,7 @@ export type LeadListRow = Readonly<{
   campaignName: string | null;
   creativeId: string | null;
   creativeName: string | null;
+  pipelineName: string;
   stageId: string;
   stageName: string;
   slaSeconds: number | null;

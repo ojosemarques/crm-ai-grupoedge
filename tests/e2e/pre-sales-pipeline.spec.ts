@@ -135,11 +135,13 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
   await expect(page.getByRole("heading", { name: "Prospecção Ativa", exact: true })).toBeVisible();
   await expect(activeProspectingLink).toHaveAttribute("aria-current", "page");
   const prospectingAreas = page.getByRole("navigation", { name: "Áreas da Prospecção Ativa" });
-  for (const label of ["Visão geral", "Pipeline", "Estoque", "Atividades", "E-mails", "Métricas", "Configurações"]) {
+  for (const label of ["Pipeline", "Estoque", "Atividades", "Métricas"]) {
     await expect(prospectingAreas.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
-  await prospectingAreas.getByRole("link", { name: "Pipeline", exact: true }).click();
-  await expect(page).toHaveURL(/\/email-agente\?view=pipeline/);
+  for (const removedLabel of ["Visão geral", "E-mails", "Configurações"]) {
+    await expect(prospectingAreas.getByRole("link", { name: removedLabel, exact: true })).toHaveCount(0);
+  }
+  await expect(prospectingAreas.getByRole("link", { name: "Pipeline", exact: true })).toHaveAttribute("data-active", "true");
   await expect(page.getByRole("navigation", { name: "Selecionar pipeline" })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Quadro do pipeline" })).toBeVisible();
   for (const stage of ["Novo lead", "Abordagem inicial", "Cadência ativa", "Conversa iniciada", "Reunião marcada", "Encerrado — sem retorno", "Descartado"]) {
@@ -151,19 +153,49 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
   await addLeadDialog.getByLabel("Nome", { exact: true }).fill(leadName);
   await addLeadDialog.getByLabel("Telefone", { exact: true }).fill(uniquePhone(leadName));
   await addLeadDialog.getByRole("button", { name: "Adicionar lead" }).click();
-  await expect(page.locator("article").filter({ hasText: leadName })).toBeVisible();
+  const leadCard = page.locator("article").filter({ hasText: leadName });
+  await expect(leadCard).toBeVisible();
+  await leadCard.click();
+  await expect(page).toHaveURL(/\/leads\/.+\/historico/);
+  await expect(page.getByRole("heading", { name: leadName, exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Informações do contato", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Atividades", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Resumo", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tarefas", exact: true })).toBeVisible();
+
+  const database = getDatabaseClient();
+  const seller = await database.workspaceMember.findFirstOrThrow({
+    where: { workspace: { slug: "politizai" }, user: { normalizedEmail: DEMO_USERS[1].email } },
+    select: { id: true },
+  });
+  const createdLead = await database.lead.findFirstOrThrow({
+    where: { workspace: { slug: "politizai" }, fullName: leadName },
+    select: { id: true },
+  });
+  await database.lead.update({
+    where: { id: createdLead.id },
+    data: { ownerMemberId: seller.id, awaitingHumanResponse: true, lastInboundResponseAt: new Date() },
+  });
+
+  await page.goto(`/leads?q=${encodeURIComponent(leadName)}`);
+  await expect(page.getByRole("row").filter({ hasText: leadName })).toContainText("Prospecção Ativa · Novo lead");
+
+  await page.goto("/meu-dia");
+  const dailyLead = page.locator("article").filter({ hasText: leadName }).first();
+  await expect(dailyLead).toBeVisible();
+  await expect(dailyLead).toContainText("Prospecção Ativa · Novo lead");
 
   for (const [label, heading] of [
     ["Estoque", "Estoque anterior ao Lead"],
     ["Atividades", "Atividades manuais da cadência"],
-    ["E-mails", "Ordens de e-mail"],
-    ["Métricas", "Taxa de resposta · 30 dias"],
-    ["Configurações", "Administração operacional"],
-    ["Visão geral", "Pipeline operacional"],
+    ["Métricas", "Indicadores da Prospecção Ativa"],
   ] as const) {
-    await prospectingAreas.getByRole("link", { name: label, exact: true }).click();
+    await page.goto("/email-agente");
+    const currentNavigation = page.getByRole("navigation", { name: "Áreas da Prospecção Ativa" });
+    await currentNavigation.getByRole("link", { name: label, exact: true }).click();
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
   }
+  await expect(page.getByRole("link", { name: "Abrir Indicadores", exact: true })).toHaveAttribute("href", "/dashboard?preset=MONTH");
 });
 
 test("mantém o pipeline somente leitura para o visualizador", async ({ page }) => {
