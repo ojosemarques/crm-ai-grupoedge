@@ -86,9 +86,10 @@ describe("MCP privado Politizai", () => {
       politician: { mandateStatus: "CURRENT", mandateVerifiedAt: "2026-10-06T11:00:00-03:00" },
       contact: { phone: "+551140001234", phoneScope: "OFFICE" },
       sources: [
+        { field: "role", type: "TSE", url: "https://resultados.tse.jus.br/oficial/app/index.html#/eleicao/619", observedAt: "2026-10-06T11:00:00-03:00" },
         { field: "role", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/prefeita", observedAt: "2026-10-06T11:00:00-03:00", validationMethod: "OFFICIAL_SOURCE_CHECK" },
         { field: "mandate", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/prefeita", observedAt: "2026-10-06T11:00:00-03:00", validationMethod: "OFFICIAL_SOURCE_CHECK" },
-        { field: "phone", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/contato", observedAt: "2026-10-06T11:00:00-03:00", contactScope: "OFFICE", validationMethod: "OFFICIAL_SOURCE_CHECK" },
+        { field: "phone", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/contato", observedAt: "2026-10-06T11:00:00-03:00", validationMethod: "OFFICIAL_SOURCE_CHECK" },
       ],
     });
     expect(ingested).toMatchObject({ duplicate: false, candidate: { status: "READY" } });

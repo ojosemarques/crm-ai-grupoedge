@@ -19,6 +19,7 @@ import {
 } from "@/modules/prospecting/application/politizai-mcp-prospecting-service";
 import { getPolitizaiMcpPublicConfig, POLITIZAI_MCP_SERVER_VERSION } from "@/modules/prospecting/domain/politizai-mcp-config";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { logger } from "@/shared/core/logging/logger";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -51,8 +52,22 @@ async function safeTool(operation: () => Promise<unknown>) {
   try {
     return result(await operation());
   } catch (error) {
+    const validationIssues = error instanceof z.ZodError
+      ? error.issues.slice(0, 6).map((issue) => ({
+        path: issue.path.join(".") || "payload",
+        code: issue.code,
+        message: issue.message,
+      }))
+      : [];
+    if (validationIssues.length > 0) {
+      logger.warn(
+        { errorCode: "MCP_TOOL_INVALID_INPUT", issueCount: error instanceof z.ZodError ? error.issues.length : 0, issues: validationIssues },
+        "Ferramenta MCP da prospecção rejeitou entrada na validação",
+      );
+    }
     const message = error instanceof ApplicationError && error.expose ? error.message
-      : error instanceof z.ZodError ? "Dados inválidos para a ferramenta."
+      : error instanceof z.ZodError
+        ? `Dados inválidos para a ferramenta: ${validationIssues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`
         : "Não foi possível concluir a operação no CRM.";
     return { content: [{ type: "text" as const, text: message }], isError: true };
   }

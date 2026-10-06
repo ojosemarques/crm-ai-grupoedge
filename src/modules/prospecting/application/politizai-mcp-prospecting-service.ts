@@ -54,6 +54,39 @@ export const registerCandidateSchema = z.object({
   sources: z.array(researchSourceSchema).min(3).max(38),
 }).strict();
 
+type RegisterCandidateContact = z.infer<typeof registerCandidateSchema>["contact"];
+type RegisterCandidateSource = z.infer<typeof registerCandidateSchema>["sources"][number];
+
+export function normalizeRegisterCandidateSources(
+  contact: RegisterCandidateContact,
+  sources: readonly RegisterCandidateSource[],
+): RegisterCandidateSource[] {
+  const scopeByField: Partial<Record<RegisterCandidateSource["field"], "POLITICIAN" | "ADVISOR" | "OFFICE">> = {
+    phone: "OFFICE",
+    email: "OFFICE",
+    politician_phone: "POLITICIAN",
+    politician_email: "POLITICIAN",
+    advisor_phone: "ADVISOR",
+    advisor_email: "ADVISOR",
+    ...(contact.whatsappScope ? { whatsapp: contact.whatsappScope } : {}),
+    ...(contact.instagramScope ? { instagram: contact.instagramScope } : {}),
+  };
+
+  return sources
+    .filter((source) => source.type !== "TSE" || ["politician_phone", "politician_email"].includes(source.field))
+    .map((source) => {
+      const contactScope = scopeByField[source.field];
+      const validationMethod = source.type === "TSE" && !source.validationMethod.includes("2024")
+        ? `TSE_RESULTADOS_2024_${source.validationMethod}`
+        : source.validationMethod;
+      return {
+        ...source,
+        validationMethod,
+        ...(contactScope ? { contactScope } : {}),
+      };
+    });
+}
+
 export const inconclusiveTargetSchema = z.object({
   targetId: z.string().uuid(),
   leaseOwner: z.string().min(10).max(240),
@@ -214,6 +247,7 @@ export function createPolitizaiMcpProspectingService(options: Options) {
 
   async function registerCandidate(auth: McpAuthExtra, raw: unknown) {
     const input = registerCandidateSchema.parse(raw);
+    const normalizedSources = normalizeRegisterCandidateSources(input.contact, input.sources);
     return options.database.$transaction(async (transaction) => {
       const researchPrincipal = await principal(transaction, auth, "open-dot-research");
       await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`politizai-target:${auth.workspaceId}:${input.targetId}`}, 0))`;
@@ -234,14 +268,14 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         sources: [
           { field: "role", type: "TSE", url: PROSPECTING_SOURCE_SNAPSHOTS.election.url, observedAt: PROSPECTING_SOURCE_SNAPSHOTS.election.observedAt, originalValue: target.tseCandidateId, validationMethod: "TSE_RESULTADOS_2024_SQ_CANDIDATO" },
           { field: "population", type: "IBGE", url: PROSPECTING_SOURCE_SNAPSHOTS.population.url, observedAt: PROSPECTING_SOURCE_SNAPSHOTS.population.observedAt, originalValue: String(target.population), normalizedValue: String(target.population), validationMethod: "IBGE_ESTIMATIVA_2026_CODIGO_MUNICIPIO" },
-          ...input.sources,
+          ...normalizedSources,
         ],
         agentVersion: AGENT_VERSION,
         promptVersion: PROMPT_VERSION,
       });
       await transaction.prospectingResearchTarget.update({
         where: { id: target.id },
-        data: { status: result.candidate.status === "REVIEW_REQUIRED" ? "REVIEW_REQUIRED" : "INGESTED", candidateId: result.candidate.id, leaseOwner: null, leaseExpiresAt: null, completedAt: now, lastEvidence: asJson({ sourceCount: input.sources.length + 2 }) },
+        data: { status: result.candidate.status === "REVIEW_REQUIRED" ? "REVIEW_REQUIRED" : "INGESTED", candidateId: result.candidate.id, leaseOwner: null, leaseExpiresAt: null, completedAt: now, lastEvidence: asJson({ sourceCount: normalizedSources.length + 2 }) },
       });
       return result;
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 });
