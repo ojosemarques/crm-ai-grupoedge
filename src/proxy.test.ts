@@ -17,8 +17,17 @@ describe("proteção otimista de rotas", () => {
     const response = proxy(new NextRequest("http://localhost:3000/"));
 
     expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe("http://localhost:3000/login");
+    expect(response.headers.get("location")).toBe("http://localhost:3000/login?next=%2F");
     expect(response.headers.get("content-security-policy")).toContain("nonce-");
+  });
+
+  it("preserva caminho e query internos para retomar o fluxo após o login", () => {
+    const response = proxy(new NextRequest("http://localhost:3000/oauth/authorize?client_id=dot&state=abc"));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?next=%2Foauth%2Fauthorize%3Fclient_id%3Ddot%26state%3Dabc",
+    );
   });
 
   it("deixa a validação definitiva para o servidor quando há cookie", () => {
