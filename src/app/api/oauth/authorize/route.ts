@@ -1,4 +1,4 @@
-import { OAuthError, OAuthErrorCode } from "@modelcontextprotocol/server";
+import { OAuthErrorCode } from "@modelcontextprotocol/server";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
@@ -21,10 +21,6 @@ function parseRequest(params: URLSearchParams) {
   }
   const scope = uniqueParam(params, "scope", false);
   if (scope !== undefined) raw.scope = scope;
-  const allowed = new Set([...Object.keys(raw), "scope"]);
-  for (const name of params.keys()) {
-    if (!allowed.has(name)) throw new OAuthError(OAuthErrorCode.InvalidRequest, `Parâmetro OAuth não suportado: ${name}.`);
-  }
   return getPolitizaiMcpOAuthService().parseAuthorizationRequest(raw);
 }
 
