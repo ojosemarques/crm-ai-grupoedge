@@ -67,7 +67,7 @@ describe("GET /api/oauth/authorize", () => {
       },
     ));
 
-    expect(response.status).toBe(303);
+    expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe(
       "https://chatgpt.com/connector/oauth/7q5u9EYDB8WK?state=oauth-state&code=authorization-code",
     );

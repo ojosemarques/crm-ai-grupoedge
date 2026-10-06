@@ -65,11 +65,11 @@ export async function POST(request: NextRequest) {
     redirect.searchParams.set("state", authorization.state);
     if (decision !== "allow") {
       redirect.searchParams.set("error", OAuthErrorCode.AccessDenied);
-      return NextResponse.redirect(redirect, 303);
+      return NextResponse.redirect(redirect, 302);
     }
     const code = await getPolitizaiMcpOAuthService().createAuthorizationCode(context, authorization);
     redirect.searchParams.set("code", code);
-    return NextResponse.redirect(redirect, 303);
+    return NextResponse.redirect(redirect, 302);
   } catch (error) {
     return oauthErrorResponse(error);
   }
