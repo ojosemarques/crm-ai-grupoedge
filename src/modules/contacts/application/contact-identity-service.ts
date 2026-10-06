@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import type { LeadContactView } from "@/modules/contacts/domain/contact-contracts";
+import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
 import type { AuthorizationDecision, ResourceScope } from "@/modules/users/permissions/authorization-service";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -398,6 +399,16 @@ export async function ensureContactForLeadInTransaction(
 }
 
 const leadQuerySchema = z.object({ leadId: z.string().uuid() }).strict();
+const addLeadContactPointsSchema = z
+  .object({
+    leadId: z.string().uuid(),
+    whatsapp: z.string().trim().min(1).max(40).optional(),
+    instagram: z.string().trim().min(1).max(160).optional(),
+  })
+  .strict()
+  .refine((value) => Boolean(value.whatsapp || value.instagram), {
+    message: "Informe WhatsApp ou Instagram.",
+  });
 const resolveReviewSchema = z
   .object({
     reviewId: z.string().uuid(),
@@ -405,6 +416,40 @@ const resolveReviewSchema = z
     reason: z.string().trim().min(3).max(500),
   })
   .strict();
+
+function normalizeInstagramContact(value: string): string {
+  let candidate = value.trim();
+  if (/^https?:\/\//i.test(candidate)) {
+    let profileUrl: URL;
+    try {
+      profileUrl = new URL(candidate);
+    } catch {
+      throw new ApplicationError("Informe um perfil válido do Instagram.", {
+        code: "INVALID_INPUT",
+        statusCode: 400,
+        expose: true,
+      });
+    }
+    const hostname = profileUrl.hostname.toLocaleLowerCase("pt-BR").replace(/^www\./, "");
+    if (hostname !== "instagram.com") {
+      throw new ApplicationError("Informe um perfil válido do Instagram.", {
+        code: "INVALID_INPUT",
+        statusCode: 400,
+        expose: true,
+      });
+    }
+    candidate = profileUrl.pathname.split("/").filter(Boolean)[0] ?? "";
+  }
+  const username = candidate.replace(/^@/, "");
+  if (!/^[a-zA-Z0-9._]{1,30}$/.test(username)) {
+    throw new ApplicationError("Informe um usuário válido do Instagram.", {
+      code: "INVALID_INPUT",
+      statusCode: 400,
+      expose: true,
+    });
+  }
+  return `@${username.toLocaleLowerCase("pt-BR")}`;
+}
 
 export function createContactIdentityService(options: Readonly<{
   database: PrismaClient;
@@ -522,6 +567,165 @@ export function createContactIdentityService(options: Readonly<{
     };
   }
 
+  async function addLeadContactPoints(context: AuthenticatedContext, payload: unknown): Promise<LeadContactView> {
+    const parsed = addLeadContactPointsSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new ApplicationError("Dados de contato inválidos.", {
+        code: "INVALID_INPUT",
+        statusCode: 400,
+        expose: true,
+      });
+    }
+    const lead = await options.database.lead.findFirst({
+      where: { id: parsed.data.leadId, workspaceId: context.workspaceId, deletedAt: null },
+      select: {
+        id: true,
+        workspaceId: true,
+        contactId: true,
+        ownerMemberId: true,
+        queueId: true,
+        routingQueue: { select: { teamId: true } },
+        queue: { select: { teamId: true } },
+        fullName: true,
+        jobTitle: true,
+        normalizedPhone: true,
+        normalizedEmail: true,
+        contactPreference: true,
+      },
+    });
+    if (!lead) {
+      throw new ApplicationError("Lead não encontrado.", {
+        code: "NOT_FOUND",
+        statusCode: 404,
+        expose: true,
+      });
+    }
+    await Promise.all([
+      options.authorization.assertAuthorized(context, PermissionKeys.LEADS_WRITE, resourceForLead(lead)),
+      options.authorization.assertAuthorized(context, PermissionKeys.CONTACTS_READ, resourceForLead(lead)),
+    ]);
+
+    const points: Array<Readonly<{
+      type: "WHATSAPP" | "INSTAGRAM";
+      originalValue: string;
+      normalizedValue: string;
+      countryCode: string | null;
+    }>> = [];
+    if (parsed.data.whatsapp) {
+      const whatsapp = normalizePhone(parsed.data.whatsapp);
+      if (!whatsapp.success) {
+        throw new ApplicationError(whatsapp.message, {
+          code: "INVALID_INPUT",
+          statusCode: 400,
+          expose: true,
+        });
+      }
+      points.push({
+        type: "WHATSAPP",
+        originalValue: parsed.data.whatsapp,
+        normalizedValue: whatsapp.normalizedPhone,
+        countryCode: whatsapp.normalizedPhone.startsWith("+55") ? "BR" : null,
+      });
+    }
+    if (parsed.data.instagram) {
+      const instagram = normalizeInstagramContact(parsed.data.instagram);
+      points.push({
+        type: "INSTAGRAM",
+        originalValue: instagram,
+        normalizedValue: instagram,
+        countryCode: null,
+      });
+    }
+
+    await options.database.$transaction(async (transaction) => {
+      await transaction.$executeRaw`
+        SELECT pg_advisory_xact_lock(
+          hashtextextended(${`contact-point:${context.workspaceId}:${lead.id}`}, 0)
+        )
+      `;
+      const currentLead = await transaction.lead.findFirst({
+        where: { id: lead.id, workspaceId: context.workspaceId, deletedAt: null },
+        select: { contactId: true },
+      });
+      if (!currentLead) {
+        throw new ApplicationError("Lead não encontrado.", {
+          code: "NOT_FOUND",
+          statusCode: 404,
+          expose: true,
+        });
+      }
+      const contactId = currentLead.contactId ?? (await ensureContactForLeadInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        actorId: context.actorId,
+        facts: {
+          leadId: lead.id,
+          fullName: lead.fullName,
+          jobTitle: lead.jobTitle,
+          normalizedPhone: lead.normalizedPhone,
+          originalPhone: lead.normalizedPhone,
+          normalizedEmail: lead.normalizedEmail,
+          originalEmail: lead.normalizedEmail,
+          doNotContact: lead.contactPreference === "DO_NOT_CONTACT",
+          origin: "LEAD_BACKFILL",
+        },
+      })).contactId;
+
+      for (const point of points) {
+        const existing = await transaction.contactPoint.findFirst({
+          where: {
+            workspaceId: context.workspaceId,
+            contactId,
+            type: point.type,
+            deletedAt: null,
+          },
+          orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+          select: { id: true, normalizedValue: true },
+        });
+        if (existing?.normalizedValue === point.normalizedValue) continue;
+        if (existing) {
+          throw new ApplicationError(
+            `${point.type === "WHATSAPP" ? "WhatsApp" : "Instagram"} já cadastrado para este contato.`,
+            { code: "CONTACT_POINT_ALREADY_EXISTS", statusCode: 409, expose: true },
+          );
+        }
+        const created = await transaction.contactPoint.create({
+          data: {
+            workspaceId: context.workspaceId,
+            contactId,
+            type: point.type,
+            originalValue: point.originalValue,
+            normalizedValue: point.normalizedValue,
+            countryCode: point.countryCode,
+            label: "Manual",
+            isPrimary: true,
+            source: "MANUAL",
+            doNotContact: lead.contactPreference === "DO_NOT_CONTACT",
+            createdByActorId: context.actorId,
+            updatedByActorId: context.actorId,
+          },
+          select: { id: true },
+        });
+        await transaction.auditLog.create({
+          data: {
+            workspaceId: context.workspaceId,
+            actorId: context.actorId,
+            action: "contact.point.created_manually",
+            entityType: "ContactPoint",
+            entityId: created.id,
+            changes: {
+              leadId: lead.id,
+              contactId,
+              type: point.type,
+              valueHash: fingerprint([point.type, point.normalizedValue]),
+            },
+          },
+        });
+      }
+    });
+
+    return getLeadContact(context, { leadId: lead.id });
+  }
+
   async function resolveReview(context: AuthenticatedContext, payload: unknown) {
     const parsed = resolveReviewSchema.safeParse(payload);
     if (!parsed.success) {
@@ -581,7 +785,7 @@ export function createContactIdentityService(options: Readonly<{
     });
   }
 
-  return Object.freeze({ getLeadContact, resolveReview });
+  return Object.freeze({ getLeadContact, addLeadContactPoints, resolveReview });
 }
 
 let service: ReturnType<typeof createContactIdentityService> | undefined;

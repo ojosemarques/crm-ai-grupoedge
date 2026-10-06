@@ -258,6 +258,31 @@ function NextActionFields({ required = false }: Readonly<{ required?: boolean }>
   );
 }
 
+function ContactChannelsForm({
+  showWhatsapp,
+  showInstagram,
+  pending,
+  onSubmit,
+}: Readonly<{
+  showWhatsapp: boolean;
+  showInstagram: boolean;
+  pending: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}>) {
+  if (!showWhatsapp && !showInstagram) return null;
+  return (
+    <form aria-label="Adicionar WhatsApp e Instagram" className="mt-4 grid gap-3 rounded-xl border border-dashed bg-background p-4 sm:grid-cols-2" onSubmit={onSubmit}>
+      <div className="sm:col-span-2">
+        <h4 className="text-sm font-semibold">Adicionar ponto de contato</h4>
+        <p className="mt-1 text-xs text-muted-foreground">Cadastre somente os canais confirmados para este lead.</p>
+      </div>
+      {showWhatsapp ? <label className="text-sm">WhatsApp<input autoComplete="tel" className={inputClass} inputMode="tel" maxLength={40} name="whatsapp" placeholder="+55 11 99999-9999" required={!showInstagram} /></label> : null}
+      {showInstagram ? <label className="text-sm">Instagram<input autoComplete="off" className={inputClass} maxLength={160} name="instagram" placeholder="@usuario ou link do perfil" required={!showWhatsapp} /></label> : null}
+      <Button className="sm:col-span-2" disabled={pending} type="submit">{pending ? "Salvando…" : "Salvar contatos"}</Button>
+    </form>
+  );
+}
+
 export function OperationalHistoryWorkspace({
   initialOperations,
   initialQualifications,
@@ -309,6 +334,8 @@ export function OperationalHistoryWorkspace({
   const [quickFlowOpen, setQuickFlowOpen] = useState(false);
   const [sellerMemberId, setSellerMemberId] = useState(initialOperations.lead.ownerMemberId ?? "");
   const [sellerTargetsLoading, setSellerTargetsLoading] = useState(false);
+  const hasWhatsapp = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "WHATSAPP"));
+  const hasInstagram = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "INSTAGRAM"));
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
@@ -585,6 +612,37 @@ export function OperationalHistoryWorkspace({
       stateCode: nullableFormText(form, "stateCode"),
       interestSummary: nullableFormText(form, "interestSummary"),
     });
+  }
+
+  async function submitContactChannels(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const element = event.currentTarget;
+    const form = new FormData(element);
+    const whatsapp = formText(form, "whatsapp");
+    const instagram = formText(form, "instagram");
+    if (!whatsapp && !instagram) {
+      setNotice({ kind: "error", message: "Informe WhatsApp ou Instagram." });
+      return;
+    }
+    setPending(true);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/leads/${operations.lead.id}/contact`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...(whatsapp ? { whatsapp } : {}), ...(instagram ? { instagram } : {}) }),
+      });
+      setContactIdentity((await readResponse(response)) as LeadContactView);
+      element.reset();
+      setNotice({ kind: "success", message: "Pontos de contato salvos." });
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Não foi possível salvar os contatos.",
+      });
+    } finally {
+      setPending(false);
+    }
   }
 
   async function submitSellerAssignment(event: FormEvent<HTMLFormElement>) {
@@ -1030,6 +1088,7 @@ export function OperationalHistoryWorkspace({
             <article className="surface-panel border-dashed p-6 lg:col-span-2">
               <h2 className="text-lg font-semibold">Contato ainda não vinculado</h2>
               <p className="mt-2 text-sm text-muted-foreground">Os campos legados do lead continuam disponíveis. Um administrador pode executar o backfill controlado; nenhuma identidade será inferida ou mesclada automaticamente.</p>
+              {operations.permissions.canWrite ? <ContactChannelsForm onSubmit={submitContactChannels} pending={pending} showInstagram showWhatsapp /> : null}
             </article>
           ) : (
             <>
@@ -1068,6 +1127,7 @@ export function OperationalHistoryWorkspace({
                     ))}
                   </ul>
                 ) : <p className="mt-3 text-sm text-muted-foreground">Nenhum ponto de contato utilizável.</p>}
+                {operations.permissions.canWrite ? <ContactChannelsForm onSubmit={submitContactChannels} pending={pending} showInstagram={!hasInstagram} showWhatsapp={!hasWhatsapp} /> : null}
               </article>
 
               <article className="surface-panel bg-[var(--surface-subtle)] p-5">

@@ -288,6 +288,41 @@ describe("Contact e ContactPoint canônicos", () => {
     ).not.toBeNull();
   });
 
+  it("adiciona WhatsApp e Instagram manualmente com normalização, auditoria e autorização", async () => {
+    const result = await intakeService().intake(entry("11 98880-3501", "channels@crm33.test"), system);
+    if (result.outcome === "REJECTED") throw new Error("entrada rejeitada");
+    const identity = createContactIdentityService({ database, authorization, now: () => now });
+
+    const updated = await identity.addLeadContactPoints(admin, {
+      leadId: result.leadId,
+      whatsapp: "(11) 99876-5432",
+      instagram: "https://www.instagram.com/Contato.CRM33/",
+    });
+    expect(updated.contact?.points).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "WHATSAPP", normalizedValue: "+5511998765432", source: "MANUAL", verificationStatus: "UNVERIFIED" }),
+      expect.objectContaining({ type: "INSTAGRAM", normalizedValue: "@contato.crm33", source: "MANUAL", verificationStatus: "UNVERIFIED" }),
+    ]));
+    await expect(identity.addLeadContactPoints(admin, {
+      leadId: result.leadId,
+      whatsapp: "+5511998765432",
+      instagram: "@contato.crm33",
+    })).resolves.toMatchObject({ leadId: result.leadId });
+    expect(await database.contactPoint.findMany({
+      where: { workspaceId, contactId: updated.contact!.id, type: { in: ["WHATSAPP", "INSTAGRAM"] }, deletedAt: null },
+      select: { type: true, countryCode: true },
+    })).toEqual(expect.arrayContaining([
+      { type: "WHATSAPP", countryCode: "BR" },
+      { type: "INSTAGRAM", countryCode: null },
+    ]));
+    expect(await database.auditLog.count({
+      where: { workspaceId, action: "contact.point.created_manually", entityType: "ContactPoint" },
+    })).toBeGreaterThanOrEqual(2);
+    await expect(identity.addLeadContactPoints(viewer, {
+      leadId: result.leadId,
+      whatsapp: "+5511998765432",
+    })).rejects.toBeInstanceOf(AccessDeniedError);
+  });
+
   it("impõe unicidade no mesmo contato e permite ponto compartilhado entre contatos", async () => {
     const first = await intakeService().intake(entry("11 98880-4001", "constraint-a@crm33.test"), system);
     const second = await intakeService().intake(entry("11 98880-4002", "constraint-b@crm33.test"), system);

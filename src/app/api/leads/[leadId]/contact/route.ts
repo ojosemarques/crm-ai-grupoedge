@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireApiAuthentication } from "@/modules/auth/http/authentication-guards";
+import { assertSameOrigin } from "@/modules/auth/http/request-security";
 import { getContactIdentityService } from "@/modules/contacts/application/contact-identity-service";
 import { handleRouteError } from "@/shared/core/errors/route-error-handler";
 
@@ -15,6 +16,25 @@ export async function GET(
     const context = await requireApiAuthentication(request);
     const { leadId } = await routeContext.params;
     const result = await getContactIdentityService().getLeadContact(context, { leadId });
+    return NextResponse.json({ result }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    return handleRouteError(error);
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  routeContext: Readonly<{ params: Promise<{ leadId: string }> }>,
+) {
+  try {
+    assertSameOrigin(request);
+    const context = await requireApiAuthentication(request);
+    const { leadId } = await routeContext.params;
+    const body: unknown = await request.json().catch(() => null);
+    const result = await getContactIdentityService().addLeadContactPoints(context, {
+      ...(body && typeof body === "object" ? body : {}),
+      leadId,
+    });
     return NextResponse.json({ result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return handleRouteError(error);

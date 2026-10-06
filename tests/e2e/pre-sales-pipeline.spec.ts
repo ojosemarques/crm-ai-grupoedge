@@ -158,45 +158,11 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
   const database = getDatabaseClient();
   const createdLead = await database.lead.findFirstOrThrow({
     where: { workspace: { slug: "politizai" }, fullName: leadName },
-    select: { id: true, workspaceId: true, contactId: true, updatedByActorId: true },
+    select: { id: true, workspaceId: true, contactId: true },
   });
   expect(createdLead.contactId).not.toBeNull();
   const whatsapp = uniquePhone(`${leadName}:whatsapp`);
   const instagram = `@lead_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
-  await database.contactPoint.createMany({
-    data: [
-      {
-        workspaceId: createdLead.workspaceId,
-        contactId: createdLead.contactId!,
-        type: "WHATSAPP",
-        originalValue: whatsapp,
-        normalizedValue: whatsapp,
-        label: "Direto",
-        verificationStatus: "VERIFIED",
-        quality: "VALID",
-        source: "MANUAL",
-        verifiedAt: new Date(),
-        createdByActorId: createdLead.updatedByActorId,
-        updatedByActorId: createdLead.updatedByActorId,
-      },
-      {
-        workspaceId: createdLead.workspaceId,
-        contactId: createdLead.contactId!,
-        type: "INSTAGRAM",
-        originalValue: instagram,
-        normalizedValue: instagram,
-        label: "Direto",
-        verificationStatus: "VERIFIED",
-        quality: "VALID",
-        source: "MANUAL",
-        verifiedAt: new Date(),
-        createdByActorId: createdLead.updatedByActorId,
-        updatedByActorId: createdLead.updatedByActorId,
-      },
-    ],
-  });
-  await page.reload();
-  await expect(leadCard).toBeVisible();
   await leadCard.click();
   await expect(page).toHaveURL(/\/email-agente(?:\?|$)/);
   const prospectingLeadDialog = page.getByRole("dialog");
@@ -206,10 +172,17 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
   await expect(prospectingLeadDialog.getByRole("tab", { name: "Atividades", exact: true })).toBeVisible();
   await expect(prospectingLeadDialog.getByRole("tab", { name: "Resumo", exact: true })).toBeVisible();
   await prospectingLeadDialog.getByRole("tab", { name: "Contato", exact: true }).click();
-  await expect(prospectingLeadDialog.getByText("WhatsApp", { exact: true })).toBeVisible();
+  await prospectingLeadDialog.getByLabel("WhatsApp", { exact: true }).fill(whatsapp);
+  await prospectingLeadDialog.getByLabel("Instagram", { exact: true }).fill(instagram);
+  await prospectingLeadDialog.getByRole("button", { name: "Salvar contatos" }).click();
+  await expect(prospectingLeadDialog.getByText("Pontos de contato salvos.")).toBeVisible();
+  await expect(prospectingLeadDialog.getByText("WhatsApp principal", { exact: true })).toBeVisible();
   await expect(prospectingLeadDialog.getByText(whatsapp, { exact: true })).toBeVisible();
-  await expect(prospectingLeadDialog.getByText("Instagram", { exact: true })).toBeVisible();
+  await expect(prospectingLeadDialog.getByText("Instagram principal", { exact: true })).toBeVisible();
   await expect(prospectingLeadDialog.getByText(instagram, { exact: true })).toBeVisible();
+  await expect.poll(() => database.contactPoint.count({
+    where: { workspaceId: createdLead.workspaceId, contactId: createdLead.contactId!, type: { in: ["WHATSAPP", "INSTAGRAM"] }, deletedAt: null },
+  })).toBe(2);
   await prospectingLeadDialog.getByRole("tab", { name: "Atividades", exact: true }).click();
   await expect(prospectingLeadDialog.getByRole("tab", { name: "Inteligência" })).toHaveCount(0);
   await expect(prospectingLeadDialog.getByRole("tab", { name: "Negócios" })).toHaveCount(0);
