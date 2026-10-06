@@ -1,11 +1,13 @@
+import { McpServer } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
 
 import { registerCandidateSchema } from "@/modules/prospecting/application/politizai-mcp-prospecting-service";
 
 describe("registerCandidateSchema", () => {
-  it("publica todos os contatos como opcionais no contrato MCP", () => {
-    const jsonSchema = z.toJSONSchema(registerCandidateSchema) as {
+  it("publica todos os contatos como opcionais no contrato anunciado pelo SDK MCP", () => {
+    const server = new McpServer({ name: "schema-regression", version: "1.0.0" });
+    server.registerTool("registrar_candidato", { inputSchema: registerCandidateSchema }, async () => ({ content: [] }));
+    const jsonSchema = server.toolInputSchemaJson("registrar_candidato") as {
       properties?: { contact?: { required?: string[] } };
     };
 

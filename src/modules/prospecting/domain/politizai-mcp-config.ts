@@ -18,6 +18,7 @@ export const POLITIZAI_MCP_CLIENT_REGISTRATIONS = Object.freeze([
   Object.freeze({ clientId: POLITIZAI_MCP_CALLBACK_CLIENT_ID, redirectUri: POLITIZAI_MCP_CALLBACK_REDIRECT_URI }),
 ]);
 export const POLITIZAI_MCP_PATH = "/api/mcp/politizai";
+export const POLITIZAI_MCP_SERVER_VERSION = "1.1.0";
 
 export const PROSPECTING_SOURCE_SNAPSHOTS = Object.freeze({
   population: Object.freeze({

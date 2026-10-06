@@ -84,14 +84,18 @@ describe("MCP privado Politizai", () => {
       targetId: target.id,
       leaseOwner: target.leaseOwner,
       politician: { mandateStatus: "CURRENT", mandateVerifiedAt: "2026-10-06T11:00:00-03:00" },
-      contact: { phone: "+551140001234", phoneScope: "OFFICE", email: "gabinete@prefeitura.sp.gov.br", emailScope: "OFFICE", instagram: null, instagramScope: null },
+      contact: { phone: "+551140001234", phoneScope: "OFFICE" },
       sources: [
+        { field: "role", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/prefeita", observedAt: "2026-10-06T11:00:00-03:00", validationMethod: "OFFICIAL_SOURCE_CHECK" },
         { field: "mandate", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/prefeita", observedAt: "2026-10-06T11:00:00-03:00", validationMethod: "OFFICIAL_SOURCE_CHECK" },
         { field: "phone", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/contato", observedAt: "2026-10-06T11:00:00-03:00", contactScope: "OFFICE", validationMethod: "OFFICIAL_SOURCE_CHECK" },
-        { field: "email", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/contato", observedAt: "2026-10-06T11:00:00-03:00", contactScope: "OFFICE", validationMethod: "OFFICIAL_SOURCE_CHECK" },
       ],
     });
     expect(ingested).toMatchObject({ duplicate: false, candidate: { status: "READY" } });
+    await expect(database.prospectCandidate.findUniqueOrThrow({ where: { id: ingested.candidate.id }, select: { normalizedPhone: true, normalizedEmail: true } })).resolves.toEqual({
+      normalizedPhone: "+551140001234",
+      normalizedEmail: null,
+    });
     await expect(database.lead.count({ where: { workspaceId: context.workspaceId } })).resolves.toBe(leadCountBefore);
     await expect(database.prospectingEmailJob.count({ where: { workspaceId: context.workspaceId } })).resolves.toBe(emailJobCountBefore);
   });

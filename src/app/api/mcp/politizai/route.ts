@@ -17,7 +17,7 @@ import {
   inconclusiveTargetSchema,
   registerCandidateSchema,
 } from "@/modules/prospecting/application/politizai-mcp-prospecting-service";
-import { getPolitizaiMcpPublicConfig } from "@/modules/prospecting/domain/politizai-mcp-config";
+import { getPolitizaiMcpPublicConfig, POLITIZAI_MCP_SERVER_VERSION } from "@/modules/prospecting/domain/politizai-mcp-config";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 export const dynamic = "force-dynamic";
@@ -61,7 +61,7 @@ async function safeTool(operation: () => Promise<unknown>) {
 const handler = createMcpHandler(({ authInfo }) => {
   const auth = authExtra(authInfo);
   const service = getPolitizaiMcpProspectingService();
-  const server = new McpServer({ name: "Politizai Prospecção Política", version: "1.0.0" }, {
+  const server = new McpServer({ name: "Politizai Prospecção Política", version: POLITIZAI_MCP_SERVER_VERSION }, {
     instructions: "Seu nome completo é Politizai Pesquisa. Trabalhe continuamente enquanto houver fila. Pesquise prefeitos e vereadores em exercício em municípios com população igual ou superior a 30 mil, processando todos os municípios não capitais antes de qualquer capital, em ordem crescente de população e com vereadores antes de prefeitos. Cruze o eleito por município e cargo no Resultados TSE 2024, valide o mandato atual em Prefeitura, Câmara ou Diário Oficial e procure contatos no gabinete. Se faltar canal útil, consulte apenas campos atualmente públicos do DivulgaCandContas 2024; depois pesquise no Google por NOME + PREFEITO ou VEREADOR + MUNICÍPIO e valide o Instagram pelo nome, município e cargo no próprio perfil. Google é somente descoberta, não evidência final. Nunca infira contatos nem use dado vazado, restrito ou oculto. Registre quando houver telefone/WhatsApp público ou Instagram validado; e-mail pode complementar, mas e-mail isolado deve ser descartado. Grave fonte específica para cada contato, apenas no estoque, e nunca envie e-mail nem crie Lead diretamente.",
   });
 
