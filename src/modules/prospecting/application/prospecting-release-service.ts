@@ -14,6 +14,7 @@ import {
 } from "@/modules/prospecting/domain/prospecting-cadence";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { logger } from "@/shared/core/logging/logger";
 
 type Options = Readonly<{ database: PrismaClient; now: () => Date }>;
 
@@ -259,6 +260,12 @@ export function createProspectingReleaseService(options: Options) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
         return { processed: false, outcome: "RACE_LOST" as const };
       }
+      logger.error({
+        releaseId: due.id,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        prismaCode: error instanceof Prisma.PrismaClientKnownRequestError ? error.code : null,
+        prismaMeta: error instanceof Prisma.PrismaClientKnownRequestError ? error.meta : null,
+      }, "Falha ao materializar candidato de prospecção em Lead");
       const failedAttemptCount = due.attemptCount + 1;
       const terminal = failedAttemptCount >= 3;
       await options.database.prospectRelease.updateMany({
