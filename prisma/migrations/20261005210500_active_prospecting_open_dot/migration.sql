@@ -28,6 +28,40 @@ WITH target AS (
   WHERE "entityType" = 'LEAD'::"PipelineEntityType"
     AND "name" = 'Prospecção Ativa'
     AND "deletedAt" IS NULL
+), obsolete AS (
+  SELECT stage."workspaceId", stage."pipelineId", stage."id" AS obsolete_id, replacement."id" AS replacement_id
+  FROM "pipeline_stages" stage
+  JOIN target ON target."id" = stage."pipelineId"
+  JOIN "pipeline_stages" replacement
+    ON replacement."workspaceId" = stage."workspaceId"
+   AND replacement."pipelineId" = stage."pipelineId"
+   AND replacement."position" = 4
+   AND replacement."deletedAt" IS NULL
+  WHERE stage."position" = 5
+    AND stage."deletedAt" IS NULL
+)
+UPDATE "leads" lead
+SET "currentStageId" = obsolete.replacement_id, "updatedAt" = CURRENT_TIMESTAMP
+FROM obsolete
+WHERE lead."workspaceId" = obsolete."workspaceId"
+  AND lead."pipelineId" = obsolete."pipelineId"
+  AND lead."currentStageId" = obsolete.obsolete_id;
+
+UPDATE "pipeline_stages" stage
+SET "deletedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP
+FROM "pipelines" pipeline
+WHERE pipeline."id" = stage."pipelineId"
+  AND pipeline."entityType" = 'LEAD'::"PipelineEntityType"
+  AND pipeline."name" = 'Prospecção Ativa'
+  AND pipeline."deletedAt" IS NULL
+  AND stage."position" = 5
+  AND stage."deletedAt" IS NULL;
+
+WITH target AS (
+  SELECT "id" FROM "pipelines"
+  WHERE "entityType" = 'LEAD'::"PipelineEntityType"
+    AND "name" = 'Prospecção Ativa'
+    AND "deletedAt" IS NULL
 ), mapped AS (
   SELECT stage."id", stage."pipelineId", stage."workspaceId", stage."position",
     CASE stage."position"
@@ -72,38 +106,6 @@ SET "stableKey" = mapped.stable_key,
     "updatedAt" = CURRENT_TIMESTAMP
 FROM mapped
 WHERE stage."id" = mapped."id";
-
-WITH target AS (
-  SELECT "id" FROM "pipelines"
-  WHERE "entityType" = 'LEAD'::"PipelineEntityType"
-    AND "name" = 'Prospecção Ativa'
-    AND "deletedAt" IS NULL
-), obsolete AS (
-  SELECT stage."workspaceId", stage."pipelineId", stage."id" AS obsolete_id, replacement."id" AS replacement_id
-  FROM "pipeline_stages" stage
-  JOIN target ON target."id" = stage."pipelineId"
-  JOIN "pipeline_stages" replacement
-    ON replacement."workspaceId" = stage."workspaceId"
-   AND replacement."pipelineId" = stage."pipelineId"
-   AND replacement."stableKey" = 'active-prospecting.meeting-scheduled'
-  WHERE stage."position" = 5 AND stage."stableKey" IS NULL
-)
-UPDATE "leads" lead
-SET "currentStageId" = obsolete.replacement_id, "updatedAt" = CURRENT_TIMESTAMP
-FROM obsolete
-WHERE lead."workspaceId" = obsolete."workspaceId"
-  AND lead."pipelineId" = obsolete."pipelineId"
-  AND lead."currentStageId" = obsolete.obsolete_id;
-
-UPDATE "pipeline_stages" stage
-SET "deletedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP
-FROM "pipelines" pipeline
-WHERE pipeline."id" = stage."pipelineId"
-  AND pipeline."entityType" = 'LEAD'::"PipelineEntityType"
-  AND pipeline."name" = 'Prospecção Ativa'
-  AND pipeline."deletedAt" IS NULL
-  AND stage."position" = 5
-  AND stage."stableKey" IS NULL;
 
 CREATE UNIQUE INDEX "pipeline_stages_workspaceId_pipelineId_stableKey_key"
   ON "pipeline_stages"("workspaceId", "pipelineId", "stableKey");
