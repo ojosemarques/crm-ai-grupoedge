@@ -214,17 +214,24 @@ describe("MCP privado Politizai", () => {
     })).rejects.toMatchObject({ code: "PROSPECTING_SHARED_OFFICE_PHONE" });
   });
 
-  it("prioriza cidade menor e vereador e consulta o lote sem exigir argumento", async () => {
+  it("prioriza regiões, cidade menor e vereador e consulta o lote sem exigir argumento", async () => {
     const auth = { workspaceId: context.workspaceId, userId: context.userId, memberId: context.memberId, authorizingActorId: context.actorId };
     const opened = await prospecting.openBatch(auth);
     const batchId = opened.batch.id;
     await database.prospectingResearchTarget.createMany({ data: [
       { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:priority-capital", tseCandidateId: "priority-capital", role: "COUNCILOR", politicianName: "Vereador Capital", municipalityName: "Palmas", municipalityIbgeCode: "1721000", stateCode: "TO", population: 30_001 },
+      { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:priority-northeast", tseCandidateId: "priority-northeast", role: "COUNCILOR", politicianName: "Vereador Nordeste", municipalityName: "Cidade Nordeste", municipalityIbgeCode: "2900108", stateCode: "BA", population: 30_000 },
+      { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:priority-north", tseCandidateId: "priority-north", role: "COUNCILOR", politicianName: "Vereador Norte", municipalityName: "Cidade Norte", municipalityIbgeCode: "1700251", stateCode: "TO", population: 30_000 },
+      { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:priority-center-west", tseCandidateId: "priority-center-west", role: "COUNCILOR", politicianName: "Vereador Centro-Oeste", municipalityName: "Cidade Centro-Oeste", municipalityIbgeCode: "5100102", stateCode: "MT", population: 30_000 },
       { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:priority-mayor", tseCandidateId: "priority-mayor", role: "MAYOR", politicianName: "Prefeito Cidade Menor", municipalityName: "Cidade Menor", municipalityIbgeCode: "3500105", stateCode: "SP", population: 30_001 },
       { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:priority-councilor", tseCandidateId: "priority-councilor", role: "COUNCILOR", politicianName: "Vereador Cidade Menor", municipalityName: "Cidade Menor", municipalityIbgeCode: "3500105", stateCode: "SP", population: 30_001 },
       { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:priority-large-non-capital", tseCandidateId: "priority-large-non-capital", role: "COUNCILOR", politicianName: "Vereador Cidade Grande", municipalityName: "Cidade Grande", municipalityIbgeCode: "3500204", stateCode: "SP", population: 1_000_000 },
+      { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:priority-south", tseCandidateId: "priority-south", role: "COUNCILOR", politicianName: "Vereador Sul", municipalityName: "Cidade Sul", municipalityIbgeCode: "4100103", stateCode: "PR", population: 900_000 },
     ] });
     await expect(prospecting.getBatch(auth)).resolves.toMatchObject({ batch: { id: batchId } });
+    const south = await prospecting.claimNextTarget(auth, batchId);
+    expect(south).toMatchObject({ target: { politicianName: "Vereador Sul", stateCode: "PR" } });
+    await prospecting.markInconclusive(auth, { targetId: south.target!.id, leaseOwner: south.target!.leaseOwner, reasonCode: "CONTACT_NOT_FOUND", evidence: [] });
     const councilor = await prospecting.claimNextTarget(auth, batchId);
     expect(councilor).toMatchObject({ target: { politicianName: "Vereador Cidade Menor", role: "COUNCILOR", population: 30_001 } });
     await prospecting.markInconclusive(auth, { targetId: councilor.target!.id, leaseOwner: councilor.target!.leaseOwner, reasonCode: "CONTACT_NOT_FOUND", evidence: [] });
@@ -233,6 +240,15 @@ describe("MCP privado Politizai", () => {
     await prospecting.markInconclusive(auth, { targetId: mayor.target!.id, leaseOwner: mayor.target!.leaseOwner, reasonCode: "CONTACT_NOT_FOUND", evidence: [] });
     const largeNonCapital = await prospecting.claimNextTarget(auth, batchId);
     expect(largeNonCapital).toMatchObject({ target: { politicianName: "Vereador Cidade Grande", municipalityName: "Cidade Grande" } });
+    await prospecting.markInconclusive(auth, { targetId: largeNonCapital.target!.id, leaseOwner: largeNonCapital.target!.leaseOwner, reasonCode: "CONTACT_NOT_FOUND", evidence: [] });
+    const centerWest = await prospecting.claimNextTarget(auth, batchId);
+    expect(centerWest).toMatchObject({ target: { politicianName: "Vereador Centro-Oeste", stateCode: "MT" } });
+    await prospecting.markInconclusive(auth, { targetId: centerWest.target!.id, leaseOwner: centerWest.target!.leaseOwner, reasonCode: "CONTACT_NOT_FOUND", evidence: [] });
+    const north = await prospecting.claimNextTarget(auth, batchId);
+    expect(north).toMatchObject({ target: { politicianName: "Vereador Norte", stateCode: "TO" } });
+    await prospecting.markInconclusive(auth, { targetId: north.target!.id, leaseOwner: north.target!.leaseOwner, reasonCode: "CONTACT_NOT_FOUND", evidence: [] });
+    const northeast = await prospecting.claimNextTarget(auth, batchId);
+    expect(northeast).toMatchObject({ target: { politicianName: "Vereador Nordeste", stateCode: "BA" } });
   });
 
   it("mantém RLS e privilégios fechados nas três tabelas novas", async () => {
