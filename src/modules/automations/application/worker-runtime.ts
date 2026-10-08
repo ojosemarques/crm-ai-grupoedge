@@ -11,6 +11,7 @@ import { createTelephonyWorkerService } from "@/modules/integrations/application
 import { localTelephonySimulator } from "@/modules/integrations/application/telephony-transport";
 import { createCalendarWorkerService } from "@/modules/integrations/application/calendar-worker-service";
 import { localCalendarSandbox } from "@/modules/integrations/application/calendar-transport";
+import { createGoogleCalendarWorkerService } from "@/modules/integrations/application/google-calendar-worker-service";
 import { getConversionFeedbackService } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { getPaymentWorkerService } from "@/modules/payments/application/payment-worker-service";
 import { getProspectingReleaseService } from "@/modules/prospecting/application/prospecting-release-service";
@@ -40,6 +41,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
   });
   const paymentWorker = getPaymentWorkerService();
   const calendarWorker = createCalendarWorkerService({ ...common, adapter: localCalendarSandbox });
+  const googleCalendarWorker = createGoogleCalendarWorkerService(common);
   const telephonyWorker = createTelephonyWorkerService({ ...common, adapter: localTelephonySimulator });
   const emailWorker = createEmailMessageWorkerService({ ...common, transport: localEmailSinkTransport });
   const whatsappWorker = createWhatsAppWebhookWorkerService(common);
@@ -63,6 +65,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
         { key: "prospecting-cadence", processNext: prospectingCadenceWorker.processDue },
         { key: "payments", processNext: paymentWorker.processNext },
         { key: "calendar", processNext: calendarWorker.processNext },
+        { key: "google-calendar", processNext: googleCalendarWorker.processNext },
         { key: "telephony", processNext: telephonyWorker.processNext },
         { key: "email", processNext: emailWorker.processNext },
         { key: "whatsapp", processNext: whatsappWorker.processNext },

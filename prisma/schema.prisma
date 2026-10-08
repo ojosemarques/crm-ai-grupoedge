@@ -1810,6 +1810,12 @@ enum CalendarOperatingMode {
   PAUSED
 }
 
+enum GoogleCalendarConnectionStatus {
+  CONNECTED
+  NEEDS_REAUTH
+  DISCONNECTED
+}
+
 enum CalendarSyncState {
   PENDING_PUSH
   PENDING_PULL
@@ -2240,6 +2246,7 @@ enum JobType {
   OMNICHANNEL_MESSAGE
   TELEPHONY_CALL
   CALENDAR_SYNC
+  GOOGLE_CALENDAR_SYNC
   PAYMENT_ATTEMPT
   PAYMENT_WEBHOOK
   PRIVACY_RETENTION_CHECKPOINT
@@ -2747,6 +2754,9 @@ model Workspace {
   calendarSyncConflicts        CalendarSyncConflict[]
   calendarBackfillRuns         CalendarBackfillRun[]
   calendarBackfillItems        CalendarBackfillItem[]
+  googleCalendarAccounts       GoogleCalendarAccount[]
+  googleCalendarOAuthStates    GoogleCalendarOAuthState[]
+  googleCalendarEventLinks     GoogleCalendarEventLink[]
   dataSubjectRequestEvents     DataSubjectRequestEvent[]
 
   @@map("workspaces")
@@ -2950,6 +2960,8 @@ model Actor {
   calendarConflictsCreated          CalendarSyncConflict[]               @relation("CalendarConflictCreatedBy")
   calendarConflictsResolved         CalendarSyncConflict[]               @relation("CalendarConflictResolvedBy")
   calendarBackfillRunsRequested     CalendarBackfillRun[]                @relation("CalendarBackfillRequestedBy")
+  googleCalendarAccountsCreated     GoogleCalendarAccount[]              @relation("GoogleCalendarAccountCreatedBy")
+  googleCalendarAccountsUpdated     GoogleCalendarAccount[]              @relation("GoogleCalendarAccountUpdatedBy")
   tagsCreated                       Tag[]                                @relation("TagCreatedBy")
   tagsUpdated                       Tag[]                                @relation("TagUpdatedBy")
   leadTagsCreated                   LeadTag[]                            @relation("LeadTagCreatedBy")
@@ -3139,6 +3151,9 @@ model WorkspaceMember {
   accountPlanTrackHistoryOwned OpportunityPlanTrackRevision[]  @relation("AccountPlanTrackRevisionOwner")
   accountPlanWaitsOwned        OpportunityPlannedWait[]        @relation("AccountPlanWaitOwner")
   meetingsOwned                Meeting[]
+  googleCalendarAccount        GoogleCalendarAccount?
+  googleCalendarOAuthStates    GoogleCalendarOAuthState[]
+  googleCalendarEventLinks     GoogleCalendarEventLink[]
   meetingHistoryOwned          MeetingHistory[]
   tasksAssigned                Task[]
   conversationsAssigned        Conversation[]
@@ -3605,9 +3620,9 @@ model ProspectRelease {
   claimedBy        String?
   claimedAt        DateTime?             @db.Timestamptz(3)
   leaseExpiresAt   DateTime?             @db.Timestamptz(3)
-  attemptCount     Int                    @default(0)
-  nextAttemptAt    DateTime?              @db.Timestamptz(3)
-  lastErrorAt      DateTime?              @db.Timestamptz(3)
+  attemptCount     Int                   @default(0)
+  nextAttemptAt    DateTime?             @db.Timestamptz(3)
+  lastErrorAt      DateTime?             @db.Timestamptz(3)
   leadId           String?               @db.Uuid
   reasonCode       String?
   idempotencyKey   String
@@ -3773,23 +3788,23 @@ model ProspectingCalendarHoliday {
 }
 
 model ProspectingSettings {
-  id                    String   @id @default(uuid()) @db.Uuid
-  workspaceId           String   @unique @db.Uuid
-  releaseEnabled        Boolean  @default(false)
-  emailEgressEnabled    Boolean  @default(false)
-  dailyCapacity         Int      @default(75)
-  reservePercent        Int      @default(10)
-  emailWindowStart      String   @default("09:00")
-  emailWindowEnd        String   @default("17:00")
-  coverageWarningDays   Int      @default(10)
-  coverageCriticalDays  Int      @default(5)
-  privacyApprovedAt     DateTime? @db.Timestamptz(3)
-  canaryApprovedAt      DateTime? @db.Timestamptz(3)
-  revision              Int      @default(1)
-  createdByActorId      String   @db.Uuid
-  updatedByActorId      String   @db.Uuid
-  createdAt             DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
+  id                   String    @id @default(uuid()) @db.Uuid
+  workspaceId          String    @unique @db.Uuid
+  releaseEnabled       Boolean   @default(false)
+  emailEgressEnabled   Boolean   @default(false)
+  dailyCapacity        Int       @default(75)
+  reservePercent       Int       @default(10)
+  emailWindowStart     String    @default("09:00")
+  emailWindowEnd       String    @default("17:00")
+  coverageWarningDays  Int       @default(10)
+  coverageCriticalDays Int       @default(5)
+  privacyApprovedAt    DateTime? @db.Timestamptz(3)
+  canaryApprovedAt     DateTime? @db.Timestamptz(3)
+  revision             Int       @default(1)
+  createdByActorId     String    @db.Uuid
+  updatedByActorId     String    @db.Uuid
+  createdAt            DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime  @updatedAt @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@map("prospecting_settings")
@@ -6509,6 +6524,7 @@ model Meeting {
   calendarEvents      CalendarSyncEvent[]
   calendarConflicts   CalendarSyncConflict[]
   calendarBackfills   CalendarBackfillItem[]
+  googleCalendarLink  GoogleCalendarEventLink?
   transcriptArtifacts MeetingTranscriptArtifact[]
 
   @@unique([workspaceId, id])
@@ -7932,6 +7948,90 @@ model CalendarConnectionProfile {
   @@unique([workspaceId, providerKey, externalCalendarId])
   @@index([workspaceId, operatingMode, updatedAt])
   @@map("calendar_connection_profiles")
+}
+
+model GoogleCalendarAccount {
+  id                     String                         @id @default(uuid()) @db.Uuid
+  workspaceId            String                         @db.Uuid
+  memberId               String                         @db.Uuid
+  googleSubject          String
+  googleEmail            String
+  calendarId             String                         @default("primary")
+  accessTokenCiphertext  String                         @db.Text
+  refreshTokenCiphertext String                         @db.Text
+  tokenExpiresAt         DateTime                       @db.Timestamptz(3)
+  grantedScopes          String[]
+  status                 GoogleCalendarConnectionStatus @default(CONNECTED)
+  lastSyncAt             DateTime?                      @db.Timestamptz(3)
+  lastErrorAt            DateTime?                      @db.Timestamptz(3)
+  lastErrorCode          String?
+  createdByActorId       String                         @db.Uuid
+  updatedByActorId       String                         @db.Uuid
+  createdAt              DateTime                       @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime                       @updatedAt @db.Timestamptz(3)
+  disconnectedAt         DateTime?                      @db.Timestamptz(3)
+
+  workspace  Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  member     WorkspaceMember           @relation(fields: [workspaceId, memberId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy  Actor                     @relation("GoogleCalendarAccountCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy  Actor                     @relation("GoogleCalendarAccountUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  eventLinks GoogleCalendarEventLink[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, memberId])
+  @@unique([workspaceId, googleSubject])
+  @@index([workspaceId, status, updatedAt])
+  @@map("google_calendar_accounts")
+}
+
+model GoogleCalendarOAuthState {
+  id                     String    @id @default(uuid()) @db.Uuid
+  workspaceId            String    @db.Uuid
+  memberId               String    @db.Uuid
+  stateHash              String    @unique
+  codeVerifierCiphertext String    @db.Text
+  returnPath             String    @default("/integracoes/calendario")
+  expiresAt              DateTime  @db.Timestamptz(3)
+  consumedAt             DateTime? @db.Timestamptz(3)
+  createdAt              DateTime  @default(now()) @db.Timestamptz(3)
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  member    WorkspaceMember @relation(fields: [workspaceId, memberId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, memberId, expiresAt])
+  @@map("google_calendar_oauth_states")
+}
+
+model GoogleCalendarEventLink {
+  id               String            @id @default(uuid()) @db.Uuid
+  workspaceId      String            @db.Uuid
+  meetingId        String            @db.Uuid
+  memberId         String            @db.Uuid
+  accountId        String            @db.Uuid
+  externalEventId  String
+  externalHtmlLink String?
+  conferenceUrl    String?
+  syncState        CalendarSyncState @default(PENDING_PUSH)
+  syncedRevision   Int?
+  externalEtag     String?
+  lastPushedAt     DateTime?         @db.Timestamptz(3)
+  lastErrorAt      DateTime?         @db.Timestamptz(3)
+  lastErrorCode    String?
+  lastErrorMessage String?
+  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(3)
+
+  workspace Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  meeting   Meeting               @relation(fields: [workspaceId, meetingId], references: [workspaceId, id], onDelete: Restrict)
+  member    WorkspaceMember       @relation(fields: [workspaceId, memberId], references: [workspaceId, id], onDelete: Restrict)
+  account   GoogleCalendarAccount @relation(fields: [workspaceId, accountId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, meetingId])
+  @@unique([workspaceId, accountId, externalEventId])
+  @@index([workspaceId, memberId, syncState, updatedAt])
+  @@map("google_calendar_event_links")
 }
 
 model CalendarEventLink {
@@ -14262,63 +14362,63 @@ enum CommercialMetricReconciliationState {
 }
 
 model CommercialMetricFact {
-  id                          String                        @id @default(uuid()) @db.Uuid
-  workspaceId                 String                        @db.Uuid
-  eventKey                    String
-  eventType                   CommercialMetricEventType
-  occurredAt                  DateTime                      @db.Timestamptz(3)
-  recordedAt                  DateTime                      @default(now()) @db.Timestamptz(3)
-  sourceEntityType            String
-  sourceEntityId              String                        @db.Uuid
-  sourceRevision              Int                           @default(1)
-  leadId                      String?                       @db.Uuid
-  contactId                   String?                       @db.Uuid
-  accountId                   String?                       @db.Uuid
-  taskId                      String?                       @db.Uuid
-  activityId                  String?                       @db.Uuid
-  messageId                   String?                       @db.Uuid
-  phoneCallId                 String?                       @db.Uuid
-  meetingId                   String?                       @db.Uuid
-  opportunityId               String?                       @db.Uuid
-  contractId                  String?                       @db.Uuid
-  paymentId                   String?                       @db.Uuid
-  pipelineId                  String?                       @db.Uuid
-  stageId                     String?                       @db.Uuid
-  fromStageId                 String?                       @db.Uuid
-  toStageId                   String?                       @db.Uuid
-  teamId                      String?                       @db.Uuid
-  creditedMemberId            String?                       @db.Uuid
-  performedByMemberId         String?                       @db.Uuid
-  leadOwnerMemberIdAtEvent    String?                       @db.Uuid
-  meetingOwnerMemberIdAtEvent String?                       @db.Uuid
-  opportunityOwnerMemberIdAtEvent String?                    @db.Uuid
-  bookedByMemberId            String?                       @db.Uuid
-  originatingSdrMemberId      String?                       @db.Uuid
-  sourceId                    String?                       @db.Uuid
-  campaignId                  String?                       @db.Uuid
-  creativeId                  String?                       @db.Uuid
-  politicalRole               String?
-  municipality                String?
-  stateCode                   String?
-  channel                     String?
-  direction                   String?
-  taskKind                    String?
-  activityType                String?
-  result                      String?
-  cadenceInstanceId           String?                       @db.Uuid
-  cadenceStepKey              String?
-  cadenceDay                  Int?
-  executionMode               CommercialMetricExecutionMode @default(SYSTEM)
-  valueCents                  BigInt?
-  durationSeconds             Int?
-  quantity                    Int                           @default(1)
-  correctionOfFactId          String?                       @db.Uuid
-  reversedAt                  DateTime?                     @db.Timestamptz(3)
-  reversalReason              String?
-  definitionVersion           Int                           @default(1)
-  producerVersion             String                        @default("indicators.v1")
-  inputFingerprint            String
-  safeMetadata                Json?
+  id                              String                        @id @default(uuid()) @db.Uuid
+  workspaceId                     String                        @db.Uuid
+  eventKey                        String
+  eventType                       CommercialMetricEventType
+  occurredAt                      DateTime                      @db.Timestamptz(3)
+  recordedAt                      DateTime                      @default(now()) @db.Timestamptz(3)
+  sourceEntityType                String
+  sourceEntityId                  String                        @db.Uuid
+  sourceRevision                  Int                           @default(1)
+  leadId                          String?                       @db.Uuid
+  contactId                       String?                       @db.Uuid
+  accountId                       String?                       @db.Uuid
+  taskId                          String?                       @db.Uuid
+  activityId                      String?                       @db.Uuid
+  messageId                       String?                       @db.Uuid
+  phoneCallId                     String?                       @db.Uuid
+  meetingId                       String?                       @db.Uuid
+  opportunityId                   String?                       @db.Uuid
+  contractId                      String?                       @db.Uuid
+  paymentId                       String?                       @db.Uuid
+  pipelineId                      String?                       @db.Uuid
+  stageId                         String?                       @db.Uuid
+  fromStageId                     String?                       @db.Uuid
+  toStageId                       String?                       @db.Uuid
+  teamId                          String?                       @db.Uuid
+  creditedMemberId                String?                       @db.Uuid
+  performedByMemberId             String?                       @db.Uuid
+  leadOwnerMemberIdAtEvent        String?                       @db.Uuid
+  meetingOwnerMemberIdAtEvent     String?                       @db.Uuid
+  opportunityOwnerMemberIdAtEvent String?                       @db.Uuid
+  bookedByMemberId                String?                       @db.Uuid
+  originatingSdrMemberId          String?                       @db.Uuid
+  sourceId                        String?                       @db.Uuid
+  campaignId                      String?                       @db.Uuid
+  creativeId                      String?                       @db.Uuid
+  politicalRole                   String?
+  municipality                    String?
+  stateCode                       String?
+  channel                         String?
+  direction                       String?
+  taskKind                        String?
+  activityType                    String?
+  result                          String?
+  cadenceInstanceId               String?                       @db.Uuid
+  cadenceStepKey                  String?
+  cadenceDay                      Int?
+  executionMode                   CommercialMetricExecutionMode @default(SYSTEM)
+  valueCents                      BigInt?
+  durationSeconds                 Int?
+  quantity                        Int                           @default(1)
+  correctionOfFactId              String?                       @db.Uuid
+  reversedAt                      DateTime?                     @db.Timestamptz(3)
+  reversalReason                  String?
+  definitionVersion               Int                           @default(1)
+  producerVersion                 String                        @default("indicators.v1")
+  inputFingerprint                String
+  safeMetadata                    Json?
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, eventKey])
@@ -14335,23 +14435,23 @@ model CommercialMetricFact {
 }
 
 model CommercialMetricBackfillRun {
-  id                String                         @id @default(uuid()) @db.Uuid
-  workspaceId       String                         @db.Uuid
-  mode              CommercialMetricBackfillMode
-  status            CommercialMetricBackfillStatus @default(RUNNING)
-  ruleVersion       Int                            @default(1)
-  inputFingerprint  String
-  cursor            String?
-  eligibleCount     Int                            @default(0)
-  createdCount      Int                            @default(0)
-  existingCount     Int                            @default(0)
-  reviewCount       Int                            @default(0)
-  skippedCount      Int                            @default(0)
-  failedCount       Int                            @default(0)
-  requestedByActorId String                        @db.Uuid
-  startedAt         DateTime                       @default(now()) @db.Timestamptz(3)
-  finishedAt        DateTime?                      @db.Timestamptz(3)
-  summary           Json?
+  id                 String                         @id @default(uuid()) @db.Uuid
+  workspaceId        String                         @db.Uuid
+  mode               CommercialMetricBackfillMode
+  status             CommercialMetricBackfillStatus @default(RUNNING)
+  ruleVersion        Int                            @default(1)
+  inputFingerprint   String
+  cursor             String?
+  eligibleCount      Int                            @default(0)
+  createdCount       Int                            @default(0)
+  existingCount      Int                            @default(0)
+  reviewCount        Int                            @default(0)
+  skippedCount       Int                            @default(0)
+  failedCount        Int                            @default(0)
+  requestedByActorId String                         @db.Uuid
+  startedAt          DateTime                       @default(now()) @db.Timestamptz(3)
+  finishedAt         DateTime?                      @db.Timestamptz(3)
+  summary            Json?
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, mode, inputFingerprint])
@@ -14360,17 +14460,17 @@ model CommercialMetricBackfillRun {
 }
 
 model CommercialMetricBackfillItem {
-  id              String                          @id @default(uuid()) @db.Uuid
-  workspaceId     String                          @db.Uuid
-  runId           String                          @db.Uuid
+  id               String                          @id @default(uuid()) @db.Uuid
+  workspaceId      String                          @db.Uuid
+  runId            String                          @db.Uuid
   sourceEntityType String
-  sourceEntityId  String                          @db.Uuid
-  eventKey        String
-  outcome         CommercialMetricBackfillOutcome
-  reasonCode      String?
-  factId          String?                         @db.Uuid
+  sourceEntityId   String                          @db.Uuid
+  eventKey         String
+  outcome          CommercialMetricBackfillOutcome
+  reasonCode       String?
+  factId           String?                         @db.Uuid
   inputFingerprint String
-  createdAt       DateTime                        @default(now()) @db.Timestamptz(3)
+  createdAt        DateTime                        @default(now()) @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, runId, eventKey])
@@ -14389,28 +14489,28 @@ enum ProspectingResearchTargetStatus {
 }
 
 model ProspectingResearchTarget {
-  id                  String                          @id @default(uuid()) @db.Uuid
-  workspaceId         String                          @db.Uuid
-  batchId             String                          @db.Uuid
-  externalIdentityKey String
-  tseCandidateId      String
-  role                ProspectingRole
-  politicianName      String
-  ballotName          String?
-  municipalityName    String
+  id                   String                          @id @default(uuid()) @db.Uuid
+  workspaceId          String                          @db.Uuid
+  batchId              String                          @db.Uuid
+  externalIdentityKey  String
+  tseCandidateId       String
+  role                 ProspectingRole
+  politicianName       String
+  ballotName           String?
+  municipalityName     String
   municipalityIbgeCode String
-  stateCode           String
-  population          Int
-  status              ProspectingResearchTargetStatus @default(PENDING)
-  candidateId         String?                         @db.Uuid
-  leaseOwner          String?
-  leaseExpiresAt      DateTime?                       @db.Timestamptz(3)
-  attemptCount        Int                             @default(0)
-  lastReasonCode      String?
-  lastEvidence        Json?
-  completedAt         DateTime?                       @db.Timestamptz(3)
-  createdAt           DateTime                        @default(now()) @db.Timestamptz(3)
-  updatedAt           DateTime                        @updatedAt @db.Timestamptz(3)
+  stateCode            String
+  population           Int
+  status               ProspectingResearchTargetStatus @default(PENDING)
+  candidateId          String?                         @db.Uuid
+  leaseOwner           String?
+  leaseExpiresAt       DateTime?                       @db.Timestamptz(3)
+  attemptCount         Int                             @default(0)
+  lastReasonCode       String?
+  lastEvidence         Json?
+  completedAt          DateTime?                       @db.Timestamptz(3)
+  createdAt            DateTime                        @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime                        @updatedAt @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, externalIdentityKey])
@@ -14421,20 +14521,20 @@ model ProspectingResearchTarget {
 }
 
 model McpOAuthAuthorizationCode {
-  id                  String    @id @default(uuid()) @db.Uuid
-  workspaceId         String    @db.Uuid
-  userId              String    @db.Uuid
-  workspaceMemberId   String    @db.Uuid
-  authorizingActorId  String    @db.Uuid
-  clientId            String
-  redirectUri         String
-  resource            String
-  scope               String
-  codeHash            String    @unique @db.Char(64)
-  codeChallenge       String
-  expiresAt           DateTime  @db.Timestamptz(3)
-  consumedAt          DateTime? @db.Timestamptz(3)
-  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+  id                 String    @id @default(uuid()) @db.Uuid
+  workspaceId        String    @db.Uuid
+  userId             String    @db.Uuid
+  workspaceMemberId  String    @db.Uuid
+  authorizingActorId String    @db.Uuid
+  clientId           String
+  redirectUri        String
+  resource           String
+  scope              String
+  codeHash           String    @unique @db.Char(64)
+  codeChallenge      String
+  expiresAt          DateTime  @db.Timestamptz(3)
+  consumedAt         DateTime? @db.Timestamptz(3)
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
 
   @@index([workspaceId, expiresAt, consumedAt])
   @@index([clientId, expiresAt, consumedAt])
@@ -14442,20 +14542,20 @@ model McpOAuthAuthorizationCode {
 }
 
 model McpOAuthRefreshToken {
-  id                  String    @id @default(uuid()) @db.Uuid
-  workspaceId         String    @db.Uuid
-  userId              String    @db.Uuid
-  workspaceMemberId   String    @db.Uuid
-  authorizingActorId  String    @db.Uuid
-  clientId            String
-  resource            String
-  scope               String
-  tokenHash            String    @unique @db.Char(64)
-  expiresAt           DateTime  @db.Timestamptz(3)
-  lastUsedAt          DateTime? @db.Timestamptz(3)
-  revokedAt           DateTime? @db.Timestamptz(3)
-  rotatedToId         String?   @db.Uuid
-  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+  id                 String    @id @default(uuid()) @db.Uuid
+  workspaceId        String    @db.Uuid
+  userId             String    @db.Uuid
+  workspaceMemberId  String    @db.Uuid
+  authorizingActorId String    @db.Uuid
+  clientId           String
+  resource           String
+  scope              String
+  tokenHash          String    @unique @db.Char(64)
+  expiresAt          DateTime  @db.Timestamptz(3)
+  lastUsedAt         DateTime? @db.Timestamptz(3)
+  revokedAt          DateTime? @db.Timestamptz(3)
+  rotatedToId        String?   @db.Uuid
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
 
   @@index([workspaceId, expiresAt, revokedAt])
   @@index([clientId, expiresAt, revokedAt])
@@ -14463,20 +14563,20 @@ model McpOAuthRefreshToken {
 }
 
 model CommercialMetricReconciliationRun {
-  id                 String                               @id @default(uuid()) @db.Uuid
-  workspaceId        String                               @db.Uuid
-  runKey             String
-  status             CommercialMetricReconciliationStatus @default(RUNNING)
-  ruleVersion        Int                                  @default(1)
-  expectedCount      Int                                  @default(0)
-  actualCount        Int                                  @default(0)
-  gapCount           Int                                  @default(0)
-  matchedCheckCount  Int                                  @default(0)
-  divergentCheckCount Int                                 @default(0)
-  requestedByActorId String                               @db.Uuid
-  startedAt          DateTime                             @default(now()) @db.Timestamptz(3)
-  finishedAt         DateTime?                            @db.Timestamptz(3)
-  summary            Json?
+  id                  String                               @id @default(uuid()) @db.Uuid
+  workspaceId         String                               @db.Uuid
+  runKey              String
+  status              CommercialMetricReconciliationStatus @default(RUNNING)
+  ruleVersion         Int                                  @default(1)
+  expectedCount       Int                                  @default(0)
+  actualCount         Int                                  @default(0)
+  gapCount            Int                                  @default(0)
+  matchedCheckCount   Int                                  @default(0)
+  divergentCheckCount Int                                  @default(0)
+  requestedByActorId  String                               @db.Uuid
+  startedAt           DateTime                             @default(now()) @db.Timestamptz(3)
+  finishedAt          DateTime?                            @db.Timestamptz(3)
+  summary             Json?
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, runKey])

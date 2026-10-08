@@ -127,7 +127,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       <p><Icon name="leads" size={16} />{meeting.leadName} · {meeting.closerName}</p>
       {meeting.observation ? <p className={styles.observation}>{meeting.observation}</p> : null}
       <StatusBadge tone={meeting.calendarSync.state === "SYNCED" ? "success" : meeting.calendarSync.state === "CONFLICT" || meeting.calendarSync.state === "FAILED" ? "danger" : "info"}>Calendário: {meeting.calendarSync.state === "NOT_LINKED" ? "não conectado" : meeting.calendarSync.state.toLowerCase().replaceAll("_", " ")}</StatusBadge>
-      <div className={styles.detailLinks}><Link href={`/agenda/reunioes/${meeting.id}`}>Abrir briefing do closer →</Link><Link href={`/integracoes/calendario?meetingId=${meeting.id}`}>Ver calendário</Link>{meeting.opportunityId ? <Link href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
+      <div className={styles.detailLinks}><Link href={`/agenda/reunioes/${meeting.id}`}>Abrir briefing do closer →</Link>{meeting.calendarSync.conferenceUrl ? <a href={meeting.calendarSync.conferenceUrl} rel="noreferrer" target="_blank">Entrar no Google Meet</a> : <Link href="/integracoes/calendario">Conectar calendário</Link>}{meeting.opportunityId ? <Link href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
       <MeetingActions meeting={meeting} onCommitted={refresh} />
     </div>;
   }
@@ -142,7 +142,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
         </section>
         {screen.canFilterCloser ? <label className={styles.closerLabel}>Agenda de<select className={inputClass} onChange={(event) => navigate(screen.selectedDate, screen.view, event.target.value)} value={screen.closerId}><option value="">Todos os closers</option>{screen.closerOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label> : null}
         <section className={styles.calendars}><h2>Minhas reuniões</h2>{Object.entries(statusLabels).map(([status, label]) => <label key={status}><input checked={!hiddenStatuses.includes(status)} onChange={(event) => setHiddenStatuses((current) => event.target.checked ? current.filter((item) => item !== status) : [...current, status])} type="checkbox" /><span>{label}</span></label>)}</section>
-        <Link className={styles.connectLink} href="/integracoes/calendario"><Icon name="mais" size={14} /> Abrir calendário local</Link>
+        <Link className={styles.connectLink} href="/integracoes/calendario"><Icon name="mais" size={14} /> Conectar Google Calendar</Link>
         <p className={styles.timezone}>{screen.timeZone}</p>
       </aside>
       <section className={styles.main} aria-label="Compromissos">

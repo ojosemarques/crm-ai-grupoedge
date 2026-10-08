@@ -28,6 +28,7 @@ import type {
 import { recordOpportunityMeetingHeldInTransaction } from "@/modules/opportunities/application/opportunity-service";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { stopColdCadenceInTransaction } from "@/modules/prospecting/application/prospecting-cadence-service";
+import { enqueueGoogleCalendarSyncInTransaction } from "@/modules/integrations/application/google-calendar-service";
 import {
   transitionLeadStageInTransaction,
 } from "@/modules/pipelines/application/pre-sales-pipeline-service";
@@ -38,7 +39,7 @@ import type {
 } from "@/modules/users/permissions/authorization-service";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
-import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
+import { AccessRoleKeys, PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
@@ -149,6 +150,7 @@ type MeetingRow = Prisma.MeetingGetPayload<{
     lead: { select: { fullName: true } };
     owner: { select: { user: { select: { displayName: true } } } };
     calendarLinks: { select: { syncState: true }; take: 1 };
+    googleCalendarLink: { select: { syncState: true; conferenceUrl: true } };
   };
 }>;
 
@@ -289,10 +291,9 @@ function serializeMeeting(row: MeetingRow, now: Date, canWrite: boolean): Meetin
     outcome: row.outcome,
     revision: row.revision,
     canWrite,
-    calendarSync: {
-      state: (row.calendarLinks[0]?.syncState ?? "NOT_LINKED") as MeetingListItem["calendarSync"]["state"],
-      externalEgress: false as const,
-    },
+    calendarSync: row.googleCalendarLink
+      ? { state: row.googleCalendarLink.syncState, externalEgress: true, conferenceUrl: row.googleCalendarLink.conferenceUrl }
+      : { state: (row.calendarLinks[0]?.syncState ?? "NOT_LINKED") as MeetingListItem["calendarSync"]["state"], externalEgress: false, conferenceUrl: null },
   });
 }
 
@@ -443,7 +444,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           startDate: selectedDate,
           endDate: selectedDate,
         };
-    const [closers, writeDecision, leads] = await Promise.all([
+    const [visibleClosers, writeDecision, leads] = await Promise.all([
       closerOptions(context, readDecision.scope),
       options.authorization.authorize(context, PermissionKeys.MEETINGS_WRITE, {
         workspaceId: context.workspaceId,
@@ -452,7 +453,10 @@ export function createMeetingService(options: MeetingServiceOptions) {
       }),
       leadOptions(context),
     ]);
-    const allowedCloserIds = new Set(closers.map((closer) => closer.id));
+    const closers = context.roleKey === "sdr"
+      ? await closerOptions(context, "WORKSPACE")
+      : visibleClosers;
+    const allowedCloserIds = new Set(visibleClosers.map((closer) => closer.id));
     if (parsed.data.closerId && !allowedCloserIds.has(parsed.data.closerId)) {
       await options.authorization.assertAuthorized(context, PermissionKeys.MEETINGS_READ, {
         workspaceId: context.workspaceId,
@@ -478,6 +482,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         lead: { select: { fullName: true } },
         owner: { select: { user: { select: { displayName: true } } } },
         calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
+        googleCalendarLink: { select: { syncState: true, conferenceUrl: true } },
       },
       orderBy: [{ startsAt: "asc" }, { id: "asc" }],
     });
@@ -531,6 +536,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           lead: { select: { fullName: true } },
           owner: { select: { user: { select: { displayName: true } } } },
           calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
+          googleCalendarLink: { select: { syncState: true, conferenceUrl: true } },
           history: {
             orderBy: [{ meetingRevision: "desc" }],
             include: { recordedBy: { select: { displayName: true } } },
@@ -592,6 +598,9 @@ export function createMeetingService(options: MeetingServiceOptions) {
     });
     if (!lead) notFound("Lead não encontrado.");
     await options.authorization.assertAuthorized(context, PermissionKeys.MEETINGS_WRITE, leadResource(context.workspaceId, lead));
+    if (context.roleKey === AccessRoleKeys.CLOSER && parsed.data.closerId !== context.memberId) {
+      throw new ApplicationError("Vendedores podem agendar reuniões somente na própria agenda.", { code: "MEETING_OWNER_SCOPE_DENIED", statusCode: 403, expose: true });
+    }
 
     return options.database.$transaction(async (transaction) => {
       await lockCloser(transaction, context.workspaceId, parsed.data.closerId);
@@ -833,6 +842,14 @@ export function createMeetingService(options: MeetingServiceOptions) {
           },
         );
       }
+      await enqueueGoogleCalendarSyncInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        meetingId: meeting.id,
+        ownerMemberId: closer.id,
+        meetingRevision: meeting.revision,
+        actorId: context.actorId,
+        now: occurredAt,
+      });
       await options.beforeCommit?.();
       return Object.freeze({ meetingId: meeting.id, taskId: task.id, revision: meeting.revision });
     });
@@ -1179,6 +1196,14 @@ export function createMeetingService(options: MeetingServiceOptions) {
           reason: "Lembretes cancelados porque a reunião foi encerrada.",
         });
       }
+      await enqueueGoogleCalendarSyncInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        meetingId: meeting.id,
+        ownerMemberId: meeting.ownerMemberId,
+        meetingRevision: updated.revision,
+        actorId: context.actorId,
+        now,
+      });
       await options.beforeCommit?.();
       return Object.freeze({
         meetingId: meeting.id,
@@ -1202,6 +1227,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         owner: { select: { user: { select: { displayName: true } } } },
         opportunity: { select: { id: true, name: true, nextActionTaskId: true, nextActionAt: true, nextActionDescription: true } },
         calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
+        googleCalendarLink: { select: { syncState: true, conferenceUrl: true } },
         lead: {
           include: {
             submissions: {

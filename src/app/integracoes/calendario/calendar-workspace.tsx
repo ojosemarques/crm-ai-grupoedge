@@ -1,55 +1,55 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/ui/empty-state";
-import { DataTableShell, SectionHeader, StatCard, Surface } from "@/components/ui/surface";
-import { calendarScenarios, type CalendarScenario } from "@/modules/integrations/domain/calendar-shared-contracts";
+import { SectionHeader, Surface } from "@/components/ui/surface";
 
 type Initial = Readonly<{
-  generatedAt: string; externalEgress: false; activationStatus: string;
-  profile: null | Readonly<{ id: string; displayName: string; timeZone: string; syncPastDays: number; syncFutureDays: number; maxItemsPerRun: number; revision: number; lastSyncAt: string | null; lastSuccessAt: string | null }>;
-  metrics: Readonly<{ linked: number; pending: number; conflicts: number; failed: number }>;
-  links: readonly Readonly<{ id: string; meetingId: string; leadName: string; closerName: string; title: string; startsAt: string; meetingStatus: string; meetingRevision: number; syncState: string; externalEventId: string; externalVersion: number; lastPushedAt: string | null; lastPulledAt: string | null }>[];
-  events: readonly Readonly<{ id: string; meetingId: string | null; direction: string; operation: string; status: string; origin: string; occurredAt: string; processedAt: string | null; errorCode: string | null }>[];
-  conflicts: readonly Readonly<{ id: string; meetingId: string | null; type: string; status: string; eventKey: string; createdAt: string; resolvedAt: string | null }>[];
-  permissions: Readonly<{ configure: boolean; sync: boolean; replay: boolean; readConflicts: boolean; resolveConflict: boolean }>;
-  checklist: readonly string[];
+  configurationReady: boolean;
+  account: null | Readonly<{
+    email: string;
+    status: "CONNECTED" | "NEEDS_REAUTH" | "DISCONNECTED";
+    lastSyncAt: string | null;
+    lastErrorAt: string | null;
+    lastErrorCode: string | null;
+    updatedAt: string;
+  }>;
 }>;
 
-const scenarioLabels: Record<CalendarScenario, string> = { SUCCESS: "Sucesso local", TRANSIENT_FAILURE: "Falha transitória com retry", PERMANENT_FAILURE: "Falha permanente", TIMEOUT: "Timeout até dead-letter" };
-const labels: Record<string, string> = { LOCAL_SANDBOX: "Sandbox local ativo", EXTERNAL_DISABLED: "Provider externo desativado", PAUSED: "Pausado", PENDING_PUSH: "Aguardando envio", PENDING_PULL: "Aguardando entrada", SYNCED: "Sincronizado", CONFLICT: "Conflito", FAILED: "Falha", CANCELLED: "Cancelado", ACCEPTED: "Aceito", APPLIED: "Aplicado", DUPLICATE: "Duplicado", IGNORED: "Ignorado", RETRY_PENDING: "Nova tentativa", FAILED_PERMANENT: "Falha terminal", CREATE: "Criar", UPDATE: "Atualizar", RESCHEDULE: "Remarcar", CANCEL: "Cancelar" };
-const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "—";
+const statusLabel = { CONNECTED: "Conectado", NEEDS_REAUTH: "Precisa reconectar", DISCONNECTED: "Desconectado" } as const;
+function date(value: string | null) { return value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" }).format(new Date(value)) : "Ainda não executada"; }
 
-export function CalendarWorkspace({ initial, initialMeetingId }: Readonly<{ initial: Initial; initialMeetingId: string }>) {
+export function CalendarWorkspace({ initial, callbackStatus, callbackCode }: Readonly<{ initial: Initial; callbackStatus?: string | undefined; callbackCode?: string | undefined }>) {
   const router = useRouter();
-  const [meetingId, setMeetingId] = useState(initialMeetingId);
-  const [scenario, setScenario] = useState<CalendarScenario>("SUCCESS");
-  const [pending, setPending] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
-
-  async function command(action: string, data: unknown) {
-    setPending(action); setFeedback(null);
-    const response = await fetch("/api/integrations/calendar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, data }) });
-    const payload = await response.json() as { error?: { message?: string } };
-    setPending(null);
-    if (!response.ok) { setFeedback({ tone: "danger", text: payload.error?.message ?? "A operação de calendário não foi concluída." }); return; }
-    setFeedback({ tone: "success", text: "Operação registrada no sandbox local. Nenhum calendário externo foi acionado." });
-    router.refresh();
+  const [pending, setPending] = useState<"connect" | "disconnect" | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(callbackStatus === "connected" ? "Google Calendar conectado com sucesso." : callbackStatus === "error" ? `A conexão não foi concluída (${callbackCode ?? "erro desconhecido"}).` : null);
+  async function connect() {
+    setPending("connect"); setFeedback(null);
+    const response = await fetch("/api/integrations/google-calendar/connect", { method: "POST" });
+    const body = await response.json() as { result?: { authorizationUrl?: string }; error?: { message?: string } };
+    if (!response.ok || !body.result?.authorizationUrl) { setFeedback(body.error?.message ?? "Não foi possível iniciar a autorização do Google."); setPending(null); return; }
+    window.location.assign(body.result.authorizationUrl);
   }
-
+  async function disconnect() {
+    setPending("disconnect"); setFeedback(null);
+    const response = await fetch("/api/integrations/google-calendar/disconnect", { method: "POST" });
+    const body = await response.json() as { error?: { message?: string } };
+    setPending(null);
+    if (!response.ok) { setFeedback(body.error?.message ?? "Não foi possível desconectar a conta."); return; }
+    setFeedback("Conta desconectada. Novas reuniões não serão enviadas ao Google até uma nova autorização."); router.refresh();
+  }
+  const connected = initial.account?.status === "CONNECTED";
   return <div className="space-y-5">
-    <Surface tone="accent"><div className="flex flex-wrap items-start justify-between gap-4"><SectionHeader title="Sincronização segura, sem egress" description="O fluxo, a fila, a idempotência e os conflitos são reais; o evento externo é determinístico e local. O CRM nunca perde a autoridade sobre Meeting." /><span className="status-badge" data-tone={initial.activationStatus === "LOCAL_SANDBOX" ? "success" : "warning"}>{labels[initial.activationStatus] ?? initial.activationStatus}</span></div></Surface>
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Reuniões ligadas" value={initial.metrics.linked} hint="Identidade externa explícita" /><StatCard label="Pendentes" value={initial.metrics.pending} hint="Fila PostgreSQL" /><StatCard label="Conflitos" value={initial.metrics.conflicts} hint="Nunca sobrescritos" /><StatCard label="Falhas terminais" value={initial.metrics.failed} hint="Replay autorizado" /></div>
-    {feedback ? <p className="feedback-banner" data-tone={feedback.tone} role={feedback.tone === "danger" ? "alert" : "status"}>{feedback.text}</p> : null}
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)]">
-      <Surface><SectionHeader title="Projetar reunião no calendário local" description="Informe uma reunião do seu escopo. Repetir a mesma revisão não duplica evento, link ou job." /><form className="mt-4 grid gap-4 md:grid-cols-2" onSubmit={(event) => { event.preventDefault(); const id = crypto.randomUUID(); void command("SYNC_MEETING", { meetingId, scenario, idempotencyKey: `ui:${id}`, correlationId: `ui:${id}` }); }}><label className="space-y-1 text-sm"><span className="font-semibold">ID da reunião</span><input className="w-full rounded-[var(--radius-control)] border border-border bg-card px-3 py-2 font-mono text-xs" onChange={(event) => setMeetingId(event.target.value)} placeholder="UUID da reunião autorizada" required value={meetingId} /></label><label className="space-y-1 text-sm"><span className="font-semibold">Cenário determinístico</span><select className="w-full rounded-[var(--radius-control)] border border-border bg-card px-3 py-2" onChange={(event) => setScenario(event.target.value as CalendarScenario)} value={scenario}>{calendarScenarios.map((item) => <option key={item} value={item}>{scenarioLabels[item]}</option>)}</select></label><div className="flex flex-wrap items-center gap-2 md:col-span-2"><Button disabled={pending !== null || !initial.permissions.sync || initial.activationStatus !== "LOCAL_SANDBOX"} type="submit">{pending === "SYNC_MEETING" ? "Enfileirando…" : "Sincronizar localmente"}</Button><span className="text-xs text-muted-foreground">O worker processa criação, atualização, remarcação ou cancelamento.</span></div></form></Surface>
-      <Surface tone="subtle"><SectionHeader title="Limites do sandbox" description="Configuração persistida e fronteira explícita de ativação futura." /><dl className="mt-4 space-y-3 text-sm"><div className="flex justify-between gap-3"><dt>Calendário</dt><dd className="font-semibold">{initial.profile?.displayName ?? "—"}</dd></div><div className="flex justify-between gap-3"><dt>Timezone</dt><dd className="font-semibold">{initial.profile?.timeZone ?? "—"}</dd></div><div className="flex justify-between gap-3"><dt>Janela</dt><dd className="font-semibold">{initial.profile ? `${initial.profile.syncPastDays} dias atrás / ${initial.profile.syncFutureDays} à frente` : "—"}</dd></div><div className="flex justify-between gap-3"><dt>Egress externo</dt><dd className="font-semibold">Bloqueado</dd></div></dl>{initial.profile && initial.permissions.configure ? <Button className="mt-4" onClick={() => void command(initial.activationStatus === "PAUSED" ? "RESUME" : "PAUSE", { revision: initial.profile!.revision })} variant="secondary">{initial.activationStatus === "PAUSED" ? "Retomar sandbox" : "Pausar sandbox"}</Button> : null}<details className="mt-4"><summary className="cursor-pointer font-semibold">Ativação futura</summary><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{initial.checklist.map((item) => <li key={item}>{item}</li>)}</ul></details></Surface>
-    </div>
-    <Surface><SectionHeader title="Reuniões sincronizadas" description="Identidade local, revisão canônica e versão externa ficam separadas." />{initial.links.length ? <DataTableShell className="mt-4"><table><thead><tr><th>Reunião</th><th>Closer</th><th>Horário</th><th>Estado</th><th>Versões</th><th>Ação</th></tr></thead><tbody>{initial.links.map((item) => <tr key={item.id}><td><div className="font-semibold">{item.title}</div><div className="text-xs text-muted-foreground">{item.leadName}</div></td><td>{item.closerName}</td><td>{formatDate(item.startsAt)}</td><td><span className="status-badge" data-tone={item.syncState === "SYNCED" ? "success" : item.syncState === "CONFLICT" || item.syncState === "FAILED" ? "danger" : "info"}>{labels[item.syncState] ?? item.syncState}</span></td><td className="font-mono text-xs">CRM r{item.meetingRevision} · local v{item.externalVersion}</td><td><div className="flex flex-wrap gap-2"><Button asChild size="sm" variant="secondary"><Link href={`/agenda?date=${item.startsAt.slice(0, 10)}`}>Abrir agenda</Link></Button>{initial.permissions.sync ? <Button onClick={() => { const id = crypto.randomUUID(); void command("SYNC_MEETING", { meetingId: item.meetingId, scenario: "SUCCESS", idempotencyKey: `ui:${id}`, correlationId: `ui:${id}` }); }} size="sm">Sincronizar</Button> : null}</div></td></tr>)}</tbody></table></DataTableShell> : <EmptyState title="Nenhuma reunião ligada" description="A sincronização cria o vínculo somente a partir de uma reunião persistida e autorizada." />}</Surface>
-    <div className="grid gap-5 xl:grid-cols-2"><Surface><SectionHeader title="Eventos recentes" description="Direção, operação e resultado do processamento local." /><div className="mt-4 space-y-2">{initial.events.slice(0, 12).map((item) => <div className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-control)] bg-muted/50 p-3 text-sm" key={item.id}><span>{item.direction === "PUSH" ? "CRM → calendário" : "Calendário → CRM"} · {labels[item.operation] ?? item.operation}</span><span className="status-badge" data-tone={item.status === "APPLIED" ? "success" : item.status === "CONFLICT" || item.status === "FAILED_PERMANENT" ? "danger" : "info"}>{labels[item.status] ?? item.status}</span>{item.status === "FAILED_PERMANENT" && initial.permissions.replay ? <Button onClick={() => void command("REPLAY", { eventId: item.id })} size="sm" variant="secondary">Reprocessar</Button> : null}</div>)}{initial.events.length === 0 ? <p className="text-sm text-muted-foreground">Nenhum evento processado.</p> : null}</div></Surface><Surface><SectionHeader title="Conflitos explícitos" description="Alterações concorrentes nunca são resolvidas silenciosamente." /><div className="mt-4 space-y-3">{initial.conflicts.filter((item) => item.status === "OPEN").map((item) => <div className="rounded-[var(--radius-panel)] border border-red-200 bg-red-50/70 p-4" key={item.id}><div className="flex items-center justify-between gap-3"><strong>{item.type}</strong><span className="status-badge" data-tone="danger">Aberto</span></div><p className="mt-1 text-xs text-muted-foreground">{item.eventKey} · {formatDate(item.createdAt)}</p>{initial.permissions.resolveConflict ? <div className="mt-3 flex flex-wrap gap-2"><Button onClick={() => void command("RESOLVE_CONFLICT", { conflictId: item.id, resolution: "KEEP_CRM", reason: "Manter a reunião canônica confirmada pelo gestor." })} size="sm" variant="secondary">Manter CRM</Button><Button onClick={() => void command("RESOLVE_CONFLICT", { conflictId: item.id, resolution: "APPLY_EXTERNAL", reason: "Aplicar alteração externa confirmada pelo gestor." })} size="sm">Aplicar externo</Button></div> : null}</div>)}{initial.conflicts.every((item) => item.status !== "OPEN") ? <p className="text-sm text-muted-foreground">Nenhum conflito aberto.</p> : null}</div></Surface></div>
+    {feedback ? <p className="feedback-banner" data-tone={callbackStatus === "error" ? "danger" : "success"} role="status">{feedback}</p> : null}
+    <Surface tone="accent"><div className="flex flex-wrap items-start justify-between gap-4"><SectionHeader title="Google Calendar" description="Cada vendedor conecta a própria conta. As reuniões do CRM são criadas na agenda do responsável e recebem um link do Google Meet." /><span className="status-badge" data-tone={connected ? "success" : initial.configurationReady ? "warning" : "danger"}>{connected ? "Conectado" : initial.configurationReady ? "Aguardando conexão" : "Configuração pendente"}</span></div></Surface>
+    <Surface>
+      <SectionHeader title="Minha conta Google" description="A autorização é individual. Senha e tokens nunca aparecem na interface; as credenciais ficam cifradas no servidor." />
+      {initial.account ? <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">Conta</dt><dd className="font-semibold">{initial.account.email}</dd></div><div><dt className="text-muted-foreground">Estado</dt><dd className="font-semibold">{statusLabel[initial.account.status]}</dd></div><div><dt className="text-muted-foreground">Última sincronização</dt><dd className="font-semibold">{date(initial.account.lastSyncAt)}</dd></div><div><dt className="text-muted-foreground">Última falha</dt><dd className="font-semibold">{initial.account.lastErrorCode ?? "Nenhuma"}</dd></div></dl> : <p className="mt-4 text-sm text-muted-foreground">Nenhuma conta conectada para o seu usuário.</p>}
+      <div className="mt-5 flex flex-wrap gap-2"><Button disabled={pending !== null || !initial.configurationReady} onClick={() => void connect()}>{pending === "connect" ? "Abrindo Google…" : connected ? "Reconectar Google" : "Conectar Google Calendar"}</Button>{initial.account && initial.account.status !== "DISCONNECTED" ? <Button disabled={pending !== null} onClick={() => void disconnect()} variant="secondary">{pending === "disconnect" ? "Desconectando…" : "Desconectar"}</Button> : null}</div>
+      {!initial.configurationReady ? <p className="mt-4 text-sm text-red-700">As variáveis protegidas do Google ainda não foram aplicadas ao ambiente.</p> : null}
+    </Surface>
+    <Surface tone="subtle"><SectionHeader title="Como funciona" description="O CRM continua sendo a fonte oficial da reunião." /><ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-muted-foreground"><li>O SDR ou vendedor agenda a reunião no CRM e escolhe o closer responsável.</li><li>Se o responsável conectou sua conta, o worker cria ou atualiza o evento na agenda dele.</li><li>Remarcações e cancelamentos feitos no CRM são refletidos automaticamente no Google Calendar.</li><li>Administradores e gerentes acompanham as agendas no CRM; vendedores veem apenas o próprio escopo.</li></ol></Surface>
   </div>;
 }

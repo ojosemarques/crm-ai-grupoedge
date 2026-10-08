@@ -21,7 +21,8 @@ export type MeetingListItem = Readonly<{
   canWrite: boolean;
   calendarSync: Readonly<{
     state: "NOT_LINKED" | "PENDING_PUSH" | "PENDING_PULL" | "SYNCED" | "CONFLICT" | "FAILED" | "CANCELLED";
-    externalEgress: false;
+    externalEgress: boolean;
+    conferenceUrl: string | null;
   }>;
 }>;
 
