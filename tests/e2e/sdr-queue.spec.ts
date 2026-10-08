@@ -127,6 +127,15 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
   await activity.locator('input[name="nextDueAt"]').fill("2035-01-15T10:30");
   await activity.getByRole("button", { name: "Registrar atividade" }).click();
   await expect(dialog.getByRole("status")).toContainText("Operação registrada com sucesso.");
+  await expect(
+    page.getByRole("tabpanel").locator(`[data-lead-id="${leadId}"]`),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText(
+      "Tarefa concluída e removida do Meu Dia. A próxima etapa já foi atualizada.",
+      { exact: true },
+    ),
+  ).toBeAttached();
   await expect(page.getByRole("heading", { name: "Meu Dia", exact: true })).toBeVisible();
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Fechar ficha e voltar ao Meu Dia" }).click();

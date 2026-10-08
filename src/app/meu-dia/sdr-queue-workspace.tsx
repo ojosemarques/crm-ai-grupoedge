@@ -23,6 +23,12 @@ import {
   type SdrQueueScreen,
   type SdrQueueSection,
 } from "@/modules/leads/domain/sdr-queue-contracts";
+import { hideCompletedTaskFromSections } from "@/modules/leads/domain/sdr-queue-optimistic";
+import {
+  notifySdrQueueTaskCompleted,
+  SDR_QUEUE_TASK_COMPLETED_EVENT,
+  type SdrQueueTaskCompletedDetail,
+} from "@/modules/leads/ui/sdr-queue-events";
 
 const AUTO_REFRESH_SECONDS = 30;
 
@@ -123,7 +129,6 @@ function QueueRow({
   nowMs: number;
   screen: SdrQueueScreen;
 }>) {
-  const router = useRouter();
   const resultOptions = cadenceResultOptions[item.nextActionKind ?? ""] ?? [];
   const canCompleteCadenceTask = Boolean(
     item.nextActionTaskId &&
@@ -157,8 +162,10 @@ function QueueRow({
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message ?? "Não foi possível concluir a tarefa.");
-      setNotice("Tarefa concluída. A próxima etapa foi atualizada automaticamente.");
-      router.refresh();
+      notifySdrQueueTaskCompleted({
+        leadId: item.id,
+        taskId: item.nextActionTaskId,
+      });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Não foi possível concluir a tarefa.");
     } finally {
@@ -171,6 +178,7 @@ function QueueRow({
       className={styles.queueRow}
       data-lead-id={item.id}
       data-operational-recommendation={item.recommendation.code}
+      data-task-id={item.nextActionTaskId ?? undefined}
     >
       <div>
         <Link
@@ -395,14 +403,23 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
   const [goalEditorMemberId, setGoalEditorMemberId] = useState(screen.selectedMemberId ?? screen.dailyGoalMemberOptions[0]?.id ?? "");
   const [goalSaving, setGoalSaving] = useState(false);
   const [goalNotice, setGoalNotice] = useState<string | null>(null);
+  const [completionNotice, setCompletionNotice] = useState<string | null>(null);
+  const [completedTaskIds, setCompletedTaskIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+
+  const sections = useMemo(
+    () => hideCompletedTaskFromSections(screen.sections, completedTaskIds),
+    [completedTaskIds, screen.sections],
+  );
 
   const requestedQueue = searchParams.get("queue");
   const activeQueue: SdrQueueBucket = isQueueBucket(requestedQueue)
     ? requestedQueue
     : "NOW";
   const activeSection =
-    screen.sections.find((section) => section.key === activeQueue) ??
-    screen.sections[0]!;
+    sections.find((section) => section.key === activeQueue) ??
+    sections[0]!;
   useEffect(() => {
     const clockId = window.setInterval(() => setNowMs(Date.now()), 1_000);
     const refreshId = window.setInterval(() => {
@@ -414,9 +431,30 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
     };
   }, [router]);
 
+  useEffect(() => {
+    const hideCompletedTask = (event: Event) => {
+      const detail = (event as CustomEvent<SdrQueueTaskCompletedDetail>).detail;
+      if (!detail?.taskId) return;
+      setCompletedTaskIds((current) => {
+        if (current.has(detail.taskId)) return current;
+        return new Set([...current, detail.taskId]);
+      });
+      setCompletionNotice(
+        "Tarefa concluída e removida do Meu Dia. A próxima etapa já foi atualizada.",
+      );
+    };
+
+    window.addEventListener(SDR_QUEUE_TASK_COMPLETED_EVENT, hideCompletedTask);
+    return () =>
+      window.removeEventListener(
+        SDR_QUEUE_TASK_COMPLETED_EVENT,
+        hideCompletedTask,
+      );
+  }, []);
+
   const sectionsByKey = useMemo(
-    () => new Map(screen.sections.map((section) => [section.key, section])),
-    [screen.sections],
+    () => new Map(sections.map((section) => [section.key, section])),
+    [sections],
   );
 
   const sideGroups = useMemo(() => {
@@ -542,19 +580,19 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
   ) {
     let nextIndex: number | undefined;
     if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-      nextIndex = (currentIndex + 1) % screen.sections.length;
+      nextIndex = (currentIndex + 1) % sections.length;
     } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
       nextIndex =
-        (currentIndex - 1 + screen.sections.length) % screen.sections.length;
+        (currentIndex - 1 + sections.length) % sections.length;
     } else if (event.key === "Home") {
       nextIndex = 0;
     } else if (event.key === "End") {
-      nextIndex = screen.sections.length - 1;
+      nextIndex = sections.length - 1;
     }
 
     if (nextIndex === undefined) return;
     event.preventDefault();
-    const nextSection = screen.sections[nextIndex];
+    const nextSection = sections[nextIndex];
     if (!nextSection) return;
     selectSection(nextSection.key, false);
     tabRefs.current[nextIndex]?.focus();
@@ -635,6 +673,12 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         </div>
       </header>
 
+      {completionNotice ? (
+        <p className={styles.completionNotice} role="status">
+          {completionNotice}
+        </p>
+      ) : null}
+
       <section aria-labelledby="producao-hoje" className={styles.productionPanel}>
         <div className={styles.productionHeading}>
           <div>
@@ -700,7 +744,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         <section aria-label="Navegador de filas" className={styles.queuePanel}>
           <div className={styles.tabsScroller}>
             <div aria-label="Filas do Meu Dia" className={styles.tabList} role="tablist">
-              {screen.sections.map((section, index) => (
+              {sections.map((section, index) => (
                 <button
                   aria-controls={`queue-tabpanel-${section.key}`}
                   aria-selected={section.key === activeSection.key}

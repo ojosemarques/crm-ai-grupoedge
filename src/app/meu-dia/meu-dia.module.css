@@ -34,6 +34,16 @@
   margin: 0.35rem 0 0;
 }
 
+.completionNotice {
+  background: var(--success-surface, #ecfdf3);
+  border: 1px solid var(--success-border, #86efac);
+  border-radius: var(--radius-control);
+  color: var(--success-foreground, #166534);
+  font-size: 0.78rem;
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+}
+
 .headerControls {
   align-items: end;
   display: flex;

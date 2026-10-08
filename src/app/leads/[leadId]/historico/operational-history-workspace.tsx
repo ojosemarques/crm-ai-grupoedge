@@ -20,6 +20,7 @@ import type { FreeQualificationScreen } from "@/modules/qualification/domain/fre
 import type { LeadScoreView } from "@/modules/qualification/domain/scoring-contracts";
 import type { LeadPipelineState } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import type { ContactPointView, LeadContactView } from "@/modules/contacts/domain/contact-contracts";
+import { notifySdrQueueTaskCompleted } from "@/modules/leads/ui/sdr-queue-events";
 import { JourneyPanel } from "@/components/lifecycle/journey-panel";
 import type { JourneySnapshot } from "@/modules/lifecycle/domain/lifecycle-contracts";
 import type { getOmnichannelService } from "@/modules/communications/application/omnichannel-service";
@@ -462,7 +463,11 @@ export function OperationalHistoryWorkspace({
     }
   }
 
-  async function mutate(action: string, data: Record<string, unknown>) {
+  async function mutate(
+    action: string,
+    data: Record<string, unknown>,
+    onSaved?: () => void,
+  ) {
     setPending(true);
     setNotice(null);
     try {
@@ -472,6 +477,7 @@ export function OperationalHistoryWorkspace({
         body: JSON.stringify({ action, data }),
       });
       await readResponse(response);
+      onSaved?.();
       await refresh();
       setNotice({ kind: "success", message: "Operação registrada com sucesso." });
       return true;
@@ -505,6 +511,7 @@ export function OperationalHistoryWorkspace({
       const action = currentTask && currentTask.kind !== "IMMEDIATE_CALL"
         ? "COMPLETE_TASK"
         : "RECORD_ACTIVITY";
+      const completedActivityType = formText(form, "activityType");
       const data = cadenceTask
         ? {
             taskId: currentTask.id,
@@ -519,7 +526,7 @@ export function OperationalHistoryWorkspace({
             nextTask,
           }
         : {
-            type: formText(form, "activityType"),
+            type: completedActivityType,
             direction: "OUTBOUND",
             result: formText(form, "activityResult"),
             subject: formText(form, "subject"),
@@ -533,6 +540,21 @@ export function OperationalHistoryWorkspace({
           body: JSON.stringify({ action, data }),
         });
         await readResponse(operationResponse);
+        const completedCurrentTask = Boolean(
+          currentTask &&
+            (action === "COMPLETE_TASK" ||
+              (currentTask.kind === "IMMEDIATE_CALL" &&
+                completedActivityType &&
+                ["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"].includes(
+                  completedActivityType,
+                ))),
+        );
+        if (currentTask && completedCurrentTask) {
+          notifySdrQueueTaskCompleted({
+            leadId: operations.lead.id,
+            taskId: currentTask.id,
+          });
+        }
         operationSaved = true;
         setQuickOperationCompletedForId(operations.lead.id);
       }
@@ -679,8 +701,17 @@ export function OperationalHistoryWorkspace({
     try {
       const nextTask = nextTaskFromForm(form);
       const duration = formText(form, "durationSeconds");
+      const type = formText(form, "type");
+      const currentTask = operations.tasks.find(
+        (task) => task.id === operations.lead.nextAction?.taskId,
+      );
+      const completesImmediateCall = Boolean(
+        currentTask?.kind === "IMMEDIATE_CALL" &&
+          type &&
+          ["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"].includes(type),
+      );
       const saved = await mutate("RECORD_ACTIVITY", {
-        type: formText(form, "type"),
+        type,
         direction: formText(form, "direction"),
         ...(formText(form, "result") ? { result: formText(form, "result") } : {}),
         subject: formText(form, "subject"),
@@ -689,7 +720,13 @@ export function OperationalHistoryWorkspace({
           : {}),
         ...(duration ? { durationSeconds: Number(duration) } : {}),
         ...(nextTask ? { nextTask } : {}),
-      });
+      }, completesImmediateCall && currentTask
+        ? () =>
+            notifySdrQueueTaskCompleted({
+              leadId: operations.lead.id,
+              taskId: currentTask.id,
+            })
+        : undefined);
       if (saved) element.reset();
     } catch (error) {
       setNotice({
@@ -727,7 +764,11 @@ export function OperationalHistoryWorkspace({
         ...(formText(form, "resultReason") ? { resultReason: formText(form, "resultReason") } : {}),
         ...(formText(form, "stopReason") ? { stopReason: formText(form, "stopReason") } : {}),
         ...(nextTask ? { nextTask } : {}),
-      });
+      }, () =>
+        notifySdrQueueTaskCompleted({
+          leadId: operations.lead.id,
+          taskId,
+        }));
       if (saved) element.reset();
     } catch (error) {
       setNotice({
