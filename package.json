@@ -57,6 +57,7 @@
     "db:forecast:backfill": "tsx scripts/run-forecast-backfill.ts",
     "db:commercial-metrics:backfill": "tsx scripts/run-commercial-metric-backfill.ts",
     "db:commercial-metrics:reconcile": "tsx scripts/run-commercial-metric-reconciliation.ts",
+    "db:prospecting-email-sequence": "tsx scripts/run-prospecting-email-sequence.ts",
     "db:demo:reset": "tsx scripts/reset-demo-schema.ts",
     "db:test:migrate": "prisma migrate deploy --config prisma.test.config.ts",
     "db:test:cleanup": "tsx scripts/cleanup-test-schemas.ts",

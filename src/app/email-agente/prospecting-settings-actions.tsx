@@ -140,7 +140,7 @@ export function ProspectingSettingsActions({ screen }: Props) {
       </form>
       <form className={styles.card} onSubmit={publishTemplate}>
         <h3>Publicar template imutável</h3>
-        <label>Passo<select className={control} name="stepKey">{[1,2,3,4,5,6,7].map((number) => <option key={number} value={`email-${number}`}>E-mail {number}</option>)}</select></label>
+        <label>Passo<select className={control} name="stepKey">{[1,2,3,4,5,6].map((number) => <option key={number} value={`email-${number}`}>E-mail {number}</option>)}</select></label>
         <label>Assunto<input className={control} minLength={3} name="subject" required /></label>
         <label>Corpo<textarea className={control} minLength={20} name="body" required rows={8} /></label>
         <button className={styles.button} disabled={pending} type="submit">Publicar nova versão</button>

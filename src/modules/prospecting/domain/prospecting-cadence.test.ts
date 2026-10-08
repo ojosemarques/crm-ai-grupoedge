@@ -8,11 +8,19 @@ import {
 } from "@/modules/prospecting/domain/prospecting-cadence";
 
 describe("cadência de prospecção política", () => {
-  it("materializa 16 contatos e o encerramento, incluindo três passos distintos no D1", () => {
+  it("materializa seis e-mails e o restante da cadência, incluindo três passos manuais no D1", () => {
     const schedule = scheduleProspectingCadence({ d1Date: "2026-10-05", timeZone: "America/Sao_Paulo", holidays: new Set() });
-    expect(schedule).toHaveLength(17);
-    expect(schedule.filter((step) => step.dayNumber === 1).map((step) => step.stepKey)).toEqual(["call-1", "instagram-message-1", "instagram-follow"]);
-    expect(new Set(PROSPECTING_CADENCE.map((step) => step.stepKey)).size).toBe(17);
+    expect(schedule).toHaveLength(16);
+    expect(schedule.filter((step) => ["call-1", "instagram-message-1", "instagram-follow"].includes(step.stepKey)).map((step) => step.dayNumber)).toEqual([1, 1, 1]);
+    expect(schedule.filter((step) => step.executor === "OPEN_DOT").map((step) => [step.stepKey, step.dayNumber - 1])).toEqual([
+      ["email-1", 0],
+      ["email-2", 3],
+      ["email-3", 7],
+      ["email-4", 12],
+      ["email-5", 18],
+      ["email-6", 25],
+    ]);
+    expect(new Set(PROSPECTING_CADENCE.map((step) => step.stepKey)).size).toBe(16);
   });
 
   it("empurra sábado, domingo e feriado para o próximo dia útil", () => {

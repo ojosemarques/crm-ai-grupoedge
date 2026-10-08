@@ -4,6 +4,7 @@ import { getAuthorizationService } from "@/modules/users/permissions/authorizati
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { resolveLeadVisibilityScope } from "@/modules/leads/application/lead-list-service";
+import { PROSPECTING_EMAIL_TEMPLATE_COUNT } from "@/modules/prospecting/domain/prospecting-email-sequence";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { addLocalDays, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 import { z } from "zod";
@@ -169,7 +170,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       }),
       options.database.prospectingEmailTemplateVersion.findMany({
         where: { workspaceId: context.workspaceId }, orderBy: [{ stepKey: "asc" }, { version: "desc" }],
-        select: { id: true, stepKey: true, version: true, published: true, publishedAt: true, contentHash: true },
+        select: { id: true, stepKey: true, version: true, subjectTemplate: true, bodyTemplate: true, allowedVariables: true, published: true, publishedAt: true, contentHash: true },
       }),
       options.database.emailConnectionProfile.findMany({
         where: { workspaceId: context.workspaceId }, orderBy: { createdAt: "asc" },
@@ -258,7 +259,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       ...(coverageDays < (settings?.coverageCriticalDays ?? 5) ? [{ level: "CRITICAL", code: "LOW_STOCK", message: `Estoque cobre aproximadamente ${coverageDays} dia(s).`, action: "Acionar pesquisa Open-Dot." }] : coverageDays < (settings?.coverageWarningDays ?? 10) ? [{ level: "WARNING", code: "LOW_STOCK", message: `Estoque cobre aproximadamente ${coverageDays} dia(s).`, action: "Programar reposição." }] : []),
       ...(overdueJobs > 0 ? [{ level: "CRITICAL", code: "OVERDUE_EMAIL_JOBS", message: `${overdueJobs} ordem(ns) de e-mail vencida(s).`, action: "Verificar Open-Dot e revalidar a fila." }] : []),
       ...(overdueD1 > 0 ? [{ level: "WARNING", code: "OVERDUE_D1_GATE", message: `${overdueD1} cadência(s) com gate D1 vencido.`, action: "Abrir Meu Dia e resolver exceções." }] : []),
-      ...(publishedTemplateKeys.size < 7 ? [{ level: "BLOCKED", code: "EMAIL_TEMPLATES_MISSING", message: `${7 - publishedTemplateKeys.size} template(s) de e-mail ainda não publicado(s).`, action: "Cadastrar as copys aprovadas." }] : []),
+      ...(publishedTemplateKeys.size < PROSPECTING_EMAIL_TEMPLATE_COUNT ? [{ level: "BLOCKED", code: "EMAIL_TEMPLATES_MISSING", message: `${PROSPECTING_EMAIL_TEMPLATE_COUNT - publishedTemplateKeys.size} template(s) de e-mail ainda não publicado(s).`, action: "Cadastrar as copys aprovadas." }] : []),
       ...(!senderReady ? [{ level: "BLOCKED", code: "EMAIL_SENDER_NOT_READY", message: "Nenhum remetente possui SPF, DKIM e DMARC verificados.", action: "Concluir contas e reputação." }] : []),
       ...(!settings?.privacyApprovedAt ? [{ level: "BLOCKED", code: "PRIVACY_APPROVAL_MISSING", message: "Aprovação de privacidade/compliance não registrada.", action: "Obter e registrar a aprovação formal." }] : []),
       ...(!settings?.canaryApprovedAt ? [{ level: "BLOCKED", code: "CANARY_APPROVAL_MISSING", message: "Canário real ainda não foi aprovado.", action: "Executar homologação controlada antes do egress." }] : []),

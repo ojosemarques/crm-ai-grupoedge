@@ -1,6 +1,7 @@
 import { addLocalDays, parseWorkspaceLocalDateTime } from "@/shared/core/time/workspace-time";
+import { PROSPECTING_EMAIL_SEQUENCE } from "@/modules/prospecting/domain/prospecting-email-sequence";
 
-export const PROSPECTING_CADENCE_VERSION = 1;
+export const PROSPECTING_CADENCE_VERSION = 2;
 
 export type ProspectingCadenceDefinition = Readonly<{
   stepKey: string;
@@ -14,19 +15,18 @@ export const PROSPECTING_CADENCE: readonly ProspectingCadenceDefinition[] = Obje
   { stepKey: "call-1", dayNumber: 1, executor: "SELLER", action: "CALL", timeOfDay: "09:00" },
   { stepKey: "instagram-message-1", dayNumber: 1, executor: "SELLER", action: "INSTAGRAM_MESSAGE", timeOfDay: "09:15" },
   { stepKey: "instagram-follow", dayNumber: 1, executor: "SELLER", action: "INSTAGRAM_FOLLOW", timeOfDay: "09:30" },
-  { stepKey: "email-1", dayNumber: 2, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
-  { stepKey: "email-2", dayNumber: 6, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
+  { stepKey: PROSPECTING_EMAIL_SEQUENCE[0].stepKey, dayNumber: PROSPECTING_EMAIL_SEQUENCE[0].dayOffset + 1, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
+  { stepKey: PROSPECTING_EMAIL_SEQUENCE[1].stepKey, dayNumber: PROSPECTING_EMAIL_SEQUENCE[1].dayOffset + 1, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
   { stepKey: "instagram-message-2", dayNumber: 8, executor: "SELLER", action: "INSTAGRAM_MESSAGE", timeOfDay: "09:00" },
+  { stepKey: PROSPECTING_EMAIL_SEQUENCE[2].stepKey, dayNumber: PROSPECTING_EMAIL_SEQUENCE[2].dayOffset + 1, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
   { stepKey: "call-2", dayNumber: 10, executor: "SELLER", action: "CALL", timeOfDay: "10:00" },
-  { stepKey: "email-3", dayNumber: 11, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
-  { stepKey: "email-4", dayNumber: 15, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
+  { stepKey: PROSPECTING_EMAIL_SEQUENCE[3].stepKey, dayNumber: PROSPECTING_EMAIL_SEQUENCE[3].dayOffset + 1, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
   { stepKey: "instagram-message-3", dayNumber: 16, executor: "SELLER", action: "INSTAGRAM_MESSAGE", timeOfDay: "09:00" },
+  { stepKey: PROSPECTING_EMAIL_SEQUENCE[4].stepKey, dayNumber: PROSPECTING_EMAIL_SEQUENCE[4].dayOffset + 1, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
   { stepKey: "call-3", dayNumber: 19, executor: "SELLER", action: "CALL", timeOfDay: "10:00" },
-  { stepKey: "email-5", dayNumber: 20, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
   { stepKey: "instagram-message-4", dayNumber: 24, executor: "SELLER", action: "INSTAGRAM_MESSAGE", timeOfDay: "09:00" },
-  { stepKey: "email-6", dayNumber: 25, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
+  { stepKey: PROSPECTING_EMAIL_SEQUENCE[5].stepKey, dayNumber: PROSPECTING_EMAIL_SEQUENCE[5].dayOffset + 1, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
   { stepKey: "call-4", dayNumber: 27, executor: "SELLER", action: "CALL", timeOfDay: "10:00" },
-  { stepKey: "email-7", dayNumber: 29, executor: "OPEN_DOT", action: "EMAIL", timeOfDay: "10:00" },
   { stepKey: "close-no-response", dayNumber: 30, executor: "CRM_WORKER", action: "CLOSE", timeOfDay: "18:00" },
 ]);
 

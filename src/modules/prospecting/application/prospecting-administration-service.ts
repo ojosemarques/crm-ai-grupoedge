@@ -4,6 +4,11 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { getProspectingPlannerService } from "@/modules/prospecting/application/prospecting-planner-service";
 import { loadOpenDotClients } from "@/modules/prospecting/domain/open-dot-policy";
+import {
+  PROSPECTING_EMAIL_ALLOWED_VARIABLES,
+  PROSPECTING_EMAIL_STEP_KEYS,
+  PROSPECTING_EMAIL_TEMPLATE_COUNT,
+} from "@/modules/prospecting/domain/prospecting-email-sequence";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -11,14 +16,12 @@ import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
 
-const emailStepKeys = ["email-1", "email-2", "email-3", "email-4", "email-5", "email-6", "email-7"] as const;
-const allowedVariables = ["primeiro_nome", "nome", "cargo", "municipio", "uf", "nome_vendedor", "assinatura"] as const;
 const timeSchema = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
 
 const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("SAVE_SETTINGS"), expectedRevision: z.number().int().nonnegative(), releaseEnabled: z.boolean(), emailEgressEnabled: z.boolean(), dailyCapacity: z.number().int().min(1).max(250), reservePercent: z.number().int().min(0).max(50), emailWindowStart: timeSchema, emailWindowEnd: timeSchema, coverageWarningDays: z.number().int().min(1).max(30), coverageCriticalDays: z.number().int().min(1).max(30) }).strict(),
   z.object({ action: z.literal("SAVE_SELLERS"), sellers: z.array(z.object({ memberId: z.string().uuid(), senderProfileId: z.string().uuid().nullable(), active: z.boolean(), dailyCapacity: z.number().int().min(1).max(250), reservePercent: z.number().int().min(0).max(50), dailyEmailLimit: z.number().int().min(1).max(500).nullable(), rotationPosition: z.number().int().min(0).max(20), pausedReason: z.string().trim().min(3).max(240).nullable() }).strict()).min(1).max(20) }).strict(),
-  z.object({ action: z.literal("PUBLISH_EMAIL_TEMPLATE"), stepKey: z.enum(emailStepKeys), subject: z.string().trim().min(3).max(200), body: z.string().trim().min(20).max(20_000) }).strict(),
+  z.object({ action: z.literal("PUBLISH_EMAIL_TEMPLATE"), stepKey: z.enum(PROSPECTING_EMAIL_STEP_KEYS), subject: z.string().trim().min(3).max(200), body: z.string().trim().min(20).max(20_000) }).strict(),
   z.object({ action: z.literal("SAVE_HOLIDAYS"), holidays: z.array(z.object({ localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), name: z.string().trim().min(2).max(160) }).strict()).max(100) }).strict(),
   z.object({ action: z.literal("RUN_PLANNER"), limit: z.number().int().min(1).max(2_000).default(2_000) }).strict(),
   z.object({ action: z.literal("RECORD_PRIVACY_APPROVAL"), evidenceReference: z.string().trim().min(10).max(500), confirmed: z.literal(true) }).strict(),
@@ -72,7 +75,7 @@ export function createProspectingAdministrationService(options: Readonly<{ datab
           const readySenderCount = await transaction.emailConnectionProfile.count({ where: { workspaceId: context.workspaceId, id: { in: senderProfileIds }, operatingMode: "EXTERNAL_READY", spfStatus: "VERIFIED_EXTERNAL", dkimStatus: "VERIFIED_EXTERNAL", dmarcStatus: "VERIFIED_EXTERNAL" } });
           const sellersReady = activeSellers.length > 0 && activeSellers.every((seller) => seller.senderProfileId && seller.dailyEmailLimit) && readySenderCount === senderProfileIds.length;
           const clientReady = loadOpenDotClients(options.environment).some((client) => client.workspaceId === context.workspaceId && client.scopes.includes("EMAIL_CLAIM") && client.scopes.includes("EMAIL_RECEIPT"));
-          if (templateKeys.length !== 7 || !sellersReady || !clientReady) fail("Egress exige sete templates, remetentes mapeados/verificados e cliente Open-Dot de e-mail.", "PROSPECTING_EMAIL_FOUNDATION_INCOMPLETE");
+          if (templateKeys.length !== PROSPECTING_EMAIL_TEMPLATE_COUNT || !sellersReady || !clientReady) fail(`Egress exige ${PROSPECTING_EMAIL_TEMPLATE_COUNT} templates, remetentes mapeados/verificados e cliente Open-Dot de e-mail.`, "PROSPECTING_EMAIL_FOUNDATION_INCOMPLETE");
         }
         const updated = await transaction.prospectingSettings.update({ where: { id: settings.id }, data: { releaseEnabled: input.releaseEnabled, emailEgressEnabled: input.emailEgressEnabled, dailyCapacity: input.dailyCapacity, reservePercent: input.reservePercent, emailWindowStart: input.emailWindowStart, emailWindowEnd: input.emailWindowEnd, coverageWarningDays: input.coverageWarningDays, coverageCriticalDays: input.coverageCriticalDays, revision: { increment: 1 }, updatedByActorId: context.actorId } });
         if (!settings.releaseEnabled && updated.releaseEnabled) {
@@ -127,13 +130,13 @@ export function createProspectingAdministrationService(options: Readonly<{ datab
       }
 
       if (input.action === "PUBLISH_EMAIL_TEMPLATE") {
-        const unknown = [...placeholders(input.subject), ...placeholders(input.body)].filter((variable) => !(allowedVariables as readonly string[]).includes(variable));
+        const unknown = [...placeholders(input.subject), ...placeholders(input.body)].filter((variable) => !(PROSPECTING_EMAIL_ALLOWED_VARIABLES as readonly string[]).includes(variable));
         if (unknown.length) fail(`Variável de template não permitida: ${[...new Set(unknown)].join(", ")}.`, "PROSPECTING_EMAIL_TEMPLATE_VARIABLE_INVALID");
         const last = await transaction.prospectingEmailTemplateVersion.findFirst({ where: { workspaceId: context.workspaceId, stepKey: input.stepKey }, orderBy: { version: "desc" }, select: { version: true } });
         const contentHash = createHash("sha256").update(`${input.subject}\n${input.body}`).digest("hex");
         const duplicate = await transaction.prospectingEmailTemplateVersion.findFirst({ where: { workspaceId: context.workspaceId, stepKey: input.stepKey, contentHash }, select: { id: true, version: true } });
         if (duplicate) return { action: input.action, id: duplicate.id, version: duplicate.version, duplicate: true };
-        const template = await transaction.prospectingEmailTemplateVersion.create({ data: { workspaceId: context.workspaceId, stepKey: input.stepKey, version: (last?.version ?? 0) + 1, subjectTemplate: input.subject, bodyTemplate: input.body, allowedVariables: [...allowedVariables], contentHash, published: true, publishedAt: now, createdByActorId: context.actorId } });
+        const template = await transaction.prospectingEmailTemplateVersion.create({ data: { workspaceId: context.workspaceId, stepKey: input.stepKey, version: (last?.version ?? 0) + 1, subjectTemplate: input.subject, bodyTemplate: input.body, allowedVariables: [...PROSPECTING_EMAIL_ALLOWED_VARIABLES], contentHash, published: true, publishedAt: now, createdByActorId: context.actorId } });
         await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "prospecting.email_template.published", entityType: "ProspectingEmailTemplateVersion", entityId: template.id, occurredAt: now, changes: { stepKey: template.stepKey, version: template.version, contentHash } } });
         return { action: input.action, id: template.id, version: template.version, duplicate: false };
       }

@@ -232,7 +232,7 @@ describe("staging governado da Prospecção Ativa", () => {
     ]));
     const cadence = await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { workspaceId_leadId: { workspaceId: principal.workspaceId, leadId } } });
     expect(cadence.status).toBe("PENDING_D1");
-    expect(await database.prospectingCadenceStep.count({ where: { cadenceInstanceId: cadence.id } })).toBe(17);
+    expect(await database.prospectingCadenceStep.count({ where: { cadenceInstanceId: cadence.id } })).toBe(16);
     expect(await database.lead.count({ where: { workspaceId: principal.workspaceId, id: leadId } })).toBe(1);
 
     clock = new Date(clock.getTime() + 1_000);
@@ -248,10 +248,10 @@ describe("staging governado da Prospecção Ativa", () => {
     }
     expect(await database.prospectingCadenceStep.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "call-1" } })).toMatchObject({ resultCode: "WRONG_NUMBER", resultReason: "Número incorreto informado pelo vendedor." });
     expect(await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id } })).toMatchObject({ status: "ACTIVE" });
-    expect(await database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id, status: "SCHEDULED" } })).toBe(7);
+    expect(await database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id, status: "SCHEDULED" } })).toBe(6);
 
     const firstEmail = await database.prospectingEmailJob.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "email-1" } });
-    clock = new Date(firstEmail.scheduledAt.getTime() + 5 * 60_000);
+    clock = new Date(Math.max(clock.getTime(), firstEmail.scheduledAt.getTime()) + 5 * 60_000);
     const email = createProspectingEmailService({ database, now: () => clock });
     const claims = await Promise.all([
       database.$transaction((transaction) => email.claim(transaction, principal, { limit: 1, leaseSeconds: 120 })),
@@ -271,7 +271,7 @@ describe("staging governado da Prospecção Ativa", () => {
     expect(await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id } })).toMatchObject({ status: "CONVERSATION_STARTED", stopReasonCode: "HUMAN_REPLY" });
     expect(await database.lead.findUniqueOrThrow({ where: { id: leadId } })).toMatchObject({ awaitingHumanResponse: true });
     expect(await database.task.count({ where: { workspaceId: principal.workspaceId, leadId, sourceKey: `active-prospecting:${cadence.id}:respond-human`, status: "OPEN" } })).toBe(1);
-    expect(await database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id, status: "CANCELLED" } })).toBe(6);
+    expect(await database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id, status: "CANCELLED" } })).toBe(5);
   });
 
   it("restaura a etapa escolhida pelo vendedor quando a cadência a sobrescreveu", async () => {
@@ -317,6 +317,8 @@ describe("staging governado da Prospecção Ativa", () => {
 
     const planner = createProspectingPlannerService({ database, now: () => clock });
     await planner.plan(database, { workspaceId: principal.workspaceId, actorId: systemActorId, horizonStart: "2026-10-06", horizonEnd: "2026-11-04" });
+    const plannedRelease = await database.prospectRelease.findUniqueOrThrow({ where: { workspaceId_candidateId: { workspaceId: principal.workspaceId, candidateId: ingested.candidate.id } }, select: { plannedDate: true } });
+    clock = new Date(Math.max(clock.getTime(), plannedRelease.plannedDate.getTime() + 15 * 60 * 60_000));
     let releaseOffset = 0;
     const release = createProspectingReleaseService({ database, now: () => new Date(clock.getTime() + releaseOffset++) });
     for (let index = 0; index < 20; index += 1) {
