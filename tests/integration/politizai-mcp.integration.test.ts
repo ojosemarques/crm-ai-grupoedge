@@ -85,6 +85,11 @@ describe("MCP privado Politizai", () => {
       leaseOwner: target.leaseOwner,
       politician: { mandateStatus: "CURRENT", mandateVerifiedAt: "2026-10-06T11:00:00-03:00" },
       contact: { phone: "+551140001234", phoneScope: "OFFICE" },
+      researchChecks: {
+        municipalOffice: { status: "INDIVIDUAL_CONTACTS_CAPTURED", url: "https://prefeitura.sp.gov.br/contato", checkedAt: "2026-10-06T11:00:00-03:00" },
+        tse2024Candidate: { status: "CONTACTS_NOT_PUBLIC", url: "https://divulgacandcontas.tse.jus.br/divulga/#/candidato/2024", checkedAt: "2026-10-06T11:00:00-03:00" },
+        instagram: { status: "PROFILE_NOT_FOUND", checkedAt: "2026-10-06T11:00:00-03:00" },
+      },
       sources: [
         { field: "role", type: "TSE", url: "https://resultados.tse.jus.br/oficial/app/index.html#/eleicao/619", observedAt: "2026-10-06T11:00:00-03:00" },
         { field: "role", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/prefeita", observedAt: "2026-10-06T11:00:00-03:00", validationMethod: "OFFICIAL_SOURCE_CHECK" },
@@ -99,6 +104,25 @@ describe("MCP privado Politizai", () => {
     });
     await expect(database.lead.count({ where: { workspaceId: context.workspaceId } })).resolves.toBe(leadCountBefore);
     await expect(database.prospectingEmailJob.count({ where: { workspaceId: context.workspaceId } })).resolves.toBe(emailJobCountBefore);
+
+    await database.prospectingResearchTarget.create({ data: { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:integration-mayor-2", tseCandidateId: "integration-mayor-2", role: "MAYOR", politicianName: "Outro Prefeito Integração", ballotName: "Outro Prefeito", municipalityName: "Cidade Integração", municipalityIbgeCode: "3550308", stateCode: "SP", population: 1_000_000 } });
+    const duplicatePhoneTarget = (await prospecting.claimNextTarget(auth, batchId)).target!;
+    await expect(prospecting.registerCandidate(auth, {
+      targetId: duplicatePhoneTarget.id,
+      leaseOwner: duplicatePhoneTarget.leaseOwner,
+      politician: { mandateStatus: "CURRENT", mandateVerifiedAt: "2026-10-06T11:00:00-03:00" },
+      contact: { phone: "+551140001234", phoneScope: "OFFICE" },
+      researchChecks: {
+        municipalOffice: { status: "INDIVIDUAL_CONTACTS_CAPTURED", url: "https://prefeitura.sp.gov.br/outro-gabinete", checkedAt: "2026-10-06T11:00:00-03:00" },
+        tse2024Candidate: { status: "CONTACTS_NOT_PUBLIC", url: "https://divulgacandcontas.tse.jus.br/divulga/#/candidato/2024", checkedAt: "2026-10-06T11:00:00-03:00" },
+        instagram: { status: "PROFILE_NOT_FOUND", checkedAt: "2026-10-06T11:00:00-03:00" },
+      },
+      sources: [
+        { field: "mandate", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/outro-prefeito", observedAt: "2026-10-06T11:00:00-03:00" },
+        { field: "phone", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/outro-gabinete", observedAt: "2026-10-06T11:00:00-03:00", contactScope: "OFFICE" },
+        { field: "role", type: "TSE", url: "https://resultados.tse.jus.br/oficial/app/index.html#/eleicao/619", observedAt: "2026-10-06T11:00:00-03:00" },
+      ],
+    })).rejects.toMatchObject({ code: "PROSPECTING_SHARED_OFFICE_PHONE" });
   });
 
   it("prioriza cidade menor e vereador e consulta o lote sem exigir argumento", async () => {

@@ -6,12 +6,13 @@ import { createProspectingStagingService } from "@/modules/prospecting/applicati
 import { PROSPECTING_CONTRACT_VERSION } from "@/modules/prospecting/domain/prospecting-contracts";
 import { PROSPECTING_SOURCE_SNAPSHOTS } from "@/modules/prospecting/domain/politizai-mcp-config";
 import type { OpenDotPrincipal } from "@/modules/prospecting/domain/open-dot-policy";
+import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const LEASE_MINUTES = 45;
-const AGENT_VERSION = "politizai-dot-mcp/1.3.0";
-const PROMPT_VERSION = "political-prospect-production/v4";
+const AGENT_VERSION = "politizai-dot-mcp/1.4.0";
+const PROMPT_VERSION = "political-prospect-production/v5";
 const BRAZILIAN_CAPITALS = [
   "Aracaju", "Belém", "Belo Horizonte", "Boa Vista", "Campo Grande", "Cuiabá", "Curitiba",
   "Florianópolis", "Fortaleza", "Goiânia", "João Pessoa", "Macapá", "Maceió", "Manaus",
@@ -29,6 +30,44 @@ const researchSourceSchema = z.object({
   normalizedValue: z.string().trim().max(2_000).optional(),
   validationMethod: z.string().trim().min(3).max(160).default("OFFICIAL_SOURCE_CHECK"),
 }).strict();
+
+const checkedAtSchema = z.string().datetime({ offset: true });
+const publicUrlSchema = z.string().url().max(2_000);
+const researchChecksSchema = z.object({
+  municipalOffice: z.object({
+    status: z.enum(["INDIVIDUAL_CONTACTS_CAPTURED", "SHARED_CONTACT_ONLY", "CONTACTS_NOT_PUBLISHED", "SOURCE_UNAVAILABLE"]),
+    url: publicUrlSchema,
+    checkedAt: checkedAtSchema,
+  }).strict(),
+  tse2024Candidate: z.object({
+    status: z.enum(["CONTACTS_CAPTURED", "CONTACTS_NOT_PUBLIC", "SOURCE_UNAVAILABLE"]),
+    url: publicUrlSchema.refine((value) => {
+      const host = new URL(value).hostname.toLowerCase();
+      return host === "tse.jus.br" || host.endsWith(".tse.jus.br");
+    }, "A consulta de contatos eleitorais deve apontar para o TSE/DivulgaCandContas."),
+    checkedAt: checkedAtSchema,
+  }).strict(),
+  instagram: z.object({
+    status: z.enum(["PROFILE_CAPTURED", "PROFILE_NOT_FOUND", "SOURCE_UNAVAILABLE"]),
+    url: publicUrlSchema.optional(),
+    checkedAt: checkedAtSchema,
+  }).strict(),
+}).strict();
+
+function describesSharedInstitutionalContact(value: string | undefined): boolean {
+  if (!value) return false;
+  const normalized = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return [
+    "central compartilhada",
+    "contato compartilhado",
+    "telefone compartilhado",
+    "geral/protocolo",
+    "geral da camara",
+    "central da camara",
+    "nao exclusivo",
+    "intermediado",
+  ].some((marker) => normalized.includes(marker));
+}
 
 export const registerCandidateSchema = z.object({
   targetId: z.string().uuid(),
@@ -51,8 +90,39 @@ export const registerCandidateSchema = z.object({
     instagram: z.string().trim().min(2).max(160).nullable().optional(),
     instagramScope: z.enum(["POLITICIAN", "ADVISOR", "OFFICE"]).nullable().optional(),
   }).strict(),
+  researchChecks: researchChecksSchema,
   sources: z.array(researchSourceSchema).min(3).max(38),
-}).strict();
+}).strict().superRefine((value, context) => {
+  const officeContacts = [value.contact.phone, value.contact.email, value.contact.advisorPhone, value.contact.advisorEmail].filter(Boolean);
+  const officeStatus = value.researchChecks.municipalOffice.status;
+  if (officeStatus === "INDIVIDUAL_CONTACTS_CAPTURED" && officeContacts.length === 0) {
+    context.addIssue({ code: "custom", path: ["researchChecks", "municipalOffice", "status"], message: "O status informa contato individual, mas nenhum contato de gabinete ou assessor foi enviado." });
+  }
+  if (officeStatus !== "INDIVIDUAL_CONTACTS_CAPTURED" && officeContacts.length > 0) {
+    context.addIssue({ code: "custom", path: ["contact", "phone"], message: "Contato geral ou compartilhado da Câmara não pode ser cadastrado como gabinete individual." });
+  }
+  const officePhoneSources = value.sources.filter((source) => source.field === "phone" && source.contactScope === "OFFICE");
+  if (value.contact.phone && officePhoneSources.some((source) => describesSharedInstitutionalContact(source.originalValue))) {
+    context.addIssue({ code: "custom", path: ["contact", "phone"], message: "A evidência identifica central geral/compartilhada, não telefone ou ramal individual do gabinete." });
+  }
+
+  const tseContactSources = value.sources.filter((source) => source.type === "TSE" && ["politician_phone", "politician_email"].includes(source.field));
+  if (value.researchChecks.tse2024Candidate.status === "CONTACTS_CAPTURED") {
+    if (!value.contact.politicianPhone && !value.contact.politicianEmail) {
+      context.addIssue({ code: "custom", path: ["researchChecks", "tse2024Candidate", "status"], message: "O status informa contatos do DivulgaCandContas, mas telefone/e-mail do candidato não foi enviado." });
+    }
+    if (tseContactSources.length === 0) {
+      context.addIssue({ code: "custom", path: ["sources"], message: "Contato eleitoral capturado exige evidência específica do TSE/DivulgaCandContas 2024." });
+    }
+  }
+
+  if (value.researchChecks.instagram.status === "PROFILE_CAPTURED" && !value.contact.instagram) {
+    context.addIssue({ code: "custom", path: ["contact", "instagram"], message: "O status informa Instagram validado, mas o perfil não foi enviado." });
+  }
+  if (value.contact.instagram && value.researchChecks.instagram.status !== "PROFILE_CAPTURED") {
+    context.addIssue({ code: "custom", path: ["researchChecks", "instagram", "status"], message: "Instagram informado exige pesquisa concluída e perfil validado." });
+  }
+});
 
 type RegisterCandidateContact = z.infer<typeof registerCandidateSchema>["contact"];
 type RegisterCandidateSource = z.infer<typeof registerCandidateSchema>["sources"][number];
@@ -162,10 +232,14 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         currentMandateRequired: true,
         acceptanceRule: "PUBLIC_PHONE_OR_WHATSAPP_OR_VALIDATED_INSTAGRAM",
         rejectWhen: "EMAIL_ONLY_OR_NO_USABLE_PUBLIC_CHANNEL",
-        optionalContactsWhenAvailable: ["officePhone", "officeEmail", "politicianPhone", "politicianEmail", "advisorPhone", "advisorEmail", "whatsapp", "instagram"],
+        requiredResearchChecks: ["individualMunicipalOffice", "DivulgaCandContas2024", "validatedInstagram"],
+        exhaustiveResearch: true,
+        optionalContactsWhenAvailable: ["individualOfficePhoneOrExtension", "individualOfficeEmail", "politicianPhone", "politicianEmail", "advisorPhone", "advisorEmail", "whatsapp", "instagram"],
+        rejectSharedInstitutionalContact: true,
         queuePriority: ["allNonCapitalsBeforeCapitals", "smallerMunicipalityPopulation", "councilorBeforeMayor"],
         publicContactSources: ["TSE_2024", "DIVULGACANDCONTAS", "CITY_HALL", "CITY_COUNCIL", "OFFICIAL_GAZETTE", "INSTITUTIONAL_PROFILE"],
-        researchSequence: ["TSE_2024_ELECTED_MATCH", "CURRENT_MUNICIPAL_MANDATE", "MUNICIPAL_CONTACT", "DIVULGACANDCONTAS_PUBLIC_FIELDS", "GOOGLE_TO_VALIDATED_INSTAGRAM"],
+        researchSequence: ["TSE_2024_ELECTED_MATCH", "CURRENT_MUNICIPAL_MANDATE", "INDIVIDUAL_OFFICE_CONTACT", "DIVULGACANDCONTAS_2024_ALWAYS", "GOOGLE_TO_VALIDATED_INSTAGRAM_ALWAYS"],
+        stopAfterFirstContact: false,
         inferContactData: false,
         directLeadCreation: false,
         emailSending: false,
@@ -241,7 +315,7 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         data: { status: "CLAIMED", leaseOwner, leaseExpiresAt, attemptCount: { increment: 1 }, lastReasonCode: null },
         select: { id: true, batchId: true, tseCandidateId: true, externalIdentityKey: true, role: true, politicianName: true, ballotName: true, municipalityName: true, municipalityIbgeCode: true, stateCode: true, population: true },
       });
-      return { target: { ...claimed, leaseOwner, leaseExpiresAt: leaseExpiresAt.toISOString(), instructions: "Cruze o eleito no Resultados TSE 2024 por município e cargo com a identidade do candidato. Valide o mandato atual em fonte municipal oficial. Procure primeiro Prefeitura/Câmara/gabinete; se faltar canal útil, consulte somente campos atualmente públicos do DivulgaCandContas 2024 e depois pesquise no Google por NOME + PREFEITO ou VEREADOR + MUNICÍPIO para localizar o Instagram público. O Google serve apenas para descoberta: confirme no perfil nome, município e cargo antes de registrar. Cadastre quando houver ao menos telefone/WhatsApp público ou Instagram validado. E-mail pode complementar, mas e-mail isolado deve ser descartado. Nunca use dado vazado, restrito, oculto ou inferido; registre fonte específica para cada contato." }, queueEmpty: false };
+      return { target: { ...claimed, leaseOwner, leaseExpiresAt: leaseExpiresAt.toISOString(), instructions: "Conclua obrigatoriamente todas as etapas antes de registrar, mesmo após encontrar o primeiro contato: (1) cruze o eleito no Resultados TSE 2024 e valide o mandato atual; (2) procure telefone/ramal e e-mail do gabinete individual ou assessor em página nominal da Prefeitura/Câmara; nunca grave central geral, protocolo, recepção ou número compartilhado como gabinete; (3) consulte sempre o candidato no DivulgaCandContas 2024 e capture todo telefone/e-mail que ainda esteja publicamente exibido; (4) pesquise sempre no Google por NOME + PREFEITO ou VEREADOR + MUNICÍPIO e valide o Instagram no próprio perfil por nome, município e cargo. Informe o resultado das três frentes em researchChecks. Google é somente descoberta, não evidência final. Cadastre quando houver telefone/WhatsApp público ou Instagram validado; e-mail isolado deve ser descartado. Nunca use dado vazado, restrito, oculto ou inferido; registre uma fonte específica para cada contato." }, queueEmpty: false };
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 20_000 });
   }
 
@@ -256,6 +330,23 @@ export function createPolitizaiMcpProspectingService(options: Options) {
       if (!target) fail("Alvo de pesquisa não encontrado.", "PROSPECTING_TARGET_NOT_FOUND", 404);
       if (target.status !== "CLAIMED" || target.leaseOwner !== input.leaseOwner || !target.leaseExpiresAt || target.leaseExpiresAt <= now) {
         fail("A concessão deste alvo expirou ou pertence a outra execução.", "PROSPECTING_TARGET_LEASE_INVALID");
+      }
+      if (input.contact.phone) {
+        const normalizedOfficePhone = normalizePhone(input.contact.phone);
+        if (normalizedOfficePhone.success) {
+          const sameNumberForAnotherPolitician = await transaction.prospectCandidate.findFirst({
+            where: {
+              workspaceId: auth.workspaceId,
+              municipalityIbgeCode: target.municipalityIbgeCode,
+              normalizedPhone: normalizedOfficePhone.normalizedPhone,
+              externalIdentityKey: { not: target.externalIdentityKey },
+            },
+            select: { politicianName: true },
+          });
+          if (sameNumberForAnotherPolitician) {
+            fail(`O telefone já está associado a ${sameNumberForAnotherPolitician.politicianName} no mesmo município e aparenta ser central compartilhada. Reenvie sem esse telefone e conclua TSE/DivulgaCandContas e Instagram.`, "PROSPECTING_SHARED_OFFICE_PHONE", 400);
+          }
+        }
       }
       const result = await staging.ingestCandidate(transaction, researchPrincipal, {
         schemaVersion: PROSPECTING_CONTRACT_VERSION,
@@ -275,7 +366,7 @@ export function createPolitizaiMcpProspectingService(options: Options) {
       });
       await transaction.prospectingResearchTarget.update({
         where: { id: target.id },
-        data: { status: result.candidate.status === "REVIEW_REQUIRED" ? "REVIEW_REQUIRED" : "INGESTED", candidateId: result.candidate.id, leaseOwner: null, leaseExpiresAt: null, completedAt: now, lastEvidence: asJson({ sourceCount: normalizedSources.length + 2 }) },
+        data: { status: result.candidate.status === "REVIEW_REQUIRED" ? "REVIEW_REQUIRED" : "INGESTED", candidateId: result.candidate.id, leaseOwner: null, leaseExpiresAt: null, completedAt: now, lastEvidence: asJson({ sourceCount: normalizedSources.length + 2, researchChecks: input.researchChecks }) },
       });
       return result;
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 });
