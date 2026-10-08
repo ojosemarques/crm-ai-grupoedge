@@ -17,7 +17,6 @@ import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import {
-  getSlaBand,
   sdrQueueBuckets,
   type SdrQueueBucket,
   type SdrQueueItem,
@@ -99,46 +98,6 @@ function elapsedLabel(from: string, nowMs: number): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-function slaState(item: SdrQueueItem, screen: SdrQueueScreen, nowMs: number) {
-  if (
-    item.slaSeconds === null ||
-    item.healthyMaxSeconds === null ||
-    item.attentionMaxSeconds === null
-  ) {
-    return {
-      seconds: null,
-      band: "UNKNOWN" as const,
-      label: "SLA sem ciclo persistido",
-    };
-  }
-
-  const seconds = item.firstHumanAttemptAt
-    ? item.slaSeconds
-    : item.slaSeconds +
-      Math.max(
-        0,
-        Math.floor(
-          (nowMs - new Date(screen.generatedAt).getTime()) / 1_000,
-        ),
-      );
-  const band = getSlaBand(
-    seconds,
-    item.healthyMaxSeconds,
-    item.attentionMaxSeconds,
-  );
-  const bandLabel = {
-    HEALTHY: "Saudável",
-    ATTENTION: "Atenção",
-    CRITICAL: "Crítico",
-  }[band];
-
-  return {
-    seconds,
-    band,
-    label: `${seconds}s · ${bandLabel}${item.firstHumanAttemptAt ? " · tentativa registrada" : " · sem tentativa"}`,
-  };
-}
-
 function PriorityScore({ item }: Readonly<{ item: SdrQueueItem }>) {
   return (
     <div className={styles.scoreLine}>
@@ -165,7 +124,6 @@ function QueueRow({
   screen: SdrQueueScreen;
 }>) {
   const router = useRouter();
-  const sla = slaState(item, screen, nowMs);
   const resultOptions = cadenceResultOptions[item.nextActionKind ?? ""] ?? [];
   const canCompleteCadenceTask = Boolean(
     item.nextActionTaskId &&
@@ -238,9 +196,6 @@ function QueueRow({
       </div>
 
       <div>
-        <span className={styles.slaBadge} data-sla-band={sla.band}>
-          {sla.label}
-        </span>
         <p
           className={`${styles.nextAction} ${item.nextActionAt ? "" : styles.missingAction}`}
         >
@@ -478,18 +433,6 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
       return selected;
     };
 
-    const nowItems = sectionsByKey.get("NOW")?.items ?? [];
-    const criticalItems = nowItems.filter(
-      (item) => slaState(item, screen, nowMs).band === "CRITICAL",
-    );
-    const criticalUnique: SdrQueueItem[] = [];
-    for (const item of criticalItems) {
-      if (usedLeadIds.has(item.id)) continue;
-      usedLeadIds.add(item.id);
-      criticalUnique.push(item);
-      if (criticalUnique.length === 2) break;
-    }
-
     const groups: SideGroup[] = [
       {
         key: "MEETINGS_TODAY",
@@ -503,14 +446,6 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         total: sectionsByKey.get("OVERDUE")?.total ?? 0,
         tone: "warning",
         items: takeUnique("OVERDUE"),
-      },
-      {
-        key: "NOW",
-        title: "SLA crítico",
-        total: criticalItems.length,
-        totalLabel: `${criticalItems.length} visíveis`,
-        tone: "danger",
-        items: criticalUnique,
       },
       {
         key: "STALE_CONTACT",
@@ -529,7 +464,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
     ];
 
     return groups;
-  }, [nowMs, screen, sectionsByKey]);
+  }, [sectionsByKey]);
 
   const secondsUntilRefresh = Math.max(
     0,

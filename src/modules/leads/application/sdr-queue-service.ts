@@ -353,6 +353,17 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       l."workspaceId" = ${context.workspaceId}::uuid
       AND l."deletedAt" IS NULL
       AND l."status"::text IN ('OPEN', 'QUALIFIED')
+      AND COALESCE(stage."stableKey", '') <> 'active-prospecting.conversation-started'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM "tasks" sla_task
+        WHERE sla_task."workspaceId" = l."workspaceId"
+          AND sla_task."leadId" = l."id"
+          AND sla_task."id" = l."nextActionTaskId"
+          AND sla_task."slaCycleId" IS NOT NULL
+          AND sla_task."status"::text IN ('OPEN', 'IN_PROGRESS')
+          AND sla_task."deletedAt" IS NULL
+      )
       AND ${leadVisibilitySql(context, scope)}
       ${memberFilter}
     `;
@@ -454,6 +465,12 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         where: {
           workspaceId: context.workspaceId,
           assigneeMemberId: { in: productivityMemberIds },
+          slaCycleId: null,
+          lead: {
+            currentStage: {
+              stableKey: { not: "active-prospecting.conversation-started" },
+            },
+          },
           kind: { not: "MEETING" },
           deletedAt: null,
           OR: [
@@ -613,7 +630,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           AND task."status"::text IN ('OPEN', 'IN_PROGRESS')
           AND task."kind"::text = 'FOLLOW_UP'
           AND task."dueAt" < ${today.end}
-          AND cadence."status"::text IN ('CONVERSATION_STARTED', 'MEETING_SCHEDULED')
+          AND cadence."status"::text = 'MEETING_SCHEDULED'
           AND task."deletedAt" IS NULL
       `),
       options.database.prospectingSellerConfig.findMany({

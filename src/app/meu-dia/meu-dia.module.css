@@ -570,34 +570,6 @@
   font-weight: 600;
 }
 
-.slaBadge {
-  border-radius: var(--radius-pill);
-  display: inline-flex;
-  font-size: 0.68rem;
-  font-weight: 600;
-  padding: 0.22rem 0.48rem;
-}
-
-.slaBadge[data-sla-band="HEALTHY"] {
-  background: var(--success-surface);
-  color: var(--success);
-}
-
-.slaBadge[data-sla-band="ATTENTION"] {
-  background: var(--warning-surface);
-  color: var(--warning);
-}
-
-.slaBadge[data-sla-band="CRITICAL"] {
-  background: var(--danger-surface);
-  color: var(--danger);
-}
-
-.slaBadge[data-sla-band="UNKNOWN"] {
-  background: var(--inactive-surface);
-  color: var(--inactive);
-}
-
 .nextAction {
   color: var(--foreground);
   font-size: 0.74rem;

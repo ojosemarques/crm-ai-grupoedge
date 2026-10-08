@@ -79,6 +79,7 @@ function queueService() {
 async function createLead(
   label: string,
   priorityBandCode: "P1" | "P2" | "P3" = "P2",
+  includeInMyDay = true,
 ) {
   const result = await createLeadIntakeService({
     database,
@@ -112,7 +113,43 @@ async function createLead(
     systemContext,
   );
   if (result.outcome === "REJECTED") throw new Error(result.code);
-  return result;
+  if (!includeInMyDay) return result;
+  const task = await database.$transaction(async (transaction) => {
+    const owner = await transaction.lead.findUniqueOrThrow({
+      where: { id: result.leadId },
+      select: { ownerMemberId: true, queueId: true },
+    });
+    await transaction.task.updateMany({
+      where: { workspaceId, leadId: result.leadId, slaCycleId: { not: null }, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null },
+      data: { status: "CANCELLED", updatedByActorId: systemContext.actorId },
+    });
+    const nextTask = await transaction.task.create({
+      data: {
+        workspaceId,
+        leadId: result.leadId,
+        assigneeMemberId: owner.ownerMemberId,
+        queueId: owner.ownerMemberId ? null : owner.queueId,
+        title: "Próxima ação comercial",
+        kind: "CALL",
+        status: "OPEN",
+        priority: "MEDIUM",
+        dueAt: now,
+        createdByActorId: systemContext.actorId,
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+    await transaction.lead.update({
+      where: { id: result.leadId },
+      data: {
+        nextActionTaskId: nextTask.id,
+        nextActionAt: nextTask.dueAt,
+        nextActionDescription: nextTask.title,
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+    return nextTask;
+  });
+  return { ...result, taskId: task.id };
 }
 
 async function assignTo(leadId: string, memberId: string) {
@@ -308,6 +345,71 @@ describe("fila priorizada do SDR", () => {
     expect(screen.sections).toHaveLength(10);
     expect(screen.sections.every((section) => section.total === 0)).toBe(true);
     expect(screen.sections.every((section) => section.items.length === 0)).toBe(true);
+  });
+
+  it("retira do Meu Dia tarefas de SLA e leads em conversa iniciada", async () => {
+    const before = await queueService().getScreen(isolatedSdrContext, {});
+    const slaLead = await createLead(`CRM10 SLA fora do Meu Dia ${randomUUID().slice(0, 8)}`, "P2", false);
+    const conversationLead = await createLead(`CRM10 conversa externa ${randomUUID().slice(0, 8)}`, "P2");
+    await Promise.all([
+      assignTo(slaLead.leadId, isolatedSdrContext.memberId),
+      assignTo(conversationLead.leadId, isolatedSdrContext.memberId),
+    ]);
+    const conversationPipeline = await database.lead.findUniqueOrThrow({
+      where: { id: conversationLead.leadId },
+      select: { pipelineId: true },
+    });
+    const conversationStage = await database.pipelineStage.create({
+      data: {
+        workspaceId,
+        pipelineId: conversationPipeline.pipelineId,
+        stableKey: "active-prospecting.conversation-started",
+        name: "Conversa iniciada",
+        position: 99,
+        type: "OPEN",
+        createdByActorId: systemContext.actorId,
+        updatedByActorId: systemContext.actorId,
+      },
+      select: { id: true },
+    });
+    const conversationTask = await database.task.create({
+      data: {
+        workspaceId,
+        leadId: conversationLead.leadId,
+        assigneeMemberId: isolatedSdrContext.memberId,
+        title: "Responder conversa iniciada",
+        kind: "FOLLOW_UP",
+        sourceKey: `active-prospecting:${randomUUID()}:respond-human`,
+        status: "OPEN",
+        priority: "URGENT",
+        dueAt: new Date(now.getTime() - 60_000),
+        createdByActorId: systemContext.actorId,
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+    await database.task.updateMany({
+      where: { workspaceId, leadId: conversationLead.leadId, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null, id: { not: conversationTask.id } },
+      data: { status: "CANCELLED", updatedByActorId: systemContext.actorId },
+    });
+    await database.lead.update({
+      where: { id: conversationLead.leadId },
+      data: {
+        currentStageId: conversationStage.id,
+        awaitingHumanResponse: true,
+        lastInboundResponseAt: now,
+        nextActionTaskId: conversationTask.id,
+        nextActionAt: conversationTask.dueAt,
+        nextActionDescription: conversationTask.title,
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+
+    const after = await queueService().getScreen(isolatedSdrContext, {});
+    const visibleIds = after.sections.flatMap((section) => section.items.map((item) => item.id));
+    expect(visibleIds).not.toContain(slaLead.leadId);
+    expect(visibleIds).not.toContain(conversationLead.leadId);
+    expect(after.dailyProduction.tasksDue).toBe(before.dailyProduction.tasksDue);
+    expect(after.dailyProduction.callsPending).toBe(before.dailyProduction.callsPending);
   });
 
   it("ordena respostas, retornos vencidos, novos P1/P2/P3 e demais", async () => {

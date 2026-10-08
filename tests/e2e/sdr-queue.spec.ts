@@ -52,9 +52,10 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
   expect(leadId).toBeTruthy();
   const assigned = await database.lead.findUniqueOrThrow({
     where: { id: leadId! },
-    select: { ownerMemberId: true },
+    select: { ownerMemberId: true, nextActionTaskId: true },
   });
   expect(assigned.ownerMemberId).not.toBeNull();
+  expect(assigned.nextActionTaskId).not.toBeNull();
 
   await Promise.all([
     database.lead.update({
@@ -64,9 +65,9 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
         lastInboundResponseAt: new Date(Date.now() + 60_000),
       },
     }),
-    database.leadSlaCycle.updateMany({
-      where: { leadId: leadId! },
-      data: { receivedAt: new Date(Date.now() - 181_000) },
+    database.task.update({
+      where: { id: assigned.nextActionTaskId! },
+      data: { slaCycleId: null },
     }),
   ]);
 
@@ -95,7 +96,8 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
   const queueLead = page.getByRole("tabpanel").locator(`[data-lead-id="${leadId}"]`);
   await expect(queueLead).toBeVisible();
   await expect(queueLead).toContainText("P1");
-  await expect(queueLead.locator("[data-sla-band='CRITICAL']")).toBeVisible();
+  await expect(queueLead.locator("[data-sla-band]")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "SLA crítico" })).toHaveCount(0);
   await expect(queueLead.getByRole("link", { name: "Responder agora" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Plano e produção de hoje" })).toBeVisible();
   await expect(page.getByText("Ligações para fazer", { exact: true })).toBeVisible();
@@ -125,8 +127,8 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
 
   await page.goto(`/meu-dia?memberId=${assigned.ownerMemberId}`);
   const updatedCard = page.getByRole("tabpanel").locator(`[data-lead-id="${leadId}"]`).first();
-  await expect(updatedCard).toContainText("tentativa registrada");
-  await expect(updatedCard).toContainText("Retornar amanhã");
+  await expect(updatedCard).toContainText("Última atividade");
+  await expect(updatedCard).toContainText(/Primeira tentativa pelo Meu Dia|Retornar amanhã/);
   await expect(updatedCard.getByRole("link", { name: "Responder agora" })).toBeVisible();
   await expect(page.getByLabel("Visualizar fila por SDR")).toBeVisible();
 });
