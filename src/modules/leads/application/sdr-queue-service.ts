@@ -511,20 +511,23 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         },
         _sum: { amountCents: true },
       }),
-      options.database.task.findMany({
-        where: {
-          workspaceId: context.workspaceId,
-          assigneeMemberId: { in: productivityMemberIds },
-          completedAt: { gte: today.start, lt: today.end },
-          status: "COMPLETED",
-          kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] },
-          sourceKey: { startsWith: "active-prospecting:" },
-          result: { not: "CHANNEL_UNAVAILABLE" },
-          deletedAt: null,
-        },
-        distinct: ["leadId"],
-        select: { leadId: true },
-      }),
+      options.database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
+        SELECT DISTINCT task."leadId"
+        FROM "tasks" task
+        JOIN "prospecting_cadence_steps" step
+          ON step."workspaceId" = task."workspaceId" AND step."taskId" = task."id"
+        JOIN "prospecting_cadence_instances" cadence
+          ON cadence."workspaceId" = step."workspaceId" AND cadence."id" = step."cadenceInstanceId"
+        WHERE task."workspaceId" = ${context.workspaceId}::uuid
+          ${productivityMemberSql}
+          AND task."status"::text = 'COMPLETED'
+          AND task."completedAt" >= ${today.start}
+          AND task."completedAt" < ${today.end}
+          AND task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
+          AND COALESCE(task."result", '') <> 'CHANNEL_UNAVAILABLE'
+          AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
+          AND task."deletedAt" IS NULL
+      `),
       options.database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
         SELECT DISTINCT task."leadId"
         FROM "tasks" task
