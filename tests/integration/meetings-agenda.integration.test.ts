@@ -203,9 +203,13 @@ describe("agenda interna e reuniões", () => {
   it("agenda de forma atômica, cria tarefa, atualiza pipeline, timeline e auditoria", async () => {
     const lead = await qualifyLead("CRM15 agendamento");
     const before = await meetings().getLeadMeetings(lead.sdrContext, { leadId: lead.leadId });
+    const agenda = await meetings().getAgenda(lead.sdrContext, { view: "day", date: "2035-02-11" });
     expect(before.canSchedule).toBe(true);
     expect(before.closerOptions).toHaveLength(2);
-    const result = await schedule(lead.leadId, lead.sdrContext, "2035-02-11T09:30");
+    expect(agenda.canFilterCloser).toBe(false);
+    expect(agenda.closerOptions).toHaveLength(0);
+    expect(agenda.schedulingCloserOptions).toHaveLength(2);
+    const result = await schedule(lead.leadId, lead.sdrContext, "2035-02-11T09:30", closer2Id);
     const [meeting, task, storedLead, stage, history, activities, audit] = await Promise.all([
       database.meeting.findUniqueOrThrow({ where: { id: result.meetingId } }),
       database.task.findFirstOrThrow({ where: { workspaceId, meetingId: result.meetingId } }),
@@ -221,7 +225,7 @@ describe("agenda interna e reuniões", () => {
       timeZone: "America/Sao_Paulo",
       status: "SCHEDULED",
     });
-    expect(task).toMatchObject({ kind: "MEETING", status: "OPEN", assigneeMemberId: closer1Id });
+    expect(task).toMatchObject({ kind: "MEETING", status: "OPEN", assigneeMemberId: closer2Id });
     expect(storedLead).toMatchObject({ status: "QUALIFIED" });
     expect(storedLead.nextActionTaskId).not.toBeNull();
     expect(stage.transitionOrigin).toBe("MEETING");
@@ -366,10 +370,14 @@ describe("agenda interna e reuniões", () => {
     const ownAgenda = await meetings().getAgenda(closer1, { view: "day", date: "2035-02-17" });
     expect(ownAgenda.meetings.map((meeting) => meeting.id)).toContain(scheduled.meetingId);
     expect(ownAgenda.canFilterCloser).toBe(false);
+    expect(ownAgenda.closerOptions).toEqual([{ id: closer1Id, name: expect.any(String) }]);
+    expect(ownAgenda.schedulingCloserOptions).toEqual([{ id: closer1Id, name: expect.any(String) }]);
     const otherAgenda = await meetings().getAgenda(closer2, { view: "day", date: "2035-02-17" });
     expect(otherAgenda.meetings.map((meeting) => meeting.id)).not.toContain(scheduled.meetingId);
     const managerAgenda = await meetings().getAgenda(managerContext, { view: "week", date: "2035-02-17", closerId: closer1Id });
     expect(managerAgenda.meetings.map((meeting) => meeting.id)).toContain(scheduled.meetingId);
+    expect(managerAgenda.canFilterCloser).toBe(true);
+    expect(managerAgenda.closerOptions).toEqual(managerAgenda.schedulingCloserOptions);
     const viewerAgenda = await meetings().getAgenda(viewerContext, { view: "day", date: "2035-02-17" });
     expect(viewerAgenda.meetings.find((meeting) => meeting.id === scheduled.meetingId)?.canWrite).toBe(false);
     await expect(meetings().act(viewerContext, {
@@ -377,6 +385,21 @@ describe("agenda interna e reuniões", () => {
       meetingId: scheduled.meetingId,
       expectedRevision: 1,
     })).rejects.toBeInstanceOf(AccessDeniedError);
+  });
+
+  it("limita o vendedor à própria agenda também no card do lead e no servidor", async () => {
+    clock = new Date("2035-02-17T15:00:00.000Z");
+    const lead = await qualifyLead("CRM15 escopo do vendedor");
+    await database.lead.update({ where: { id: lead.leadId }, data: { ownerMemberId: closer1Id } });
+    const closer = await contextByMember(closer1Id);
+    const leadAgenda = await meetings().getLeadMeetings(closer, { leadId: lead.leadId });
+    expect(leadAgenda.closerOptions).toEqual([{ id: closer1Id, name: expect.any(String) }]);
+    await expect(schedule(lead.leadId, closer, "2035-02-18T09:00", closer2Id)).rejects.toMatchObject({
+      code: "MEETING_OWNER_SCOPE_DENIED",
+    });
+    await expect(schedule(lead.leadId, closer, "2035-02-18T09:00", closer1Id)).resolves.toMatchObject({
+      meetingId: expect.any(String),
+    });
   });
 
   it("marca horário passado sem resultado como pendência e entrega briefing persistido", async () => {

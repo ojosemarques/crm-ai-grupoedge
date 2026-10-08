@@ -393,6 +393,11 @@ export function createMeetingService(options: MeetingServiceOptions) {
     return rows.map((row) => ({ id: row.id, name: row.user.displayName }));
   }
 
+  function schedulingScope(context: AuthenticatedContext, decision: AuthorizationDecision): PermissionScope | null {
+    if (!decision.allowed) return null;
+    return context.roleKey === AccessRoleKeys.SDR ? "WORKSPACE" : decision.scope;
+  }
+
   async function leadOptions(context: AuthenticatedContext) {
     const permission = await options.authorization.authorize(context, PermissionKeys.LEADS_READ, {
       workspaceId: context.workspaceId,
@@ -453,9 +458,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
       }),
       leadOptions(context),
     ]);
-    const closers = context.roleKey === "sdr"
-      ? await closerOptions(context, "WORKSPACE")
-      : visibleClosers;
+    const scheduleScope = schedulingScope(context, writeDecision);
+    const schedulingClosers = scheduleScope ? await closerOptions(context, scheduleScope) : [];
     const allowedCloserIds = new Set(visibleClosers.map((closer) => closer.id));
     if (parsed.data.closerId && !allowedCloserIds.has(parsed.data.closerId)) {
       await options.authorization.assertAuthorized(context, PermissionKeys.MEETINGS_READ, {
@@ -489,7 +493,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
     const permissions = await Promise.all(rows.map((row) =>
       options.authorization.authorize(context, PermissionKeys.MEETINGS_WRITE, meetingResource(context.workspaceId, row)),
     ));
-    const canSchedule = writeDecision.allowed && leads.length > 0 && closers.length > 0;
+    const canSchedule = writeDecision.allowed && leads.length > 0 && schedulingClosers.length > 0;
     if (workspaceRow.defaultMeetingDurationMinutes !== 30 && workspaceRow.defaultMeetingDurationMinutes !== 40) {
       conflict("SETTINGS_INVALID", "A duração padrão de reunião é inválida.");
     }
@@ -505,7 +509,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
       closerId: parsed.data.closerId,
       canSchedule,
       canFilterCloser: readDecision.scope !== "OWN",
-      closerOptions: closers,
+      closerOptions: visibleClosers,
+      schedulingCloserOptions: schedulingClosers,
       leadOptions: leads,
       meetings: rows.map((row, index) => serializeMeeting(row, options.now(), permissions[index]?.allowed ?? false)),
     });
@@ -545,9 +550,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
         orderBy: [{ startsAt: "desc" }, { id: "desc" }],
       }),
     ]);
-    const closers = write.allowed
-      ? await closerOptions(context, "WORKSPACE")
-      : [];
+    const scheduleScope = schedulingScope(context, write);
+    const closers = scheduleScope ? await closerOptions(context, scheduleScope) : [];
     if (workspaceRow.defaultMeetingDurationMinutes !== 30 && workspaceRow.defaultMeetingDurationMinutes !== 40) {
       conflict("SETTINGS_INVALID", "A duração padrão de reunião é inválida.");
     }
@@ -597,9 +601,13 @@ export function createMeetingService(options: MeetingServiceOptions) {
       },
     });
     if (!lead) notFound("Lead não encontrado.");
-    await options.authorization.assertAuthorized(context, PermissionKeys.MEETINGS_WRITE, leadResource(context.workspaceId, lead));
-    if (context.roleKey === AccessRoleKeys.CLOSER && parsed.data.closerId !== context.memberId) {
-      throw new ApplicationError("Vendedores podem agendar reuniões somente na própria agenda.", { code: "MEETING_OWNER_SCOPE_DENIED", statusCode: 403, expose: true });
+    const leadScope = leadResource(context.workspaceId, lead);
+    const writeDecision = await options.authorization.authorize(context, PermissionKeys.MEETINGS_WRITE, leadScope);
+    if (!writeDecision.allowed) await options.authorization.assertAuthorized(context, PermissionKeys.MEETINGS_WRITE, leadScope);
+    const targetScope = schedulingScope(context, writeDecision);
+    const allowedClosers = targetScope ? await closerOptions(context, targetScope) : [];
+    if (!allowedClosers.some((closer) => closer.id === parsed.data.closerId)) {
+      throw new ApplicationError("Você não pode agendar reuniões para este vendedor.", { code: "MEETING_OWNER_SCOPE_DENIED", statusCode: 403, expose: true });
     }
 
     return options.database.$transaction(async (transaction) => {

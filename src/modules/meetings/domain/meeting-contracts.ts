@@ -53,6 +53,7 @@ export type AgendaScreen = Readonly<{
   canSchedule: boolean;
   canFilterCloser: boolean;
   closerOptions: readonly CloserOption[];
+  schedulingCloserOptions: readonly CloserOption[];
   leadOptions: readonly LeadOption[];
   meetings: readonly MeetingListItem[];
 }>;
