@@ -412,6 +412,112 @@ describe("fila priorizada do SDR", () => {
     expect(after.dailyProduction.callsPending).toBe(before.dailyProduction.callsPending);
   });
 
+  it("omite ligação sem telefone e seleciona a tarefa de Instagram disponível", async () => {
+    const before = await queueService().getScreen(isolatedSdrContext, {});
+    const lead = await createLead(`CRM10 sem telefone ${randomUUID().slice(0, 8)}`, "P2");
+    await assignTo(lead.leadId, isolatedSdrContext.memberId);
+    const storedLead = await database.lead.findUniqueOrThrow({
+      where: { id: lead.leadId },
+      select: { contactId: true },
+    });
+
+    await database.$transaction(async (transaction) => {
+      await transaction.task.updateMany({
+        where: {
+          workspaceId,
+          leadId: lead.leadId,
+          status: { in: ["OPEN", "IN_PROGRESS"] },
+          deletedAt: null,
+        },
+        data: { status: "CANCELLED", updatedByActorId: systemContext.actorId },
+      });
+      if (storedLead.contactId) {
+        await transaction.contactPoint.updateMany({
+          where: {
+            workspaceId,
+            contactId: storedLead.contactId,
+            type: { in: ["PHONE", "WHATSAPP"] },
+            deletedAt: null,
+          },
+          data: { deletedAt: now, updatedByActorId: systemContext.actorId },
+        });
+      }
+      const callTask = await transaction.task.create({
+        data: {
+          workspaceId,
+          leadId: lead.leadId,
+          assigneeMemberId: isolatedSdrContext.memberId,
+          title: "Ligação D1 sem telefone",
+          kind: "CALL",
+          sourceKey: `active-prospecting:${randomUUID()}:call-1`,
+          status: "OPEN",
+          priority: "MEDIUM",
+          dueAt: now,
+          createdByActorId: systemContext.actorId,
+          updatedByActorId: systemContext.actorId,
+        },
+      });
+      await transaction.task.create({
+        data: {
+          workspaceId,
+          leadId: lead.leadId,
+          assigneeMemberId: isolatedSdrContext.memberId,
+          title: "Tentativa anterior sem resposta",
+          kind: "CALL",
+          sourceKey: `active-prospecting:${randomUUID()}:previous-call`,
+          status: "COMPLETED",
+          result: "NO_ANSWER",
+          dueAt: now,
+          completedAt: now,
+          createdByActorId: systemContext.actorId,
+          updatedByActorId: systemContext.actorId,
+        },
+      });
+      await transaction.task.create({
+        data: {
+          workspaceId,
+          leadId: lead.leadId,
+          assigneeMemberId: isolatedSdrContext.memberId,
+          title: "Seguir no Instagram",
+          kind: "INSTAGRAM_FOLLOW",
+          sourceKey: `active-prospecting:${randomUUID()}:instagram-follow`,
+          status: "OPEN",
+          priority: "MEDIUM",
+          dueAt: now,
+          createdByActorId: systemContext.actorId,
+          updatedByActorId: systemContext.actorId,
+        },
+      });
+      await transaction.lead.update({
+        where: { id: lead.leadId },
+        data: {
+          normalizedPhone: null,
+          nextActionTaskId: callTask.id,
+          nextActionAt: callTask.dueAt,
+          nextActionDescription: callTask.title,
+          updatedByActorId: systemContext.actorId,
+        },
+      });
+    });
+
+    const after = await queueService().getScreen(isolatedSdrContext, {});
+    const item = after.sections
+      .find((section) => section.key === "NOW")
+      ?.items.find((candidate) => candidate.id === lead.leadId);
+    const waitingCallIds = after.sections
+      .find((section) => section.key === "WAITING_CALL")
+      ?.items.map((candidate) => candidate.id);
+
+    expect(item).toMatchObject({
+      nextActionKind: "INSTAGRAM_FOLLOW",
+      recommendation: { code: "RECORD_INSTAGRAM" },
+    });
+    expect(waitingCallIds).not.toContain(lead.leadId);
+    expect(after.dailyProduction.calls).toBe(before.dailyProduction.calls + 1);
+    expect(after.dailyProduction.callsPending).toBe(before.dailyProduction.callsPending);
+    expect(after.dailyProduction.messagesPending).toBe(before.dailyProduction.messagesPending + 1);
+  });
+
   it("ordena respostas, retornos vencidos, novos P1/P2/P3 e demais", async () => {
     const prefix = `CRM10 ordem ${randomUUID().slice(0, 8)}`;
     const responded = await createLead(`${prefix} respondeu`, "P2");

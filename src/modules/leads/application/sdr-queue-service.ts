@@ -92,6 +92,25 @@ function invalidInput(error: z.ZodError): never {
   );
 }
 
+function callablePhoneSql(): Prisma.Sql {
+  return Prisma.sql`
+    l."contactPreference"::text <> 'DO_NOT_CONTACT'
+    AND (
+      NULLIF(BTRIM(l."normalizedPhone"), '') IS NOT NULL
+      OR EXISTS (
+        SELECT 1
+        FROM "contact_points" phone_point
+        WHERE phone_point."workspaceId" = l."workspaceId"
+          AND phone_point."contactId" = l."contactId"
+          AND phone_point."type"::text IN ('PHONE', 'WHATSAPP')
+          AND phone_point."doNotContact" = FALSE
+          AND NULLIF(BTRIM(phone_point."normalizedValue"), '') IS NOT NULL
+          AND phone_point."deletedAt" IS NULL
+      )
+    )
+  `;
+}
+
 function bucketSql(bucket: SdrQueueBucket, now: Date): Prisma.Sql {
   switch (bucket) {
     case "NOW":
@@ -101,7 +120,7 @@ function bucketSql(bucket: SdrQueueBucket, now: Date): Prisma.Sql {
     case "P1":
       return Prisma.sql`COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P1'`;
     case "WAITING_CALL":
-      return Prisma.sql`EXISTS (
+      return Prisma.sql`(${callablePhoneSql()}) AND EXISTS (
         SELECT 1 FROM "tasks" waiting_task
         WHERE waiting_task."workspaceId" = l."workspaceId"
           AND waiting_task."leadId" = l."id"
@@ -136,14 +155,12 @@ function bucketSql(bucket: SdrQueueBucket, now: Date): Prisma.Sql {
 function operationalOrderSql(now: Date): Prisma.Sql {
   return Prisma.sql`
     CASE
-      WHEN next_task."sourceKey" LIKE 'active-prospecting:%:call-1'
-        AND next_task."kind"::text = 'CALL' THEN 0
-      WHEN next_task."sourceKey" LIKE 'active-prospecting:%:instagram-follow'
-        AND next_task."kind"::text = 'INSTAGRAM_FOLLOW' THEN 1
-      WHEN next_task."sourceKey" LIKE 'active-prospecting:%:instagram-message-1'
-        AND next_task."kind"::text = 'INSTAGRAM_MESSAGE' THEN 2
       WHEN next_task."sourceKey" LIKE 'active-prospecting:%'
-        AND next_task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW') THEN 3
+        AND next_task."kind"::text = 'CALL' THEN 0
+      WHEN next_task."sourceKey" LIKE 'active-prospecting:%'
+        AND next_task."kind"::text = 'INSTAGRAM_FOLLOW' THEN 1
+      WHEN next_task."sourceKey" LIKE 'active-prospecting:%'
+        AND next_task."kind"::text = 'INSTAGRAM_MESSAGE' THEN 2
       WHEN l."awaitingHumanResponse" OR meeting_today."id" IS NOT NULL THEN 4
       WHEN COALESCE(next_task."dueAt", l."nextActionAt") < ${now} THEN 5
       WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P1' THEN 6
@@ -286,6 +303,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           AND task."leadId" = l."id"
           AND task."sourceKey" LIKE 'active-prospecting:%'
           AND task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
+          AND (task."kind"::text <> 'CALL' OR (${callablePhoneSql()}))
           AND task."status"::text IN ('OPEN', 'IN_PROGRESS')
           AND task."deletedAt" IS NULL
         ORDER BY
@@ -473,9 +491,38 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           },
           kind: { not: "MEETING" },
           deletedAt: null,
-          OR: [
-            { status: { in: ["OPEN", "IN_PROGRESS"] }, dueAt: { lt: today.end } },
-            { status: "COMPLETED", completedAt: { gte: today.start, lt: today.end } },
+          AND: [
+            {
+              OR: [
+                { status: { in: ["OPEN", "IN_PROGRESS"] }, dueAt: { lt: today.end } },
+                { status: "COMPLETED", completedAt: { gte: today.start, lt: today.end } },
+              ],
+            },
+            {
+              OR: [
+                { status: "COMPLETED" },
+                { kind: { notIn: ["IMMEDIATE_CALL", "CALL"] } },
+                {
+                  lead: {
+                    contactPreference: { not: "DO_NOT_CONTACT" },
+                    OR: [
+                      { normalizedPhone: { not: null } },
+                      {
+                        contact: {
+                          points: {
+                            some: {
+                              type: { in: ["PHONE", "WHATSAPP"] },
+                              doNotContact: false,
+                              deletedAt: null,
+                            },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
           ],
         },
         _count: { _all: true },

@@ -205,9 +205,7 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
   await expect(page.getByRole("row").filter({ hasText: leadName })).toContainText("Prospecção Ativa · Novo lead");
 
   await page.goto("/meu-dia");
-  const dailyLead = page.locator("article").filter({ hasText: leadName }).first();
-  await expect(dailyLead).toBeVisible();
-  await expect(dailyLead).toContainText("Prospecção Ativa · Novo lead");
+  await expect(page.locator("article").filter({ hasText: leadName })).toHaveCount(0);
 
   for (const [label, heading] of [
     ["Estoque", "Estoque anterior ao Lead"],

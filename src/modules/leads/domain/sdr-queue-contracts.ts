@@ -192,10 +192,9 @@ export function getOperationalRank(
 ): number {
   const coldProspectingTask = item.nextActionSourceKey?.startsWith("active-prospecting:")
     && ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"].includes(item.nextActionKind ?? "");
-  if (coldProspectingTask && item.nextActionSourceKey?.endsWith(":call-1")) return 0;
-  if (coldProspectingTask && item.nextActionSourceKey?.endsWith(":instagram-follow")) return 1;
-  if (coldProspectingTask && item.nextActionSourceKey?.endsWith(":instagram-message-1")) return 2;
-  if (coldProspectingTask) return 3;
+  if (coldProspectingTask && item.nextActionKind === "CALL") return 0;
+  if (coldProspectingTask && item.nextActionKind === "INSTAGRAM_FOLLOW") return 1;
+  if (coldProspectingTask && item.nextActionKind === "INSTAGRAM_MESSAGE") return 2;
   if (item.awaitingHumanResponse || item.meetingTodayId) return 4;
   if (item.nextActionAt && new Date(item.nextActionAt) < now) return 5;
   if (item.stagePosition === 0 && item.priorityCode === "P1") return 6;
@@ -223,26 +222,6 @@ export function getSdrQueueRecommendation(
       label: "Criar próxima ação",
       reason: "Lead aberto sem próxima ação é um erro operacional.",
       href: `${historyHref}#criar-tarefa`,
-    };
-  }
-  if (
-    item.stagePosition === 0 &&
-    !item.firstHumanAttemptAt &&
-    item.priorityCode
-  ) {
-    return {
-      code: "CALL_NOW",
-      label: "Ligar agora",
-      reason: `Lead novo ${item.priorityCode} ainda sem tentativa humana.`,
-      href: `${historyHref}#registrar-atividade`,
-    };
-  }
-  if (new Date(item.nextActionAt) < now) {
-    return {
-      code: "EXECUTE_RETURN",
-      label: "Executar retorno",
-      reason: "A próxima ação está vencida.",
-      href: `${historyHref}#registrar-atividade`,
     };
   }
   if (item.nextActionKind === "IMMEDIATE_CALL" || item.nextActionKind === "CALL") {
@@ -274,6 +253,26 @@ export function getSdrQueueRecommendation(
       code: "RECORD_EMAIL",
       label: "Registrar e-mail",
       reason: "A próxima tarefa persistida é um e-mail.",
+      href: `${historyHref}#registrar-atividade`,
+    };
+  }
+  if (
+    item.stagePosition === 0 &&
+    !item.firstHumanAttemptAt &&
+    item.priorityCode
+  ) {
+    return {
+      code: "CALL_NOW",
+      label: "Ligar agora",
+      reason: `Lead novo ${item.priorityCode} ainda sem tentativa humana.`,
+      href: `${historyHref}#registrar-atividade`,
+    };
+  }
+  if (new Date(item.nextActionAt) < now) {
+    return {
+      code: "EXECUTE_RETURN",
+      label: "Executar retorno",
+      reason: "A próxima ação está vencida.",
       href: `${historyHref}#registrar-atividade`,
     };
   }

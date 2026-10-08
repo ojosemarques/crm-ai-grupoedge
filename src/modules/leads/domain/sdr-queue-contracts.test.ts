@@ -38,11 +38,12 @@ describe("fila determinística do SDR", () => {
     expect(getSlaBand(181, 60, 180)).toBe("CRITICAL");
   });
 
-  it("executa todo o lote D1 por fase antes de retornos e conversas", () => {
+  it("prioriza ligações antes de follows e mensagens da cadência", () => {
     expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:cadence:call-1", nextActionKind: "CALL", stagePosition: 1, priorityCode: "P2", nextActionAt: "2033-05-10T14:00:00.000Z" }, now)).toBe(0);
     expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:cadence:instagram-follow", nextActionKind: "INSTAGRAM_FOLLOW", stagePosition: 1, priorityCode: "P2", nextActionAt: "2033-05-10T14:00:00.000Z" }, now)).toBe(1);
     expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:cadence:instagram-message-1", nextActionKind: "INSTAGRAM_MESSAGE", stagePosition: 1, priorityCode: "P2", nextActionAt: "2033-05-10T14:00:00.000Z" }, now)).toBe(2);
-    expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:cadence:call-2", nextActionKind: "CALL", stagePosition: 1, priorityCode: "P2", nextActionAt: "2033-05-10T14:00:00.000Z" }, now)).toBe(3);
+    expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:cadence:call-2", nextActionKind: "CALL", stagePosition: 1, priorityCode: "P2", nextActionAt: "2033-05-10T14:00:00.000Z" }, now)).toBe(0);
+    expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:cadence:instagram-message-2", nextActionKind: "INSTAGRAM_MESSAGE", stagePosition: 1, priorityCode: "P2", nextActionAt: "2033-05-10T14:00:00.000Z" }, now)).toBe(2);
     expect(getOperationalRank({ awaitingHumanResponse: true, stagePosition: 2, priorityCode: "P3", nextActionAt: null }, now)).toBe(4);
     expect(getOperationalRank({ awaitingHumanResponse: false, meetingTodayId: "meeting", stagePosition: 2, priorityCode: "P3", nextActionAt: null }, now)).toBe(4);
     expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 1, priorityCode: "P1", nextActionAt: "2033-05-10T14:59:59.000Z" }, now)).toBe(5);

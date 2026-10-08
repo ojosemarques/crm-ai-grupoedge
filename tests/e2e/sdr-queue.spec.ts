@@ -116,16 +116,23 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
 
   await page.goto(`/meu-dia?memberId=${assigned.ownerMemberId}`);
   await page.getByRole("tabpanel").locator(`[data-lead-id="${leadId}"]`).getByRole("link", { name: "Responder agora" }).click();
-  await expect(page).toHaveURL(/\/leads\/[0-9a-f-]+\/historico#registrar-atividade$/);
-  const activity = page.locator("#registrar-atividade");
+  await expect(page.getByRole("heading", { name: "Meu Dia", exact: true })).toBeVisible();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(leadName, { exact: true }).first()).toBeVisible();
+  const activity = dialog.locator("#registrar-atividade");
   await activity.locator('select[name="type"]').selectOption("CALL_UNANSWERED");
   await activity.getByLabel("Assunto").fill("Primeira tentativa pelo Meu Dia");
   await activity.locator('input[name="nextTitle"]').fill("Retornar amanhã");
   await activity.locator('input[name="nextDueAt"]').fill("2035-01-15T10:30");
   await activity.getByRole("button", { name: "Registrar atividade" }).click();
-  await expect(page.getByRole("status")).toContainText("Operação registrada com sucesso.");
+  await expect(dialog.getByRole("status")).toContainText("Operação registrada com sucesso.");
+  await expect(page.getByRole("heading", { name: "Meu Dia", exact: true })).toBeVisible();
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Fechar ficha e voltar ao Meu Dia" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`/meu-dia\\?memberId=${assigned.ownerMemberId}$`));
 
-  await page.goto(`/meu-dia?memberId=${assigned.ownerMemberId}`);
   const updatedCard = page.getByRole("tabpanel").locator(`[data-lead-id="${leadId}"]`).first();
   await expect(updatedCard).toContainText("Última atividade");
   await expect(updatedCard).toContainText(/Primeira tentativa pelo Meu Dia|Retornar amanhã/);
