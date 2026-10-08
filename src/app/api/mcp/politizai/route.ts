@@ -64,6 +64,19 @@ async function safeTool(operation: () => Promise<unknown>) {
         { errorCode: "MCP_TOOL_INVALID_INPUT", issueCount: error instanceof z.ZodError ? error.issues.length : 0, issues: validationIssues },
         "Ferramenta MCP da prospecção rejeitou entrada na validação",
       );
+    } else if (!(error instanceof ApplicationError)) {
+      const errorRecord = error && typeof error === "object"
+        ? error as { code?: unknown; meta?: unknown }
+        : null;
+      logger.error(
+        {
+          errorCode: "MCP_TOOL_OPERATION_FAILED",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          prismaCode: typeof errorRecord?.code === "string" ? errorRecord.code : null,
+          prismaMeta: errorRecord?.meta ?? null,
+        },
+        "Falha inesperada ao executar ferramenta MCP da prospecção",
+      );
     }
     const message = error instanceof ApplicationError && error.expose ? error.message
       : error instanceof z.ZodError
