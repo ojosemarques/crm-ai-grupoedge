@@ -99,6 +99,7 @@ export async function LeadHistoryContent({
         <span>{operations.lead.fullName}</span>
       </nav>
       <OperationalHistoryWorkspace
+        key={leadId}
         initialOperations={operations}
         initialQualifications={qualifications}
         initialPipeline={pipeline}

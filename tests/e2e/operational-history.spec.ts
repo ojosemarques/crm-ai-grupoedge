@@ -45,6 +45,12 @@ test("registra atividade e tarefa no histórico operacional persistido", async (
   await expect(page.getByRole("heading", { name: "Lead histórico E2E", exact: true })).toBeVisible();
   await expect(page.getByText(/^Ligar agora ·/).first()).toBeVisible();
   await expect(page.getByRole("tab", { name: "Atividades" })).toHaveAttribute("aria-selected", "true");
+  const activityDisclosure = page.locator("#registrar-atividade");
+  await expect(activityDisclosure).not.toHaveAttribute("open", "");
+  await activityDisclosure.locator("summary").click();
+  await expect(activityDisclosure).toHaveAttribute("open", "");
+  await activityDisclosure.locator("summary").click();
+  await expect(activityDisclosure).not.toHaveAttribute("open", "");
   await expect(page.getByText("Lead histórico E2E", { exact: true }).first()).toBeVisible();
   await page.getByRole("tab", { name: "Resumo" }).click();
   await expect(page.getByRole("heading", { name: "Comunicações" })).toBeVisible();
