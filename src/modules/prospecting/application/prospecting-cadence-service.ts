@@ -3,6 +3,7 @@ import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import {
   ACCEPTED_MANUAL_RESULTS,
   D1_GATE_STEP_KEYS,
+  resolveProspectingManualResultReason,
 } from "@/modules/prospecting/domain/prospecting-cadence";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
@@ -173,9 +174,9 @@ export async function applyProspectingTaskCompletionInTransaction(
         : [];
   const code = input.result.trim().toUpperCase().replaceAll(" ", "_");
   if (!(accepted as readonly string[]).includes(code)) fail("Resultado inválido para o passo da cadência.", "PROSPECTING_MANUAL_RESULT_INVALID", 400);
-  if (["CHANNEL_UNAVAILABLE", "FAILED", "PROFILE_NOT_FOUND", "WRONG_NUMBER"].includes(code) && !input.resultReason?.trim()) fail("Informe o motivo da exceção de canal.", "PROSPECTING_MANUAL_RESULT_REASON_REQUIRED", 400);
+  const resultReason = resolveProspectingManualResultReason(code, input.resultReason);
   if (input.stopReason && !input.resultReason?.trim()) fail("Informe o motivo da recusa ou pedido de parada.", "PROSPECTING_STOP_REASON_REQUIRED", 400);
-  await transaction.prospectingCadenceStep.update({ where: { id: step.id }, data: { status: "COMPLETED", resultCode: code, resultReason: input.resultReason?.trim() ?? null, completedAt: input.completedAt } });
+  await transaction.prospectingCadenceStep.update({ where: { id: step.id }, data: { status: "COMPLETED", resultCode: code, resultReason, completedAt: input.completedAt } });
   if (input.stopReason) {
     await stopColdCadenceInTransaction(transaction, { workspaceId: input.workspaceId, leadId: input.leadId, actorId: input.actorId, reason: input.stopReason, occurredAt: input.completedAt });
     return { terminal: true as const, nextActionAt: null, nextActionDescription: null };

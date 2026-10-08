@@ -38,6 +38,21 @@ export const ACCEPTED_MANUAL_RESULTS = Object.freeze({
   INSTAGRAM_FOLLOW: ["COMPLETED", "ALREADY_FOLLOWING", "FAILED", "CHANNEL_UNAVAILABLE"],
 } as const);
 
+const AUTOMATIC_RESULT_REASONS: Readonly<Record<string, string>> = Object.freeze({
+  WRONG_NUMBER: "Número incorreto informado pelo vendedor.",
+  CHANNEL_UNAVAILABLE: "Canal indisponível informado pelo vendedor.",
+  FAILED: "Falha informada pelo vendedor.",
+  PROFILE_NOT_FOUND: "Perfil não encontrado informado pelo vendedor.",
+});
+
+export function resolveProspectingManualResultReason(
+  resultCode: string,
+  suppliedReason?: string,
+): string | null {
+  const reason = suppliedReason?.trim();
+  return reason || AUTOMATIC_RESULT_REASONS[resultCode] || null;
+}
+
 function weekDay(localDate: string): number {
   const [year, month, day] = localDate.split("-").map(Number);
   return new Date(Date.UTC(year!, month! - 1, day!)).getUTCDay();

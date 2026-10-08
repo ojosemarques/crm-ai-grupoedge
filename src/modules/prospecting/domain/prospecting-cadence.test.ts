@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   manualCapacityDates,
   PROSPECTING_CADENCE,
+  resolveProspectingManualResultReason,
   scheduleProspectingCadence,
 } from "@/modules/prospecting/domain/prospecting-cadence";
 
@@ -30,5 +31,14 @@ describe("cadência de prospecção política", () => {
     const close = schedule.find((step) => step.stepKey === "close-no-response")!;
     expect(close.localDate <= "2026-11-03").toBe(true);
     expect(close.localDate).toBe("2026-11-02");
+  });
+
+  it("registra motivo automático para resultados de exceção sem exigir texto adicional", () => {
+    expect(resolveProspectingManualResultReason("WRONG_NUMBER")).toBe("Número incorreto informado pelo vendedor.");
+    expect(resolveProspectingManualResultReason("CHANNEL_UNAVAILABLE")).toBe("Canal indisponível informado pelo vendedor.");
+    expect(resolveProspectingManualResultReason("FAILED")).toBe("Falha informada pelo vendedor.");
+    expect(resolveProspectingManualResultReason("PROFILE_NOT_FOUND")).toBe("Perfil não encontrado informado pelo vendedor.");
+    expect(resolveProspectingManualResultReason("WRONG_NUMBER", "Telefone pertence a outra pessoa.")).toBe("Telefone pertence a outra pessoa.");
+    expect(resolveProspectingManualResultReason("NO_ANSWER")).toBeNull();
   });
 });
