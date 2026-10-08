@@ -6,8 +6,26 @@ export type PhoneNormalizationResult =
       message: string;
     }>;
 
+export type PhoneIdentityResult =
+  | Readonly<{
+      success: true;
+      normalizedPhone: string;
+      countryCode: string;
+      extension: string | null;
+      identity: string;
+    }>
+  | Extract<PhoneNormalizationResult, { success: false }>;
+
 const e164Pattern = /^\+[1-9][0-9]{7,14}$/;
 const acceptedCharactersPattern = /^[+0-9().\s-]+$/;
+const extensionSuffixPattern = /\s+(?:ramal|ram\.?|ext(?:ens[aã]o)?\.?|x)\s*[:.#-]?\s*([0-9]{1,6})\s*$/i;
+
+export function splitPhoneExtension(input: string): Readonly<{ phone: string; extension: string | null }> {
+  const value = input.trim();
+  const match = extensionSuffixPattern.exec(value);
+  if (!match || match.index === 0) return { phone: value, extension: null };
+  return { phone: value.slice(0, match.index).trim(), extension: match[1] ?? null };
+}
 
 function validBrazilianNationalNumber(value: string): boolean {
   return /^[1-9][1-9][2-9][0-9]{7,8}$/.test(value);
@@ -33,7 +51,7 @@ function fromInternational(value: string): PhoneNormalizationResult {
 }
 
 export function normalizePhone(input: string): PhoneNormalizationResult {
-  const value = input.trim();
+  const value = splitPhoneExtension(input).phone;
   if (!value || !acceptedCharactersPattern.test(value)) {
     return {
       success: false,
@@ -93,5 +111,16 @@ export function normalizePhone(input: string): PhoneNormalizationResult {
       digits.length < 10
         ? "O telefone brasileiro precisa incluir DDD; números internacionais precisam começar com + ou 00."
         : "Informe um telefone brasileiro com DDD ou um número internacional com + ou 00.",
+  };
+}
+
+export function normalizePhoneIdentity(input: string): PhoneIdentityResult {
+  const { extension } = splitPhoneExtension(input);
+  const normalized = normalizePhone(input);
+  if (!normalized.success) return normalized;
+  return {
+    ...normalized,
+    extension,
+    identity: extension ? `${normalized.normalizedPhone};ext=${extension}` : normalized.normalizedPhone,
   };
 }

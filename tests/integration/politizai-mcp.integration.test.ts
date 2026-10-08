@@ -144,6 +144,54 @@ describe("MCP privado Politizai", () => {
     });
     await expect(database.contactPoint.findFirst({ where: { workspaceId: context.workspaceId, contactId: existingLead.contactId!, type: "PHONE", normalizedValue: "+5511999991234", deletedAt: null }, select: { verificationStatus: true, quality: true } })).resolves.toEqual({ verificationStatus: "VERIFIED", quality: "VALID" });
 
+    await database.prospectingResearchTarget.update({ where: { id: target.id }, data: { status: "PENDING", completedAt: null, lastReasonCode: "SHARED_PHONE_ENRICHMENT" } });
+    const extensionTarget = (await prospecting.claimNextTarget(auth, batchId)).target!;
+    const extensionEnrichment = await prospecting.registerCandidate(auth, {
+      targetId: extensionTarget.id,
+      leaseOwner: extensionTarget.leaseOwner,
+      politician: { mandateStatus: "CURRENT", mandateVerifiedAt: "2026-10-06T11:30:00-03:00" },
+      contact: { phone: "(11) 4000-1234 ramal 207", phoneScope: "OFFICE" },
+      researchChecks: {
+        municipalOffice: { status: "INDIVIDUAL_CONTACTS_CAPTURED", url: "https://prefeitura.sp.gov.br/gabinete", checkedAt: "2026-10-06T11:30:00-03:00" },
+        tse2024Candidate: { status: "CONTACTS_NOT_PUBLIC", url: "https://divulgacandcontas.tse.jus.br/divulga/#/candidato/2024", checkedAt: "2026-10-06T11:30:00-03:00" },
+        instagram: { status: "PROFILE_NOT_FOUND", checkedAt: "2026-10-06T11:30:00-03:00" },
+      },
+      sources: [
+        { field: "role", type: "TSE", url: "https://resultados.tse.jus.br/oficial/app/index.html#/eleicao/619", observedAt: "2026-10-06T11:30:00-03:00" },
+        { field: "mandate", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/prefeita", observedAt: "2026-10-06T11:30:00-03:00" },
+        { field: "phone", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/gabinete", observedAt: "2026-10-06T11:30:00-03:00", originalValue: "(11) 4000-1234 ramal 207", contactScope: "OFFICE" },
+      ],
+    });
+    expect(extensionEnrichment).toMatchObject({ enriched: true, candidate: { id: ingested.candidate.id, status: "READY" } });
+    await expect(database.prospectCandidate.findUniqueOrThrow({ where: { id: ingested.candidate.id }, select: { phone: true, normalizedPhone: true } })).resolves.toEqual({
+      phone: "(11) 4000-1234 ramal 207",
+      normalizedPhone: "+551140001234",
+    });
+    await expect(database.contactPoint.findFirst({ where: { workspaceId: context.workspaceId, contactId: existingLead.contactId!, type: "PHONE", originalValue: "(11) 4000-1234 ramal 207", deletedAt: null }, select: { normalizedValue: true, label: true, verificationStatus: true } })).resolves.toEqual({
+      normalizedValue: "+551140001234",
+      label: "Gabinete · ramal 207",
+      verificationStatus: "VERIFIED",
+    });
+
+    await database.prospectingResearchTarget.create({ data: { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:integration-mayor-extension-2", tseCandidateId: "integration-mayor-extension-2", role: "MAYOR", politicianName: "Prefeito Ramal 208", ballotName: "Prefeito Ramal 208", municipalityName: "Cidade Integração", municipalityIbgeCode: "3550308", stateCode: "SP", population: 1_000_000 } });
+    const distinctExtensionTarget = (await prospecting.claimNextTarget(auth, batchId)).target!;
+    await expect(prospecting.registerCandidate(auth, {
+      targetId: distinctExtensionTarget.id,
+      leaseOwner: distinctExtensionTarget.leaseOwner,
+      politician: { mandateStatus: "CURRENT", mandateVerifiedAt: "2026-10-06T11:30:00-03:00" },
+      contact: { phone: "(11) 4000-1234 ramal 208", phoneScope: "OFFICE" },
+      researchChecks: {
+        municipalOffice: { status: "INDIVIDUAL_CONTACTS_CAPTURED", url: "https://prefeitura.sp.gov.br/gabinete-208", checkedAt: "2026-10-06T11:30:00-03:00" },
+        tse2024Candidate: { status: "CONTACTS_NOT_PUBLIC", url: "https://divulgacandcontas.tse.jus.br/divulga/#/candidato/2024", checkedAt: "2026-10-06T11:30:00-03:00" },
+        instagram: { status: "PROFILE_NOT_FOUND", checkedAt: "2026-10-06T11:30:00-03:00" },
+      },
+      sources: [
+        { field: "role", type: "TSE", url: "https://resultados.tse.jus.br/oficial/app/index.html#/eleicao/619", observedAt: "2026-10-06T11:30:00-03:00" },
+        { field: "mandate", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/prefeito-208", observedAt: "2026-10-06T11:30:00-03:00" },
+        { field: "phone", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/gabinete-208", observedAt: "2026-10-06T11:30:00-03:00", originalValue: "(11) 4000-1234 ramal 208", contactScope: "OFFICE" },
+      ],
+    })).resolves.toMatchObject({ duplicate: false, candidate: { status: "READY" } });
+
     await database.prospectingResearchTarget.create({ data: { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:integration-mayor-2", tseCandidateId: "integration-mayor-2", role: "MAYOR", politicianName: "Outro Prefeito Integração", ballotName: "Outro Prefeito", municipalityName: "Cidade Integração", municipalityIbgeCode: "3550308", stateCode: "SP", population: 1_000_000 } });
     const duplicatePhoneTarget = (await prospecting.claimNextTarget(auth, batchId)).target!;
     await expect(prospecting.registerCandidate(auth, {

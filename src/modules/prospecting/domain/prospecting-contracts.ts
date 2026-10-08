@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
+import { normalizePhone, normalizePhoneIdentity } from "@/modules/leads/domain/phone-normalizer";
 
 export const PROSPECTING_CONTRACT_VERSION = "political-prospect/v1" as const;
 export const OPEN_DOT_MAX_BODY_BYTES = 256 * 1024;
@@ -343,22 +343,22 @@ export const openDotHeadersSchema = z.object({
 }).strict();
 
 export function candidateFingerprint(value: ProspectCandidateInput): string {
-  const phone = value.contact.phone ? normalizePhone(value.contact.phone) : null;
-  const politicianPhone = value.contact.politicianPhone ? normalizePhone(value.contact.politicianPhone) : null;
-  const advisorPhone = value.contact.advisorPhone ? normalizePhone(value.contact.advisorPhone) : null;
-  const whatsapp = value.contact.whatsapp ? normalizePhone(value.contact.whatsapp) : null;
+  const phone = value.contact.phone ? normalizePhoneIdentity(value.contact.phone) : null;
+  const politicianPhone = value.contact.politicianPhone ? normalizePhoneIdentity(value.contact.politicianPhone) : null;
+  const advisorPhone = value.contact.advisorPhone ? normalizePhoneIdentity(value.contact.advisorPhone) : null;
+  const whatsapp = value.contact.whatsapp ? normalizePhoneIdentity(value.contact.whatsapp) : null;
   return createHash("sha256").update(JSON.stringify({
     identity: value.externalIdentityKey,
     role: value.politician.role,
     term: value.politician.term,
     municipality: value.municipality.ibgeCode,
-    phone: phone?.success ? phone.normalizedPhone : value.contact.phone,
+    phone: phone?.success ? phone.identity : value.contact.phone,
     email: value.contact.email,
-    politicianPhone: politicianPhone?.success ? politicianPhone.normalizedPhone : value.contact.politicianPhone,
+    politicianPhone: politicianPhone?.success ? politicianPhone.identity : value.contact.politicianPhone,
     politicianEmail: value.contact.politicianEmail,
-    advisorPhone: advisorPhone?.success ? advisorPhone.normalizedPhone : value.contact.advisorPhone,
+    advisorPhone: advisorPhone?.success ? advisorPhone.identity : value.contact.advisorPhone,
     advisorEmail: value.contact.advisorEmail,
-    whatsapp: whatsapp?.success ? whatsapp.normalizedPhone : value.contact.whatsapp,
+    whatsapp: whatsapp?.success ? whatsapp.identity : value.contact.whatsapp,
     whatsappScope: value.contact.whatsappScope,
     instagram: value.contact.instagram,
     instagramScope: value.contact.instagramScope,

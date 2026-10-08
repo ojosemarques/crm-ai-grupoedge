@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
+import { normalizePhone, normalizePhoneIdentity } from "@/modules/leads/domain/phone-normalizer";
 
 describe("normalizePhone", () => {
   it.each([
@@ -35,8 +35,21 @@ describe("normalizePhone", () => {
     });
   });
 
-  it("rejeita ramal ou conteúdo alfabético em vez de removê-lo", () => {
-    expect(normalizePhone("11 98765-4321 ramal 2")).toMatchObject({
+  it("preserva ramal individual na identidade sem alterar o número-base E.164", () => {
+    expect(normalizePhone("(38) 3754-1402 ramal 207")).toMatchObject({
+      success: true,
+      normalizedPhone: "+553837541402",
+    });
+    expect(normalizePhoneIdentity("(38) 3754-1402 ramal 207")).toMatchObject({
+      success: true,
+      normalizedPhone: "+553837541402",
+      extension: "207",
+      identity: "+553837541402;ext=207",
+    });
+  });
+
+  it("continua rejeitando conteúdo alfabético que não seja um ramal final", () => {
+    expect(normalizePhone("telefone 11 98765-4321")).toMatchObject({
       success: false,
       code: "PHONE_INVALID",
     });

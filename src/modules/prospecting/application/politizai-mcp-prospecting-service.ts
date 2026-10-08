@@ -8,13 +8,13 @@ import { createProspectingStagingService } from "@/modules/prospecting/applicati
 import { PROSPECTING_CONTRACT_VERSION } from "@/modules/prospecting/domain/prospecting-contracts";
 import { PROSPECTING_SOURCE_SNAPSHOTS } from "@/modules/prospecting/domain/politizai-mcp-config";
 import type { OpenDotPrincipal } from "@/modules/prospecting/domain/open-dot-policy";
-import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
+import { normalizePhoneIdentity } from "@/modules/leads/domain/phone-normalizer";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const LEASE_MINUTES = 45;
-const AGENT_VERSION = "politizai-dot-mcp/1.5.0";
-const PROMPT_VERSION = "political-prospect-production/v6";
+const AGENT_VERSION = "politizai-dot-mcp/1.5.1";
+const PROMPT_VERSION = "political-prospect-production/v7";
 const BRAZILIAN_CAPITALS = [
   "Aracaju", "Belém", "Belo Horizonte", "Boa Vista", "Campo Grande", "Cuiabá", "Curitiba",
   "Florianópolis", "Fortaleza", "Goiânia", "João Pessoa", "Macapá", "Maceió", "Manaus",
@@ -217,6 +217,16 @@ function normalizeInstagram(value: string): string {
   return value.trim().toLocaleLowerCase("pt-BR");
 }
 
+function storedPhoneIdentity(rawValue: string | null, normalizedValue: string | null) {
+  const parsed = rawValue ? normalizePhoneIdentity(rawValue) : normalizedValue ? normalizePhoneIdentity(normalizedValue) : null;
+  return parsed?.success ? parsed : null;
+}
+
+function phoneContactLabel(label: string, rawValue: string): string {
+  const parsed = normalizePhoneIdentity(rawValue);
+  return parsed.success && parsed.extension ? `${label} · ramal ${parsed.extension}` : label;
+}
+
 export function createPolitizaiMcpProspectingService(options: Options) {
   const staging = createProspectingStagingService({ database: options.database, now: options.now });
 
@@ -355,7 +365,7 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         select: { phone: true, politicianPhone: true, advisorPhone: true, whatsapp: true, instagram: true },
       }) : null;
       const enrichmentInstruction = claimed.candidateId
-        ? "Este alvo já existe no CRM e deve ser ENRIQUECIDO sem remover nenhum contato atual. Encontre e envie ao menos um novo telefone individual do político, assessor, gabinete/ramal exclusivo ou WhatsApp. Não repita a central compartilhada já cadastrada; o Instagram continua obrigatório como frente de pesquisa, mas sozinho não conclui este enriquecimento."
+        ? "Este alvo já existe no CRM e deve ser ENRIQUECIDO sem remover nenhum contato atual. Encontre e envie ao menos um novo telefone individual do político, assessor, gabinete/ramal exclusivo ou WhatsApp. Quando a fonte publicar um ramal individual, envie o telefone completo no formato `(DDD) NNNN-NNNN ramal NNN`; ramais diferentes da mesma central são contatos distintos. Não repita a central compartilhada já cadastrada; o Instagram continua obrigatório como frente de pesquisa, mas sozinho não conclui este enriquecimento."
         : "Este é um cadastro novo.";
       return { target: { ...claimed, mode: claimed.candidateId ? "ENRICH_EXISTING_CANDIDATE" : "CREATE_CANDIDATE", existingContact, leaseOwner, leaseExpiresAt: leaseExpiresAt.toISOString(), instructions: `${enrichmentInstruction} Conclua obrigatoriamente todas as etapas antes de registrar, mesmo após encontrar o primeiro contato: (1) cruze o eleito no Resultados TSE 2024 e valide o mandato atual; (2) procure telefone/ramal e e-mail do gabinete individual ou assessor em página nominal da Prefeitura/Câmara; nunca grave central geral, protocolo, recepção ou número compartilhado como gabinete; (3) consulte sempre o candidato no DivulgaCandContas 2024 e capture todo telefone/e-mail que ainda esteja publicamente exibido; (4) pesquise sempre no Google por NOME + PREFEITO ou VEREADOR + MUNICÍPIO e valide o Instagram no próprio perfil por nome, município e cargo. Informe o resultado das três frentes em researchChecks. Google é somente descoberta, não evidência final. Cadastre quando houver telefone/WhatsApp público ou Instagram validado; e-mail isolado deve ser descartado. Nunca use dado vazado, restrito, oculto ou inferido; registre uma fonte específica para cada contato.` }, queueEmpty: false };
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 20_000 });
@@ -387,14 +397,15 @@ export function createPolitizaiMcpProspectingService(options: Options) {
       if (!normalizedSources.some((source) => (source.field === "role" || source.field === "mandate") && officialMandateSourceTypes.has(source.type))) {
         fail("O mandato atual exige fonte municipal oficial compatível com o cargo.", "PROSPECTING_MANDATE_SOURCE_REQUIRED", 400);
       }
-      const submittedPhoneValues = [input.contact.phone, input.contact.politicianPhone, input.contact.advisorPhone, input.contact.whatsapp]
+      const submittedPhones = [input.contact.phone, input.contact.politicianPhone, input.contact.advisorPhone, input.contact.whatsapp]
         .flatMap((value) => {
           if (!value) return [];
-          const normalized = normalizePhone(value);
-          return normalized.success ? [normalized.normalizedPhone] : [];
+          const normalized = normalizePhoneIdentity(value);
+          return normalized.success ? [normalized] : [];
         });
-      if (submittedPhoneValues.length > 0) {
-        const sameNumberForAnotherPolitician = await transaction.prospectCandidate.findFirst({
+      if (submittedPhones.length > 0) {
+        const submittedPhoneValues = [...new Set(submittedPhones.map((phone) => phone.normalizedPhone))];
+        const candidatesWithSameBase = await transaction.prospectCandidate.findMany({
           where: {
             workspaceId: auth.workspaceId,
             municipalityIbgeCode: target.municipalityIbgeCode,
@@ -406,7 +417,29 @@ export function createPolitizaiMcpProspectingService(options: Options) {
               { normalizedWhatsapp: { in: submittedPhoneValues } },
             ],
           },
-          select: { politicianName: true },
+          select: {
+            politicianName: true,
+            phone: true,
+            normalizedPhone: true,
+            politicianPhone: true,
+            normalizedPoliticianPhone: true,
+            advisorPhone: true,
+            normalizedAdvisorPhone: true,
+            whatsapp: true,
+            normalizedWhatsapp: true,
+          },
+        });
+        const sameNumberForAnotherPolitician = candidatesWithSameBase.find((candidate) => {
+          const existingPhones = [
+            storedPhoneIdentity(candidate.phone, candidate.normalizedPhone),
+            storedPhoneIdentity(candidate.politicianPhone, candidate.normalizedPoliticianPhone),
+            storedPhoneIdentity(candidate.advisorPhone, candidate.normalizedAdvisorPhone),
+            storedPhoneIdentity(candidate.whatsapp, candidate.normalizedWhatsapp),
+          ].filter((phone): phone is NonNullable<typeof phone> => Boolean(phone));
+          return submittedPhones.some((submitted) => existingPhones.some((existing) =>
+            submitted.normalizedPhone === existing.normalizedPhone
+            && (!submitted.extension || submitted.extension === existing.extension),
+          ));
         });
         if (sameNumberForAnotherPolitician) {
           fail(`O telefone já está associado a ${sameNumberForAnotherPolitician.politicianName} no mesmo município e aparenta ser compartilhado. Reenvie sem esse telefone e conclua TSE/DivulgaCandContas e Instagram.`, "PROSPECTING_SHARED_OFFICE_PHONE", 400);
@@ -418,10 +451,16 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         });
         if (!candidate) fail("O candidato existente deste alvo não foi encontrado.", "PROSPECTING_ENRICHMENT_CANDIDATE_NOT_FOUND", 404);
 
-        const normalizedOfficePhone = input.contact.phone ? normalizePhone(input.contact.phone) : null;
-        const normalizedPoliticianPhone = input.contact.politicianPhone ? normalizePhone(input.contact.politicianPhone) : null;
-        const normalizedAdvisorPhone = input.contact.advisorPhone ? normalizePhone(input.contact.advisorPhone) : null;
-        const normalizedWhatsapp = input.contact.whatsapp ? normalizePhone(input.contact.whatsapp) : null;
+        const normalizedOfficePhone = input.contact.phone ? normalizePhoneIdentity(input.contact.phone) : null;
+        const normalizedPoliticianPhone = input.contact.politicianPhone ? normalizePhoneIdentity(input.contact.politicianPhone) : null;
+        const normalizedAdvisorPhone = input.contact.advisorPhone ? normalizePhoneIdentity(input.contact.advisorPhone) : null;
+        const normalizedWhatsapp = input.contact.whatsapp ? normalizePhoneIdentity(input.contact.whatsapp) : null;
+        const incomingPhoneContacts = [
+          normalizedOfficePhone?.success ? normalizedOfficePhone.identity : null,
+          normalizedPoliticianPhone?.success ? normalizedPoliticianPhone.identity : null,
+          normalizedAdvisorPhone?.success ? normalizedAdvisorPhone.identity : null,
+          normalizedWhatsapp?.success ? normalizedWhatsapp.identity : null,
+        ].filter((value): value is string => Boolean(value));
         const incomingUsableContacts = [
           normalizedOfficePhone?.success ? normalizedOfficePhone.normalizedPhone : null,
           normalizedPoliticianPhone?.success ? normalizedPoliticianPhone.normalizedPhone : null,
@@ -430,13 +469,12 @@ export function createPolitizaiMcpProspectingService(options: Options) {
           input.contact.instagram ? normalizeInstagram(input.contact.instagram) : null,
         ].filter((value): value is string => Boolean(value));
         const currentUsableContacts = new Set([
-          candidate.normalizedPhone,
-          candidate.normalizedPoliticianPhone,
-          candidate.normalizedAdvisorPhone,
-          candidate.normalizedWhatsapp,
+          storedPhoneIdentity(candidate.phone, candidate.normalizedPhone)?.identity,
+          storedPhoneIdentity(candidate.politicianPhone, candidate.normalizedPoliticianPhone)?.identity,
+          storedPhoneIdentity(candidate.advisorPhone, candidate.normalizedAdvisorPhone)?.identity,
+          storedPhoneIdentity(candidate.whatsapp, candidate.normalizedWhatsapp)?.identity,
           candidate.instagram ? normalizeInstagram(candidate.instagram) : null,
         ].filter((value): value is string => Boolean(value)));
-        const incomingPhoneContacts = incomingUsableContacts.filter((value) => value !== (input.contact.instagram ? normalizeInstagram(input.contact.instagram) : null));
         if (!incomingPhoneContacts.some((value) => !currentUsableContacts.has(value))) {
           fail("O enriquecimento precisa acrescentar ao menos um novo telefone individual ou WhatsApp.", "PROSPECTING_ENRICHMENT_NO_NEW_PHONE", 400);
         }
@@ -474,13 +512,13 @@ export function createPolitizaiMcpProspectingService(options: Options) {
           role: candidate.role,
           term: candidate.mandate,
           municipality: candidate.municipalityIbgeCode,
-          phone: normalizedOfficePhone?.success ? normalizedOfficePhone.normalizedPhone : candidate.normalizedPhone,
+          phone: normalizedOfficePhone?.success ? normalizedOfficePhone.identity : storedPhoneIdentity(candidate.phone, candidate.normalizedPhone)?.identity ?? candidate.normalizedPhone,
           email: mergedContact.email,
-          politicianPhone: normalizedPoliticianPhone?.success ? normalizedPoliticianPhone.normalizedPhone : candidate.normalizedPoliticianPhone,
+          politicianPhone: normalizedPoliticianPhone?.success ? normalizedPoliticianPhone.identity : storedPhoneIdentity(candidate.politicianPhone, candidate.normalizedPoliticianPhone)?.identity ?? candidate.normalizedPoliticianPhone,
           politicianEmail: mergedContact.politicianEmail,
-          advisorPhone: normalizedAdvisorPhone?.success ? normalizedAdvisorPhone.normalizedPhone : candidate.normalizedAdvisorPhone,
+          advisorPhone: normalizedAdvisorPhone?.success ? normalizedAdvisorPhone.identity : storedPhoneIdentity(candidate.advisorPhone, candidate.normalizedAdvisorPhone)?.identity ?? candidate.normalizedAdvisorPhone,
           advisorEmail: mergedContact.advisorEmail,
-          whatsapp: normalizedWhatsapp?.success ? normalizedWhatsapp.normalizedPhone : candidate.normalizedWhatsapp,
+          whatsapp: normalizedWhatsapp?.success ? normalizedWhatsapp.identity : storedPhoneIdentity(candidate.whatsapp, candidate.normalizedWhatsapp)?.identity ?? candidate.normalizedWhatsapp,
           whatsappScope: mergedContact.whatsappScope,
           instagram: mergedContact.instagram,
           instagramScope: mergedContact.instagramScope,
@@ -546,18 +584,28 @@ export function createPolitizaiMcpProspectingService(options: Options) {
           });
           if (lead?.contactId) {
             const points = [
-              input.contact.phone && normalizedOfficePhone?.success ? { type: "PHONE" as const, originalValue: input.contact.phone, normalizedValue: normalizedOfficePhone.normalizedPhone, label: "Gabinete" } : null,
-              input.contact.politicianPhone && normalizedPoliticianPhone?.success ? { type: "PHONE" as const, originalValue: input.contact.politicianPhone, normalizedValue: normalizedPoliticianPhone.normalizedPhone, label: "Direto" } : null,
-              input.contact.advisorPhone && normalizedAdvisorPhone?.success ? { type: "PHONE" as const, originalValue: input.contact.advisorPhone, normalizedValue: normalizedAdvisorPhone.normalizedPhone, label: "Assessoria" } : null,
-              input.contact.whatsapp && normalizedWhatsapp?.success && input.contact.whatsappScope ? { type: "PHONE" as const, originalValue: input.contact.whatsapp, normalizedValue: normalizedWhatsapp.normalizedPhone, label: `WhatsApp · ${contactScopeLabel(input.contact.whatsappScope)}` } : null,
-              input.contact.whatsapp && normalizedWhatsapp?.success && input.contact.whatsappScope ? { type: "WHATSAPP" as const, originalValue: input.contact.whatsapp, normalizedValue: normalizedWhatsapp.normalizedPhone, label: contactScopeLabel(input.contact.whatsappScope) } : null,
-              input.contact.instagram && input.contact.instagramScope ? { type: "INSTAGRAM" as const, originalValue: input.contact.instagram, normalizedValue: normalizeInstagram(input.contact.instagram), label: contactScopeLabel(input.contact.instagramScope) } : null,
-              input.contact.email ? { type: "EMAIL" as const, originalValue: input.contact.email, normalizedValue: input.contact.email, label: "Gabinete" } : null,
-              input.contact.politicianEmail ? { type: "EMAIL" as const, originalValue: input.contact.politicianEmail, normalizedValue: input.contact.politicianEmail, label: "Direto" } : null,
-              input.contact.advisorEmail ? { type: "EMAIL" as const, originalValue: input.contact.advisorEmail, normalizedValue: input.contact.advisorEmail, label: "Assessoria" } : null,
+              input.contact.phone && normalizedOfficePhone?.success ? { type: "PHONE" as const, originalValue: input.contact.phone, normalizedValue: normalizedOfficePhone.normalizedPhone, label: phoneContactLabel("Gabinete", input.contact.phone), hasExtension: Boolean(normalizedOfficePhone.extension) } : null,
+              input.contact.politicianPhone && normalizedPoliticianPhone?.success ? { type: "PHONE" as const, originalValue: input.contact.politicianPhone, normalizedValue: normalizedPoliticianPhone.normalizedPhone, label: phoneContactLabel("Direto", input.contact.politicianPhone), hasExtension: Boolean(normalizedPoliticianPhone.extension) } : null,
+              input.contact.advisorPhone && normalizedAdvisorPhone?.success ? { type: "PHONE" as const, originalValue: input.contact.advisorPhone, normalizedValue: normalizedAdvisorPhone.normalizedPhone, label: phoneContactLabel("Assessoria", input.contact.advisorPhone), hasExtension: Boolean(normalizedAdvisorPhone.extension) } : null,
+              input.contact.whatsapp && normalizedWhatsapp?.success && input.contact.whatsappScope ? { type: "PHONE" as const, originalValue: input.contact.whatsapp, normalizedValue: normalizedWhatsapp.normalizedPhone, label: phoneContactLabel(`WhatsApp · ${contactScopeLabel(input.contact.whatsappScope)}`, input.contact.whatsapp), hasExtension: Boolean(normalizedWhatsapp.extension) } : null,
+              input.contact.whatsapp && normalizedWhatsapp?.success && input.contact.whatsappScope ? { type: "WHATSAPP" as const, originalValue: input.contact.whatsapp, normalizedValue: normalizedWhatsapp.normalizedPhone, label: contactScopeLabel(input.contact.whatsappScope), hasExtension: Boolean(normalizedWhatsapp.extension) } : null,
+              input.contact.instagram && input.contact.instagramScope ? { type: "INSTAGRAM" as const, originalValue: input.contact.instagram, normalizedValue: normalizeInstagram(input.contact.instagram), label: contactScopeLabel(input.contact.instagramScope), hasExtension: false } : null,
+              input.contact.email ? { type: "EMAIL" as const, originalValue: input.contact.email, normalizedValue: input.contact.email, label: "Gabinete", hasExtension: false } : null,
+              input.contact.politicianEmail ? { type: "EMAIL" as const, originalValue: input.contact.politicianEmail, normalizedValue: input.contact.politicianEmail, label: "Direto", hasExtension: false } : null,
+              input.contact.advisorEmail ? { type: "EMAIL" as const, originalValue: input.contact.advisorEmail, normalizedValue: input.contact.advisorEmail, label: "Assessoria", hasExtension: false } : null,
             ].filter((point): point is NonNullable<typeof point> => Boolean(point));
             for (const point of points) {
-              const existingPoint = await transaction.contactPoint.findFirst({ where: { workspaceId: auth.workspaceId, contactId: lead.contactId, type: point.type, normalizedValue: point.normalizedValue, deletedAt: null }, select: { id: true, label: true } });
+              const existingPoint = await transaction.contactPoint.findFirst({
+                where: {
+                  workspaceId: auth.workspaceId,
+                  contactId: lead.contactId,
+                  type: point.type,
+                  normalizedValue: point.normalizedValue,
+                  deletedAt: null,
+                  ...(point.hasExtension ? { originalValue: point.originalValue } : {}),
+                },
+                select: { id: true, label: true },
+              });
               if (existingPoint) {
                 await transaction.contactPoint.update({ where: { id: existingPoint.id }, data: { label: existingPoint.label ?? point.label, verificationStatus: "VERIFIED", quality: "VALID", verifiedAt: new Date(input.politician.mandateVerifiedAt), updatedByActorId: researchPrincipal.actorId } });
               } else {
@@ -571,7 +619,7 @@ export function createPolitizaiMcpProspectingService(options: Options) {
           data: { status: "INGESTED", leaseOwner: null, leaseExpiresAt: null, completedAt: now, lastEvidence: asJson({ sourceCount: normalizedSources.length, researchChecks: input.researchChecks, enrichment: true, requestFingerprint }) },
         });
         await transaction.auditLog.create({
-          data: { workspaceId: auth.workspaceId, actorId: researchPrincipal.actorId, action: "prospecting.candidate.enriched", origin: "API", entityType: "ProspectCandidate", entityId: candidate.id, changes: { revision: { from: candidate.revision, to: updated.revision } }, metadata: { targetId: target.id, addedUsableContacts: incomingUsableContacts.filter((value) => !currentUsableContacts.has(value)), sourceCount: normalizedSources.length, leadSynchronized: Boolean(updated.leadId) } },
+          data: { workspaceId: auth.workspaceId, actorId: researchPrincipal.actorId, action: "prospecting.candidate.enriched", origin: "API", entityType: "ProspectCandidate", entityId: candidate.id, changes: { revision: { from: candidate.revision, to: updated.revision } }, metadata: { targetId: target.id, addedUsableContacts: incomingPhoneContacts.filter((value) => !currentUsableContacts.has(value)), sourceCount: normalizedSources.length, leadSynchronized: Boolean(updated.leadId) } },
         });
         return { candidate: { id: updated.id, fingerprint: updated.fingerprint, status: updated.status, revision: updated.revision }, duplicate: false, enriched: true };
       }
