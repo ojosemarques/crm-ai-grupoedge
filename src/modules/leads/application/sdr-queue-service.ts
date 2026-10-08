@@ -19,6 +19,7 @@ import { getAuthorizationService } from "@/modules/users/permissions/authorizati
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { isBusinessDate } from "@/modules/prospecting/domain/prospecting-cadence";
+import { summarizeProspectingTaskResults } from "@/modules/prospecting/domain/prospecting-daily-metrics";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
@@ -76,6 +77,7 @@ type RawQueueRow = Readonly<{
   nextActionAt: Date | null;
   nextActionDescription: string | null;
   nextActionKind: string | null;
+  nextActionSourceKey: string | null;
   awaitingHumanResponse: boolean;
   lastInboundResponseAt: Date | null;
   meetingTodayId: string | null;
@@ -134,23 +136,25 @@ function bucketSql(bucket: SdrQueueBucket, now: Date): Prisma.Sql {
 function operationalOrderSql(now: Date): Prisma.Sql {
   return Prisma.sql`
     CASE
-      WHEN l."awaitingHumanResponse" THEN 0
-      WHEN meeting_today."id" IS NOT NULL THEN 0
-      WHEN l."nextActionAt" < ${now} THEN 1
+      WHEN next_task."sourceKey" LIKE 'active-prospecting:%:call-1'
+        AND next_task."kind"::text = 'CALL' THEN 0
+      WHEN next_task."sourceKey" LIKE 'active-prospecting:%:instagram-follow'
+        AND next_task."kind"::text = 'INSTAGRAM_FOLLOW' THEN 1
+      WHEN next_task."sourceKey" LIKE 'active-prospecting:%:instagram-message-1'
+        AND next_task."kind"::text = 'INSTAGRAM_MESSAGE' THEN 2
       WHEN next_task."sourceKey" LIKE 'active-prospecting:%'
-        AND next_task."sourceKey" NOT LIKE '%:call-1'
-        AND next_task."sourceKey" NOT LIKE '%:instagram-message-1'
-        AND next_task."sourceKey" NOT LIKE '%:instagram-follow' THEN 2
-      WHEN next_task."sourceKey" LIKE 'active-prospecting:%' THEN 3
-      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P1' THEN 4
-      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P2' THEN 5
-      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P3' THEN 6
-      ELSE 7
+        AND next_task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW') THEN 3
+      WHEN l."awaitingHumanResponse" OR meeting_today."id" IS NOT NULL THEN 4
+      WHEN COALESCE(next_task."dueAt", l."nextActionAt") < ${now} THEN 5
+      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P1' THEN 6
+      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P2' THEN 7
+      WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P3' THEN 8
+      ELSE 9
     END ASC,
     CASE WHEN l."awaitingHumanResponse" THEN l."lastInboundResponseAt" END DESC NULLS LAST,
     CASE WHEN stage."position" = 0 THEN latest_cycle."receivedAt" END ASC NULLS LAST,
-    CASE WHEN l."nextActionAt" < ${now} THEN l."nextActionAt" END ASC NULLS LAST,
-    l."nextActionAt" ASC NULLS LAST,
+    CASE WHEN COALESCE(next_task."dueAt", l."nextActionAt") < ${now} THEN COALESCE(next_task."dueAt", l."nextActionAt") END ASC NULLS LAST,
+    COALESCE(next_task."dueAt", l."nextActionAt") ASC NULLS LAST,
     l."createdAt" ASC,
     l."id" ASC
   `;
@@ -275,11 +279,26 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       LEFT JOIN "users" owner_user ON owner_user."id" = owner."userId"
       LEFT JOIN "queues" responsible_queue
         ON responsible_queue."workspaceId" = l."workspaceId" AND responsible_queue."id" = l."queueId"
-      LEFT JOIN "tasks" next_task
-        ON next_task."workspaceId" = l."workspaceId"
-        AND next_task."leadId" = l."id"
-        AND next_task."id" = l."nextActionTaskId"
-        AND next_task."deletedAt" IS NULL
+      LEFT JOIN LATERAL (
+        SELECT task."id", task."kind", task."sourceKey", task."dueAt", task."title"
+        FROM "tasks" task
+        WHERE task."workspaceId" = l."workspaceId"
+          AND task."leadId" = l."id"
+          AND task."sourceKey" LIKE 'active-prospecting:%'
+          AND task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
+          AND task."status"::text IN ('OPEN', 'IN_PROGRESS')
+          AND task."deletedAt" IS NULL
+        ORDER BY
+          CASE
+            WHEN task."sourceKey" LIKE 'active-prospecting:%:call-1' THEN 0
+            WHEN task."sourceKey" LIKE 'active-prospecting:%:instagram-follow' THEN 1
+            WHEN task."sourceKey" LIKE 'active-prospecting:%:instagram-message-1' THEN 2
+            ELSE 3
+          END,
+          task."dueAt",
+          task."id"
+        LIMIT 1
+      ) next_task ON TRUE
       LEFT JOIN "lead_current_scores" current_score
         ON current_score."workspaceId" = l."workspaceId"
         AND current_score."leadId" = l."id"
@@ -362,10 +381,11 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
             latest_cycle."attentionMaxSeconds",
             l."lastActivityAt",
             latest_activity."subject" AS "lastActivitySubject",
-            l."nextActionTaskId",
-            l."nextActionAt",
-            l."nextActionDescription",
+            COALESCE(next_task."id", l."nextActionTaskId")::text AS "nextActionTaskId",
+            COALESCE(next_task."dueAt", l."nextActionAt") AS "nextActionAt",
+            COALESCE(next_task."title", l."nextActionDescription") AS "nextActionDescription",
             next_task."kind"::text AS "nextActionKind",
+            next_task."sourceKey" AS "nextActionSourceKey",
             l."awaitingHumanResponse",
             l."lastInboundResponseAt",
             meeting_today."id"::text AS "meetingTodayId",
@@ -400,9 +420,10 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     const [
       activityCounts,
       taskCounts,
-      meetingsScheduled,
+      meetingsToday,
       meetingsCompleted,
       effectiveContacts,
+      connectedProspectingRows,
       qualifications,
       meetingsMarked,
       proposals,
@@ -415,6 +436,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       prospectingSellerConfigs,
       calendarHolidays,
       dailyGoalProfiles,
+      prospectingTaskResultCounts,
     ] = await Promise.all([
       options.database.activity.groupBy({
         by: ["type"],
@@ -432,10 +454,12 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         where: {
           workspaceId: context.workspaceId,
           assigneeMemberId: { in: productivityMemberIds },
-          dueAt: { gte: today.start, lt: today.end },
-          status: { not: "CANCELLED" },
           kind: { not: "MEETING" },
           deletedAt: null,
+          OR: [
+            { status: { in: ["OPEN", "IN_PROGRESS"] }, dueAt: { lt: today.end } },
+            { status: "COMPLETED", completedAt: { gte: today.start, lt: today.end } },
+          ],
         },
         _count: { _all: true },
       }),
@@ -476,6 +500,20 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         distinct: ["leadId"],
         select: { leadId: true },
       }),
+      options.database.task.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          assigneeMemberId: { in: productivityMemberIds },
+          sourceKey: { startsWith: "active-prospecting:" },
+          kind: "CALL",
+          status: "COMPLETED",
+          result: "CONNECTED",
+          completedAt: { gte: today.start, lt: today.end },
+          deletedAt: null,
+        },
+        distinct: ["leadId"],
+        select: { leadId: true },
+      }),
       options.database.leadQualification.count({
         where: {
           workspaceId: context.workspaceId,
@@ -484,14 +522,16 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           validatedByActorId: { in: actorIds },
         },
       }),
-      options.database.meeting.count({
+      options.database.stageHistory.findMany({
         where: {
           workspaceId: context.workspaceId,
-          createdAt: { gte: today.start, lt: today.end },
-          createdByActorId: { in: actorIds },
-          status: { not: "CANCELLED" },
-          deletedAt: null,
+          enteredAt: { gte: today.start, lt: today.end },
+          enteredByActorId: { in: actorIds },
+          leadId: { not: null },
+          stage: { stableKey: "active-prospecting.meeting-scheduled", deletedAt: null },
         },
+        distinct: ["leadId"],
+        select: { leadId: true },
       }),
       options.database.offer.count({
         where: {
@@ -516,8 +556,6 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         FROM "tasks" task
         JOIN "prospecting_cadence_steps" step
           ON step."workspaceId" = task."workspaceId" AND step."taskId" = task."id"
-        JOIN "prospecting_cadence_instances" cadence
-          ON cadence."workspaceId" = step."workspaceId" AND cadence."id" = step."cadenceInstanceId"
         WHERE task."workspaceId" = ${context.workspaceId}::uuid
           ${productivityMemberSql}
           AND task."status"::text = 'COMPLETED'
@@ -525,7 +563,6 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           AND task."completedAt" < ${today.end}
           AND task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
           AND COALESCE(task."result", '') <> 'CHANNEL_UNAVAILABLE'
-          AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
           AND task."deletedAt" IS NULL
       `),
       options.database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
@@ -591,6 +628,19 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         where: { workspaceId: context.workspaceId, memberId: { in: dailyGoalProfileMemberIds } },
         orderBy: { memberId: "asc" },
       }),
+      options.database.task.groupBy({
+        by: ["kind", "result"],
+        where: {
+          workspaceId: context.workspaceId,
+          assigneeMemberId: { in: productivityMemberIds },
+          sourceKey: { startsWith: "active-prospecting:" },
+          kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] },
+          status: "COMPLETED",
+          completedAt: { gte: today.start, lt: today.end },
+          deletedAt: null,
+        },
+        _count: { _all: true },
+      }),
     ]);
     const productivityDailyGoalProfiles = dailyGoalProfiles.filter((profile) =>
       productivityMemberIds.includes(profile.memberId),
@@ -604,15 +654,24 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     const openStatuses = ["OPEN", "IN_PROGRESS"];
     const actionableKinds = ["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "EMAIL", "FOLLOW_UP"];
     const tasksDue = taskCount(actionableKinds, openStatuses);
-    const calls = activityCount(["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"]);
-    const messages = activityCount(["MESSAGE_SENT"]);
+    const calls = taskCount(["IMMEDIATE_CALL", "CALL"], ["COMPLETED"]);
+    const messages = taskCount(["MESSAGE", "INSTAGRAM_MESSAGE"], ["COMPLETED"]);
+    const prospectingResults = summarizeProspectingTaskResults(prospectingTaskResultCounts.map((row) => ({
+      kind: row.kind,
+      result: row.result,
+      count: row._count._all,
+    })));
+    const effectiveContactLeadIds = new Set([
+      ...effectiveContacts.map((row) => row.leadId),
+      ...connectedProspectingRows.map((row) => row.leadId),
+    ]);
     const dailyGoalProgress = buildDailyGoalProgress(
       {
         calls: BigInt(calls),
         messages: BigInt(messages),
-        effectiveContacts: BigInt(effectiveContacts.length),
+        effectiveContacts: BigInt(effectiveContactLeadIds.size),
         qualifications: BigInt(qualifications),
-        meetingsScheduled: BigInt(meetingsMarked),
+        meetingsScheduled: BigInt(meetingsMarked.length),
         proposals: BigInt(proposals),
         salesValueCents: salesValue._sum.amountCents ?? 0n,
       },
@@ -663,6 +722,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           nextActionAt: row.nextActionAt?.toISOString() ?? null,
           nextActionDescription: row.nextActionDescription,
           nextActionKind: row.nextActionKind,
+          nextActionSourceKey: row.nextActionSourceKey,
           awaitingHumanResponse: row.awaitingHumanResponse,
           lastInboundResponseAt: row.lastInboundResponseAt?.toISOString() ?? null,
           meetingTodayId: row.meetingTodayId,
@@ -731,13 +791,21 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           queueSize: dailyQueueLeadIds.size,
         },
         calls,
+        callsConnected: prospectingResults.callsConnected,
+        callsNoAnswer: prospectingResults.callsNoAnswer,
+        callsBusy: prospectingResults.callsBusy,
+        callsVoicemail: prospectingResults.callsVoicemail,
+        callsFailed: prospectingResults.callsFailed,
         callsPending: taskCount(["IMMEDIATE_CALL", "CALL"], openStatuses),
         messages,
+        instagramMessagesSent: prospectingResults.instagramMessagesSent,
+        instagramFollowsCompleted: prospectingResults.instagramFollowsCompleted,
         messagesPending: taskCount(["MESSAGE", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"], openStatuses),
         emails: activityCount(["EMAIL"]),
         tasksDue,
         overdueFollowUps: sections.find((section) => section.key === "OVERDUE")?.total ?? 0,
-        meetingsScheduled,
+        meetingsScheduled: meetingsMarked.length,
+        meetingsToday,
         meetingsCompleted,
         staleLeads: sections.find((section) => section.key === "STALE_CONTACT")?.total ?? 0,
         dailyGoal: {

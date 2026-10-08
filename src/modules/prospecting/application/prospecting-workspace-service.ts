@@ -115,6 +115,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       capacityTaskRows,
       capacityReleases,
       manualCompletionCounts,
+      manualResultCounts,
       cadenceStopCounts,
       releasesThirtyDays,
       conversationsThirtyDays,
@@ -182,7 +183,17 @@ export function createProspectingWorkspaceService(options: Readonly<{
         distinct: ["leadId"], select: { leadId: true },
       }),
       options.database.prospectRelease.count({ where: { workspaceId: context.workspaceId, plannedMemberId: memberScope, releasedAt: { gte: today.start, lt: today.end }, status: "RELEASED" } }),
-      options.database.meeting.count({ where: { workspaceId: context.workspaceId, lead: { pipeline: { name: "Prospecção Ativa" }, ownerMemberId: memberScope }, createdAt: { gte: thirtyDaysAgo }, deletedAt: null, status: { not: "CANCELLED" } } }),
+      options.database.stageHistory.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          enteredAt: { gte: thirtyDaysAgo },
+          leadId: { not: null },
+          stage: { stableKey: "active-prospecting.meeting-scheduled", deletedAt: null },
+          lead: { ownerMemberId: memberScope, deletedAt: null },
+        },
+        distinct: ["leadId"],
+        select: { leadId: true },
+      }),
       options.database.openDotRequestReceipt.findFirst({ where: { workspaceId: context.workspaceId, scope: { in: ["RESEARCH_WRITE", "RESEARCH_REVIEW"] } }, orderBy: { receivedAt: "desc" }, select: { receivedAt: true, clientId: true } }),
       options.database.openDotRequestReceipt.findFirst({ where: { workspaceId: context.workspaceId, scope: { in: ["EMAIL_CLAIM", "EMAIL_RECEIPT", "EMAIL_EVENT_WRITE"] } }, orderBy: { receivedAt: "desc" }, select: { receivedAt: true, clientId: true } }),
       options.database.prospectingEmailJob.count({ where: { workspaceId: context.workspaceId, ...leadScope, status: "SCHEDULED", scheduledAt: { lt: now } } }),
@@ -214,6 +225,11 @@ export function createProspectingWorkspaceService(options: Readonly<{
       options.database.task.groupBy({
         by: ["kind"],
         where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: thirtyDaysAgo }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, result: { not: "CHANNEL_UNAVAILABLE" }, deletedAt: null },
+        _count: { _all: true },
+      }),
+      options.database.task.groupBy({
+        by: ["kind", "result"],
+        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: thirtyDaysAgo }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
         _count: { _all: true },
       }),
       options.database.prospectingCadenceInstance.groupBy({ by: ["stopReasonCode"], where: { workspaceId: context.workspaceId, ownerMemberId: memberScope, stoppedAt: { gte: thirtyDaysAgo } }, _count: { _all: true } }),
@@ -271,7 +287,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       settings: settings ? { ...settings, createdAt: settings.createdAt.toISOString(), updatedAt: settings.updatedAt.toISOString(), privacyApprovedAt: settings.privacyApprovedAt?.toISOString() ?? null, canaryApprovedAt: settings.canaryApprovedAt?.toISOString() ?? null } : null,
       overview: {
         stock: { total: candidateCounts.reduce((sum, row) => sum + row._count._all, 0), ready: candidateCount("READY"), review: candidateCount("REVIEW_REQUIRED"), rejected: candidateCount("REJECTED"), planned: candidateCount("PLANNED"), released: candidateCount("RELEASED"), coverageDays },
-        releasesToday, politiciansTouchedToday: touchedToday.length, meetingsThirtyDays,
+        releasesToday, politiciansTouchedToday: touchedToday.length, meetingsThirtyDays: meetingsThirtyDays.length,
         pipeline: pipeline ? { id: pipeline.id, stages: pipeline.stages.map((stage) => ({ ...stage, leads: stage._count.currentLeads })) } : null,
         cadenceCounts: cadenceCounts.map((row) => ({ status: row.status, count: row._count._all })),
         emailCounts: jobCounts.map((row) => ({ status: row.status, count: row._count._all })),
@@ -305,12 +321,13 @@ export function createProspectingWorkspaceService(options: Readonly<{
         cadenceCounts: cadenceCounts.map((row) => ({ status: row.status, count: row._count._all })),
         emailCounts: jobCounts.map((row) => ({ status: row.status, count: row._count._all })),
         manualCompletionCounts: manualCompletionCounts.map((row) => ({ channel: row.kind, count: row._count._all })),
+        manualResultCounts: manualResultCounts.map((row) => ({ channel: row.kind, result: row.result ?? "SEM_RESULTADO", count: row._count._all })),
         discardReasons: cadenceStopCounts.map((row) => ({ reason: row.stopReasonCode ?? "NONE", count: row._count._all })),
         responseRateThirtyDays: releasesThirtyDays > 0 ? Math.round(conversationsThirtyDays / releasesThirtyDays * 10_000) / 100 : 0,
         releasesThirtyDays,
         conversationsThirtyDays,
         lastSourceObservedAt: latestSourceObservation._max.observedAt?.toISOString() ?? null,
-        politiciansTouchedToday: touchedToday.length, releasesToday, meetingsThirtyDays,
+        politiciansTouchedToday: touchedToday.length, releasesToday, meetingsThirtyDays: meetingsThirtyDays.length,
       },
     };
   }

@@ -53,6 +53,7 @@ export type SdrQueueItem = Readonly<{
   nextActionAt: string | null;
   nextActionDescription: string | null;
   nextActionKind: string | null;
+  nextActionSourceKey: string | null;
   awaitingHumanResponse: boolean;
   lastInboundResponseAt: string | null;
   meetingTodayId: string | null;
@@ -116,13 +117,21 @@ export type SdrQueueScreen = Readonly<{
       queueSize: number;
     }>;
     calls: number;
+    callsConnected: number;
+    callsNoAnswer: number;
+    callsBusy: number;
+    callsVoicemail: number;
+    callsFailed: number;
     callsPending: number;
     messages: number;
+    instagramMessagesSent: number;
+    instagramFollowsCompleted: number;
     messagesPending: number;
     emails: number;
     tasksDue: number;
     overdueFollowUps: number;
     meetingsScheduled: number;
+    meetingsToday: number;
     meetingsCompleted: number;
     staleLeads: number;
     dailyGoal: Readonly<{
@@ -176,23 +185,23 @@ export function getOperationalRank(
     "awaitingHumanResponse" | "stagePosition" | "priorityCode" | "nextActionAt"
   > & Readonly<{
     meetingTodayId?: string | null;
+    nextActionKind?: string | null;
     nextActionSourceKey?: string | null;
   }>,
   now: Date,
 ): number {
-  if (item.awaitingHumanResponse || item.meetingTodayId) return 0;
-  if (item.nextActionAt && new Date(item.nextActionAt) < now) return 1;
-  if (
-    item.nextActionSourceKey?.startsWith("active-prospecting:") &&
-    !item.nextActionSourceKey.endsWith(":call-1") &&
-    !item.nextActionSourceKey.endsWith(":instagram-message-1") &&
-    !item.nextActionSourceKey.endsWith(":instagram-follow")
-  ) return 2;
-  if (item.nextActionSourceKey?.startsWith("active-prospecting:")) return 3;
-  if (item.stagePosition === 0 && item.priorityCode === "P1") return 4;
-  if (item.stagePosition === 0 && item.priorityCode === "P2") return 5;
-  if (item.stagePosition === 0 && item.priorityCode === "P3") return 6;
-  return 7;
+  const coldProspectingTask = item.nextActionSourceKey?.startsWith("active-prospecting:")
+    && ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"].includes(item.nextActionKind ?? "");
+  if (coldProspectingTask && item.nextActionSourceKey?.endsWith(":call-1")) return 0;
+  if (coldProspectingTask && item.nextActionSourceKey?.endsWith(":instagram-follow")) return 1;
+  if (coldProspectingTask && item.nextActionSourceKey?.endsWith(":instagram-message-1")) return 2;
+  if (coldProspectingTask) return 3;
+  if (item.awaitingHumanResponse || item.meetingTodayId) return 4;
+  if (item.nextActionAt && new Date(item.nextActionAt) < now) return 5;
+  if (item.stagePosition === 0 && item.priorityCode === "P1") return 6;
+  if (item.stagePosition === 0 && item.priorityCode === "P2") return 7;
+  if (item.stagePosition === 0 && item.priorityCode === "P3") return 8;
+  return 9;
 }
 
 export function getSdrQueueRecommendation(

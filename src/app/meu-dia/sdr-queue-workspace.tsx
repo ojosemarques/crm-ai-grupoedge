@@ -27,6 +27,29 @@ import {
 
 const AUTO_REFRESH_SECONDS = 30;
 
+const cadenceResultOptions: Readonly<Record<string, readonly Readonly<{ value: string; label: string }>[]>> = {
+  CALL: [
+    { value: "CONNECTED", label: "Conectou" },
+    { value: "NO_ANSWER", label: "Não atendeu" },
+    { value: "BUSY", label: "Ocupado" },
+    { value: "VOICEMAIL", label: "Caixa postal" },
+    { value: "WRONG_NUMBER", label: "Número incorreto" },
+    { value: "CHANNEL_UNAVAILABLE", label: "Canal indisponível" },
+  ],
+  INSTAGRAM_MESSAGE: [
+    { value: "SENT", label: "Mensagem enviada" },
+    { value: "FAILED", label: "Falhou" },
+    { value: "PROFILE_NOT_FOUND", label: "Perfil não encontrado" },
+    { value: "CHANNEL_UNAVAILABLE", label: "Canal indisponível" },
+  ],
+  INSTAGRAM_FOLLOW: [
+    { value: "COMPLETED", label: "Seguiu" },
+    { value: "ALREADY_FOLLOWING", label: "Já seguia" },
+    { value: "FAILED", label: "Falhou" },
+    { value: "CHANNEL_UNAVAILABLE", label: "Canal indisponível" },
+  ],
+};
+
 const summaryBuckets: readonly Readonly<{
   key: SdrQueueBucket;
   label: string;
@@ -140,7 +163,49 @@ function QueueRow({
   nowMs: number;
   screen: SdrQueueScreen;
 }>) {
+  const router = useRouter();
   const sla = slaState(item, screen, nowMs);
+  const resultOptions = cadenceResultOptions[item.nextActionKind ?? ""] ?? [];
+  const canCompleteCadenceTask = Boolean(
+    item.nextActionTaskId &&
+    item.nextActionSourceKey?.startsWith("active-prospecting:") &&
+    resultOptions.length,
+  );
+  const [result, setResult] = useState(resultOptions[0]?.value ?? "");
+  const [resultReason, setResultReason] = useState("");
+  const [stopReason, setStopReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function completeCadenceTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!item.nextActionTaskId || !result) return;
+    setSaving(true);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/leads/${item.id}/operations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "COMPLETE_TASK",
+          data: {
+            taskId: item.nextActionTaskId,
+            result,
+            ...(resultReason.trim() ? { resultReason: resultReason.trim() } : {}),
+            ...(stopReason ? { stopReason } : {}),
+          },
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message ?? "Não foi possível concluir a tarefa.");
+      setNotice("Tarefa concluída. A próxima etapa foi atualizada automaticamente.");
+      router.refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Não foi possível concluir a tarefa.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <article
@@ -193,6 +258,36 @@ function QueueRow({
         <p className={styles.rowActionMeta}>
           Entrada há {elapsedLabel(item.receivedAt, nowMs)}
         </p>
+        {canCompleteCadenceTask ? (
+          <details className={styles.quickComplete}>
+            <summary>Concluir aqui</summary>
+            <form onSubmit={completeCadenceTask}>
+              <label>
+                Resultado
+                <select disabled={saving} onChange={(event) => setResult(event.target.value)} value={result}>
+                  {resultOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label>
+                Observação opcional
+                <textarea disabled={saving} maxLength={2_000} onChange={(event) => setResultReason(event.target.value)} rows={2} value={resultReason} />
+              </label>
+              <label>
+                Encerrar cadência
+                <select disabled={saving} onChange={(event) => setStopReason(event.target.value)} value={stopReason}>
+                  <option value="">Continuar normalmente</option>
+                  <option value="REFUSAL">Recusou contato</option>
+                  <option value="DO_NOT_CONTACT">Pediu para não contatar</option>
+                </select>
+              </label>
+              {stopReason && resultReason.trim().length < 3 ? <small>Informe o motivo na observação para encerrar.</small> : null}
+              <Button disabled={saving || !result || Boolean(stopReason && resultReason.trim().length < 3)} size="sm" type="submit">
+                {saving ? "Salvando…" : "Concluir e avançar"}
+              </Button>
+              {notice ? <p aria-live="polite" className={styles.quickCompleteNotice}>{notice}</p> : null}
+            </form>
+          </details>
+        ) : null}
       </div>
 
       <details className={styles.rowDisclosure}>
@@ -252,7 +347,7 @@ function QueuePanel({
           {section.items.map((item) => (
             <QueueRow
               item={item}
-              key={item.id}
+              key={`${item.id}:${item.nextActionTaskId ?? "none"}`}
               nowMs={nowMs}
               screen={screen}
             />
@@ -637,10 +732,10 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
           <button onClick={() => selectSection("RETURN_TODAY")} type="button"><span>Retornos</span><strong>{screen.dailyProduction.prospecting.returns}</strong><small>Fora da meta de prospecção fria</small></button>
           <Link href="/atividades"><span>Cadência</span><strong>{screen.dailyProduction.prospecting.cadence}</strong><small>Políticos em nova tentativa</small></Link>
           <Link href="/email-agente?view=stock"><span>Novos liberados</span><strong>{screen.dailyProduction.prospecting.newlyReleased}</strong><small>Usados para completar a meta</small></Link>
-          <Link href="/atividades"><span>Ligações para fazer</span><strong>{screen.dailyProduction.callsPending}</strong><small>{screen.dailyProduction.calls} registradas hoje</small></Link>
-          <Link href="/atividades"><span>Mensagens para enviar</span><strong>{screen.dailyProduction.messagesPending}</strong><small>{screen.dailyProduction.messages} enviadas hoje</small></Link>
+          <Link href="/atividades"><span>Ligações para fazer</span><strong>{screen.dailyProduction.callsPending}</strong><small>{screen.dailyProduction.calls} concluídas · {screen.dailyProduction.callsConnected} conectadas · {screen.dailyProduction.callsNoAnswer} não atenderam</small></Link>
+          <Link href="/atividades"><span>Mensagens para enviar</span><strong>{screen.dailyProduction.messagesPending}</strong><small>{screen.dailyProduction.instagramMessagesSent} mensagens · {screen.dailyProduction.instagramFollowsCompleted} perfis seguidos</small></Link>
           <button onClick={() => selectSection("OVERDUE")} type="button"><span>Acompanhamentos atrasados</span><strong>{screen.dailyProduction.overdueFollowUps}</strong><small>Abrir fila de atrasados</small></button>
-          <Link href="/agenda"><span>Reuniões agendadas</span><strong>{screen.dailyProduction.meetingsScheduled}</strong><small>{screen.dailyProduction.meetingsCompleted} realizadas</small></Link>
+          <Link href="/agenda"><span>Reuniões marcadas hoje</span><strong>{screen.dailyProduction.meetingsScheduled}</strong><small>{screen.dailyProduction.meetingsToday} na agenda hoje · {screen.dailyProduction.meetingsCompleted} realizadas</small></Link>
           <button onClick={() => selectSection("STALE_CONTACT")} type="button"><span>Sem contato recente</span><strong>{screen.dailyProduction.staleLeads}</strong><small>Há mais de 72 horas</small></button>
           <Link href="/atividades"><span>Total de tarefas pendentes</span><strong>{screen.dailyProduction.tasksDue}</strong><small>{screen.dailyProduction.emails} e-mails enviados</small></Link>
         </div>

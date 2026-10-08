@@ -612,8 +612,60 @@
 
 .rowAction {
   justify-self: end;
-  max-width: 11rem;
+  max-width: 15rem;
   width: 100%;
+}
+
+.quickComplete {
+  margin-top: .45rem;
+}
+
+.quickComplete > summary {
+  color: var(--link);
+  cursor: pointer;
+  font-size: .68rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.quickComplete form {
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  display: grid;
+  gap: .5rem;
+  margin-top: .45rem;
+  padding: .65rem;
+}
+
+.quickComplete label {
+  color: var(--muted-foreground);
+  display: grid;
+  font-size: .65rem;
+  gap: .25rem;
+}
+
+.quickComplete select,
+.quickComplete textarea {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: var(--foreground);
+  font: inherit;
+  padding: .42rem .5rem;
+  width: 100%;
+}
+
+.quickComplete small {
+  color: var(--danger);
+  font-size: .62rem;
+}
+
+.quickCompleteNotice {
+  color: var(--muted-foreground);
+  font-size: .64rem;
+  line-height: 1.35;
+  margin: 0;
 }
 
 .rowDisclosure {
