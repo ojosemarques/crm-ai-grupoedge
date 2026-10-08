@@ -347,6 +347,8 @@ export function OperationalHistoryWorkspace({
   const [sellerTargetsLoading, setSellerTargetsLoading] = useState(false);
   const hasWhatsapp = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "WHATSAPP"));
   const hasInstagram = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "INSTAGRAM"));
+  const instagramPoint = contactIdentity?.contact?.points.find((point) => point.type === "INSTAGRAM" && point.isPrimary)
+    ?? contactIdentity?.contact?.points.find((point) => point.type === "INSTAGRAM");
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
@@ -1025,6 +1027,7 @@ export function OperationalHistoryWorkspace({
         <dl className={styles.facts}>
           <div><dt className="text-xs text-muted-foreground">Telefone</dt><dd className="mt-1 font-medium">{operations.lead.normalizedPhone ?? "Não informado"}</dd></div>
           <div><dt className="text-xs text-muted-foreground">E-mail</dt><dd className="mt-1 break-all font-medium">{operations.lead.normalizedEmail ?? "Não informado"}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Instagram</dt><dd className="mt-1 break-all font-medium">{instagramPoint?.value ?? "Não informado"}</dd></div>
           <div><dt className="text-xs text-muted-foreground">Cidade / estado</dt><dd className="mt-1 font-medium">{[operations.lead.city, operations.lead.stateCode].filter(Boolean).join(" / ") || "Não informado"}</dd></div>
           <div><dt className="text-xs text-muted-foreground">Etapa</dt><dd className="mt-1 font-medium"><span className="stage-badge">{operations.lead.stageName}</span></dd></div>
           <div><dt className="text-xs text-muted-foreground">Pontuação</dt><dd className="mt-1 font-medium">{operations.lead.score ?? "Não calculada"}</dd></div>

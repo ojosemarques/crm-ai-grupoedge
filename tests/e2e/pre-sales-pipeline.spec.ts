@@ -222,7 +222,12 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
   await expect(prospectingLeadDialog.getByText("WhatsApp principal", { exact: true })).toBeVisible();
   await expect(prospectingLeadDialog.getByText(whatsapp, { exact: true })).toBeVisible();
   await expect(prospectingLeadDialog.getByText("Instagram principal", { exact: true })).toBeVisible();
-  await expect(prospectingLeadDialog.getByText(instagram, { exact: true })).toBeVisible();
+  await expect(prospectingLeadDialog.getByRole("tabpanel", { name: "Contato" }).getByText(instagram, { exact: true })).toBeVisible();
+  const contactSidebar = prospectingLeadDialog
+    .getByRole("heading", { name: "Informações do contato", exact: true })
+    .locator("..");
+  await expect(contactSidebar.getByText("Instagram", { exact: true })).toBeVisible();
+  await expect(contactSidebar.getByText(instagram, { exact: true })).toBeVisible();
   await expect.poll(() => database.contactPoint.count({
     where: { workspaceId: createdLead.workspaceId, contactId: createdLead.contactId!, type: { in: ["WHATSAPP", "INSTAGRAM"] }, deletedAt: null },
   })).toBe(2);
