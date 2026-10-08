@@ -113,6 +113,7 @@ describe("MCP privado Politizai", () => {
     const stage = await database.pipelineStage.findFirstOrThrow({ where: { workspaceId: context.workspaceId, pipelineId: pipeline.id, deletedAt: null }, orderBy: { position: "asc" }, select: { id: true } });
     const contact = await database.contact.create({ data: { workspaceId: context.workspaceId, preferredName: "Contato enriquecido", origin: "MANUAL", createdByActorId: context.actorId, updatedByActorId: context.actorId } });
     const existingLead = await database.lead.create({ data: { workspaceId: context.workspaceId, contactId: contact.id, sourceId: source.id, pipelineId: pipeline.id, currentStageId: stage.id, queueId: queue.id, routingQueueId: queue.id, fullName: "Contato enriquecido", slaStartedAt: clock, slaDueAt: clock, lastActivityAt: clock, createdByActorId: context.actorId, updatedByActorId: context.actorId }, select: { id: true, contactId: true } });
+    await database.contactPoint.create({ data: { workspaceId: context.workspaceId, contactId: contact.id, type: "PHONE", originalValue: "+551140001234", normalizedValue: "+551140001234", label: "Gabinete", source: "LEAD_INTAKE", createdByActorId: context.actorId, updatedByActorId: context.actorId } });
     await database.prospectCandidate.update({ where: { id: ingested.candidate.id }, data: { leadId: existingLead.id } });
     await database.prospectingResearchTarget.update({ where: { id: target.id }, data: { status: "PENDING", completedAt: null, lastReasonCode: "SHARED_PHONE_ENRICHMENT" } });
     const enrichmentTarget = (await prospecting.claimNextTarget(auth, batchId)).target!;
@@ -172,6 +173,7 @@ describe("MCP privado Politizai", () => {
       label: "Gabinete · ramal 207",
       verificationStatus: "VERIFIED",
     });
+    await expect(database.contactPoint.count({ where: { workspaceId: context.workspaceId, contactId: existingLead.contactId!, type: "PHONE", normalizedValue: "+551140001234", deletedAt: null } })).resolves.toBe(1);
 
     await database.prospectingResearchTarget.create({ data: { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:integration-mayor-extension-2", tseCandidateId: "integration-mayor-extension-2", role: "MAYOR", politicianName: "Prefeito Ramal 208", ballotName: "Prefeito Ramal 208", municipalityName: "Cidade Integração", municipalityIbgeCode: "3550308", stateCode: "SP", population: 1_000_000 } });
     const distinctExtensionTarget = (await prospecting.claimNextTarget(auth, batchId)).target!;

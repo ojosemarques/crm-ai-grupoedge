@@ -602,12 +602,21 @@ export function createPolitizaiMcpProspectingService(options: Options) {
                   type: point.type,
                   normalizedValue: point.normalizedValue,
                   deletedAt: null,
-                  ...(point.hasExtension ? { originalValue: point.originalValue } : {}),
                 },
-                select: { id: true, label: true },
+                select: { id: true, label: true, originalValue: true },
               });
               if (existingPoint) {
-                await transaction.contactPoint.update({ where: { id: existingPoint.id }, data: { label: existingPoint.label ?? point.label, verificationStatus: "VERIFIED", quality: "VALID", verifiedAt: new Date(input.politician.mandateVerifiedAt), updatedByActorId: researchPrincipal.actorId } });
+                await transaction.contactPoint.update({
+                  where: { id: existingPoint.id },
+                  data: {
+                    originalValue: point.hasExtension ? point.originalValue : existingPoint.originalValue,
+                    label: point.hasExtension ? point.label : existingPoint.label ?? point.label,
+                    verificationStatus: "VERIFIED",
+                    quality: "VALID",
+                    verifiedAt: new Date(input.politician.mandateVerifiedAt),
+                    updatedByActorId: researchPrincipal.actorId,
+                  },
+                });
               } else {
                 await transaction.contactPoint.create({ data: { workspaceId: auth.workspaceId, contactId: lead.contactId, type: point.type, originalValue: point.originalValue, normalizedValue: point.normalizedValue, label: point.label, isPrimary: false, verificationStatus: "VERIFIED", quality: "VALID", source: "LEAD_INTAKE", doNotContact: lead.contactPreference === "DO_NOT_CONTACT", verifiedAt: new Date(input.politician.mandateVerifiedAt), createdByActorId: researchPrincipal.actorId, updatedByActorId: researchPrincipal.actorId } });
               }
