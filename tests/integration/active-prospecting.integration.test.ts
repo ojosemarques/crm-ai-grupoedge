@@ -274,6 +274,32 @@ describe("staging governado da Prospecção Ativa", () => {
     expect(await database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id, status: "CANCELLED" } })).toBe(6);
   });
 
+  it("restaura a etapa escolhida pelo vendedor quando a cadência a sobrescreveu", async () => {
+    const candidateRow = await database.prospectCandidate.findFirstOrThrow({
+      where: { workspaceId: principal.workspaceId, externalIdentityKey: "tse:2024:3550308:councilor:777", status: "RELEASED" },
+      select: { leadId: true },
+    });
+    const lead = await database.lead.findUniqueOrThrow({ where: { id: candidateRow.leadId! }, select: { pipelineId: true } });
+    const [sellerStage, automatedStage, humanActor] = await Promise.all([
+      database.pipelineStage.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, pipelineId: lead.pipelineId, stableKey: "active-prospecting.meeting-scheduled" }, select: { id: true } }),
+      database.pipelineStage.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, pipelineId: lead.pipelineId, stableKey: "active-prospecting.active-cadence" }, select: { id: true } }),
+      database.actor.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, type: "HUMAN" }, select: { id: true } }),
+    ]);
+    const manualAt = new Date(clock.getTime() + 120_000);
+    const overwrittenAt = new Date(manualAt.getTime() + 1);
+    await database.$transaction(async (transaction) => {
+      await transaction.stageHistory.updateMany({ where: { workspaceId: principal.workspaceId, leadId: candidateRow.leadId!, exitedAt: null }, data: { exitedAt: manualAt, exitedByActorId: humanActor.id } });
+      await transaction.stageHistory.create({ data: { workspaceId: principal.workspaceId, pipelineId: lead.pipelineId, stageId: sellerStage.id, leadId: candidateRow.leadId!, enteredAt: manualAt, exitedAt: overwrittenAt, enteredByActorId: humanActor.id, exitedByActorId: systemActorId, transitionOrigin: "LEAD_CARD", transitionReason: "Etapa escolhida pelo vendedor." } });
+      await transaction.stageHistory.create({ data: { workspaceId: principal.workspaceId, pipelineId: lead.pipelineId, stageId: automatedStage.id, leadId: candidateRow.leadId!, enteredAt: overwrittenAt, enteredByActorId: systemActorId, transitionOrigin: "AUTOMATION", transitionReason: "Gate D1 concluído." } });
+      await transaction.lead.update({ where: { id: candidateRow.leadId! }, data: { currentStageId: automatedStage.id, updatedByActorId: systemActorId } });
+    });
+
+    const reconciliation = createProspectingReconciliationService({ database, now: () => new Date(overwrittenAt.getTime() + 1) });
+    await expect(reconciliation.restoreOverwrittenSellerStages("integration:restore-stage")).resolves.toEqual({ status: "SELLER_STAGES_RESTORED", restored: 1 });
+    await expect(database.lead.findUniqueOrThrow({ where: { id: candidateRow.leadId! }, select: { currentStageId: true } })).resolves.toEqual({ currentStageId: sellerStage.id });
+    await expect(reconciliation.restoreOverwrittenSellerStages("integration:restore-stage:replay")).resolves.toEqual({ status: "IDLE", restored: 0 });
+  });
+
   it("libera prospect com apenas Instagram validado e suprime canais indisponíveis", async () => {
     const base = candidate();
     const payload = candidate({
@@ -311,6 +337,25 @@ describe("staging governado da Prospecção Ativa", () => {
     await expect(database.prospectingCadenceStep.findUniqueOrThrow({ where: { workspaceId_cadenceInstanceId_stepKey: { workspaceId: principal.workspaceId, cadenceInstanceId: cadence.id, stepKey: "call-1" } }, select: { status: true, resultCode: true } })).resolves.toEqual({ status: "COMPLETED", resultCode: "CHANNEL_UNAVAILABLE" });
     await expect(database.prospectingCadenceStep.findUniqueOrThrow({ where: { workspaceId_cadenceInstanceId_stepKey: { workspaceId: principal.workspaceId, cadenceInstanceId: cadence.id, stepKey: "email-1" } }, select: { status: true, resultReason: true } })).resolves.toEqual({ status: "SUPPRESSED", resultReason: "CHANNEL_UNAVAILABLE" });
     await expect(database.task.count({ where: { leadId: released.leadId!, kind: { in: ["INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, status: "OPEN" } })).resolves.toBeGreaterThan(0);
+
+    const sellerStage = await database.pipelineStage.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, pipelineId: (await database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { pipelineId: true } })).pipelineId, stableKey: "active-prospecting.meeting-scheduled" }, select: { id: true } });
+    const movedAt = new Date(clock.getTime() + 5_000);
+    await database.$transaction(async (transaction) => {
+      await transaction.stageHistory.updateMany({ where: { workspaceId: principal.workspaceId, leadId: released.leadId!, exitedAt: null }, data: { exitedAt: movedAt, exitedByActorId: systemActorId } });
+      const lead = await transaction.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { pipelineId: true } });
+      await transaction.stageHistory.create({ data: { workspaceId: principal.workspaceId, pipelineId: lead.pipelineId, stageId: sellerStage.id, leadId: released.leadId!, enteredAt: movedAt, enteredByActorId: systemActorId, transitionOrigin: "LEAD_CARD", transitionReason: "Etapa escolhida pelo vendedor." } });
+      await transaction.lead.update({ where: { id: released.leadId! }, data: { currentStageId: sellerStage.id, updatedByActorId: systemActorId } });
+    });
+    const openD1 = await database.prospectingCadenceStep.findMany({ where: { cadenceInstanceId: cadence.id, stepKey: { in: ["instagram-message-1", "instagram-follow"] } }, orderBy: { stepKey: "asc" } });
+    for (const step of openD1) {
+      const result = step.stepKey === "instagram-follow" ? "COMPLETED" : "SENT";
+      await database.$transaction(async (transaction) => {
+        await transaction.task.update({ where: { id: step.taskId! }, data: { status: "COMPLETED", completedAt: movedAt, result, updatedByActorId: systemActorId } });
+        await applyProspectingTaskCompletionInTransaction(transaction, { workspaceId: principal.workspaceId, leadId: released.leadId!, taskId: step.taskId!, result, actorId: systemActorId, completedAt: movedAt });
+      });
+    }
+    await expect(database.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id }, select: { status: true } })).resolves.toEqual({ status: "ACTIVE" });
+    await expect(database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { currentStageId: true } })).resolves.toEqual({ currentStageId: sellerStage.id });
   });
 
   it("repara Instagram ausente no contato canônico de candidato já liberado", async () => {

@@ -105,6 +105,16 @@ export type SdrQueueScreen = Readonly<{
     politiciansTouched: number;
     politiciansTouchedTarget: number;
     politiciansTouchedOverCapacity: boolean;
+    prospecting: Readonly<{
+      businessDay: boolean;
+      target: number;
+      worked: number;
+      pending: number;
+      returns: number;
+      cadence: number;
+      newlyReleased: number;
+      queueSize: number;
+    }>;
     calls: number;
     callsPending: number;
     messages: number;

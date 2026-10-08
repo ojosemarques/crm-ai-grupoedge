@@ -138,6 +138,16 @@ const contactPointLabels: Readonly<Record<ContactPointView["type"], string>> = {
   INSTAGRAM: "Instagram",
 };
 
+const prospectingResultOptions = Object.freeze({
+  CALL: [["CONNECTED", "Conectou"], ["NO_ANSWER", "Não atendeu"], ["BUSY", "Ocupado"], ["VOICEMAIL", "Caixa postal"], ["WRONG_NUMBER", "Número incorreto"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
+  INSTAGRAM_MESSAGE: [["SENT", "Enviada"], ["FAILED", "Falhou"], ["PROFILE_NOT_FOUND", "Perfil não encontrado"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
+  INSTAGRAM_FOLLOW: [["COMPLETED", "Concluído"], ["ALREADY_FOLLOWING", "Já seguia"], ["FAILED", "Falhou"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
+} as const);
+
+function isColdProspectingTask(task: Readonly<{ sourceKey: string | null; kind: string }> | null | undefined): task is NonNullable<typeof task> & Readonly<{ kind: keyof typeof prospectingResultOptions }> {
+  return Boolean(task?.sourceKey?.startsWith("active-prospecting:") && task.kind in prospectingResultOptions);
+}
+
 const tabs: readonly Readonly<{ key: TabKey; label: string }>[] = [
   { key: "timeline", label: "Atividades" },
   { key: "summary", label: "Resumo" },
@@ -484,17 +494,25 @@ export function OperationalHistoryWorkspace({
     setNotice(null);
     let operationSaved = quickOperationCompletedForId === operations.lead.id;
     try {
-      const nextTask = nextTaskFromForm(form);
-      if (!nextTask) throw new Error("Defina a próxima ação antes de concluir este atendimento.");
       const currentTask = operations.tasks.find(
         (task) => task.id === operations.lead.nextAction?.taskId,
       );
+      const cadenceTask = isColdProspectingTask(currentTask);
+      const nextTask = nextTaskFromForm(form);
+      if (!cadenceTask && !nextTask) throw new Error("Defina a próxima ação antes de concluir este atendimento.");
       const resultDescription = formText(form, "resultDescription");
-      if (!resultDescription) throw new Error("Descreva o resultado do atendimento.");
+      if (!cadenceTask && !resultDescription) throw new Error("Descreva o resultado do atendimento.");
       const action = currentTask && currentTask.kind !== "IMMEDIATE_CALL"
         ? "COMPLETE_TASK"
         : "RECORD_ACTIVITY";
-      const data = action === "COMPLETE_TASK"
+      const data = cadenceTask
+        ? {
+            taskId: currentTask.id,
+            result: formText(form, "cadenceResult"),
+            ...(formText(form, "resultReason") ? { resultReason: formText(form, "resultReason") } : {}),
+            ...(formText(form, "stopReason") ? { stopReason: formText(form, "stopReason") } : {}),
+          }
+        : action === "COMPLETE_TASK"
         ? {
             taskId: currentTask!.id,
             result: resultDescription,
@@ -786,6 +804,7 @@ export function OperationalHistoryWorkspace({
   const quickCurrentTask = operations.tasks.find(
     (task) => task.id === operations.lead.nextAction?.taskId,
   ) ?? null;
+  const quickCadenceTask = isColdProspectingTask(quickCurrentTask);
 
   function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     const keyToIndex: Readonly<Record<string, number>> = {
@@ -895,15 +914,22 @@ export function OperationalHistoryWorkspace({
               </p>
             ) : null}
             <form className="mt-4 grid gap-4" onSubmit={concludeAndOpenNext}>
-            {!quickCurrentTask || quickCurrentTask.kind === "IMMEDIATE_CALL" ? (
+            {quickCadenceTask ? (
+              <fieldset className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
+                <legend className="px-1 text-sm font-semibold">Conclusão da tarefa da cadência</legend>
+                <label className="text-sm">Resultado<select className={inputClass} name="cadenceResult" required><option value="">Selecione</option>{prospectingResultOptions[quickCurrentTask.kind].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                <label className="text-sm">Motivo/observação<input className={inputClass} name="resultReason" placeholder="Opcional; o CRM registra o resultado" /></label>
+                <label className="text-sm sm:col-span-2">Interromper cadência<select className={inputClass} defaultValue="" name="stopReason"><option value="">Não interromper</option><option value="REFUSAL">Recusa</option><option value="DO_NOT_CONTACT">Pedido de não contato</option></select></label>
+              </fieldset>
+            ) : !quickCurrentTask || quickCurrentTask.kind === "IMMEDIATE_CALL" ? (
               <div className="grid gap-4 sm:grid-cols-3">
                 <label className="text-sm">Atividade realizada<select className={inputClass} defaultValue="CALL_UNANSWERED" name="activityType"><option value="CALL_UNANSWERED">Ligação não atendida</option><option value="CALL_CONNECTED">Ligação atendida</option><option value="MESSAGE_SENT">Mensagem enviada</option><option value="EMAIL">E-mail enviado</option><option value="NOTE">Nota interna</option></select></label>
                 <label className="text-sm">Resultado<select className={inputClass} defaultValue="NOT_CONNECTED" name="activityResult"><option value="NOT_CONNECTED">Não conectado</option><option value="CONNECTED">Conectado</option><option value="SENT">Enviado</option><option value="INFORMATION">Informativo</option><option value="OTHER">Outro</option></select></label>
                 <label className="text-sm">Assunto<input className={inputClass} defaultValue="Atendimento concluído" name="subject" required /></label>
               </div>
             ) : null}
-            <label className="text-sm">Resultado do atendimento<textarea className={textareaClass} name="resultDescription" placeholder="Ex.: não atendeu; retornar amanhã às 10h" required /></label>
-            <NextActionFields required />
+            {!quickCadenceTask ? <label className="text-sm">Resultado do atendimento<textarea className={textareaClass} name="resultDescription" placeholder="Ex.: não atendeu; retornar amanhã às 10h" required /></label> : null}
+            {!quickCadenceTask ? <NextActionFields required /> : null}
             {pipeline.canWrite ? (
               <fieldset className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
                 <legend className="px-1 text-sm font-semibold">Mover etapa (opcional)</legend>

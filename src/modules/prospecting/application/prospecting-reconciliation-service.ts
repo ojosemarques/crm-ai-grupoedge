@@ -54,6 +54,14 @@ type MissingInstagramContact = Readonly<{
   mandateVerifiedAt: Date;
   doNotContact: boolean;
 }>;
+type OverwrittenSellerStage = Readonly<{
+  currentHistoryId: string;
+  workspaceId: string;
+  leadId: string;
+  pipelineId: string;
+  previousStageId: string;
+  currentEnteredAt: Date;
+}>;
 
 function contactScopeLabel(scope: MissingInstagramContact["instagramScope"]): string {
   if (scope === "POLITICIAN") return "Direto";
@@ -79,6 +87,98 @@ function findingsHash(findings: readonly ProspectingReconciliationFinding[]): st
 }
 
 export function createProspectingReconciliationService(options: Readonly<{ database: PrismaClient; now: () => Date }>) {
+  async function restoreOverwrittenSellerStages(workerId: string) {
+    const now = options.now();
+    return options.database.$transaction(async (database) => {
+      const rows = await database.$queryRaw<OverwrittenSellerStage[]>(Prisma.sql`
+        SELECT current_history."id" AS "currentHistoryId",
+               current_history."workspaceId",
+               current_history."leadId",
+               current_history."pipelineId",
+               previous_history."stageId" AS "previousStageId",
+               current_history."enteredAt" AS "currentEnteredAt"
+        FROM "stage_history" current_history
+        JOIN "leads" lead
+          ON lead."workspaceId" = current_history."workspaceId"
+         AND lead."id" = current_history."leadId"
+         AND lead."currentStageId" = current_history."stageId"
+         AND lead."deletedAt" IS NULL
+        JOIN "pipelines" pipeline
+          ON pipeline."workspaceId" = lead."workspaceId"
+         AND pipeline."id" = lead."pipelineId"
+         AND pipeline."name" = 'Prospecção Ativa'
+         AND pipeline."deletedAt" IS NULL
+        JOIN LATERAL (
+          SELECT previous."stageId", previous."transitionOrigin"
+          FROM "stage_history" previous
+          WHERE previous."workspaceId" = current_history."workspaceId"
+            AND previous."leadId" = current_history."leadId"
+            AND previous."enteredAt" < current_history."enteredAt"
+            AND previous."transitionOrigin"::text IN ('PIPELINE_BOARD', 'PIPELINE_LIST', 'LEAD_CARD')
+          ORDER BY previous."enteredAt" DESC, previous."id" DESC
+          LIMIT 1
+        ) previous_history ON TRUE
+        WHERE current_history."exitedAt" IS NULL
+          AND current_history."transitionOrigin"::text = 'AUTOMATION'
+          AND current_history."transitionReason" IN (
+            'Cadência política D1 materializada.',
+            'Gate D1 concluído.',
+            'Interrupção da cadência: HUMAN_REPLY.'
+          )
+        ORDER BY current_history."enteredAt" ASC, current_history."id" ASC
+        LIMIT 100
+        FOR UPDATE OF current_history, lead SKIP LOCKED
+      `);
+      if (rows.length === 0) return { status: "IDLE" as const, restored: 0 };
+
+      const actorIds = new Map<string, string>();
+      for (const row of rows) {
+        let actorId = actorIds.get(row.workspaceId);
+        if (!actorId) {
+          const actor = await database.actor.findFirstOrThrow({
+            where: { workspaceId: row.workspaceId, type: "SYSTEM", key: "system", userId: null },
+            select: { id: true },
+          });
+          actorId = actor.id;
+          actorIds.set(row.workspaceId, actorId);
+        }
+        const occurredAt = now > row.currentEnteredAt ? now : new Date(row.currentEnteredAt.getTime() + 1);
+        await database.stageHistory.update({
+          where: { id: row.currentHistoryId },
+          data: { exitedAt: occurredAt, exitedByActorId: actorId },
+        });
+        await database.stageHistory.create({
+          data: {
+            workspaceId: row.workspaceId,
+            pipelineId: row.pipelineId,
+            stageId: row.previousStageId,
+            leadId: row.leadId,
+            enteredAt: occurredAt,
+            enteredByActorId: actorId,
+            transitionOrigin: "SYSTEM",
+            transitionReason: "Restauração da etapa definida pelo vendedor após sobrescrita da cadência.",
+            managerCorrection: true,
+          },
+        });
+        await database.lead.update({ where: { id: row.leadId }, data: { currentStageId: row.previousStageId, updatedByActorId: actorId } });
+        await database.auditLog.create({
+          data: {
+            workspaceId: row.workspaceId,
+            actorId,
+            action: "prospecting.seller_stage.restored",
+            entityType: "Lead",
+            entityId: row.leadId,
+            origin: "SYSTEM",
+            requestId: workerId,
+            occurredAt,
+            changes: { restoredStageId: row.previousStageId, overwrittenHistoryId: row.currentHistoryId, externalEgress: false },
+          },
+        });
+      }
+      return { status: "SELLER_STAGES_RESTORED" as const, restored: rows.length };
+    }, { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 });
+  }
+
   async function repairMissingInstagramContacts(workerId: string) {
     const now = options.now();
     return options.database.$transaction(async (database) => {
@@ -336,6 +436,8 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
   }
 
   async function processNext(workerId: string) {
+    const stageRepair = await restoreOverwrittenSellerStages(workerId);
+    if (stageRepair.restored > 0) return stageRepair;
     const repair = await repairMissingInstagramContacts(workerId);
     if (repair.repaired > 0) return repair;
     const dueBefore = new Date(options.now().getTime() - DAY_MS);
@@ -353,7 +455,7 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
     return reconcileWorkspace(workspace.workspaceId, workerId);
   }
 
-  return Object.freeze({ processNext, reconcileWorkspace, repairMissingInstagramContacts });
+  return Object.freeze({ processNext, reconcileWorkspace, repairMissingInstagramContacts, restoreOverwrittenSellerStages });
 }
 
 let singleton: ReturnType<typeof createProspectingReconciliationService> | undefined;

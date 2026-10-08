@@ -5,7 +5,6 @@ import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { resolveLeadVisibilityScope } from "@/modules/leads/application/lead-list-service";
 import { getDatabaseClient } from "@/shared/core/database/client";
-import { manualCapacityDates } from "@/modules/prospecting/domain/prospecting-cadence";
 import { addLocalDays, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 import { z } from "zod";
 
@@ -114,7 +113,6 @@ export function createProspectingWorkspaceService(options: Readonly<{
       emailJobTotal,
       capacityTaskRows,
       capacityReleases,
-      calendarHolidays,
       manualCompletionCounts,
       cadenceStopCounts,
       releasesThirtyDays,
@@ -212,7 +210,6 @@ export function createProspectingWorkspaceService(options: Readonly<{
         where: { workspaceId: context.workspaceId, plannedMemberId: memberScope, status: { in: ["PLANNED", "CLAIMED"] }, plannedDate: { gte: new Date(`${todayLocal}T00:00:00.000Z`), lte: new Date(`${capacityEndLocal}T00:00:00.000Z`) } },
         select: { plannedMemberId: true, plannedDate: true },
       }),
-      options.database.prospectingCalendarHoliday.findMany({ where: { workspaceId: context.workspaceId }, select: { localDate: true } }),
       options.database.task.groupBy({
         by: ["kind"],
         where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: thirtyDaysAgo }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, result: { not: "CHANNEL_UNAVAILABLE" }, deletedAt: null },
@@ -242,21 +239,19 @@ export function createProspectingWorkspaceService(options: Readonly<{
     const memberById = new Map(memberRows.map((member) => [member.id, member]));
     const candidateCount = (status: string) => candidateCounts.find((row) => row.status === status)?._count._all ?? 0;
     const readyOrPlanned = candidateCount("READY") + candidateCount("PLANNED");
-    const dailyNewCapacity = sellers.filter((seller) => seller.active).reduce((sum, seller) => sum + Math.max(1, Math.floor(seller.dailyCapacity * (100 - seller.reservePercent) / 100 / 7)), 0);
+    const dailyNewCapacity = sellers.filter((seller) => seller.active).reduce((sum, seller) => sum + seller.dailyCapacity, 0);
     const coverageDays = dailyNewCapacity > 0 ? Math.floor(readyOrPlanned / dailyNewCapacity) : 0;
     const publishedTemplateKeys = new Set(templates.filter((template) => template.published).map((template) => template.stepKey));
     const senderReady = senders.some((sender) => sender.operatingMode === "EXTERNAL_READY" && sender.spfStatus === "VERIFIED_EXTERNAL" && sender.dkimStatus === "VERIFIED_EXTERNAL" && sender.dmarcStatus === "VERIFIED_EXTERNAL");
     const capacityByKey = new Map(capacityTaskRows.map((row) => [`${row.memberId}:${dateKey(row.localDate)}`, { realized: Number(row.realized), scheduled: Number(row.scheduled), planned: 0 }]));
-    const holidaySet = new Set(calendarHolidays.map((holiday) => dateKey(holiday.localDate)));
     for (const release of capacityReleases) {
       if (!release.plannedMemberId) continue;
-      for (const localDate of manualCapacityDates({ d1Date: dateKey(release.plannedDate), holidays: holidaySet })) {
-        if (localDate < todayLocal || localDate > capacityEndLocal) continue;
-        const key = `${release.plannedMemberId}:${localDate}`;
-        const value = capacityByKey.get(key) ?? { realized: 0, scheduled: 0, planned: 0 };
-        value.planned += 1;
-        capacityByKey.set(key, value);
-      }
+      const localDate = dateKey(release.plannedDate);
+      if (localDate < todayLocal || localDate > capacityEndLocal) continue;
+      const key = `${release.plannedMemberId}:${localDate}`;
+      const value = capacityByKey.get(key) ?? { realized: 0, scheduled: 0, planned: 0 };
+      value.planned += 1;
+      capacityByKey.set(key, value);
     }
     const alerts = [
       ...persistedReconciliationAlerts(reconciliationState?.findings),
@@ -298,7 +293,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
         const memberId = key.slice(0, separator);
         const localDate = key.slice(separator + 1);
         const seller = sellers.find((item) => item.memberId === memberId);
-        const limit = seller ? Math.max(1, Math.floor(seller.dailyCapacity * (100 - seller.reservePercent) / 100)) : 75;
+        const limit = seller?.dailyCapacity ?? 75;
         return { memberId, memberName: memberById.get(memberId)?.user.displayName ?? "Membro indisponível", localDate, ...value, projected: value.realized + value.scheduled + value.planned, limit, overCapacity: value.realized + value.scheduled + value.planned > limit };
       }).sort((left, right) => left.localDate.localeCompare(right.localDate) || left.memberName.localeCompare(right.memberName)),
       activities: { items: manualTasks.map((task) => ({ ...task, dueAt: task.dueAt.toISOString(), completedAt: task.completedAt?.toISOString() ?? null })), total: manualTaskTotal, page: query.activityPage, pageSize },

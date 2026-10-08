@@ -1,13 +1,21 @@
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
-import { manualCapacityDates, nextBusinessDate } from "@/modules/prospecting/domain/prospecting-cadence";
-import { addLocalDays, workspaceDateAt } from "@/shared/core/time/workspace-time";
+import { nextBusinessDate, PROSPECTING_CADENCE } from "@/modules/prospecting/domain/prospecting-cadence";
+import { addLocalDays, parseWorkspaceLocalDateTime, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 import { getDatabaseClient } from "@/shared/core/database/client";
 
 type Database = PrismaClient | Prisma.TransactionClient;
 
 type LoadRow = Readonly<{ memberId: string; localDate: Date; touched: bigint }>;
+type DueTaskRow = Readonly<{
+  taskId: string;
+  leadId: string;
+  stepId: string;
+  stepKey: string;
+  cadenceStatus: "PENDING_D1" | "ACTIVE";
+  dueAt: Date;
+}>;
 
 function localDate(value: Date): string {
   return value.toISOString().slice(0, 10);
@@ -22,14 +30,15 @@ export function chooseProspectingSeller(input: Readonly<{
   dates: readonly string[];
   loads: ReadonlyMap<string, number>;
 }>): string | null {
+  const targetDate = input.dates[0];
+  if (!targetDate) return null;
   const ranked = input.sellers
     .map((seller) => {
-      const effectiveCapacity = Math.max(1, Math.floor(seller.dailyCapacity * (100 - seller.reservePercent) / 100));
-      const dailyLoads = input.dates.map((date) => input.loads.get(loadKey(seller.memberId, date)) ?? 0);
+      const dailyLoad = input.loads.get(loadKey(seller.memberId, targetDate)) ?? 0;
       return {
         seller,
-        available: dailyLoads.every((value) => value < effectiveCapacity),
-        projectedLoad: dailyLoads.reduce((sum, value) => sum + value, 0),
+        available: dailyLoad < seller.dailyCapacity,
+        projectedLoad: dailyLoad,
       };
     })
     .filter((item) => item.available)
@@ -57,11 +66,15 @@ export function createProspectingPlannerService(options: Readonly<{ database: Pr
     const settings = await ensureFoundation(database, input.workspaceId, input.actorId);
     const today = workspaceDateAt(options.now(), workspace.timeZone);
     const start = input.horizonStart ?? today;
-    const end = input.horizonEnd ?? addLocalDays(start, 29);
+    const requestedEnd = input.horizonEnd ?? addLocalDays(start, 29);
     const holidays = new Set((await database.prospectingCalendarHoliday.findMany({
-      where: { workspaceId: input.workspaceId, localDate: { gte: new Date(`${start}T00:00:00.000Z`), lte: new Date(`${addLocalDays(end, 29)}T00:00:00.000Z`) } },
+      where: { workspaceId: input.workspaceId, localDate: { gte: new Date(`${start}T00:00:00.000Z`), lte: new Date(`${addLocalDays(requestedEnd, 29)}T00:00:00.000Z`) } },
       select: { localDate: true },
     })).map((item) => localDate(item.localDate)));
+    const releaseDate = nextBusinessDate(start, holidays);
+    if (releaseDate > requestedEnd) {
+      return { planned: 0, deferred: 0, replanned: 0, reason: "NO_BUSINESS_DATE", start, end: requestedEnd, releaseEnabled: settings.releaseEnabled };
+    }
     const sellers = await database.prospectingSellerConfig.findMany({
       where: {
         workspaceId: input.workspaceId,
@@ -78,32 +91,172 @@ export function createProspectingPlannerService(options: Readonly<{ database: Pr
     })).map((member) => member.id));
     const eligibleSellers = sellers.filter((seller) => eligibleMemberIds.has(seller.memberId));
     if (eligibleSellers.length === 0) {
-      return { planned: 0, deferred: 0, reason: "NO_ELIGIBLE_SELLERS", start, end };
+      return { planned: 0, deferred: 0, replanned: 0, reason: "NO_ELIGIBLE_SELLERS", start, end: releaseDate };
     }
+
+    let replanned = 0;
+    if (releaseDate === today) {
+      const futurePlans = await database.prospectRelease.findMany({
+        where: {
+          workspaceId: input.workspaceId,
+          status: "PLANNED",
+          plannedDate: { gt: new Date(`${releaseDate}T00:00:00.000Z`) },
+          candidateId: { in: (await database.prospectCandidate.findMany({
+            where: { workspaceId: input.workspaceId, status: "PLANNED", leadId: null },
+            select: { id: true },
+          })).map((candidate) => candidate.id) },
+        },
+        select: { id: true, candidateId: true },
+      });
+      if (futurePlans.length > 0) {
+        const candidateIds = futurePlans.map((release) => release.candidateId);
+        await database.prospectRelease.updateMany({
+          where: { id: { in: futurePlans.map((release) => release.id) }, workspaceId: input.workspaceId, status: "PLANNED" },
+          data: { status: "DEFERRED", reasonCode: "DAILY_QUEUE_REPLAN", claimedBy: null, claimedAt: null, leaseExpiresAt: null },
+        });
+        await database.prospectCandidate.updateMany({
+          where: { id: { in: candidateIds }, workspaceId: input.workspaceId, status: "PLANNED", leadId: null },
+          data: { status: "READY", plannedReleaseDate: null, revision: { increment: 1 } },
+        });
+        await database.auditLog.create({
+          data: {
+            workspaceId: input.workspaceId,
+            actorId: input.actorId,
+            action: "prospecting.daily_queue.replanned",
+            entityType: "ProspectRelease",
+            entityId: futurePlans[0]!.id,
+            origin: "SYSTEM",
+            occurredAt: options.now(),
+            reason: "Planos futuros devolvidos ao estoque para preenchimento diário da meta.",
+            changes: { releaseDate, releaseIds: futurePlans.map((release) => release.id), count: futurePlans.length },
+          },
+        });
+        replanned = futurePlans.length;
+      }
+
+      const targetRange = workspaceDayRange(releaseDate, workspace.timeZone);
+      const nextDate = nextBusinessDate(addLocalDays(releaseDate, 1), holidays);
+      for (const seller of eligibleSellers) {
+        const completedRows = await database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
+          SELECT DISTINCT task."leadId"
+          FROM "tasks" task
+          JOIN "prospecting_cadence_steps" step
+            ON step."workspaceId" = task."workspaceId" AND step."taskId" = task."id"
+          JOIN "prospecting_cadence_instances" cadence
+            ON cadence."workspaceId" = step."workspaceId" AND cadence."id" = step."cadenceInstanceId"
+          WHERE task."workspaceId" = ${input.workspaceId}::uuid
+            AND task."assigneeMemberId" = ${seller.memberId}::uuid
+            AND task."status"::text = 'COMPLETED'
+            AND task."completedAt" >= ${targetRange.start}
+            AND task."completedAt" < ${targetRange.end}
+            AND COALESCE(task."result", '') <> 'CHANNEL_UNAVAILABLE'
+            AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
+            AND task."deletedAt" IS NULL
+        `);
+        const completedLeadIds = new Set(completedRows.map((row) => row.leadId));
+        const dueRows = await database.$queryRaw<DueTaskRow[]>(Prisma.sql`
+          SELECT task."id" AS "taskId", task."leadId", step."id" AS "stepId", step."stepKey",
+                 cadence."status"::text AS "cadenceStatus", task."dueAt"
+          FROM "tasks" task
+          JOIN "prospecting_cadence_steps" step
+            ON step."workspaceId" = task."workspaceId" AND step."taskId" = task."id"
+          JOIN "prospecting_cadence_instances" cadence
+            ON cadence."workspaceId" = step."workspaceId" AND cadence."id" = step."cadenceInstanceId"
+          WHERE task."workspaceId" = ${input.workspaceId}::uuid
+            AND task."assigneeMemberId" = ${seller.memberId}::uuid
+            AND task."status"::text IN ('OPEN', 'IN_PROGRESS')
+            AND task."dueAt" < ${targetRange.end}
+            AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
+            AND task."deletedAt" IS NULL
+          ORDER BY CASE WHEN cadence."status"::text = 'PENDING_D1' THEN 0 ELSE 1 END,
+                   task."dueAt" ASC, task."leadId" ASC, task."id" ASC
+        `);
+        const tasksByLead = new Map<string, DueTaskRow[]>();
+        for (const row of dueRows) {
+          const rows = tasksByLead.get(row.leadId) ?? [];
+          rows.push(row);
+          tasksByLead.set(row.leadId, rows);
+        }
+        const remainingSlots = Math.max(0, seller.dailyCapacity - completedLeadIds.size);
+        const rankedLeadIds = [...tasksByLead.keys()].sort((left, right) => {
+          const leftRows = tasksByLead.get(left)!;
+          const rightRows = tasksByLead.get(right)!;
+          const leftPendingD1 = leftRows.some((row) => row.cadenceStatus === "PENDING_D1");
+          const rightPendingD1 = rightRows.some((row) => row.cadenceStatus === "PENDING_D1");
+          return Number(rightPendingD1) - Number(leftPendingD1)
+            || leftRows[0]!.dueAt.getTime() - rightRows[0]!.dueAt.getTime()
+            || left.localeCompare(right);
+        });
+        const selected = new Set(rankedLeadIds.filter((leadId) => completedLeadIds.has(leadId)));
+        let newlySelected = 0;
+        for (const leadId of rankedLeadIds) {
+          if (selected.has(leadId)) continue;
+          if (newlySelected >= remainingSlots) break;
+          selected.add(leadId);
+          newlySelected += 1;
+        }
+        for (const leadId of rankedLeadIds) {
+          if (selected.has(leadId)) continue;
+          const movedTaskIds: string[] = [];
+          for (const row of tasksByLead.get(leadId) ?? []) {
+            const definition = PROSPECTING_CADENCE.find((step) => step.stepKey === row.stepKey);
+            if (!definition) continue;
+            const dueAt = parseWorkspaceLocalDateTime(`${nextDate}T${definition.timeOfDay}`, workspace.timeZone);
+            await database.task.update({ where: { id: row.taskId }, data: { dueAt, updatedByActorId: input.actorId } });
+            await database.prospectingCadenceStep.update({ where: { id: row.stepId }, data: { scheduledAt: dueAt } });
+            await database.lead.updateMany({
+              where: { id: leadId, workspaceId: input.workspaceId, nextActionTaskId: row.taskId },
+              data: { nextActionAt: dueAt, updatedByActorId: input.actorId },
+            });
+            movedTaskIds.push(row.taskId);
+          }
+          if (movedTaskIds.length > 0) {
+            await database.auditLog.create({
+              data: {
+                workspaceId: input.workspaceId,
+                actorId: input.actorId,
+                action: "prospecting.daily_queue.deferred",
+                entityType: "Lead",
+                entityId: leadId,
+                origin: "SYSTEM",
+                occurredAt: options.now(),
+                reason: "Capacidade diária de políticos distintos atingida.",
+                changes: { fromDate: releaseDate, toDate: nextDate, taskIds: movedTaskIds },
+              },
+            });
+          }
+        }
+      }
+    }
+
+    const dayRange = workspaceDayRange(releaseDate, workspace.timeZone);
     const rows = await database.$queryRaw<LoadRow[]>`
       SELECT task."assigneeMemberId" AS "memberId",
-             (task."dueAt" AT TIME ZONE ${workspace.timeZone})::date AS "localDate",
+             ${releaseDate}::date AS "localDate",
              COUNT(DISTINCT task."leadId")::bigint AS touched
       FROM "tasks" task
+      JOIN "prospecting_cadence_steps" step
+        ON step."workspaceId" = task."workspaceId" AND step."taskId" = task."id"
+      JOIN "prospecting_cadence_instances" cadence
+        ON cadence."workspaceId" = step."workspaceId" AND cadence."id" = step."cadenceInstanceId"
       WHERE task."workspaceId" = ${input.workspaceId}::uuid
         AND task."assigneeMemberId" IN (${Prisma.join(eligibleSellers.map((seller) => seller.memberId))})
-        AND task."status"::text IN ('OPEN', 'IN_PROGRESS')
-        AND task."kind"::text IN ('IMMEDIATE_CALL', 'CALL', 'MESSAGE', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW', 'FOLLOW_UP')
+        AND ((task."status"::text IN ('OPEN', 'IN_PROGRESS') AND task."dueAt" < ${dayRange.end})
+          OR (task."status"::text = 'COMPLETED' AND task."completedAt" >= ${dayRange.start} AND task."completedAt" < ${dayRange.end}
+            AND COALESCE(task."result", '') <> 'CHANNEL_UNAVAILABLE'))
+        AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
         AND task."deletedAt" IS NULL
-        AND (task."dueAt" AT TIME ZONE ${workspace.timeZone})::date BETWEEN ${start}::date AND ${addLocalDays(end, 29)}::date
-      GROUP BY 1, 2
+      GROUP BY 1
     `;
-    const loads = new Map(rows.map((row) => [loadKey(row.memberId, localDate(row.localDate)), Number(row.touched)]));
+    const loads = new Map(rows.map((row) => [loadKey(row.memberId, releaseDate), Number(row.touched)]));
     const existingPlans = await database.prospectRelease.findMany({
-      where: { workspaceId: input.workspaceId, status: { in: ["PLANNED", "CLAIMED"] }, plannedDate: { gte: new Date(`${start}T00:00:00.000Z`) } },
+      where: { workspaceId: input.workspaceId, status: { in: ["PLANNED", "CLAIMED"] }, plannedDate: new Date(`${releaseDate}T00:00:00.000Z`) },
       select: { plannedMemberId: true, plannedDate: true },
     });
     for (const release of existingPlans) {
       if (!release.plannedMemberId) continue;
-      for (const date of manualCapacityDates({ d1Date: localDate(release.plannedDate), holidays })) {
-        const key = loadKey(release.plannedMemberId, date);
-        loads.set(key, (loads.get(key) ?? 0) + 1);
-      }
+      const key = loadKey(release.plannedMemberId, releaseDate);
+      loads.set(key, (loads.get(key) ?? 0) + 1);
     }
     const candidates = await database.prospectCandidate.findMany({
       where: { workspaceId: input.workspaceId, status: "READY", leadId: null },
@@ -113,18 +266,9 @@ export function createProspectingPlannerService(options: Readonly<{ database: Pr
     });
     let planned = 0;
     let deferred = 0;
-    let releaseDate = nextBusinessDate(start, holidays);
     for (const candidate of candidates) {
-      let assignment: { memberId: string; date: string } | null = null;
-      let cursor = releaseDate;
-      while (cursor <= end && !assignment) {
-        if (!holidays.has(cursor)) {
-          const dates = manualCapacityDates({ d1Date: cursor, holidays });
-          const memberId = chooseProspectingSeller({ sellers: eligibleSellers, dates, loads });
-          if (memberId) assignment = { memberId, date: cursor };
-        }
-        if (!assignment) cursor = nextBusinessDate(addLocalDays(cursor, 1), holidays);
-      }
+      const memberId = chooseProspectingSeller({ sellers: eligibleSellers, dates: [releaseDate], loads });
+      const assignment = memberId ? { memberId, date: releaseDate } : null;
       if (!assignment) {
         deferred += 1;
         continue;
@@ -166,19 +310,16 @@ export function createProspectingPlannerService(options: Readonly<{ database: Pr
         where: { id: candidate.id },
         data: { status: "PLANNED", plannedReleaseDate: release.plannedDate, revision: { increment: 1 } },
       });
-      for (const date of manualCapacityDates({ d1Date: assignment.date, holidays })) {
-        const key = loadKey(assignment.memberId, date);
-        loads.set(key, (loads.get(key) ?? 0) + 1);
-      }
+      const key = loadKey(assignment.memberId, assignment.date);
+      loads.set(key, (loads.get(key) ?? 0) + 1);
       planned += 1;
-      releaseDate = assignment.date;
     }
-    return { planned, deferred, reason: null, start, end, releaseEnabled: settings.releaseEnabled };
+    return { planned, deferred, replanned, reason: null, start, end: releaseDate, releaseEnabled: settings.releaseEnabled };
   }
 
   async function processNext(workerId: string) {
     const candidate = await options.database.prospectCandidate.findFirst({
-      where: { status: "READY", leadId: null },
+      where: { status: { in: ["READY", "PLANNED"] }, leadId: null },
       orderBy: [{ mandateVerifiedAt: "asc" }, { id: "asc" }],
       select: { workspaceId: true },
     });
@@ -195,7 +336,7 @@ export function createProspectingPlannerService(options: Readonly<{ database: Pr
         actorId: actor.id,
       });
       return {
-        status: result.planned > 0 ? "PLANNED" as const : "DEFERRED" as const,
+        status: result.planned > 0 ? "PLANNED" as const : result.replanned > 0 ? "REPLANNED" as const : "IDLE" as const,
         workerId,
         ...result,
       };

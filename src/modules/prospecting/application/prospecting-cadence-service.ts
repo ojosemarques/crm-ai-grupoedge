@@ -16,13 +16,25 @@ function fail(message: string, code: string, statusCode = 409): never {
 
 async function moveStage(
   transaction: Prisma.TransactionClient,
-  input: Readonly<{ workspaceId: string; leadId: string; stableKey: string; actorId: string; occurredAt: Date; reason: string }>,
+  input: Readonly<{
+    workspaceId: string;
+    leadId: string;
+    stableKey: string;
+    allowedCurrentStableKeys: readonly string[];
+    actorId: string;
+    occurredAt: Date;
+    reason: string;
+  }>,
 ) {
-  const lead = await transaction.lead.findFirst({ where: { id: input.leadId, workspaceId: input.workspaceId, deletedAt: null }, select: { id: true, pipelineId: true, currentStageId: true } });
+  const lead = await transaction.lead.findFirst({
+    where: { id: input.leadId, workspaceId: input.workspaceId, deletedAt: null },
+    select: { id: true, pipelineId: true, currentStageId: true, currentStage: { select: { stableKey: true } } },
+  });
   if (!lead) fail("Lead da cadência não encontrado.", "PROSPECTING_LEAD_NOT_FOUND", 404);
   const stage = await transaction.pipelineStage.findFirst({ where: { workspaceId: input.workspaceId, pipelineId: lead.pipelineId, stableKey: input.stableKey, deletedAt: null }, select: { id: true } });
   if (!stage) fail("Etapa estável da Prospecção Ativa não encontrada.", "PROSPECTING_STAGE_NOT_FOUND", 503);
   if (stage.id === lead.currentStageId) return;
+  if (!lead.currentStage.stableKey || !input.allowedCurrentStableKeys.includes(lead.currentStage.stableKey)) return;
   const openHistories = await transaction.stageHistory.findMany({
     where: { workspaceId: input.workspaceId, leadId: lead.id, exitedAt: null },
     select: { enteredAt: true },
@@ -72,7 +84,14 @@ export async function stopColdCadenceInTransaction(
       : status === "DISCARDED" ? "active-prospecting.discarded"
         : status === "CONVERSATION_STARTED" ? "active-prospecting.conversation-started"
           : null;
-  if (stableKey) await moveStage(transaction, { ...input, stableKey, reason: `Interrupção da cadência: ${input.reason}.` });
+  if (stableKey) {
+    const allowedCurrentStableKeys = status === "CONVERSATION_STARTED"
+      ? ["active-prospecting.new-lead", "active-prospecting.initial-outreach", "active-prospecting.active-cadence"]
+      : status === "MEETING_SCHEDULED"
+        ? ["active-prospecting.new-lead", "active-prospecting.initial-outreach", "active-prospecting.active-cadence", "active-prospecting.conversation-started"]
+        : ["active-prospecting.new-lead", "active-prospecting.initial-outreach", "active-prospecting.active-cadence"];
+    await moveStage(transaction, { ...input, stableKey, allowedCurrentStableKeys, reason: `Interrupção da cadência: ${input.reason}.` });
+  }
   if (input.reason === "HUMAN_REPLY") {
     await transaction.lead.update({ where: { id: input.leadId }, data: { awaitingHumanResponse: true, lastInboundResponseAt: input.occurredAt, updatedByActorId: input.actorId } });
     const responseTaskSourceKey = `active-prospecting:${cadence.id}:respond-human`;
@@ -190,7 +209,15 @@ export async function applyProspectingTaskCompletionInTransaction(
     const remaining = await transaction.prospectingCadenceStep.count({ where: { workspaceId: input.workspaceId, cadenceInstanceId: cadence.id, stepKey: { in: [...D1_GATE_STEP_KEYS] }, status: { not: "COMPLETED" } } });
     if (remaining === 0 && cadence.status === "PENDING_D1") {
       await transaction.prospectingCadenceInstance.update({ where: { id: cadence.id }, data: { status: "ACTIVE", d1GateCompletedAt: input.completedAt, revision: { increment: 1 } } });
-      await moveStage(transaction, { workspaceId: input.workspaceId, leadId: input.leadId, actorId: input.actorId, occurredAt: input.completedAt, stableKey: "active-prospecting.active-cadence", reason: "Gate D1 concluído." });
+      await moveStage(transaction, {
+        workspaceId: input.workspaceId,
+        leadId: input.leadId,
+        actorId: input.actorId,
+        occurredAt: input.completedAt,
+        stableKey: "active-prospecting.active-cadence",
+        allowedCurrentStableKeys: ["active-prospecting.initial-outreach"],
+        reason: "Gate D1 concluído.",
+      });
       const settings = await transaction.prospectingSettings.findUnique({ where: { workspaceId: input.workspaceId } });
       if (settings?.emailEgressEnabled && settings.privacyApprovedAt && settings.canaryApprovedAt) {
         const jobs = await transaction.prospectingEmailJob.findMany({ where: { workspaceId: input.workspaceId, cadenceInstanceId: cadence.id, status: "BLOCKED" }, select: { id: true, stepKey: true, scheduledAt: true, expiresAt: true, senderProfileId: true } });

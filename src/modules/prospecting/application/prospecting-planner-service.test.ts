@@ -40,20 +40,23 @@ describe("planejador de capacidade da Prospecção Ativa", () => {
     expect(chooseProspectingSeller({ sellers, dates, loads })).toBe("jhon");
   });
 
-  it("rejeita vendedor se qualquer dia futuro atingir a capacidade", () => {
+  it("considera somente a fila do dia atual e não bloqueia novos por uma data futura", () => {
     const loads = new Map<string, number>([
       ["carlos:2026-10-12", 75],
-      ["jhon:2026-10-23", 75],
+      ["jhon:2026-10-05", 75],
       ["ede:2026-10-05", 74],
     ]);
-    expect(chooseProspectingSeller({ sellers, dates, loads })).toBe("ede");
+    expect(chooseProspectingSeller({ sellers, dates, loads })).toBe("carlos");
+    loads.set("carlos:2026-10-05", 75);
     loads.set("ede:2026-10-05", 75);
     expect(chooseProspectingSeller({ sellers, dates, loads })).toBeNull();
   });
 
-  it("aplica a reserva antes de aceitar nova liberação", () => {
+  it("usa a meta configurada integral de 75 políticos sem descontar a reserva legada", () => {
     const withReserve = [{ memberId: "carlos", dailyCapacity: 75, reservePercent: 10, rotationPosition: 0 }];
-    const loads = new Map<string, number>([["carlos:2026-10-05", 67]]);
+    const loads = new Map<string, number>([["carlos:2026-10-05", 74]]);
+    expect(chooseProspectingSeller({ sellers: withReserve, dates, loads })).toBe("carlos");
+    loads.set("carlos:2026-10-05", 75);
     expect(chooseProspectingSeller({ sellers: withReserve, dates, loads })).toBeNull();
   });
 });

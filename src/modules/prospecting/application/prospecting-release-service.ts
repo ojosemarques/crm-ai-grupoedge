@@ -197,7 +197,10 @@ export function createProspectingReleaseService(options: Options) {
           actorKey: actor.key,
         }, transaction);
         if (intakeResult.outcome === "REJECTED") fail(intakeResult.issues[0]?.message ?? "Intake rejeitou o candidato.", `PROSPECTING_INTAKE_${intakeResult.code}`);
-        const lead = await transaction.lead.findUniqueOrThrow({ where: { id: intakeResult.leadId }, select: { id: true, ownerMemberId: true, contactId: true, currentStageId: true, contactPreference: true } });
+        const lead = await transaction.lead.findUniqueOrThrow({
+          where: { id: intakeResult.leadId },
+          select: { id: true, ownerMemberId: true, contactId: true, currentStageId: true, contactPreference: true, currentStage: { select: { stableKey: true } } },
+        });
         if (lead.ownerMemberId !== member.id) {
           const reassignedAt = options.now();
           await reassignLeadInTransaction(transaction, {
@@ -280,15 +283,20 @@ export function createProspectingReleaseService(options: Options) {
         if (!initialStage || !firstTask) fail("Etapa inicial ou tarefas D1 indisponíveis.", "PROSPECTING_CADENCE_CONFIGURATION_INVALID", 503);
         const openStageHistories = await transaction.stageHistory.findMany({
           where: { workspaceId: release.workspaceId, leadId: lead.id, exitedAt: null },
-          select: { enteredAt: true },
+          select: { enteredAt: true, transitionOrigin: true },
         });
         const transitionAt = openStageHistories.reduce(
           (latest, history) => history.enteredAt >= latest ? new Date(history.enteredAt.getTime() + 1) : latest,
           now,
         );
-        await transaction.stageHistory.updateMany({ where: { workspaceId: release.workspaceId, leadId: lead.id, exitedAt: null }, data: { exitedAt: transitionAt, exitedByActorId: actor.id } });
-        await transaction.stageHistory.create({ data: { workspaceId: release.workspaceId, pipelineId: pipeline.id, stageId: initialStage.id, leadId: lead.id, enteredAt: transitionAt, enteredByActorId: actor.id, transitionOrigin: "AUTOMATION", transitionReason: "Cadência política D1 materializada." } });
-        await transaction.lead.update({ where: { id: lead.id }, data: { currentStageId: initialStage.id, nextActionTaskId: firstTask.id, nextActionAt: firstTask.dueAt, nextActionDescription: firstTask.title, updatedByActorId: actor.id } });
+        const humanStageOrigin = openStageHistories.some((history) => ["PIPELINE_BOARD", "PIPELINE_LIST", "LEAD_CARD"].includes(history.transitionOrigin));
+        const mayMaterializeInitialStage = !humanStageOrigin
+          && ["active-prospecting.new-lead", "active-prospecting.initial-outreach"].includes(lead.currentStage.stableKey ?? "");
+        if (mayMaterializeInitialStage && lead.currentStageId !== initialStage.id) {
+          await transaction.stageHistory.updateMany({ where: { workspaceId: release.workspaceId, leadId: lead.id, exitedAt: null }, data: { exitedAt: transitionAt, exitedByActorId: actor.id } });
+          await transaction.stageHistory.create({ data: { workspaceId: release.workspaceId, pipelineId: pipeline.id, stageId: initialStage.id, leadId: lead.id, enteredAt: transitionAt, enteredByActorId: actor.id, transitionOrigin: "AUTOMATION", transitionReason: "Cadência política D1 materializada." } });
+        }
+        await transaction.lead.update({ where: { id: lead.id }, data: { ...(mayMaterializeInitialStage ? { currentStageId: initialStage.id } : {}), nextActionTaskId: firstTask.id, nextActionAt: firstTask.dueAt, nextActionDescription: firstTask.title, updatedByActorId: actor.id } });
         await transaction.prospectCandidate.update({ where: { id: candidate.id }, data: { status: "RELEASED", releasedAt: transitionAt, leadId: lead.id, revision: { increment: 1 } } });
         await transaction.prospectRelease.update({ where: { id: release.id }, data: { status: "RELEASED", leadId: lead.id, releasedAt: transitionAt, leaseExpiresAt: null } });
         await transaction.prospectingResearchBatch.update({ where: { id: candidate.batchId }, data: { releasedCount: { increment: 1 } } });

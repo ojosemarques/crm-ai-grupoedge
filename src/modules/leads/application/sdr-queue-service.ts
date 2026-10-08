@@ -18,6 +18,7 @@ import { AccessDeniedError } from "@/modules/users/permissions/authorization-err
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
+import { isBusinessDate } from "@/modules/prospecting/domain/prospecting-cadence";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
@@ -392,6 +393,10 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       select: { id: true },
     })).map((actor) => actor.id);
     const today = workspaceDayRange(workspaceDateAt(now, workspace.timeZone), workspace.timeZone);
+    const todayLocal = workspaceDateAt(now, workspace.timeZone);
+    const productivityMemberSql = productivityMemberIds.length === 0
+      ? Prisma.sql`AND FALSE`
+      : Prisma.sql`AND task."assigneeMemberId" IN (${Prisma.join(productivityMemberIds)})`;
     const [
       activityCounts,
       taskCounts,
@@ -403,6 +408,12 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       proposals,
       salesValue,
       politiciansTouchedRows,
+      coldPendingRows,
+      coldCadenceRows,
+      newlyReleasedRows,
+      returnRows,
+      prospectingSellerConfigs,
+      calendarHolidays,
       dailyGoalProfiles,
     ] = await Promise.all([
       options.database.activity.groupBy({
@@ -514,6 +525,65 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         distinct: ["leadId"],
         select: { leadId: true },
       }),
+      options.database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
+        SELECT DISTINCT task."leadId"
+        FROM "tasks" task
+        JOIN "prospecting_cadence_steps" step
+          ON step."workspaceId" = task."workspaceId" AND step."taskId" = task."id"
+        JOIN "prospecting_cadence_instances" cadence
+          ON cadence."workspaceId" = step."workspaceId" AND cadence."id" = step."cadenceInstanceId"
+        WHERE task."workspaceId" = ${context.workspaceId}::uuid
+          ${productivityMemberSql}
+          AND task."status"::text IN ('OPEN', 'IN_PROGRESS')
+          AND task."dueAt" < ${today.end}
+          AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
+          AND task."deletedAt" IS NULL
+      `),
+      options.database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
+        SELECT DISTINCT task."leadId"
+        FROM "tasks" task
+        JOIN "prospecting_cadence_steps" step
+          ON step."workspaceId" = task."workspaceId" AND step."taskId" = task."id"
+        JOIN "prospecting_cadence_instances" cadence
+          ON cadence."workspaceId" = step."workspaceId" AND cadence."id" = step."cadenceInstanceId"
+        WHERE task."workspaceId" = ${context.workspaceId}::uuid
+          ${productivityMemberSql}
+          AND task."status"::text IN ('OPEN', 'IN_PROGRESS')
+          AND task."dueAt" < ${today.end}
+          AND cadence."status"::text = 'ACTIVE'
+          AND task."deletedAt" IS NULL
+      `),
+      options.database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
+        SELECT DISTINCT cadence."leadId"
+        FROM "prospecting_cadence_instances" cadence
+        WHERE cadence."workspaceId" = ${context.workspaceId}::uuid
+          ${productivityMemberIds.length === 0
+            ? Prisma.sql`AND FALSE`
+            : Prisma.sql`AND cadence."ownerMemberId" IN (${Prisma.join(productivityMemberIds)})`}
+          AND cadence."status"::text = 'PENDING_D1'
+          AND cadence."d1Date" = ${todayLocal}::date
+      `),
+      options.database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
+        SELECT DISTINCT task."leadId"
+        FROM "tasks" task
+        JOIN "prospecting_cadence_instances" cadence
+          ON cadence."workspaceId" = task."workspaceId" AND cadence."leadId" = task."leadId"
+        WHERE task."workspaceId" = ${context.workspaceId}::uuid
+          ${productivityMemberSql}
+          AND task."status"::text IN ('OPEN', 'IN_PROGRESS')
+          AND task."kind"::text = 'FOLLOW_UP'
+          AND task."dueAt" < ${today.end}
+          AND cadence."status"::text IN ('CONVERSATION_STARTED', 'MEETING_SCHEDULED')
+          AND task."deletedAt" IS NULL
+      `),
+      options.database.prospectingSellerConfig.findMany({
+        where: { workspaceId: context.workspaceId, memberId: { in: productivityMemberIds }, active: true },
+        select: { memberId: true, dailyCapacity: true },
+      }),
+      options.database.prospectingCalendarHoliday.findMany({
+        where: { workspaceId: context.workspaceId, localDate: new Date(`${todayLocal}T00:00:00.000Z`) },
+        select: { localDate: true },
+      }),
       options.database.dailyGoalProfile.findMany({
         where: { workspaceId: context.workspaceId, memberId: { in: dailyGoalProfileMemberIds } },
         orderBy: { memberId: "asc" },
@@ -553,6 +623,11 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         salesValueCents: productivityDailyGoalProfiles.reduce((total, item) => total + item.salesValueTargetCents, 0n),
       },
     );
+    const businessDay = isBusinessDate(todayLocal, new Set(calendarHolidays.map((holiday) => holiday.localDate.toISOString().slice(0, 10))));
+    const politiciansTouchedTarget = businessDay
+      ? prospectingSellerConfigs.reduce((total, seller) => total + seller.dailyCapacity, 0)
+      : 0;
+    const dailyQueueLeadIds = new Set([...politiciansTouchedRows, ...coldPendingRows].map((row) => row.leadId));
 
     const sections: SdrQueueSection[] = sectionDefinitions.map((definition, index) => {
       const rawRows = rowsBySection[index] ?? [];
@@ -640,8 +715,18 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       })) : [],
       dailyProduction: {
         politiciansTouched: politiciansTouchedRows.length,
-        politiciansTouchedTarget: productivityMemberIds.length * 75,
-        politiciansTouchedOverCapacity: politiciansTouchedRows.length > productivityMemberIds.length * 75,
+        politiciansTouchedTarget,
+        politiciansTouchedOverCapacity: politiciansTouchedRows.length > politiciansTouchedTarget,
+        prospecting: {
+          businessDay,
+          target: politiciansTouchedTarget,
+          worked: politiciansTouchedRows.length,
+          pending: coldPendingRows.length,
+          returns: returnRows.length,
+          cadence: coldCadenceRows.length,
+          newlyReleased: newlyReleasedRows.length,
+          queueSize: dailyQueueLeadIds.size,
+        },
         calls,
         callsPending: taskCount(["IMMEDIATE_CALL", "CALL"], openStatuses),
         messages,
