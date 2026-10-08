@@ -12,6 +12,7 @@ import styles from "../pipeline/pipeline-workspace.module.css";
 import { DataTableShell } from "@/components/ui/surface";
 import { SalesGatesPanel } from "@/components/opportunities/sales-gates-panel";
 import { AccountPlanPanel } from "@/components/opportunities/account-plan-panel";
+import { InstantPipelineFilterForm } from "@/components/pipelines/instant-pipeline-filter-form";
 import { SaleCompletionPanel } from "@/components/opportunities/sale-completion-panel";
 import { useTouchPipelineControls } from "@/components/pipelines/use-touch-pipeline-controls";
 import type {
@@ -290,7 +291,11 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
 
   return (
     <div className={styles.workspace}>
-      <form className={styles.filters} method="get">
+      <InstantPipelineFilterForm
+        action="/oportunidades"
+        className={styles.filters}
+        syncKey={`${screen.pipelineId}:${screen.filters.closerId}:${screen.filters.productId}:${screen.filters.stageCode}:${screen.filters.sourceId}:${screen.filters.from}:${screen.filters.to}`}
+      >
         <input name="pipelineId" type="hidden" value={screen.pipelineId} />
         {screen.canFilterCloser ? <label className={styles.filter}>Dono do negócio<select aria-label="Dono do negócio" defaultValue={screen.filters.closerId} name="closerId"><option value="">Todos</option>{screen.closerOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
         <label className={styles.filter}>Produto<select aria-label="Produto" defaultValue={screen.filters.productId} name="productId"><option value="">Todos</option>{screen.productOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
@@ -298,8 +303,8 @@ export function OpportunityPipelineWorkspace({ screen, initialOpportunityId = nu
         {screen.sourceOptions.length ? <label className={styles.filter}>Origem<select aria-label="Origem" defaultValue={screen.filters.sourceId} name="sourceId"><option value="">Todas</option>{screen.sourceOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
         <label className={styles.filter}>De<input defaultValue={screen.filters.from} name="from" type="date" /></label>
         <label className={styles.filter}>Até<input defaultValue={screen.filters.to} name="to" type="date" /></label>
-        <Button size="sm" type="submit" variant="secondary"><Icon name="filtro" size={14} />Aplicar</Button><Link className={styles.clear} href={`/oportunidades?pipelineId=${screen.pipelineId}`}>Limpar filtros</Link>
-      </form>
+        <Link className={styles.clear} href={`/oportunidades?pipelineId=${screen.pipelineId}`}>Limpar filtros</Link>
+      </InstantPipelineFilterForm>
       <div className={styles.boardToolbar}>
         <p><strong>{screen.stages.reduce((total, stage) => total + stage.count, 0)}</strong> oportunidades de negócios <span className={styles.pipelineName}>{screen.pipelineName} · {money(opportunities.reduce((total, item) => total + BigInt(item.amountCents), BigInt(0)).toString())}</span></p>
         <div className={styles.tools}><div className={styles.viewSwitch} aria-label="Alternar visualização"><button aria-pressed={view === "board"} onClick={() => setView("board")} type="button"><Icon name="dashboard" size={14} />Quadro</button><button aria-pressed={view === "list"} onClick={() => setView("list")} type="button"><Icon name="auditoria" size={14} />Lista</button><button aria-pressed={view === "summary"} onClick={() => setView("summary")} type="button"><Icon name="tendencia" size={14} />Consolidado</button></div><button aria-label="Atualizar oportunidades" className={styles.iconButton} onClick={() => router.refresh()} type="button"><Icon name="meu-dia" size={16} /></button></div>

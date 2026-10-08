@@ -26,6 +26,32 @@ async function login(page: import("@playwright/test").Page) {
   await expect(page).toHaveURL(/\/$/);
 }
 
+test("aplica filtros do pipeline de vendas sem recarregar o documento", async ({ page }) => {
+  await login(page);
+  await page.goto("/oportunidades");
+  const stageFilter = page.getByLabel("Etapa", { exact: true });
+  const populatedStage = page.getByRole("region", { name: /^Etapa / }).filter({ has: page.locator("article") }).first();
+  const populatedStageLabel = await populatedStage.getAttribute("aria-label");
+  expect(populatedStageLabel).toMatch(/^Etapa /);
+  const populatedStageName = populatedStageLabel!.replace(/^Etapa /, "");
+  const stageCode = await stageFilter.getByRole("option", { name: populatedStageName, exact: true }).getAttribute("value");
+  expect(stageCode).toBeTruthy();
+  let documentNavigations = 0;
+  page.on("request", (request) => {
+    if (request.isNavigationRequest() && request.resourceType() === "document") documentNavigations += 1;
+  });
+
+  await stageFilter.selectOption(stageCode!);
+
+  await expect(page).toHaveURL(new RegExp(`stageCode=${stageCode}`));
+  await expect(page.getByRole("region", { name: "Pipeline de vendas" })).toBeVisible();
+  await expect(stageFilter).toHaveValue(stageCode!);
+  await expect.poll(() => page.getByRole("region", { name: /^Etapa / }).evaluateAll((regions) =>
+    regions.filter((region) => region.querySelector("article")).map((region) => region.getAttribute("aria-label")),
+  )).toEqual([populatedStageLabel]);
+  expect(documentNavigations).toBe(0);
+});
+
 function uniquePhone(label: string) {
   const hash = createHash("sha256").update(`${label}:${randomUUID()}`).digest("hex");
   const suffix = (BigInt(`0x${hash.slice(0, 12)}`) % 100_000_000n).toString().padStart(8, "0");

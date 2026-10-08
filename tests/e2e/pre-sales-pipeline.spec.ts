@@ -47,6 +47,49 @@ async function createManualLead(page: import("@playwright/test").Page, name: str
   await expect(page.getByText("Entrada processada", { exact: true })).toBeVisible();
 }
 
+function countDocumentNavigations(page: import("@playwright/test").Page) {
+  let count = 0;
+  const listener = (request: import("@playwright/test").Request) => {
+    if (request.isNavigationRequest() && request.resourceType() === "document") count += 1;
+  };
+  page.on("request", listener);
+  return {
+    current: () => count,
+    stop: () => page.off("request", listener),
+  };
+}
+
+test("filtra os pipelines de leads automaticamente sem recarregar o documento", async ({ page }) => {
+  await login(page, DEMO_USERS[1].email);
+  const preSalesLeadName = `Filtro pré-vendas ${randomUUID().slice(0, 8)}`;
+  await createManualLead(page, preSalesLeadName);
+  await page.goto("/pipeline?q=resultado-inexistente");
+
+  const preSalesNavigations = countDocumentNavigations(page);
+  await page.getByPlaceholder("Buscar negócio...").fill(preSalesLeadName);
+  await expect(page).toHaveURL(new RegExp(`q=${encodeURIComponent(preSalesLeadName).replaceAll("%20", "(?:%20|\\+)")}`));
+  await expect(page.locator("article").filter({ hasText: preSalesLeadName })).toBeVisible();
+  expect(preSalesNavigations.current()).toBe(0);
+  preSalesNavigations.stop();
+
+  await page.goto("/email-agente?view=pipeline");
+  const prospectingLeadName = `Filtro prospecção ${randomUUID().slice(0, 8)}`;
+  await page.getByRole("button", { name: "Adicionar", exact: true }).click();
+  const addLeadDialog = page.getByRole("dialog");
+  await addLeadDialog.getByLabel("Nome", { exact: true }).fill(prospectingLeadName);
+  await addLeadDialog.getByLabel("Telefone", { exact: true }).fill(uniquePhone(prospectingLeadName));
+  await addLeadDialog.getByRole("button", { name: "Adicionar lead" }).click();
+  await expect(page.locator("article").filter({ hasText: prospectingLeadName })).toBeVisible();
+
+  const prospectingNavigations = countDocumentNavigations(page);
+  await page.getByPlaceholder("Buscar negócio...").fill("resultado-inexistente");
+  await expect(page.locator("article").filter({ hasText: prospectingLeadName })).toHaveCount(0);
+  await page.getByPlaceholder("Buscar negócio...").fill(prospectingLeadName);
+  await expect(page.locator("article").filter({ hasText: prospectingLeadName })).toBeVisible();
+  expect(prospectingNavigations.current()).toBe(0);
+  prospectingNavigations.stop();
+});
+
 test("opera o pipeline por quadro, lista e cartão sem exigir configurações auxiliares", async ({ page }) => {
   await login(page, DEMO_USERS[1].email);
   const leadName = `Lead pipeline E2E ${randomUUID().slice(0, 8)}`;
