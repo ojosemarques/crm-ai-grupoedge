@@ -105,6 +105,45 @@ describe("MCP privado Politizai", () => {
     await expect(database.lead.count({ where: { workspaceId: context.workspaceId } })).resolves.toBe(leadCountBefore);
     await expect(database.prospectingEmailJob.count({ where: { workspaceId: context.workspaceId } })).resolves.toBe(emailJobCountBefore);
 
+    const [source, pipeline, queue] = await Promise.all([
+      database.leadSource.findFirstOrThrow({ where: { workspaceId: context.workspaceId, deletedAt: null }, select: { id: true } }),
+      database.pipeline.findFirstOrThrow({ where: { workspaceId: context.workspaceId, entityType: "LEAD", deletedAt: null }, select: { id: true } }),
+      database.queue.findFirstOrThrow({ where: { workspaceId: context.workspaceId, deletedAt: null }, select: { id: true } }),
+    ]);
+    const stage = await database.pipelineStage.findFirstOrThrow({ where: { workspaceId: context.workspaceId, pipelineId: pipeline.id, deletedAt: null }, orderBy: { position: "asc" }, select: { id: true } });
+    const contact = await database.contact.create({ data: { workspaceId: context.workspaceId, preferredName: "Contato enriquecido", origin: "MANUAL", createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+    const existingLead = await database.lead.create({ data: { workspaceId: context.workspaceId, contactId: contact.id, sourceId: source.id, pipelineId: pipeline.id, currentStageId: stage.id, queueId: queue.id, routingQueueId: queue.id, fullName: "Contato enriquecido", slaStartedAt: clock, slaDueAt: clock, lastActivityAt: clock, createdByActorId: context.actorId, updatedByActorId: context.actorId }, select: { id: true, contactId: true } });
+    await database.prospectCandidate.update({ where: { id: ingested.candidate.id }, data: { leadId: existingLead.id } });
+    await database.prospectingResearchTarget.update({ where: { id: target.id }, data: { status: "PENDING", completedAt: null, lastReasonCode: "SHARED_PHONE_ENRICHMENT" } });
+    const enrichmentTarget = (await prospecting.claimNextTarget(auth, batchId)).target!;
+    expect(enrichmentTarget).toMatchObject({ id: target.id, candidateId: ingested.candidate.id, mode: "ENRICH_EXISTING_CANDIDATE" });
+    const enrichmentPayload = {
+      targetId: enrichmentTarget.id,
+      leaseOwner: enrichmentTarget.leaseOwner,
+      politician: { mandateStatus: "CURRENT", mandateVerifiedAt: "2026-10-06T12:00:00-03:00" },
+      contact: { politicianPhone: "+5511999991234", politicianEmail: "prefeita@example.com" },
+      researchChecks: {
+        municipalOffice: { status: "SHARED_CONTACT_ONLY", url: "https://prefeitura.sp.gov.br/contato", checkedAt: "2026-10-06T12:00:00-03:00" },
+        tse2024Candidate: { status: "CONTACTS_CAPTURED", url: "https://divulgacandcontas.tse.jus.br/divulga/#/candidato/2024", checkedAt: "2026-10-06T12:00:00-03:00" },
+        instagram: { status: "PROFILE_NOT_FOUND", checkedAt: "2026-10-06T12:00:00-03:00" },
+      },
+      sources: [
+        { field: "role", type: "TSE", url: "https://resultados.tse.jus.br/oficial/app/index.html#/eleicao/619", observedAt: "2026-10-06T12:00:00-03:00" },
+        { field: "mandate", type: "CITY_HALL", url: "https://prefeitura.sp.gov.br/prefeita", observedAt: "2026-10-06T12:00:00-03:00" },
+        { field: "politician_phone", type: "TSE", url: "https://divulgacandcontas.tse.jus.br/divulga/#/candidato/2024", observedAt: "2026-10-06T12:00:00-03:00", originalValue: "+5511999991234" },
+        { field: "politician_email", type: "TSE", url: "https://divulgacandcontas.tse.jus.br/divulga/#/candidato/2024", observedAt: "2026-10-06T12:00:00-03:00", originalValue: "prefeita@example.com" },
+      ],
+    };
+    const enriched = await prospecting.registerCandidate(auth, enrichmentPayload);
+    expect(enriched).toMatchObject({ enriched: true, candidate: { id: ingested.candidate.id, status: "READY" } });
+    await expect(prospecting.registerCandidate(auth, enrichmentPayload)).resolves.toMatchObject({ duplicate: true, enriched: true, candidate: { id: ingested.candidate.id } });
+    await expect(database.prospectCandidate.findUniqueOrThrow({ where: { id: ingested.candidate.id }, select: { normalizedPhone: true, normalizedPoliticianPhone: true, politicianEmail: true } })).resolves.toEqual({
+      normalizedPhone: "+551140001234",
+      normalizedPoliticianPhone: "+5511999991234",
+      politicianEmail: "prefeita@example.com",
+    });
+    await expect(database.contactPoint.findFirst({ where: { workspaceId: context.workspaceId, contactId: existingLead.contactId!, type: "PHONE", normalizedValue: "+5511999991234", deletedAt: null }, select: { verificationStatus: true, quality: true } })).resolves.toEqual({ verificationStatus: "VERIFIED", quality: "VALID" });
+
     await database.prospectingResearchTarget.create({ data: { workspaceId: context.workspaceId, batchId, externalIdentityKey: "tse-2024:integration-mayor-2", tseCandidateId: "integration-mayor-2", role: "MAYOR", politicianName: "Outro Prefeito Integração", ballotName: "Outro Prefeito", municipalityName: "Cidade Integração", municipalityIbgeCode: "3550308", stateCode: "SP", population: 1_000_000 } });
     const duplicatePhoneTarget = (await prospecting.claimNextTarget(auth, batchId)).target!;
     await expect(prospecting.registerCandidate(auth, {
