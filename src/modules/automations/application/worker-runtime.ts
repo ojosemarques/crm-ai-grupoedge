@@ -54,13 +54,13 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
     runner: createWorkerBatchRunner({
       scanDue: lifecycleScanner.scanDue,
       processors: [
+        { key: "prospecting-reconciliation", processNext: prospectingReconciliationWorker.processNext },
         { key: "prospecting-planner", processNext: prospectingPlannerWorker.processNext },
         { key: "prospecting-release", processNext: async (workerId) => {
           const result = await prospectingReleaseWorker.processNext(workerId);
           return { status: result.processed ? result.outcome : "IDLE" };
         } },
         { key: "prospecting-cadence", processNext: prospectingCadenceWorker.processDue },
-        { key: "prospecting-reconciliation", processNext: prospectingReconciliationWorker.processNext },
         { key: "payments", processNext: paymentWorker.processNext },
         { key: "calendar", processNext: calendarWorker.processNext },
         { key: "telephony", processNext: telephonyWorker.processNext },

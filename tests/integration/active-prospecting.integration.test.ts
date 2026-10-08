@@ -313,6 +313,29 @@ describe("staging governado da Prospecção Ativa", () => {
     await expect(database.task.count({ where: { leadId: released.leadId!, kind: { in: ["INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, status: "OPEN" } })).resolves.toBeGreaterThan(0);
   });
 
+  it("repara Instagram ausente no contato canônico de candidato já liberado", async () => {
+    const released = await database.prospectCandidate.findFirstOrThrow({
+      where: { workspaceId: principal.workspaceId, externalIdentityKey: "tse:2024:3550308:councilor:776", status: "RELEASED" },
+      select: { id: true, leadId: true, instagram: true },
+    });
+    const lead = await database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { contactId: true } });
+    await database.contactPoint.deleteMany({ where: { workspaceId: principal.workspaceId, contactId: lead.contactId!, type: "INSTAGRAM" } });
+
+    const reconciliation = createProspectingReconciliationService({ database, now: () => clock });
+    await expect(reconciliation.processNext("integration:instagram-repair")).resolves.toMatchObject({
+      status: "INSTAGRAM_CONTACTS_REPAIRED",
+      repaired: 1,
+    });
+    await expect(database.contactPoint.findMany({
+      where: { workspaceId: principal.workspaceId, contactId: lead.contactId!, type: "INSTAGRAM", deletedAt: null },
+      select: { normalizedValue: true, label: true, verificationStatus: true, quality: true },
+    })).resolves.toEqual([{ normalizedValue: "@somenteinstagram", label: "Direto", verificationStatus: "VERIFIED", quality: "VALID" }]);
+    await expect(reconciliation.repairMissingInstagramContacts("integration:instagram-repair:replay")).resolves.toEqual({ status: "IDLE", repaired: 0 });
+    await expect(database.auditLog.count({
+      where: { workspaceId: principal.workspaceId, action: "prospecting.instagram_contact.repaired", entityId: released.id },
+    })).resolves.toBe(1);
+  });
+
   it("persiste reconciliação diária idempotente, detecta invariantes e mantém RLS fechado", async () => {
     const inconsistent = await database.prospectCandidate.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, status: "REVIEW_REQUIRED", leadId: null }, select: { id: true } });
     await database.prospectCandidate.update({ where: { id: inconsistent.id }, data: { status: "RELEASED" } });

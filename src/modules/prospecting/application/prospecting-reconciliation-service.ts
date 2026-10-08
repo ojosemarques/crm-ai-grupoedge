@@ -45,6 +45,25 @@ type ReconciliationFacts = Readonly<{
 }>;
 
 type DueWorkspace = Readonly<{ workspaceId: string }>;
+type MissingInstagramContact = Readonly<{
+  candidateId: string;
+  workspaceId: string;
+  contactId: string;
+  instagram: string;
+  instagramScope: "POLITICIAN" | "ADVISOR" | "OFFICE";
+  mandateVerifiedAt: Date;
+  doNotContact: boolean;
+}>;
+
+function contactScopeLabel(scope: MissingInstagramContact["instagramScope"]): string {
+  if (scope === "POLITICIAN") return "Direto";
+  if (scope === "ADVISOR") return "Assessoria";
+  return "Gabinete";
+}
+
+function normalizeInstagram(value: string): string {
+  return value.trim().toLocaleLowerCase("pt-BR");
+}
 
 function finding(
   collection: ProspectingReconciliationFinding[],
@@ -60,6 +79,95 @@ function findingsHash(findings: readonly ProspectingReconciliationFinding[]): st
 }
 
 export function createProspectingReconciliationService(options: Readonly<{ database: PrismaClient; now: () => Date }>) {
+  async function repairMissingInstagramContacts(workerId: string) {
+    const now = options.now();
+    return options.database.$transaction(async (database) => {
+      const candidates = await database.$queryRaw<MissingInstagramContact[]>(Prisma.sql`
+        SELECT
+          candidate."id" AS "candidateId",
+          candidate."workspaceId",
+          lead."contactId",
+          candidate."instagram",
+          candidate."instagramScope"::text AS "instagramScope",
+          candidate."mandateVerifiedAt",
+          (lead."contactPreference"::text = 'DO_NOT_CONTACT') AS "doNotContact"
+        FROM "prospect_candidates" candidate
+        JOIN "leads" lead
+          ON lead."workspaceId" = candidate."workspaceId" AND lead."id" = candidate."leadId"
+        WHERE candidate."status"::text = 'RELEASED'
+          AND candidate."instagram" IS NOT NULL
+          AND BTRIM(candidate."instagram") <> ''
+          AND candidate."instagramScope" IS NOT NULL
+          AND lead."contactId" IS NOT NULL
+          AND lead."deletedAt" IS NULL
+          AND EXISTS (
+            SELECT 1 FROM "actors" actor
+            WHERE actor."workspaceId" = candidate."workspaceId"
+              AND actor."type"::text = 'SYSTEM'
+              AND actor."key" = 'system'
+              AND actor."userId" IS NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "contact_points" point
+            WHERE point."workspaceId" = candidate."workspaceId"
+              AND point."contactId" = lead."contactId"
+              AND point."type"::text = 'INSTAGRAM'
+              AND point."normalizedValue" = LOWER(BTRIM(candidate."instagram"))
+              AND point."deletedAt" IS NULL
+          )
+        ORDER BY candidate."releasedAt" ASC NULLS FIRST, candidate."id" ASC
+        LIMIT 100
+        FOR UPDATE OF candidate SKIP LOCKED
+      `);
+      if (candidates.length === 0) return { status: "IDLE" as const, repaired: 0 };
+
+      const actorIds = new Map<string, string>();
+      for (const candidate of candidates) {
+        let actorId = actorIds.get(candidate.workspaceId);
+        if (!actorId) {
+          const actor = await database.actor.findFirstOrThrow({
+            where: { workspaceId: candidate.workspaceId, type: "SYSTEM", key: "system", userId: null },
+            select: { id: true },
+          });
+          actorId = actor.id;
+          actorIds.set(candidate.workspaceId, actorId);
+        }
+        const contactPoint = await database.contactPoint.create({
+          data: {
+            workspaceId: candidate.workspaceId,
+            contactId: candidate.contactId,
+            type: "INSTAGRAM",
+            originalValue: candidate.instagram,
+            normalizedValue: normalizeInstagram(candidate.instagram),
+            label: contactScopeLabel(candidate.instagramScope),
+            verificationStatus: "VERIFIED",
+            quality: "VALID",
+            source: "LEAD_INTAKE",
+            doNotContact: candidate.doNotContact,
+            verifiedAt: candidate.mandateVerifiedAt,
+            createdByActorId: actorId,
+            updatedByActorId: actorId,
+          },
+          select: { id: true },
+        });
+        await database.auditLog.create({
+          data: {
+            workspaceId: candidate.workspaceId,
+            actorId,
+            action: "prospecting.instagram_contact.repaired",
+            entityType: "ProspectCandidate",
+            entityId: candidate.candidateId,
+            origin: "SYSTEM",
+            requestId: workerId,
+            occurredAt: now,
+            changes: { contactPointId: contactPoint.id, type: "INSTAGRAM", externalEgress: false },
+          },
+        });
+      }
+      return { status: "INSTAGRAM_CONTACTS_REPAIRED" as const, repaired: candidates.length };
+    }, { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 });
+  }
+
   async function collect(database: Prisma.TransactionClient, workspaceId: string, now: Date) {
     const staleSourceCutoff = new Date(now.getTime() - 30 * DAY_MS);
     const recentDeliveryCutoff = new Date(now.getTime() - 30 * DAY_MS);
@@ -228,6 +336,8 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
   }
 
   async function processNext(workerId: string) {
+    const repair = await repairMissingInstagramContacts(workerId);
+    if (repair.repaired > 0) return repair;
     const dueBefore = new Date(options.now().getTime() - DAY_MS);
     const [workspace] = await options.database.$queryRaw<DueWorkspace[]>(Prisma.sql`
       SELECT settings."workspaceId"
@@ -243,7 +353,7 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
     return reconcileWorkspace(workspace.workspaceId, workerId);
   }
 
-  return Object.freeze({ processNext, reconcileWorkspace });
+  return Object.freeze({ processNext, reconcileWorkspace, repairMissingInstagramContacts });
 }
 
 let singleton: ReturnType<typeof createProspectingReconciliationService> | undefined;
