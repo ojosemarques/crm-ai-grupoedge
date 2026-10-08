@@ -37,15 +37,16 @@ const cadenceResultOptions: Readonly<Record<string, readonly Readonly<{ value: s
     { value: "CHANNEL_UNAVAILABLE", label: "Canal indisponível" },
   ],
   INSTAGRAM_MESSAGE: [
-    { value: "SENT", label: "Mensagem enviada" },
+    { value: "SENT", label: "Feito" },
     { value: "FAILED", label: "Falhou" },
-    { value: "PROFILE_NOT_FOUND", label: "Perfil não encontrado" },
+    { value: "PROFILE_NOT_FOUND", label: "Não achou Instagram" },
     { value: "CHANNEL_UNAVAILABLE", label: "Canal indisponível" },
   ],
   INSTAGRAM_FOLLOW: [
-    { value: "COMPLETED", label: "Seguiu" },
+    { value: "COMPLETED", label: "Feito" },
     { value: "ALREADY_FOLLOWING", label: "Já seguia" },
     { value: "FAILED", label: "Falhou" },
+    { value: "PROFILE_NOT_FOUND", label: "Não achou Instagram" },
     { value: "CHANNEL_UNAVAILABLE", label: "Canal indisponível" },
   ],
 };

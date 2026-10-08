@@ -360,6 +360,86 @@ describe("staging governado da Prospecção Ativa", () => {
     await expect(database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { currentStageId: true } })).resolves.toEqual({ currentStageId: sellerStage.id });
   });
 
+  it("cria todas as tarefas de Instagram sem perfil captado e aceita perfil não encontrado", async () => {
+    const base = candidate();
+    const payload = candidate({
+      idempotencyKey: "candidate:integration:without-instagram",
+      externalIdentityKey: "tse:2024:3550308:councilor:775",
+      politician: { ...base.politician, name: "Vereador Sem Instagram" },
+      contact: { phone: "+551140001775", phoneScope: "OFFICE", email: null, emailScope: null, instagram: null, instagramScope: null },
+      sources: base.sources.filter((source) => !["email", "politician_phone", "politician_email", "advisor_phone", "advisor_email", "whatsapp", "instagram"].includes(source.field)),
+    });
+    const ingested = await database.$transaction((transaction) => service.ingestCandidate(transaction, principal, payload));
+    expect(ingested.candidate.status).toBe("READY");
+
+    const planner = createProspectingPlannerService({ database, now: () => clock });
+    await planner.plan(database, { workspaceId: principal.workspaceId, actorId: systemActorId, horizonStart: "2026-10-06", horizonEnd: "2026-11-04" });
+    const plannedRelease = await database.prospectRelease.findUniqueOrThrow({ where: { workspaceId_candidateId: { workspaceId: principal.workspaceId, candidateId: ingested.candidate.id } }, select: { plannedDate: true } });
+    clock = new Date(Math.max(clock.getTime(), plannedRelease.plannedDate.getTime() + 15 * 60 * 60_000));
+    let releaseOffset = 0;
+    const release = createProspectingReleaseService({ database, now: () => new Date(clock.getTime() + releaseOffset++) });
+    for (let index = 0; index < 20; index += 1) {
+      const current = await database.prospectCandidate.findUniqueOrThrow({ where: { id: ingested.candidate.id }, select: { status: true } });
+      if (current.status === "RELEASED") break;
+      await release.processNext(`worker-without-instagram-${index}`);
+    }
+
+    const released = await database.prospectCandidate.findUniqueOrThrow({ where: { id: ingested.candidate.id }, select: { status: true, leadId: true, instagram: true } });
+    expect(released).toMatchObject({ status: "RELEASED", instagram: null });
+    const cadence = await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { workspaceId_leadId: { workspaceId: principal.workspaceId, leadId: released.leadId! } } });
+    const instagramSteps = await database.prospectingCadenceStep.findMany({
+      where: { cadenceInstanceId: cadence.id, action: { in: ["INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] } },
+      orderBy: { stepKey: "asc" },
+      select: { id: true, stepKey: true, taskId: true, status: true },
+    });
+    expect(instagramSteps).toHaveLength(5);
+    expect(instagramSteps.every((step) => step.status === "OPEN" && step.taskId !== null)).toBe(true);
+    await expect(database.task.count({ where: { leadId: released.leadId!, kind: { in: ["INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, status: "OPEN" } })).resolves.toBe(5);
+
+    const follow = instagramSteps.find((step) => step.stepKey === "instagram-follow")!;
+    await database.$transaction(async (transaction) => {
+      await transaction.task.update({ where: { id: follow.taskId! }, data: { status: "COMPLETED", completedAt: clock, result: "PROFILE_NOT_FOUND", updatedByActorId: systemActorId } });
+      await applyProspectingTaskCompletionInTransaction(transaction, { workspaceId: principal.workspaceId, leadId: released.leadId!, taskId: follow.taskId!, result: "PROFILE_NOT_FOUND", actorId: systemActorId, completedAt: clock });
+    });
+    await expect(database.prospectingCadenceStep.findUniqueOrThrow({ where: { id: follow.id }, select: { status: true, resultCode: true, resultReason: true } })).resolves.toEqual({
+      status: "COMPLETED",
+      resultCode: "PROFILE_NOT_FOUND",
+      resultReason: "Perfil não encontrado informado pelo vendedor.",
+    });
+  });
+
+  it("recria de forma idempotente tarefas de Instagram antigas sem mover o card", async () => {
+    const released = await database.prospectCandidate.findFirstOrThrow({
+      where: { workspaceId: principal.workspaceId, externalIdentityKey: "tse:2024:3550308:councilor:775", status: "RELEASED" },
+      select: { leadId: true },
+    });
+    const leadBefore = await database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { currentStageId: true } });
+    const cadence = await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { workspaceId_leadId: { workspaceId: principal.workspaceId, leadId: released.leadId! } } });
+    const steps = await database.prospectingCadenceStep.findMany({
+      where: { cadenceInstanceId: cadence.id, action: { in: ["INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] } },
+      select: { id: true, dayOffset: true, taskId: true },
+    });
+    await database.$transaction(async (transaction) => {
+      for (const step of steps) {
+        await transaction.prospectingCadenceStep.update({
+          where: { id: step.id },
+          data: step.dayOffset === 0
+            ? { taskId: null, status: "COMPLETED", resultCode: "CHANNEL_UNAVAILABLE", resultReason: "CHANNEL_UNAVAILABLE", completedAt: clock }
+            : { taskId: null, status: "SUPPRESSED", resultCode: null, resultReason: "CHANNEL_UNAVAILABLE", completedAt: null },
+        });
+      }
+      await transaction.task.deleteMany({ where: { id: { in: steps.flatMap((step) => step.taskId ? [step.taskId] : []) } } });
+    });
+
+    const reconciliation = createProspectingReconciliationService({ database, now: () => clock });
+    await expect(reconciliation.repairMissingInstagramCadenceTasks("integration:instagram-task-repair")).resolves.toEqual({ status: "INSTAGRAM_TASKS_REPAIRED", repaired: 5 });
+    await expect(database.prospectingCadenceStep.count({ where: { cadenceInstanceId: cadence.id, action: { in: ["INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, status: "OPEN", taskId: { not: null } } })).resolves.toBe(5);
+    await expect(database.task.count({ where: { leadId: released.leadId!, kind: { in: ["INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, status: "OPEN" } })).resolves.toBe(5);
+    await expect(database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { currentStageId: true } })).resolves.toEqual(leadBefore);
+    await expect(reconciliation.repairMissingInstagramCadenceTasks("integration:instagram-task-repair:replay")).resolves.toEqual({ status: "IDLE", repaired: 0 });
+    await expect(database.auditLog.count({ where: { workspaceId: principal.workspaceId, action: "prospecting.instagram_task.repaired", entityType: "ProspectingCadenceStep" } })).resolves.toBe(5);
+  });
+
   it("repara Instagram ausente no contato canônico de candidato já liberado", async () => {
     const released = await database.prospectCandidate.findFirstOrThrow({
       where: { workspaceId: principal.workspaceId, externalIdentityKey: "tse:2024:3550308:councilor:776", status: "RELEASED" },

@@ -256,7 +256,7 @@ export function createProspectingReleaseService(options: Options) {
           const channelAvailable = step.action === "CALL"
             ? Boolean(primaryPhone)
             : step.action === "INSTAGRAM_MESSAGE" || step.action === "INSTAGRAM_FOLLOW"
-              ? Boolean(candidate.instagram)
+              ? true
               : step.action === "EMAIL"
                 ? Boolean(primaryEmail)
                 : true;

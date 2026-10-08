@@ -62,6 +62,20 @@ type OverwrittenSellerStage = Readonly<{
   previousStageId: string;
   currentEnteredAt: Date;
 }>;
+type MissingInstagramCadenceTask = Readonly<{
+  stepId: string;
+  workspaceId: string;
+  cadenceInstanceId: string;
+  leadId: string;
+  ownerMemberId: string;
+  stepKey: string;
+  action: "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW";
+  scheduledAt: Date;
+  politicianName: string;
+  role: "MAYOR" | "COUNCILOR";
+  municipalityName: string;
+  stateCode: string;
+}>;
 
 function contactScopeLabel(scope: MissingInstagramContact["instagramScope"]): string {
   if (scope === "POLITICIAN") return "Direto";
@@ -71,6 +85,11 @@ function contactScopeLabel(scope: MissingInstagramContact["instagramScope"]): st
 
 function normalizeInstagram(value: string): string {
   return value.trim().toLocaleLowerCase("pt-BR");
+}
+
+function instagramTaskTitle(stepKey: string): string {
+  if (stepKey.startsWith("instagram-message-")) return `Mensagem Instagram nº ${stepKey.slice(-1)}`;
+  return "Seguir perfil no Instagram";
 }
 
 function finding(
@@ -268,6 +287,117 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
     }, { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 });
   }
 
+  async function repairMissingInstagramCadenceTasks(workerId: string) {
+    const now = options.now();
+    return options.database.$transaction(async (database) => {
+      const steps = await database.$queryRaw<MissingInstagramCadenceTask[]>(Prisma.sql`
+        SELECT
+          step."id" AS "stepId",
+          step."workspaceId",
+          step."cadenceInstanceId",
+          step."leadId",
+          cadence."ownerMemberId",
+          step."stepKey",
+          step."action"::text AS "action",
+          step."scheduledAt",
+          candidate."politicianName",
+          candidate."role"::text AS "role",
+          candidate."municipalityName",
+          candidate."stateCode"
+        FROM "prospecting_cadence_steps" step
+        JOIN "prospecting_cadence_instances" cadence
+          ON cadence."workspaceId" = step."workspaceId"
+         AND cadence."id" = step."cadenceInstanceId"
+        JOIN "prospect_candidates" candidate
+          ON candidate."workspaceId" = cadence."workspaceId"
+         AND candidate."id" = cadence."candidateId"
+        JOIN "leads" lead
+          ON lead."workspaceId" = step."workspaceId"
+         AND lead."id" = step."leadId"
+        WHERE cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
+          AND step."executor"::text = 'SELLER'
+          AND step."action"::text IN ('INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
+          AND step."taskId" IS NULL
+          AND lead."deletedAt" IS NULL
+          AND (
+            (step."status"::text = 'SUPPRESSED' AND step."resultReason" = 'CHANNEL_UNAVAILABLE')
+            OR (step."status"::text = 'COMPLETED' AND step."resultCode" = 'CHANNEL_UNAVAILABLE')
+            OR step."status"::text IN ('OPEN', 'SCHEDULED')
+          )
+          AND EXISTS (
+            SELECT 1 FROM "actors" actor
+            WHERE actor."workspaceId" = step."workspaceId"
+              AND actor."type"::text = 'SYSTEM'
+              AND actor."key" = 'system'
+              AND actor."userId" IS NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "tasks" task
+            WHERE task."workspaceId" = step."workspaceId"
+              AND task."sourceKey" = 'active-prospecting:' || step."cadenceInstanceId"::text || ':' || step."stepKey"
+          )
+        ORDER BY step."scheduledAt" ASC, step."id" ASC
+        LIMIT 100
+        FOR UPDATE OF step SKIP LOCKED
+      `);
+      if (steps.length === 0) return { status: "IDLE" as const, repaired: 0 };
+
+      const actorIds = new Map<string, string>();
+      for (const step of steps) {
+        let actorId = actorIds.get(step.workspaceId);
+        if (!actorId) {
+          const actor = await database.actor.findFirstOrThrow({
+            where: { workspaceId: step.workspaceId, type: "SYSTEM", key: "system", userId: null },
+            select: { id: true },
+          });
+          actorId = actor.id;
+          actorIds.set(step.workspaceId, actorId);
+        }
+        const task = await database.task.create({
+          data: {
+            workspaceId: step.workspaceId,
+            leadId: step.leadId,
+            assigneeMemberId: step.ownerMemberId,
+            title: instagramTaskTitle(step.stepKey),
+            description: `${step.politicianName} · ${step.role === "MAYOR" ? "Prefeito" : "Vereador"} · ${step.municipalityName}/${step.stateCode}.`,
+            kind: step.action,
+            sourceKey: `active-prospecting:${step.cadenceInstanceId}:${step.stepKey}`,
+            status: "OPEN",
+            priority: "MEDIUM",
+            dueAt: step.scheduledAt,
+            createdByActorId: actorId,
+            updatedByActorId: actorId,
+          },
+          select: { id: true },
+        });
+        await database.prospectingCadenceStep.update({
+          where: { id: step.stepId },
+          data: {
+            taskId: task.id,
+            status: "OPEN",
+            resultCode: null,
+            resultReason: null,
+            completedAt: null,
+          },
+        });
+        await database.auditLog.create({
+          data: {
+            workspaceId: step.workspaceId,
+            actorId,
+            action: "prospecting.instagram_task.repaired",
+            entityType: "ProspectingCadenceStep",
+            entityId: step.stepId,
+            origin: "SYSTEM",
+            requestId: workerId,
+            occurredAt: now,
+            changes: { taskId: task.id, stepKey: step.stepKey, action: step.action, externalEgress: false },
+          },
+        });
+      }
+      return { status: "INSTAGRAM_TASKS_REPAIRED" as const, repaired: steps.length };
+    }, { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 });
+  }
+
   async function collect(database: Prisma.TransactionClient, workspaceId: string, now: Date) {
     const staleSourceCutoff = new Date(now.getTime() - 30 * DAY_MS);
     const recentDeliveryCutoff = new Date(now.getTime() - 30 * DAY_MS);
@@ -440,6 +570,8 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
     if (stageRepair.restored > 0) return stageRepair;
     const repair = await repairMissingInstagramContacts(workerId);
     if (repair.repaired > 0) return repair;
+    const taskRepair = await repairMissingInstagramCadenceTasks(workerId);
+    if (taskRepair.repaired > 0) return taskRepair;
     const dueBefore = new Date(options.now().getTime() - DAY_MS);
     const [workspace] = await options.database.$queryRaw<DueWorkspace[]>(Prisma.sql`
       SELECT settings."workspaceId"
@@ -455,7 +587,7 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
     return reconcileWorkspace(workspace.workspaceId, workerId);
   }
 
-  return Object.freeze({ processNext, reconcileWorkspace, repairMissingInstagramContacts, restoreOverwrittenSellerStages });
+  return Object.freeze({ processNext, reconcileWorkspace, repairMissingInstagramCadenceTasks, repairMissingInstagramContacts, restoreOverwrittenSellerStages });
 }
 
 let singleton: ReturnType<typeof createProspectingReconciliationService> | undefined;
