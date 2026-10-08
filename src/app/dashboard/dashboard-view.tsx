@@ -216,7 +216,26 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
   const primaryComparisons = ["revenue", "sales", "lead-to-sale", "sla-median"].flatMap((id) => comparisonById.get(id) ?? []);
   const kpiById = new Map(screen.kpis.map((metric) => [metric.id, metric]));
   const operationalPulse = ["leads", "connected", "qualified", "scheduled", "opportunities", "proposals"].flatMap((id) => kpiById.get(id) ?? []);
-  const integratedMetricIds = ["work.tasks_completed", "outreach.calls_attempted", "outreach.call_connection_rate", "email.sent", "email.delivery_rate", "outreach.inbound_responses", "meetings.completed", "sales.bookings", "cash.received"];
+  const integratedMetricIds = [
+    "work.tasks_completed",
+    "outreach.calls_attempted",
+    "outreach.calls_connected",
+    "outreach.calls_no_answer",
+    "outreach.calls_busy",
+    "outreach.calls_voicemail",
+    "outreach.calls_wrong_number",
+    "outreach.calls_channel_unavailable",
+    "outreach.call_connection_rate",
+    "outreach.instagram_messages",
+    "outreach.instagram_follows",
+    "outreach.inbound_responses",
+    "meetings.scheduled",
+    "meetings.completed",
+    "email.sent",
+    "email.delivery_rate",
+    "sales.bookings",
+    "cash.received",
+  ];
   const integratedPulse = integratedMetricIds.flatMap((id) => screen.integrated.values.find((metric) => metric.metricId === id) ?? []);
   const integratedLabelById = new Map(integratedMetricRegistry.map((metric) => [metric.id, metric.label]));
   const ticketKpi = kpiById.get("ticket");

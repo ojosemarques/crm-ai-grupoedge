@@ -626,7 +626,6 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           AND task."completedAt" >= ${today.start}
           AND task."completedAt" < ${today.end}
           AND task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
-          AND COALESCE(task."result", '') <> 'CHANNEL_UNAVAILABLE'
           AND task."deletedAt" IS NULL
       `),
       options.database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
@@ -718,13 +717,13 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     const openStatuses = ["OPEN", "IN_PROGRESS"];
     const actionableKinds = ["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "EMAIL", "FOLLOW_UP"];
     const tasksDue = taskCount(actionableKinds, openStatuses);
-    const calls = taskCount(["IMMEDIATE_CALL", "CALL"], ["COMPLETED"]);
-    const messages = taskCount(["MESSAGE", "INSTAGRAM_MESSAGE"], ["COMPLETED"]);
     const prospectingResults = summarizeProspectingTaskResults(prospectingTaskResultCounts.map((row) => ({
       kind: row.kind,
       result: row.result,
       count: row._count._all,
     })));
+    const calls = prospectingResults.callsCompleted;
+    const messages = prospectingResults.instagramMessagesCompleted;
     const effectiveContactLeadIds = new Set([
       ...effectiveContacts.map((row) => row.leadId),
       ...connectedProspectingRows.map((row) => row.leadId),
@@ -859,11 +858,20 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         callsNoAnswer: prospectingResults.callsNoAnswer,
         callsBusy: prospectingResults.callsBusy,
         callsVoicemail: prospectingResults.callsVoicemail,
+        callsWrongNumber: prospectingResults.callsWrongNumber,
+        callsChannelUnavailable: prospectingResults.callsChannelUnavailable,
         callsFailed: prospectingResults.callsFailed,
         callsPending: taskCount(["IMMEDIATE_CALL", "CALL"], openStatuses),
         messages,
+        instagramMessagesCompleted: prospectingResults.instagramMessagesCompleted,
         instagramMessagesSent: prospectingResults.instagramMessagesSent,
+        instagramMessagesProfileNotFound: prospectingResults.instagramMessagesProfileNotFound,
+        instagramMessagesFailed: prospectingResults.instagramMessagesFailed,
+        instagramFollowsAttempted: prospectingResults.instagramFollowsAttempted,
         instagramFollowsCompleted: prospectingResults.instagramFollowsCompleted,
+        instagramFollowsAlreadyFollowing: prospectingResults.instagramFollowsAlreadyFollowing,
+        instagramFollowsProfileNotFound: prospectingResults.instagramFollowsProfileNotFound,
+        instagramFollowsFailed: prospectingResults.instagramFollowsFailed,
         messagesPending: taskCount(["MESSAGE", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"], openStatuses),
         emails: activityCount(["EMAIL"]),
         tasksDue,

@@ -28,6 +28,7 @@ import {
   applyProspectingTaskCompletionInTransaction,
   stopColdCadenceInTransaction,
 } from "@/modules/prospecting/application/prospecting-cadence-service";
+import { recordTaskCompletionMetricFactsInTransaction } from "@/modules/metrics/application/task-completion-metric-facts";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
@@ -769,6 +770,7 @@ export function createOperationalHistoryService(
           dueAt: true,
           opportunityId: true,
           meetingId: true,
+          assigneeMemberId: true,
         },
       });
       if (!task) notFound("Tarefa não encontrada.");
@@ -848,7 +850,7 @@ export function createOperationalHistoryService(
           nextTask,
         });
       }
-      await transaction.activity.create({
+      const activity = await transaction.activity.create({
         data: {
           workspaceId: context.workspaceId,
           leadId: lead.id,
@@ -875,6 +877,21 @@ export function createOperationalHistoryService(
           createdAt: completedAt,
           updatedAt: completedAt,
         },
+      });
+      await recordTaskCompletionMetricFactsInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        taskId: task.id,
+        leadId: lead.id,
+        opportunityId: task.opportunityId,
+        activityId: activity.id,
+        assigneeMemberId: task.assigneeMemberId,
+        performedByMemberId: "memberId" in context ? context.memberId : null,
+        leadOwnerMemberId: currentLead.ownerMemberId,
+        kind: task.kind,
+        result: parsed.data.result,
+        dueAt: task.dueAt,
+        completedAt,
+        executionMode: "memberId" in context ? "MANUAL" : context.actorType === "AUTOMATION" ? "AUTOMATION" : "SYSTEM",
       });
       await transaction.auditLog.create({
         data: {

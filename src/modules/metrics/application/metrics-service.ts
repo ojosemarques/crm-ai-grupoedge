@@ -976,28 +976,33 @@ export function createMetricsService(options: MetricsServiceOptions) {
     if (!workspace) invalidInput("Workspace não encontrado.");
     const where = await integratedFactWhere(options.database, context, scope, query);
     const [groups, leadFacts, latestBackfill, latestReconciliation] = await Promise.all([
-      options.database.commercialMetricFact.groupBy({ by: ["eventType"], where, _sum: { quantity: true, valueCents: true }, _max: { occurredAt: true } }),
-      options.database.commercialMetricFact.findMany({ where: { ...where, leadId: { not: null } }, select: { eventType: true, leadId: true, quantity: true } }),
+      options.database.commercialMetricFact.groupBy({ by: ["eventType", "result"], where, _sum: { quantity: true, valueCents: true }, _max: { occurredAt: true } }),
+      options.database.commercialMetricFact.findMany({ where: { ...where, leadId: { not: null } }, select: { eventType: true, result: true, leadId: true, quantity: true } }),
       options.database.commercialMetricBackfillRun.findFirst({ where: { workspaceId: context.workspaceId }, orderBy: [{ startedAt: "desc" }, { id: "desc" }] }),
       options.database.commercialMetricReconciliationRun.findFirst({ where: { workspaceId: context.workspaceId }, orderBy: [{ startedAt: "desc" }, { id: "desc" }] }),
     ]);
-    const byType = new Map(groups.map((group) => [group.eventType, group]));
-    const balances = new Map<string, number>();
-    for (const fact of leadFacts) {
-      const key = `${fact.eventType}:${fact.leadId}`;
-      balances.set(key, (balances.get(key) ?? 0) + fact.quantity);
-    }
-    const count = (types: readonly CommercialMetricEventType[]) => types.reduce((sum, type) => sum + Number(byType.get(type)?._sum.quantity ?? 0), 0);
-    const distinct = (types: readonly CommercialMetricEventType[]) => {
+    const eligibleResult = (result: string | null, results?: readonly string[]) => !results || (result !== null && results.includes(result));
+    const count = (types: readonly CommercialMetricEventType[], results?: readonly string[]) => groups
+      .filter((group) => types.includes(group.eventType) && eligibleResult(group.result, results))
+      .reduce((sum, group) => sum + Number(group._sum.quantity ?? 0), 0);
+    const distinct = (types: readonly CommercialMetricEventType[], results?: readonly string[]) => {
+      const balances = new Map<string, number>();
+      for (const fact of leadFacts) {
+        if (!types.includes(fact.eventType) || !eligibleResult(fact.result, results)) continue;
+        const key = `${fact.eventType}:${fact.leadId}`;
+        balances.set(key, (balances.get(key) ?? 0) + fact.quantity);
+      }
       const leads = new Set<string>();
-      for (const [key, balance] of balances) if (balance > 0 && types.some((type) => key.startsWith(`${type}:`))) leads.add(key.slice(key.indexOf(":") + 1));
+      for (const [key, balance] of balances) if (balance > 0) leads.add(key.slice(key.indexOf(":") + 1));
       return leads.size;
     };
-    const cents = (types: readonly CommercialMetricEventType[]) => types.reduce((sum, type) => sum + (byType.get(type)?._sum.valueCents ?? 0n), 0n);
+    const cents = (types: readonly CommercialMetricEventType[], results?: readonly string[]) => groups
+      .filter((group) => types.includes(group.eventType) && eligibleResult(group.result, results))
+      .reduce((sum, group) => sum + (group._sum.valueCents ?? 0n), 0n);
     const newest = groups.flatMap((group) => group._max.occurredAt ? [group._max.occurredAt] : []).sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
     const period = Object.freeze({ from: query.from, to: query.to, timeZone: workspace.timeZone, interval: "HALF_OPEN" as const });
     const values: CanonicalMetricValue[] = integratedMetricRegistry.map((definition) => {
-      const numerator = definition.aggregation === "DISTINCT_LEAD" ? distinct(definition.eventTypes) : definition.aggregation === "SUM_CENTS" ? cents(definition.eventTypes) : count(definition.eventTypes);
+      const numerator = definition.aggregation === "DISTINCT_LEAD" ? distinct(definition.eventTypes, definition.results) : definition.aggregation === "SUM_CENTS" ? cents(definition.eventTypes, definition.results) : count(definition.eventTypes, definition.results);
       const denominator = definition.denominatorEventTypes
         ? definition.denominatorAggregation === "DISTINCT_LEAD" ? distinct(definition.denominatorEventTypes) : count(definition.denominatorEventTypes)
         : null;
@@ -1069,6 +1074,7 @@ export function createMetricsService(options: MetricsServiceOptions) {
       where: {
         ...baseWhere,
         eventType: { in: [...definition.eventTypes] },
+        ...(definition.results ? { result: { in: [...definition.results] } } : {}),
         ...(cursorFact ? { OR: [{ occurredAt: { lt: cursorFact.occurredAt } }, { occurredAt: cursorFact.occurredAt, id: { lt: cursorFact.id } }] } : {}),
       },
       orderBy: [{ occurredAt: "desc" }, { id: "desc" }],

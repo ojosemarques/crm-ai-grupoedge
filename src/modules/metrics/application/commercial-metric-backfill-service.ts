@@ -7,6 +7,7 @@ import {
   type CommercialMetricFactInput,
   recordCommercialMetricFactInTransaction,
 } from "@/modules/metrics/application/commercial-metric-fact-writer";
+import { prospectingTaskMetricEvents } from "@/modules/prospecting/domain/prospecting-task-metric-events";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
@@ -115,12 +116,12 @@ function sources(database: PrismaClient, workspaceId: string): readonly Source[]
         sourceEntityType: "Task", sourceEntityId: task.id, leadId: task.leadId, opportunityId: task.opportunityId,
         meetingId: task.meetingId, taskId: task.id, creditedMemberId: task.assigneeMemberId, taskKind: task.kind, result: task.result,
         executionMode: task.automationRunId ? "AUTOMATION" as const : "SYSTEM" as const, safeMetadata: { provenance: "backfill" },
-      }, ...(task.kind === "INSTAGRAM_FOLLOW" ? [{
-        workspaceId, eventKey: `task:${task.id}:instagram-follow-completed:v1`, eventType: "INSTAGRAM_FOLLOW_COMPLETED" as const, occurredAt: task.completedAt,
+      }, ...prospectingTaskMetricEvents(task.kind, task.result).map((event) => ({
+        workspaceId, eventKey: `task:${task.id}:${event.eventKeySuffix}:v1`, eventType: event.eventType, occurredAt: task.completedAt!,
         sourceEntityType: "Task", sourceEntityId: task.id, leadId: task.leadId, opportunityId: task.opportunityId,
         meetingId: task.meetingId, taskId: task.id, creditedMemberId: task.assigneeMemberId, taskKind: task.kind, result: task.result,
-        executionMode: task.automationRunId ? "AUTOMATION" as const : "MANUAL" as const, safeMetadata: { provenance: "backfill" },
-      }] : [])] : []), ...(task.status === "CANCELLED" ? [{
+        channel: event.channel, direction: "OUTBOUND", executionMode: task.automationRunId ? "AUTOMATION" as const : "MANUAL" as const, safeMetadata: { provenance: "backfill" },
+      }))] : []), ...(task.status === "CANCELLED" ? [{
         workspaceId, eventKey: `task:${task.id}:cancelled:v1`, eventType: "TASK_CANCELLED" as const, occurredAt: task.completedAt ?? task.createdAt,
         sourceEntityType: "Task", sourceEntityId: task.id, leadId: task.leadId, opportunityId: task.opportunityId,
         meetingId: task.meetingId, taskId: task.id, creditedMemberId: task.assigneeMemberId, taskKind: task.kind, result: task.result,

@@ -6,6 +6,7 @@ export type IntegratedMetricDefinition = Readonly<{
   description: string;
   unit: "COUNT" | "CENTS" | "BASIS_POINTS" | "SECONDS";
   eventTypes: readonly CommercialMetricEventType[];
+  results?: readonly string[];
   aggregation: "COUNT" | "DISTINCT_LEAD" | "SUM_CENTS" | "RATE";
   denominatorEventTypes?: readonly CommercialMetricEventType[];
   denominatorAggregation?: "COUNT" | "DISTINCT_LEAD";
@@ -15,7 +16,7 @@ export type IntegratedMetricDefinition = Readonly<{
 
 const metric = (definition: IntegratedMetricDefinition) => Object.freeze(definition);
 
-export const INTEGRATED_METRIC_REGISTRY_VERSION = "indicators.1";
+export const INTEGRATED_METRIC_REGISTRY_VERSION = "indicators.2";
 
 export const integratedMetricRegistry = Object.freeze([
   metric({ id: "work.tasks_created", label: "Tarefas criadas", description: "Tarefas persistidas no período.", unit: "COUNT", eventTypes: ["TASK_CREATED"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
@@ -27,9 +28,14 @@ export const integratedMetricRegistry = Object.freeze([
   metric({ id: "outreach.calls_connected", label: "Ligações atendidas", description: "Conexões humanas confirmadas.", unit: "COUNT", eventTypes: ["CALL_CONNECTED"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
   metric({ id: "outreach.calls_unanswered", label: "Ligações sem atendimento", description: "Busy, no-answer ou voicemail.", unit: "COUNT", eventTypes: ["CALL_UNANSWERED"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
   metric({ id: "outreach.calls_failed", label: "Ligações com falha", description: "Falhas terminais de chamada.", unit: "COUNT", eventTypes: ["CALL_FAILED"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
+  metric({ id: "outreach.calls_no_answer", label: "Não atendeu", description: "Ligações concluídas com resultado não atendeu.", unit: "COUNT", eventTypes: ["CALL_UNANSWERED"], results: ["NO_ANSWER"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
+  metric({ id: "outreach.calls_busy", label: "Ocupado", description: "Ligações concluídas com linha ocupada.", unit: "COUNT", eventTypes: ["CALL_UNANSWERED"], results: ["BUSY"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
+  metric({ id: "outreach.calls_voicemail", label: "Caixa postal", description: "Ligações direcionadas à caixa postal.", unit: "COUNT", eventTypes: ["CALL_UNANSWERED"], results: ["VOICEMAIL"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
+  metric({ id: "outreach.calls_wrong_number", label: "Número incorreto", description: "Ligações concluídas com número incorreto.", unit: "COUNT", eventTypes: ["CALL_FAILED"], results: ["WRONG_NUMBER"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
+  metric({ id: "outreach.calls_channel_unavailable", label: "Canal indisponível", description: "Ligações sem canal telefônico utilizável.", unit: "COUNT", eventTypes: ["CALL_FAILED"], results: ["CHANNEL_UNAVAILABLE"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
   metric({ id: "outreach.call_connection_rate", label: "Taxa de conexão", description: "Ligações atendidas sobre tentadas.", unit: "BASIS_POINTS", eventTypes: ["CALL_CONNECTED"], denominatorEventTypes: ["CALL_ATTEMPTED"], aggregation: "RATE", desiredDirection: "UP", limitations: [] }),
-  metric({ id: "outreach.instagram_messages", label: "Mensagens Instagram", description: "Mensagens efetivamente enviadas.", unit: "COUNT", eventTypes: ["INSTAGRAM_MESSAGE_SENT"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
-  metric({ id: "outreach.instagram_follows", label: "Perfis seguidos", description: "Ações de follow concluídas.", unit: "COUNT", eventTypes: ["INSTAGRAM_FOLLOW_COMPLETED"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
+  metric({ id: "outreach.instagram_messages", label: "Mensagens Instagram", description: "Mensagens efetivamente enviadas.", unit: "COUNT", eventTypes: ["INSTAGRAM_MESSAGE_SENT"], results: ["SENT"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
+  metric({ id: "outreach.instagram_follows", label: "Perfis seguidos", description: "Ações de follow realmente concluídas.", unit: "COUNT", eventTypes: ["INSTAGRAM_FOLLOW_COMPLETED"], results: ["COMPLETED"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
   metric({ id: "outreach.inbound_responses", label: "Respostas humanas", description: "Primeira resposta humana confirmada por lead.", unit: "COUNT", eventTypes: ["HUMAN_RESPONSE_CONFIRMED"], aggregation: "DISTINCT_LEAD", desiredDirection: "UP", limitations: [] }),
   metric({ id: "outreach.response_rate", label: "Taxa de resposta", description: "Leads com primeira resposta humana sobre leads abordados.", unit: "BASIS_POINTS", eventTypes: ["HUMAN_RESPONSE_CONFIRMED"], denominatorEventTypes: ["CALL_ATTEMPTED", "INSTAGRAM_MESSAGE_SENT", "EMAIL_SENT"], denominatorAggregation: "DISTINCT_LEAD", aggregation: "RATE", desiredDirection: "UP", limitations: [] }),
   metric({ id: "outreach.effective_contacts", label: "Contatos efetivos", description: "Leads distintos com resposta ou ligação conectada.", unit: "COUNT", eventTypes: ["HUMAN_RESPONSE_CONFIRMED", "CALL_CONNECTED"], aggregation: "DISTINCT_LEAD", desiredDirection: "UP", limitations: [] }),

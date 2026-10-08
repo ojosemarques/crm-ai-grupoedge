@@ -76,11 +76,12 @@ describe("razão comercial integrada", () => {
         const callId = randomUUID();
         const lead = leadIds[index]!;
         await recordCommercialMetricFactInTransaction(tx, { workspaceId: context.workspaceId, eventKey: `known:${callId}:attempt:v1`, eventType: "CALL_ATTEMPTED", occurredAt: from, sourceEntityType: "PhoneCall", sourceEntityId: callId, phoneCallId: callId, leadId: lead, creditedMemberId: context.memberId });
-        await recordCommercialMetricFactInTransaction(tx, { workspaceId: context.workspaceId, eventKey: `known:${callId}:result:v1`, eventType: index < 6 ? "CALL_CONNECTED" : "CALL_UNANSWERED", occurredAt: from, sourceEntityType: "PhoneCall", sourceEntityId: callId, phoneCallId: callId, leadId: lead, creditedMemberId: context.memberId });
+        const result = index < 6 ? "CONNECTED" : index < 11 ? "NO_ANSWER" : index < 13 ? "BUSY" : "VOICEMAIL";
+        await recordCommercialMetricFactInTransaction(tx, { workspaceId: context.workspaceId, eventKey: `known:${callId}:result:v1`, eventType: index < 6 ? "CALL_CONNECTED" : "CALL_UNANSWERED", occurredAt: from, sourceEntityType: "PhoneCall", sourceEntityId: callId, phoneCallId: callId, leadId: lead, creditedMemberId: context.memberId, result });
       }
       for (let index = 0; index < 15; index += 1) {
         const messageId = randomUUID();
-        await recordCommercialMetricFactInTransaction(tx, { workspaceId: context.workspaceId, eventKey: `known:${messageId}:instagram:v1`, eventType: "INSTAGRAM_MESSAGE_SENT", occurredAt: from, sourceEntityType: "Message", sourceEntityId: messageId, messageId, leadId: leadIds[(index + 5) % leadIds.length]!, creditedMemberId: context.memberId, channel: "INSTAGRAM", direction: "OUTBOUND" });
+        await recordCommercialMetricFactInTransaction(tx, { workspaceId: context.workspaceId, eventKey: `known:${messageId}:instagram:v1`, eventType: "INSTAGRAM_MESSAGE_SENT", occurredAt: from, sourceEntityType: "Message", sourceEntityId: messageId, messageId, leadId: leadIds[(index + 5) % leadIds.length]!, creditedMemberId: context.memberId, channel: "INSTAGRAM", direction: "OUTBOUND", result: "SENT" });
       }
       for (let index = 0; index < 5; index += 1) {
         const messageId = randomUUID();
@@ -104,6 +105,9 @@ describe("razão comercial integrada", () => {
     expect(value("outreach.calls_attempted")?.value).toBe(15);
     expect(value("outreach.calls_connected")?.value).toBe(6);
     expect(value("outreach.calls_unanswered")?.value).toBe(9);
+    expect(value("outreach.calls_no_answer")?.value).toBe(5);
+    expect(value("outreach.calls_busy")?.value).toBe(2);
+    expect(value("outreach.calls_voicemail")?.value).toBe(2);
     expect(value("outreach.call_connection_rate")?.value).toBe(4_000);
     expect(value("outreach.instagram_messages")?.value).toBe(15);
     expect(value("work.politicians_touched")?.value).toBe(20);
@@ -117,6 +121,9 @@ describe("razão comercial integrada", () => {
     const drilldown = await metrics.getIntegratedDrilldown(context, { metricId: "outreach.calls_attempted", query: { from: from.toISOString(), to: to.toISOString(), filters: {} }, limit: 20 });
     expect(performance.now() - drilldownStartedAt).toBeLessThan(1_000);
     expect(drilldown.records).toHaveLength(15);
+    const noAnswerDrilldown = await metrics.getIntegratedDrilldown(context, { metricId: "outreach.calls_no_answer", query: { from: from.toISOString(), to: to.toISOString(), filters: {} }, limit: 20 });
+    expect(noAnswerDrilldown.records).toHaveLength(5);
+    expect(noAnswerDrilldown.records.every((record) => record.result === "NO_ANSWER")).toBe(true);
   });
 
   it("corrige por fato compensatório e mantém a tabela append-only", async () => {

@@ -188,7 +188,7 @@ describe("histórico operacional baseado em eventos", () => {
       },
     });
 
-    const [storedTask, nextTask, taskAudits, taskActivities] = await Promise.all([
+    const [storedTask, nextTask, taskAudits, taskActivities, metricFacts] = await Promise.all([
       database.task.findUniqueOrThrow({ where: { id: task.id } }),
       database.task.findUniqueOrThrow({ where: { id: completed.nextTaskId! } }),
       database.auditLog.count({
@@ -202,6 +202,10 @@ describe("histórico operacional baseado em eventos", () => {
       database.activity.count({
         where: { workspaceId, leadId: lead.leadId, type: "TASK" },
       }),
+      database.commercialMetricFact.findMany({
+        where: { workspaceId, taskId: task.id },
+        select: { eventType: true, result: true, creditedMemberId: true, performedByMemberId: true },
+      }),
     ]);
     expect(storedTask).toMatchObject({
       status: "COMPLETED",
@@ -214,6 +218,12 @@ describe("histórico operacional baseado em eventos", () => {
     });
     expect(taskAudits).toBeGreaterThanOrEqual(3);
     expect(taskActivities).toBe(4);
+    expect(metricFacts).toEqual([{
+      eventType: "TASK_COMPLETED",
+      result: "Contexto confirmado com o responsável.",
+      creditedMemberId: storedTask.assigneeMemberId,
+      performedByMemberId: managerContext.memberId,
+    }]);
     const summary = await service.getLeadOperations(managerContext, {
       leadId: lead.leadId,
     });

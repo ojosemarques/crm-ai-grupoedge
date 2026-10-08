@@ -5,6 +5,7 @@ import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { resolveLeadVisibilityScope } from "@/modules/leads/application/lead-list-service";
 import { PROSPECTING_EMAIL_TEMPLATE_COUNT } from "@/modules/prospecting/domain/prospecting-email-sequence";
+import { summarizeProspectingTaskResults } from "@/modules/prospecting/domain/prospecting-daily-metrics";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { addLocalDays, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 import { z } from "zod";
@@ -120,6 +121,9 @@ export function createProspectingWorkspaceService(options: Readonly<{
       releasesThirtyDays,
       conversationsThirtyDays,
       latestSourceObservation,
+      dailyTaskResults,
+      dailyTouchedRows,
+      dailyMeetingsScheduled,
     ] = await Promise.all([
       options.database.prospectingSettings.findUnique({ where: { workspaceId: context.workspaceId } }),
       manageDecision.allowed ? options.database.prospectingReconciliationState.findUnique({
@@ -179,7 +183,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       }),
       options.database.prospectingCadenceInstance.groupBy({ by: ["status"], where: { workspaceId: context.workspaceId, ownerMemberId: memberScope }, _count: { _all: true } }),
       options.database.task.findMany({
-        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: today.start, lt: today.end }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, result: { not: "CHANNEL_UNAVAILABLE" }, deletedAt: null },
+        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: today.start, lt: today.end }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
         distinct: ["leadId"], select: { leadId: true },
       }),
       options.database.prospectRelease.count({ where: { workspaceId: context.workspaceId, plannedMemberId: memberScope, releasedAt: { gte: today.start, lt: today.end }, status: "RELEASED" } }),
@@ -203,7 +207,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       options.database.$queryRaw<CapacityTaskRow[]>(Prisma.sql`
         SELECT task."assigneeMemberId" AS "memberId",
                (task."dueAt" AT TIME ZONE ${workspace.timeZone})::date AS "localDate",
-               COUNT(DISTINCT task."leadId") FILTER (WHERE task."status"::text = 'COMPLETED' AND COALESCE(task."result", '') <> 'CHANNEL_UNAVAILABLE')::bigint AS realized,
+               COUNT(DISTINCT task."leadId") FILTER (WHERE task."status"::text = 'COMPLETED')::bigint AS realized,
                COUNT(DISTINCT task."leadId") FILTER (WHERE task."status"::text IN ('OPEN', 'IN_PROGRESS'))::bigint AS scheduled
         FROM "tasks" task
         WHERE task."workspaceId" = ${context.workspaceId}::uuid
@@ -224,7 +228,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       }),
       options.database.task.groupBy({
         by: ["kind"],
-        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: thirtyDaysAgo }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, result: { not: "CHANNEL_UNAVAILABLE" }, deletedAt: null },
+        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: thirtyDaysAgo }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
         _count: { _all: true },
       }),
       options.database.task.groupBy({
@@ -236,6 +240,20 @@ export function createProspectingWorkspaceService(options: Readonly<{
       options.database.prospectRelease.count({ where: { workspaceId: context.workspaceId, plannedMemberId: memberScope, status: "RELEASED", releasedAt: { gte: thirtyDaysAgo } } }),
       options.database.prospectingCadenceInstance.count({ where: { workspaceId: context.workspaceId, ownerMemberId: memberScope, status: "CONVERSATION_STARTED", stoppedAt: { gte: thirtyDaysAgo } } }),
       options.database.prospectCandidateSource.aggregate({ where: { workspaceId: context.workspaceId, ...(scopedMemberIds === null ? {} : { candidateId: { in: scopedCandidateIds } }) }, _max: { observedAt: true } }),
+      options.database.task.groupBy({
+        by: ["assigneeMemberId", "kind", "result"],
+        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: today.start, lt: today.end }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
+        _count: { _all: true },
+      }),
+      options.database.task.findMany({
+        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: today.start, lt: today.end }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
+        select: { assigneeMemberId: true, leadId: true },
+      }),
+      options.database.commercialMetricFact.groupBy({
+        by: ["bookedByMemberId"],
+        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", occurredAt: { gte: today.start, lt: today.end }, bookedByMemberId: scopedMemberIds === null ? { not: null } : { in: scopedMemberIds }, reversedAt: null },
+        _sum: { quantity: true },
+      }),
     ]);
 
     const candidateSourceCounts = await options.database.prospectCandidateSource.groupBy({
@@ -254,6 +272,14 @@ export function createProspectingWorkspaceService(options: Readonly<{
       select: { id: true, user: { select: { displayName: true } } },
     });
     const memberById = new Map(memberRows.map((member) => [member.id, member]));
+    const dailyMeetingsByMember = new Map(dailyMeetingsScheduled.flatMap((row) => row.bookedByMemberId ? [[row.bookedByMemberId, Number(row._sum.quantity ?? 0)] as const] : []));
+    const dailyTouchedByMember = new Map<string, Set<string>>();
+    for (const row of dailyTouchedRows) {
+      if (!row.assigneeMemberId) continue;
+      const touched = dailyTouchedByMember.get(row.assigneeMemberId) ?? new Set<string>();
+      touched.add(row.leadId);
+      dailyTouchedByMember.set(row.assigneeMemberId, touched);
+    }
     const candidateCount = (status: string) => candidateCounts.find((row) => row.status === status)?._count._all ?? 0;
     const readyOrPlanned = candidateCount("READY") + candidateCount("PLANNED");
     const dailyNewCapacity = sellers.filter((seller) => seller.active).reduce((sum, seller) => sum + seller.dailyCapacity, 0);
@@ -328,6 +354,16 @@ export function createProspectingWorkspaceService(options: Readonly<{
         conversationsThirtyDays,
         lastSourceObservedAt: latestSourceObservation._max.observedAt?.toISOString() ?? null,
         politiciansTouchedToday: touchedToday.length, releasesToday, meetingsThirtyDays: meetingsThirtyDays.length,
+        dailyBySeller: sellers.map((seller) => {
+          const summary = summarizeProspectingTaskResults(dailyTaskResults.filter((row) => row.assigneeMemberId === seller.memberId).map((row) => ({ kind: row.kind, result: row.result, count: row._count._all })));
+          return {
+            memberId: seller.memberId,
+            memberName: memberById.get(seller.memberId)?.user.displayName ?? "Membro indisponível",
+            politiciansWorked: dailyTouchedByMember.get(seller.memberId)?.size ?? 0,
+            meetingsScheduled: dailyMeetingsByMember.get(seller.memberId) ?? 0,
+            ...summary,
+          };
+        }),
       },
     };
   }
