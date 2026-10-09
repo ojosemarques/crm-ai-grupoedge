@@ -12,7 +12,7 @@ import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
 
-const RULE_VERSION = 1;
+const RULE_VERSION = 2;
 const inputSchema = z.object({
   mode: z.enum(["DRY_RUN", "APPLY"]),
   runKey: z.string().trim().regex(/^[a-z0-9][a-z0-9:._-]{7,160}$/),
@@ -86,20 +86,56 @@ function sources(database: PrismaClient, workspaceId: string): readonly Source[]
     },
     {
       name: "stage_history",
-      fetch: async (cursor, take) => page(await database.stageHistory.findMany({
-        where: { workspaceId, ...(cursor ? { id: { gt: cursor } } : {}) }, orderBy: { id: "asc" }, take,
-        select: { id: true, leadId: true, opportunityId: true, pipelineId: true, stageId: true, enteredAt: true, exitedAt: true, transitionOrigin: true },
-      }), (history) => [{
-        workspaceId, eventKey: `stage-history:${history.id}:entered:v1`, eventType: "STAGE_ENTERED", occurredAt: history.enteredAt,
-        sourceEntityType: "StageHistory", sourceEntityId: history.id, leadId: history.leadId, opportunityId: history.opportunityId,
-        pipelineId: history.pipelineId, stageId: history.stageId, toStageId: history.stageId,
-        executionMode: history.transitionOrigin === "AUTOMATION" ? "AUTOMATION" : history.transitionOrigin === "SYSTEM" || history.transitionOrigin === "INTAKE" ? "SYSTEM" : "MANUAL",
-        safeMetadata: { provenance: "backfill" },
-      }, ...(history.exitedAt ? [{
-        workspaceId, eventKey: `stage-history:${history.id}:exited:v1`, eventType: "STAGE_EXITED" as const, occurredAt: history.exitedAt,
-        sourceEntityType: "StageHistory", sourceEntityId: history.id, leadId: history.leadId, opportunityId: history.opportunityId,
-        pipelineId: history.pipelineId, stageId: history.stageId, fromStageId: history.stageId, safeMetadata: { provenance: "backfill" },
-      }] : [])]),
+      fetch: async (cursor, take) => {
+        const histories = await database.stageHistory.findMany({
+          where: { workspaceId, ...(cursor ? { id: { gt: cursor } } : {}) }, orderBy: { id: "asc" }, take,
+          select: {
+            id: true, leadId: true, opportunityId: true, pipelineId: true, stageId: true,
+            enteredAt: true, exitedAt: true, transitionOrigin: true,
+            enteredBy: { select: { userId: true } },
+            stage: { select: { leadStageCode: true } },
+            lead: { select: { ownerMemberId: true } },
+          },
+        });
+        const userIds = histories.flatMap((history) => history.enteredBy.userId ? [history.enteredBy.userId] : []);
+        const members = await database.workspaceMember.findMany({
+          where: { workspaceId, userId: { in: userIds }, deletedAt: null },
+          select: { id: true, userId: true },
+        });
+        const memberByUserId = new Map(members.map((member) => [member.userId, member.id]));
+        return page(histories, (history) => {
+          const performedByMemberId = history.enteredBy.userId
+            ? memberByUserId.get(history.enteredBy.userId) ?? null
+            : null;
+          const executionMode = history.transitionOrigin === "AUTOMATION"
+            ? "AUTOMATION" as const
+            : history.transitionOrigin === "SYSTEM" || history.transitionOrigin === "INTAKE"
+              ? "SYSTEM" as const
+              : "MANUAL" as const;
+          const bookingMemberId = performedByMemberId ?? history.lead?.ownerMemberId ?? null;
+          return [{
+            workspaceId, eventKey: `stage-history:${history.id}:entered:v1`, eventType: "STAGE_ENTERED", occurredAt: history.enteredAt,
+            sourceEntityType: "StageHistory", sourceEntityId: history.id, leadId: history.leadId, opportunityId: history.opportunityId,
+            pipelineId: history.pipelineId, stageId: history.stageId, toStageId: history.stageId,
+            creditedMemberId: history.lead?.ownerMemberId ?? null, performedByMemberId,
+            leadOwnerMemberIdAtEvent: history.lead?.ownerMemberId ?? null, executionMode,
+            safeMetadata: { provenance: "backfill" },
+          }, ...(history.exitedAt ? [{
+            workspaceId, eventKey: `stage-history:${history.id}:exited:v1`, eventType: "STAGE_EXITED" as const, occurredAt: history.exitedAt,
+            sourceEntityType: "StageHistory", sourceEntityId: history.id, leadId: history.leadId, opportunityId: history.opportunityId,
+            pipelineId: history.pipelineId, stageId: history.stageId, fromStageId: history.stageId,
+            creditedMemberId: history.lead?.ownerMemberId ?? null, leadOwnerMemberIdAtEvent: history.lead?.ownerMemberId ?? null,
+            safeMetadata: { provenance: "backfill" },
+          }] : []), ...(history.stage.leadStageCode === "MEETING_SCHEDULED" && history.transitionOrigin !== "MEETING" ? [{
+            workspaceId, eventKey: `stage-history:${history.id}:meeting-scheduled:v1`, eventType: "MEETING_SCHEDULED" as const, occurredAt: history.enteredAt,
+            sourceEntityType: "StageHistory", sourceEntityId: history.id, leadId: history.leadId,
+            pipelineId: history.pipelineId, stageId: history.stageId, toStageId: history.stageId,
+            creditedMemberId: bookingMemberId, performedByMemberId, bookedByMemberId: bookingMemberId,
+            leadOwnerMemberIdAtEvent: history.lead?.ownerMemberId ?? null, executionMode,
+            result: "STAGE_TRANSITION", safeMetadata: { provenance: "backfill", bookingBasis: "meeting_scheduled_stage_entry" },
+          }] : [])];
+        });
+      },
     },
     {
       name: "tasks",

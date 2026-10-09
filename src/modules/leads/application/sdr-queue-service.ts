@@ -855,6 +855,8 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         },
         calls,
         callsConnected: prospectingResults.callsConnected,
+        callsCallbackRequested: prospectingResults.callsCallbackRequested,
+        callsWhatsappShared: prospectingResults.callsWhatsappShared,
         callsNoAnswer: prospectingResults.callsNoAnswer,
         callsBusy: prospectingResults.callsBusy,
         callsVoicemail: prospectingResults.callsVoicemail,

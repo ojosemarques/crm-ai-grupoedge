@@ -6,6 +6,8 @@ describe("métricas diárias da prospecção", () => {
   it("separa conclusão, atendimento e cada desfecho sem perder tentativas", () => {
     expect(summarizeProspectingTaskResults([
       { kind: "CALL", result: "CONNECTED", count: 2 },
+      { kind: "CALL", result: "CALLBACK_REQUESTED", count: 2 },
+      { kind: "CALL", result: "WHATSAPP_SHARED", count: 1 },
       { kind: "CALL", result: "NO_ANSWER", count: 3 },
       { kind: "CALL", result: "BUSY", count: 4 },
       { kind: "CALL", result: "VOICEMAIL", count: 5 },
@@ -19,8 +21,10 @@ describe("métricas diárias da prospecção", () => {
       { kind: "INSTAGRAM_FOLLOW", result: "PROFILE_NOT_FOUND", count: 2 },
       { kind: "INSTAGRAM_FOLLOW", result: "CHANNEL_UNAVAILABLE", count: 1 },
     ])).toEqual({
-      callsCompleted: 17,
-      callsConnected: 2,
+      callsCompleted: 20,
+      callsConnected: 5,
+      callsCallbackRequested: 2,
+      callsWhatsappShared: 1,
       callsNoAnswer: 3,
       callsBusy: 4,
       callsVoicemail: 5,

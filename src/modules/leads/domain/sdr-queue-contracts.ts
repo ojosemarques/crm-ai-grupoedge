@@ -118,6 +118,8 @@ export type SdrQueueScreen = Readonly<{
     }>;
     calls: number;
     callsConnected: number;
+    callsCallbackRequested: number;
+    callsWhatsappShared: number;
     callsNoAnswer: number;
     callsBusy: number;
     callsVoicemail: number;

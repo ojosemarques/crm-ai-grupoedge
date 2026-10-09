@@ -45,6 +45,7 @@ describe("cadência de prospecção política", () => {
   it("registra motivo automático para resultados de exceção sem exigir texto adicional", () => {
     expect(ACCEPTED_MANUAL_RESULTS.INSTAGRAM_MESSAGE).toContain("PROFILE_NOT_FOUND");
     expect(ACCEPTED_MANUAL_RESULTS.INSTAGRAM_FOLLOW).toContain("PROFILE_NOT_FOUND");
+    expect(ACCEPTED_MANUAL_RESULTS.CALL).toEqual(expect.arrayContaining(["CALLBACK_REQUESTED", "WHATSAPP_SHARED"]));
     expect(resolveProspectingManualResultReason("WRONG_NUMBER")).toBe("Número incorreto informado pelo vendedor.");
     expect(resolveProspectingManualResultReason("CHANNEL_UNAVAILABLE")).toBe("Canal indisponível informado pelo vendedor.");
     expect(resolveProspectingManualResultReason("FAILED")).toBe("Falha informada pelo vendedor.");

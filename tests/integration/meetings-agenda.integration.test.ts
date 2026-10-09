@@ -198,6 +198,9 @@ describe("agenda interna e reuniões", () => {
     expect(stored.interestSummary).toBeNull();
     expect(stored.qualification).toBeNull();
     expect(stored.currentStage.leadStageCode).toBe("MEETING_SCHEDULED");
+    expect(await database.commercialMetricFact.count({
+      where: { workspaceId, leadId: created.leadId, eventType: "MEETING_SCHEDULED", reversedAt: null },
+    })).toBe(1);
   });
 
   it("agenda de forma atômica, cria tarefa, atualiza pipeline, timeline e auditoria", async () => {

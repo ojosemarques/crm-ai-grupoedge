@@ -35,6 +35,8 @@ const AUTO_REFRESH_SECONDS = 30;
 const cadenceResultOptions: Readonly<Record<string, readonly Readonly<{ value: string; label: string }>[]>> = {
   CALL: [
     { value: "CONNECTED", label: "Conectou" },
+    { value: "CALLBACK_REQUESTED", label: "Pediu retorno" },
+    { value: "WHATSAPP_SHARED", label: "Passou contato/WhatsApp" },
     { value: "NO_ANSWER", label: "Não atendeu" },
     { value: "BUSY", label: "Ocupado" },
     { value: "VOICEMAIL", label: "Caixa postal" },
@@ -712,7 +714,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
           <button onClick={() => selectSection("RETURN_TODAY")} type="button"><span>Retornos</span><strong>{screen.dailyProduction.prospecting.returns}</strong><small>Fora da meta de prospecção fria</small></button>
           <Link href="/atividades"><span>Cadência</span><strong>{screen.dailyProduction.prospecting.cadence}</strong><small>Políticos em nova tentativa</small></Link>
           <Link href="/email-agente?view=stock"><span>Novos liberados</span><strong>{screen.dailyProduction.prospecting.newlyReleased}</strong><small>Usados para completar a meta</small></Link>
-          <Link href="/atividades"><span>Ligações para fazer</span><strong>{screen.dailyProduction.callsPending}</strong><small>{screen.dailyProduction.calls} feitas · {screen.dailyProduction.callsConnected} conectadas · {screen.dailyProduction.callsNoAnswer} não atenderam · {screen.dailyProduction.callsBusy} ocupadas · {screen.dailyProduction.callsVoicemail} caixa postal · {screen.dailyProduction.callsWrongNumber} número incorreto · {screen.dailyProduction.callsChannelUnavailable} sem canal</small></Link>
+          <Link href="/atividades"><span>Ligações para fazer</span><strong>{screen.dailyProduction.callsPending}</strong><small>{screen.dailyProduction.calls} feitas · {screen.dailyProduction.callsConnected} contatos efetivos · {screen.dailyProduction.callsCallbackRequested} pediram retorno · {screen.dailyProduction.callsWhatsappShared} passaram WhatsApp · {screen.dailyProduction.callsNoAnswer} não atenderam · {screen.dailyProduction.callsBusy} ocupadas · {screen.dailyProduction.callsVoicemail} caixa postal · {screen.dailyProduction.callsWrongNumber} número incorreto · {screen.dailyProduction.callsChannelUnavailable} sem canal</small></Link>
           <Link href="/atividades"><span>Instagram</span><strong>{screen.dailyProduction.messagesPending}</strong><small>{screen.dailyProduction.instagramMessagesSent} mensagens enviadas · {screen.dailyProduction.instagramFollowsCompleted} perfis seguidos · {screen.dailyProduction.instagramFollowsAlreadyFollowing} já seguidos · {screen.dailyProduction.instagramFollowsProfileNotFound + screen.dailyProduction.instagramMessagesProfileNotFound} perfis não encontrados · {screen.dailyProduction.instagramFollowsFailed + screen.dailyProduction.instagramMessagesFailed} falhas</small></Link>
           <button onClick={() => selectSection("OVERDUE")} type="button"><span>Acompanhamentos atrasados</span><strong>{screen.dailyProduction.overdueFollowUps}</strong><small>Abrir fila de atrasados</small></button>
           <Link href="/agenda"><span>Reuniões marcadas hoje</span><strong>{screen.dailyProduction.meetingsScheduled}</strong><small>{screen.dailyProduction.meetingsToday} na agenda hoje · {screen.dailyProduction.meetingsCompleted} realizadas</small></Link>

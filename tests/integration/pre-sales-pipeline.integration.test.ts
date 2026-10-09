@@ -252,6 +252,33 @@ describe("pipeline de pré-vendas e transições", () => {
     })).rejects.toThrow(/immutable/);
   });
 
+  it("registra agendamento quando o card entra manualmente em Reunião agendada", async () => {
+    const lead = await createLead("CRM14 reunião por card");
+    clock = new Date(clock.getTime() + 60_000);
+    await transition(lead.leadId, "MEETING_SCHEDULED", { context: managerContext });
+
+    const fact = await database.commercialMetricFact.findFirstOrThrow({
+      where: {
+        workspaceId,
+        leadId: lead.leadId,
+        sourceEntityType: "StageHistory",
+        eventType: "MEETING_SCHEDULED",
+      },
+      select: {
+        creditedMemberId: true,
+        performedByMemberId: true,
+        bookedByMemberId: true,
+        result: true,
+      },
+    });
+    expect(fact).toEqual({
+      creditedMemberId: managerContext.memberId,
+      performedByMemberId: managerContext.memberId,
+      bookedByMemberId: managerContext.memberId,
+      result: "STAGE_TRANSITION",
+    });
+  });
+
   it("permite mover livremente sem fluxo, PACTO ou próxima ação obrigatórios", async () => {
     const direct = await createLead("CRM14 movimento livre");
     const initial = await state(direct.leadId);

@@ -220,6 +220,8 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
     "work.tasks_completed",
     "outreach.calls_attempted",
     "outreach.calls_connected",
+    "outreach.calls_callback_requested",
+    "outreach.calls_whatsapp_shared",
     "outreach.calls_no_answer",
     "outreach.calls_busy",
     "outreach.calls_voicemail",

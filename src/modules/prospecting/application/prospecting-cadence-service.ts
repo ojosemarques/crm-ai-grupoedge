@@ -200,7 +200,7 @@ export async function applyProspectingTaskCompletionInTransaction(
     await stopColdCadenceInTransaction(transaction, { workspaceId: input.workspaceId, leadId: input.leadId, actorId: input.actorId, reason: input.stopReason, occurredAt: input.completedAt });
     return { terminal: true as const, nextActionAt: null, nextActionDescription: null };
   }
-  if (step.action === "CALL" && code === "CONNECTED") {
+  if (step.action === "CALL" && ["CONNECTED", "CALLBACK_REQUESTED", "WHATSAPP_SHARED"].includes(code)) {
     await stopColdCadenceInTransaction(transaction, { workspaceId: input.workspaceId, leadId: input.leadId, actorId: input.actorId, reason: "HUMAN_REPLY", occurredAt: input.completedAt });
     return { terminal: false as const, nextActionAt: input.completedAt, nextActionDescription: "Atender conversa iniciada" };
   }

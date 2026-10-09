@@ -104,6 +104,8 @@ describe("razão comercial integrada", () => {
     expect(value("work.tasks_completed")?.value).toBe(30);
     expect(value("outreach.calls_attempted")?.value).toBe(15);
     expect(value("outreach.calls_connected")?.value).toBe(6);
+    expect(value("outreach.calls_callback_requested")?.value).toBe(0);
+    expect(value("outreach.calls_whatsapp_shared")?.value).toBe(0);
     expect(value("outreach.calls_unanswered")?.value).toBe(9);
     expect(value("outreach.calls_no_answer")?.value).toBe(5);
     expect(value("outreach.calls_busy")?.value).toBe(2);

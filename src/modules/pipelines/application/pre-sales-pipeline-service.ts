@@ -424,6 +424,23 @@ export async function transitionLeadStageInTransaction(
     },
     select: { id: true },
   });
+  const transitionActor = await transaction.actor.findFirst({
+    where: { id: context.actorId, workspaceId: context.workspaceId },
+    select: { userId: true },
+  });
+  const performedByMember = transitionActor?.userId
+    ? await transaction.workspaceMember.findFirst({
+        where: {
+          workspaceId: context.workspaceId,
+          userId: transitionActor.userId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      })
+    : null;
+  const executionMode = input.origin === "AUTOMATION" || input.origin === "SYSTEM"
+    ? "AUTOMATION" as const
+    : "MANUAL" as const;
   await recordCommercialMetricFactInTransaction(transaction, {
     workspaceId: context.workspaceId,
     eventKey: `stage-history:${currentHistory.id}:exited:v1`,
@@ -438,10 +455,10 @@ export async function transitionLeadStageInTransaction(
     fromStageId: lead.currentStage.id,
     toStageId: target.id,
     creditedMemberId: lead.ownerMemberId,
-    performedByMemberId: null,
+    performedByMemberId: performedByMember?.id ?? null,
     leadOwnerMemberIdAtEvent: lead.ownerMemberId,
     result: input.managerCorrection ? "MANAGER_CORRECTION" : "TRANSITION",
-    executionMode: input.origin === "AUTOMATION" || input.origin === "SYSTEM" ? "AUTOMATION" : "MANUAL",
+    executionMode,
   });
   await recordCommercialMetricFactInTransaction(transaction, {
     workspaceId: context.workspaceId,
@@ -457,10 +474,35 @@ export async function transitionLeadStageInTransaction(
     fromStageId: lead.currentStage.id,
     toStageId: target.id,
     creditedMemberId: lead.ownerMemberId,
+    performedByMemberId: performedByMember?.id ?? null,
     leadOwnerMemberIdAtEvent: lead.ownerMemberId,
     result: input.managerCorrection ? "MANAGER_CORRECTION" : "TRANSITION",
-    executionMode: input.origin === "AUTOMATION" || input.origin === "SYSTEM" ? "AUTOMATION" : "MANUAL",
+    executionMode,
   });
+  if (target.leadStageCode === "MEETING_SCHEDULED" && input.origin !== "MEETING") {
+    const bookingMemberId = performedByMember?.id ?? lead.ownerMemberId;
+    await recordCommercialMetricFactInTransaction(transaction, {
+      workspaceId: context.workspaceId,
+      eventKey: `stage-history:${enteredHistory.id}:meeting-scheduled:v1`,
+      eventType: "MEETING_SCHEDULED",
+      occurredAt,
+      sourceEntityType: "StageHistory",
+      sourceEntityId: enteredHistory.id,
+      leadId: lead.id,
+      activityId: activity.id,
+      pipelineId: lead.pipelineId,
+      stageId: target.id,
+      fromStageId: lead.currentStage.id,
+      toStageId: target.id,
+      creditedMemberId: bookingMemberId,
+      performedByMemberId: performedByMember?.id ?? null,
+      bookedByMemberId: bookingMemberId,
+      leadOwnerMemberIdAtEvent: lead.ownerMemberId,
+      result: input.managerCorrection ? "MANAGER_CORRECTION" : "STAGE_TRANSITION",
+      executionMode,
+      safeMetadata: { bookingBasis: "meeting_scheduled_stage_entry" },
+    });
+  }
   if (target.leadStageCode === "QUALIFIED" || target.leadStageCode === "DISQUALIFIED") {
     await recordCommercialMetricFactInTransaction(transaction, {
       workspaceId: context.workspaceId,

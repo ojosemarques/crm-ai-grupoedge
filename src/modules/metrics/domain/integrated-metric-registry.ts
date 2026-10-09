@@ -16,7 +16,7 @@ export type IntegratedMetricDefinition = Readonly<{
 
 const metric = (definition: IntegratedMetricDefinition) => Object.freeze(definition);
 
-export const INTEGRATED_METRIC_REGISTRY_VERSION = "indicators.2";
+export const INTEGRATED_METRIC_REGISTRY_VERSION = "indicators.3";
 
 export const integratedMetricRegistry = Object.freeze([
   metric({ id: "work.tasks_created", label: "Tarefas criadas", description: "Tarefas persistidas no período.", unit: "COUNT", eventTypes: ["TASK_CREATED"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
@@ -26,6 +26,8 @@ export const integratedMetricRegistry = Object.freeze([
   metric({ id: "work.politicians_touched", label: "Políticos abordados", description: "Leads distintos com tentativa ou mensagem outbound observada.", unit: "COUNT", eventTypes: ["CALL_ATTEMPTED", "INSTAGRAM_MESSAGE_SENT", "EMAIL_SENT"], aggregation: "DISTINCT_LEAD", desiredDirection: "UP", limitations: [] }),
   metric({ id: "outreach.calls_attempted", label: "Ligações realizadas", description: "Tentativas outbound iniciadas.", unit: "COUNT", eventTypes: ["CALL_ATTEMPTED"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
   metric({ id: "outreach.calls_connected", label: "Ligações atendidas", description: "Conexões humanas confirmadas.", unit: "COUNT", eventTypes: ["CALL_CONNECTED"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
+  metric({ id: "outreach.calls_callback_requested", label: "Retornos solicitados", description: "Contatos que pediram nova ligação.", unit: "COUNT", eventTypes: ["CALL_CONNECTED"], results: ["CALLBACK_REQUESTED"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
+  metric({ id: "outreach.calls_whatsapp_shared", label: "Contatos de WhatsApp recebidos", description: "Ligações em que o político ou gabinete forneceu contato de WhatsApp.", unit: "COUNT", eventTypes: ["CALL_CONNECTED"], results: ["WHATSAPP_SHARED"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
   metric({ id: "outreach.calls_unanswered", label: "Ligações sem atendimento", description: "Busy, no-answer ou voicemail.", unit: "COUNT", eventTypes: ["CALL_UNANSWERED"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
   metric({ id: "outreach.calls_failed", label: "Ligações com falha", description: "Falhas terminais de chamada.", unit: "COUNT", eventTypes: ["CALL_FAILED"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
   metric({ id: "outreach.calls_no_answer", label: "Não atendeu", description: "Ligações concluídas com resultado não atendeu.", unit: "COUNT", eventTypes: ["CALL_UNANSWERED"], results: ["NO_ANSWER"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),

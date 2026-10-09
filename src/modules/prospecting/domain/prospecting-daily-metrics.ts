@@ -7,6 +7,8 @@ type ProspectingTaskResultRow = Readonly<{
 export type ProspectingTaskResultSummary = Readonly<{
   callsCompleted: number;
   callsConnected: number;
+  callsCallbackRequested: number;
+  callsWhatsappShared: number;
   callsNoAnswer: number;
   callsBusy: number;
   callsVoicemail: number;
@@ -38,7 +40,9 @@ export function summarizeProspectingTaskResults(
 
   return Object.freeze({
     callsCompleted: count("CALL"),
-    callsConnected: count("CALL", ["CONNECTED"]),
+    callsConnected: count("CALL", ["CONNECTED", "CALLBACK_REQUESTED", "WHATSAPP_SHARED"]),
+    callsCallbackRequested: count("CALL", ["CALLBACK_REQUESTED"]),
+    callsWhatsappShared: count("CALL", ["WHATSAPP_SHARED"]),
     callsNoAnswer: count("CALL", ["NO_ANSWER"]),
     callsBusy: count("CALL", ["BUSY"]),
     callsVoicemail: count("CALL", ["VOICEMAIL"]),
