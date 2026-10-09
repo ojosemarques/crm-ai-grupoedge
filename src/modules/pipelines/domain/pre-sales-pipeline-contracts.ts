@@ -22,6 +22,9 @@ export const leadStageLabels: Readonly<Record<LeadStageCode, string>> = {
   DISQUALIFIED: "Desqualificado",
 };
 
+export const pipelinePhoneTypes = ["ALL", "FIXED", "WHATSAPP"] as const;
+export type PipelinePhoneType = (typeof pipelinePhoneTypes)[number];
+
 export type StageTransitionOption = Readonly<{
   stageId: string;
   code: LeadStageCode;
@@ -104,6 +107,7 @@ export type PreSalesPipelineScreen = Readonly<{
     responsible: string;
     priority: "ALL" | "P1" | "P2" | "P3";
     stageCode: "ALL" | LeadStageCode;
+    phoneType: PipelinePhoneType;
   }>;
   responsibleOptions: readonly Readonly<{ value: string; label: string }>[];
   stages: readonly LeadPipelineStageColumn[];

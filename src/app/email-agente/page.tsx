@@ -43,7 +43,7 @@ export default async function ActiveProspectingPage({ searchParams }: Readonly<{
       });
       pipelineScreen = await getPreSalesPipelineService().getScreen(context, {
         pipelineId: activeProspecting.id,
-        q: first(params.q), responsible: first(params.responsible), priority: first(params.priority), stageCode: first(params.stageCode),
+        q: first(params.q), responsible: first(params.responsible), priority: first(params.priority), stageCode: first(params.stageCode), phoneType: first(params.phoneType),
       });
     } else {
       workspaceScreen = await getProspectingWorkspaceService().getScreen(context, {
@@ -68,7 +68,7 @@ export default async function ActiveProspectingPage({ searchParams }: Readonly<{
         title={ACTIVE_PROSPECTING_PIPELINE_NAME}
       />
       <ProspectingNav active={view} />
-      {view === "pipeline" && pipelineScreen ? <PreSalesPipelineWorkspace basePath="/email-agente?view=pipeline" fixedQuery={{ view: "pipeline" }} initialView="board" key={pipelineScreen.pipelineId} screen={pipelineScreen} /> : null}
+      {view === "pipeline" && pipelineScreen ? <PreSalesPipelineWorkspace basePath="/email-agente?view=pipeline" fixedQuery={{ view: "pipeline" }} initialView="board" key={pipelineScreen.pipelineId} screen={pipelineScreen} showPhoneTypeFilter /> : null}
       {view === "stock" && workspaceScreen ? <ProspectingStock screen={workspaceScreen} /> : null}
       {view === "activities" && workspaceScreen ? <ProspectingActivities screen={workspaceScreen} /> : null}
       {view === "metrics" && workspaceScreen ? <ProspectingMetrics screen={workspaceScreen} /> : null}

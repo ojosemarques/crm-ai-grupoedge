@@ -1,9 +1,9 @@
-import type {
-  LeadPipelineStageCode,
-  PipelineStage,
+import {
   Prisma,
-  PrismaClient,
-  StageTransitionOrigin,
+  type LeadPipelineStageCode,
+  type PipelineStage,
+  type PrismaClient,
+  type StageTransitionOrigin,
 } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { getAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
@@ -21,6 +21,7 @@ import {
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import {
   leadStageCodes,
+  pipelinePhoneTypes,
   type LeadPipelineCard,
   type LeadPipelineStagePage,
   type LeadPipelineState,
@@ -55,6 +56,7 @@ const screenQuerySchema = z.object({
   responsible: z.string().trim().max(100).optional().default(""),
   priority: z.enum(["ALL", "P1", "P2", "P3"]).optional().default("ALL"),
   stageCode: z.enum(["ALL", ...leadStageCodes]).optional().default("ALL"),
+  phoneType: z.enum(pipelinePhoneTypes).optional().default("ALL"),
 }).strict();
 
 const leadStateSchema = z.object({ leadId: z.string().uuid() }).strict();
@@ -76,6 +78,7 @@ const expectedStageHours: Readonly<Partial<Record<LeadStageCode, number>>> = Obj
 });
 const staleHours = 72;
 const conversionPeriodDays = 90;
+const whatsappMinDigits = 13;
 
 const transitionSchema = z.object({
   leadId: z.string().uuid(),
@@ -225,6 +228,43 @@ function pipelineLeadSearchFilter(query: string): Prisma.LeadWhereInput {
       ...phoneFilters,
     ],
   };
+}
+
+async function leadIdsByPhoneType(
+  database: PrismaClient,
+  input: Readonly<{
+    workspaceId: string;
+    pipelineId: string;
+    phoneType: "FIXED" | "WHATSAPP";
+  }>,
+): Promise<string[]> {
+  const lengthPredicate = input.phoneType === "FIXED"
+    ? Prisma.sql`< ${whatsappMinDigits}`
+    : Prisma.sql`>= ${whatsappMinDigits}`;
+  const rows = await database.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT DISTINCT lead.id
+    FROM "leads" lead
+    WHERE lead."workspaceId" = ${input.workspaceId}
+      AND lead."pipelineId" = ${input.pipelineId}
+      AND lead."deletedAt" IS NULL
+      AND (
+        (
+          NULLIF(BTRIM(lead."normalizedPhone"), '') IS NOT NULL
+          AND LENGTH(REGEXP_REPLACE(lead."normalizedPhone", '[^0-9]', '', 'g')) ${lengthPredicate}
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM "contact_points" phone_point
+          WHERE phone_point."workspaceId" = lead."workspaceId"
+            AND phone_point."contactId" = lead."contactId"
+            AND phone_point."type"::text IN ('PHONE', 'WHATSAPP')
+            AND phone_point."deletedAt" IS NULL
+            AND NULLIF(BTRIM(phone_point."normalizedValue"), '') IS NOT NULL
+            AND LENGTH(REGEXP_REPLACE(phone_point."normalizedValue", '[^0-9]', '', 'g')) ${lengthPredicate}
+        )
+      )
+  `);
+  return rows.map((row) => row.id);
 }
 
 const pipelineCardInclude = {
@@ -731,6 +771,13 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       getPipeline(context.workspaceId, parsed.data.pipelineId),
     ]);
     const visibility = leadVisibilityWhere(context, scope);
+    const phoneTypeLeadIds = parsed.data.phoneType === "ALL"
+      ? null
+      : await leadIdsByPhoneType(options.database, {
+          workspaceId: context.workspaceId,
+          pipelineId: pipeline.id,
+          phoneType: parsed.data.phoneType,
+        });
     const responsibleFilter: Prisma.LeadWhereInput = parsed.data.responsible.startsWith("member:")
       ? { ownerMemberId: parsed.data.responsible.slice(7) }
       : parsed.data.responsible.startsWith("queue:")
@@ -740,11 +787,12 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
     const priorityFilter: Prisma.LeadWhereInput = parsed.data.priority === "ALL"
       ? {}
       : { currentScore: { leadScore: { priorityBandCode: parsed.data.priority } } };
+    const phoneTypeFilter: Prisma.LeadWhereInput = phoneTypeLeadIds === null ? {} : { id: { in: phoneTypeLeadIds } };
     const baseWhere: Prisma.LeadWhereInput = {
       workspaceId: context.workspaceId,
       pipelineId: pipeline.id,
       deletedAt: null,
-      AND: [visibility, responsibleFilter, searchFilter, priorityFilter],
+      AND: [visibility, responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter],
     };
     const cardLimitPerStage = 12;
     const pipelineResource: ResourceScope = {
@@ -881,12 +929,20 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         : {};
     const searchFilter = pipelineLeadSearchFilter(parsed.data.q);
     const priorityFilter: Prisma.LeadWhereInput = parsed.data.priority === "ALL" ? {} : { currentScore: { leadScore: { priorityBandCode: parsed.data.priority } } };
+    const phoneTypeLeadIds = parsed.data.phoneType === "ALL"
+      ? null
+      : await leadIdsByPhoneType(options.database, {
+          workspaceId: context.workspaceId,
+          pipelineId: pipeline.id,
+          phoneType: parsed.data.phoneType,
+        });
+    const phoneTypeFilter: Prisma.LeadWhereInput = phoneTypeLeadIds === null ? {} : { id: { in: phoneTypeLeadIds } };
     const where: Prisma.LeadWhereInput = {
       workspaceId: context.workspaceId,
       pipelineId: pipeline.id,
       currentStageId: stage.id,
       deletedAt: null,
-      AND: [leadVisibilityWhere(context, scope), responsibleFilter, searchFilter, priorityFilter],
+      AND: [leadVisibilityWhere(context, scope), responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter],
     };
     const [total, rows] = await Promise.all([
       options.database.lead.count({ where }),

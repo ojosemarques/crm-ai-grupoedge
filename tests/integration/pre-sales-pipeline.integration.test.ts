@@ -71,8 +71,11 @@ function pipelineService(overrides: Readonly<{
   });
 }
 
-async function createLead(label: string) {
+async function createLead(label: string, phoneType: "FIXED" | "WHATSAPP" = "WHATSAPP") {
   sequence += 1;
+  const phone = phoneType === "FIXED"
+    ? `+55113${sequence.toString().slice(-7)}`
+    : `+55119${sequence.toString().slice(-8)}`;
   const result = await createLeadIntakeService({
     database,
     authorization,
@@ -81,7 +84,7 @@ async function createLead(label: string) {
     channel: "MANUAL",
     idempotencyKey: `crm14:${label}:${randomUUID()}`,
     fullName: `${label} ${randomUUID().slice(0, 8)}`,
-    phone: `+55119${sequence.toString().slice(-8)}`,
+    phone,
     sourceKey: "manual",
     priorityBandCode: "P2",
     rawPayload: { test: "crm14", label },
@@ -271,6 +274,24 @@ describe("pipeline de pré-vendas e transições", () => {
       offset: 0,
       limit: 20,
     })).resolves.toMatchObject({ leads: [expect.objectContaining({ id: lead.leadId })] });
+  });
+
+  it("filtra contatos por tamanho do telefone entre fixo e WhatsApp", async () => {
+    const label = `CRM14 tipo telefone ${randomUUID().slice(0, 8)}`;
+    const whatsappLead = await createLead(label, "WHATSAPP");
+    const fixedLead = await createLead(label, "FIXED");
+
+    const whatsappScreen = await pipelineService().getScreen(managerContext, { q: label, phoneType: "WHATSAPP" });
+    const whatsappIds = whatsappScreen.stages.flatMap((stage) => stage.leads).map((lead) => lead.id);
+    expect(whatsappScreen.filters.phoneType).toBe("WHATSAPP");
+    expect(whatsappIds).toContain(whatsappLead.leadId);
+    expect(whatsappIds).not.toContain(fixedLead.leadId);
+
+    const fixedScreen = await pipelineService().getScreen(managerContext, { q: label, phoneType: "FIXED" });
+    const fixedIds = fixedScreen.stages.flatMap((stage) => stage.leads).map((lead) => lead.id);
+    expect(fixedScreen.filters.phoneType).toBe("FIXED");
+    expect(fixedIds).toContain(fixedLead.leadId);
+    expect(fixedIds).not.toContain(whatsappLead.leadId);
   });
 
   it("transiciona pelo serviço, fecha intervalos e registra timeline e auditoria", async () => {
