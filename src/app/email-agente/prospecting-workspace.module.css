@@ -25,6 +25,15 @@
 .filters { align-items:end; display:flex; flex-wrap:wrap; gap:.7rem; }
 .filters label { display:grid; gap:.25rem; font-size:.75rem; font-weight:650; }
 .filters select { background:var(--card); border:1px solid var(--border); border-radius:var(--radius-control); min-width:150px; padding:.55rem; }
+.periodFilter { align-items:end; display:grid; gap:1rem; grid-template-columns:minmax(190px,1fr) auto auto; margin-bottom:1rem; }
+.periodFilter > div p { color:var(--muted-foreground); font-size:.82rem; margin-top:.2rem; }
+.periodNav { display:flex; flex-wrap:wrap; gap:.4rem; }
+.periodLink { border:1px solid var(--border); border-radius:999px; color:var(--muted-foreground); font-size:.78rem; font-weight:700; padding:.5rem .7rem; white-space:nowrap; }
+.periodLink[data-active="true"] { background:var(--primary); border-color:var(--primary); color:var(--primary-foreground); }
+.customPeriodForm { align-items:end; display:flex; flex-wrap:wrap; gap:.5rem; }
+.customPeriodForm label { display:grid; gap:.2rem; font-size:.72rem; font-weight:650; }
+.customPeriodForm input { background:var(--card); border:1px solid var(--border); border-radius:var(--radius-control); color:var(--foreground); min-height:2.25rem; padding:.45rem .55rem; }
+.periodEvidence { color:var(--muted-foreground); font-size:.82rem; padding:1rem 0; text-align:center; }
 .button { background:var(--primary); border-radius:var(--radius-control); color:var(--primary-foreground); font-size:.82rem; font-weight:700; padding:.58rem .9rem; }
 .link { color:var(--primary); font-size:.85rem; font-weight:700; text-decoration:underline; text-underline-offset:3px; }
 .stageBar { display:flex; gap:.45rem; overflow-x:auto; }
@@ -35,4 +44,5 @@
 .dot { background:var(--destructive); border-radius:50%; height:.6rem; width:.6rem; }
 .dot[data-ok="true"] { background:#22c55e; }
 .empty { color:var(--muted-foreground); padding:2rem; text-align:center; }
-@media (max-width:700px){.sectionHeader{align-items:flex-start;flex-direction:column}.grid{grid-template-columns:1fr}}
+@media (max-width:1000px){.periodFilter{align-items:start;grid-template-columns:1fr}.customPeriodForm{justify-content:flex-start}}
+@media (max-width:700px){.sectionHeader{align-items:flex-start;flex-direction:column}.grid{grid-template-columns:1fr}.customPeriodForm label{flex:1;min-width:130px}.customPeriodForm input{width:100%}}

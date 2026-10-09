@@ -13,8 +13,17 @@ const statusLabels: Record<string, string> = { RECEIVED: "Recebido", REVIEW_REQU
 const channelLabels: Readonly<Record<string, string>> = { CALL: "Ligação", INSTAGRAM_MESSAGE: "Mensagem no Instagram", INSTAGRAM_FOLLOW: "Seguir no Instagram" };
 const resultLabels: Readonly<Record<string, string>> = { CONNECTED: "Conectou", CALLBACK_REQUESTED: "Pediu retorno", WHATSAPP_SHARED: "Passou contato/WhatsApp", NO_ANSWER: "Não atendeu", BUSY: "Ocupado", VOICEMAIL: "Caixa postal", WRONG_NUMBER: "Número incorreto", CHANNEL_UNAVAILABLE: "Canal indisponível", SENT: "Enviada", FAILED: "Falhou", PROFILE_NOT_FOUND: "Perfil não encontrado", COMPLETED: "Concluído", ALREADY_FOLLOWING: "Já seguia", SEM_RESULTADO: "Sem resultado" };
 const emailDayLabels: Readonly<Record<string, string>> = { "email-1": "D0", "email-2": "D3", "email-3": "D7", "email-4": "D12", "email-5": "D18", "email-6": "D25" };
+const metricsPeriodLabels: Readonly<Record<string, string>> = { TODAY: "Hoje", YESTERDAY: "Ontem", LAST_7_DAYS: "Últimos 7 dias", MONTH: "Este mês", LAST_30_DAYS: "Últimos 30 dias", CUSTOM: "Personalizado" };
+const metricsPeriodShortcuts = [
+  ["TODAY", "Hoje"],
+  ["YESTERDAY", "Ontem"],
+  ["LAST_7_DAYS", "7 dias"],
+  ["MONTH", "Mês"],
+  ["LAST_30_DAYS", "30 dias"],
+] as const;
 
 function date(value: string | null, timeZone: string) { return value ? new Intl.DateTimeFormat("pt-BR", { timeZone, dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "—"; }
+function localDate(value: string) { const [year, month, day] = value.split("-"); return `${day}/${month}/${year}`; }
 
 export function ProspectingNav({ active }: Readonly<{ active: ProspectingView }>) {
   return <nav aria-label="Áreas da Prospecção Ativa" className={styles.tabs}>{prospectingViews.map((view) => <Link data-active={view === active} href={`/email-agente?view=${view}`} key={view}>{viewLabels[view]}</Link>)}</nav>;
@@ -54,33 +63,51 @@ export function ProspectingEmails({ screen }: Readonly<{ screen: Screen }>) {
 }
 
 export function ProspectingMetrics({ screen }: Readonly<{ screen: Screen }>) {
+  const selectedPeriod = screen.metrics.period;
+  const periodLabel = metricsPeriodLabels[selectedPeriod.preset] ?? "Período";
   return <>
     <div className={styles.sectionHeader}><div><h2>Indicadores da Prospecção Ativa</h2><p>Ligações, envios, reuniões e resultados vêm do log comercial; a fila mostra as tarefas abertas.</p></div><div><Link className={styles.link} href="/email-agente?view=activities">Ver registro de atividades</Link> · <Link className={styles.link} href="/dashboard?preset=MONTH">Abrir Indicadores</Link></div></div>
+    <section className={`${styles.card} ${styles.periodFilter}`} aria-label="Filtro de período das métricas">
+      <div>
+        <strong>Período das métricas</strong>
+        <p>{periodLabel} · {localDate(selectedPeriod.fromDate)} a {localDate(selectedPeriod.toDate)}</p>
+      </div>
+      <nav aria-label="Atalhos de período" className={styles.periodNav}>
+        {metricsPeriodShortcuts.map(([preset, label]) => <Link aria-current={selectedPeriod.preset === preset ? "page" : undefined} className={styles.periodLink} data-active={selectedPeriod.preset === preset} href={`/email-agente?view=metrics&metricsPreset=${preset}`} key={preset}>{label}</Link>)}
+      </nav>
+      <form className={styles.customPeriodForm} method="get">
+        <input name="view" type="hidden" value="metrics" />
+        <input name="metricsPreset" type="hidden" value="CUSTOM" />
+        <label>De<input defaultValue={selectedPeriod.fromDate} max={screen.today} name="metricsFrom" required type="date" /></label>
+        <label>Até<input defaultValue={selectedPeriod.toDate} max={screen.today} name="metricsTo" required type="date" /></label>
+        <button className={styles.button} type="submit">Personalizar</button>
+      </form>
+    </section>
     <div className={styles.grid}>
-      <article className={styles.card}><h2>Abordados hoje</h2><div className={styles.metric}>{screen.metrics.politiciansTouchedToday}</div><p>Políticos distintos com ligação, mensagem ou novo seguimento registrado</p></article>
-      <article className={styles.card}><h2>Contatos efetivos hoje</h2><div className={styles.metric}>{screen.metrics.effectiveContactsToday}</div><p>Leads distintos com ligação atendida ou resposta humana</p></article>
-      <article className={styles.card}><h2>Liberações · 30 dias</h2><div className={styles.metric}>{screen.metrics.releasesThirtyDays}</div><p>Fonte: releases confirmados</p></article>
-      <article className={styles.card}><h2>Conversas por liberação · 30 dias</h2><div className={styles.metric}>{screen.metrics.responseRateThirtyDays === null ? "—" : `${screen.metrics.responseRateThirtyDays}%`}</div><p>{screen.metrics.conversationsThirtyDays} conversas iniciadas / {screen.metrics.releasesThirtyDays} liberações; eventos do período, sem coorte de lead</p></article>
-      <article className={styles.card}><h2>Reuniões na agenda · 30 dias</h2><div className={styles.metric}>{screen.metrics.meetingsCreatedThirtyDays}</div><p>Agendamentos criados pelos vendedores</p></article>
-      <article className={styles.card}><h2>Leads movidos para reunião · 30 dias</h2><div className={styles.metric}>{screen.metrics.meetingsThirtyDays}</div><p>Políticos distintos movidos para Reunião marcada, com ou sem reunião na Agenda</p></article>
+      <article className={styles.card}><h2>Abordados no período</h2><div className={styles.metric}>{screen.metrics.politiciansTouched}</div><p>Políticos distintos com ligação, mensagem ou novo seguimento registrado</p></article>
+      <article className={styles.card}><h2>Contatos efetivos no período</h2><div className={styles.metric}>{screen.metrics.effectiveContacts}</div><p>Leads distintos com ligação atendida ou resposta humana</p></article>
+      <article className={styles.card}><h2>Liberações no período</h2><div className={styles.metric}>{screen.metrics.releases}</div><p>Fonte: releases confirmados</p></article>
+      <article className={styles.card}><h2>Conversas por liberação</h2><div className={styles.metric}>{screen.metrics.responseRate === null ? "—" : `${screen.metrics.responseRate}%`}</div><p>{screen.metrics.conversations} conversas iniciadas / {screen.metrics.releases} liberações; eventos do período, sem coorte de lead</p></article>
+      <article className={styles.card}><h2>Reuniões na agenda</h2><div className={styles.metric}>{screen.metrics.meetingsCreated}</div><p>Agendamentos criados pelos vendedores no período</p></article>
+      <article className={styles.card}><h2>Leads movidos para reunião</h2><div className={styles.metric}>{screen.metrics.meetingsMoved}</div><p>Políticos distintos movidos para Reunião marcada no período</p></article>
     </div>
     <section className={styles.section}>
-      <div className={styles.sectionHeader}><div><h2>Produção de hoje por vendedor</h2><p>Atividades registradas no dia local. Cada político conta uma vez por vendedor; e-mails automáticos são atribuídos ao responsável da cadência.</p></div></div>
-      <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Vendedor</th><th>Políticos</th><th>Contatos efetivos</th><th>Ligações</th><th>Resultados das ligações</th><th>Instagram</th><th>E-mails enviados</th><th>Reuniões marcadas</th></tr></thead><tbody>{screen.metrics.dailyBySeller.map((row) => <tr key={row.memberId}><td><strong>{row.memberName}</strong></td><td>{row.politiciansWorked}</td><td>{row.effectiveContacts}</td><td>{row.callsCompleted} feitas</td><td>{row.callsConnected} ligações atendidas · {row.callsCallbackRequested} pediram retorno · {row.callsWhatsappShared} passaram WhatsApp · {row.callsUnanswered} sem atendimento ({row.callsNoAnswer} não atenderam, {row.callsBusy} ocupadas, {row.callsVoicemail} caixa postal, {row.callsUnansweredOther} outras) · {row.callsFailed} falhas ({row.callsWrongNumber} número incorreto, {row.callsChannelUnavailable} sem canal, {row.callsFailedOther} outras) · {row.callsWithoutOutcome} sem desfecho</td><td>{row.instagramMessagesSent} mensagens · {row.instagramFollowsCompleted} seguidos · {row.instagramFollowsAlreadyFollowing} já seguidos · {row.instagramMessagesProfileNotFound + row.instagramFollowsProfileNotFound} não encontrados · {row.instagramMessagesFailed + row.instagramFollowsFailed} falhas</td><td>{row.emailsSent}</td><td>{row.meetingsScheduled}</td></tr>)}</tbody></table>{screen.metrics.dailyBySeller.length === 0 ? <p className={styles.empty}>Nenhum vendedor de prospecção está disponível neste recorte.</p> : null}</div>
+      <div className={styles.sectionHeader}><div><h2>Produção por vendedor</h2><p>Atividades registradas no período selecionado. Cada político conta uma vez por vendedor; e-mails automáticos são atribuídos ao responsável da cadência.</p></div></div>
+      <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Vendedor</th><th>Políticos</th><th>Contatos efetivos</th><th>Ligações</th><th>Resultados das ligações</th><th>Instagram</th><th>E-mails enviados</th><th>Reuniões marcadas</th></tr></thead><tbody>{screen.metrics.bySeller.map((row) => <tr key={row.memberId}><td><strong>{row.memberName}</strong></td><td>{row.politiciansWorked}</td><td>{row.effectiveContacts}</td><td>{row.callsCompleted} feitas</td><td>{row.callsConnected} ligações atendidas · {row.callsCallbackRequested} pediram retorno · {row.callsWhatsappShared} passaram WhatsApp · {row.callsUnanswered} sem atendimento ({row.callsNoAnswer} não atenderam, {row.callsBusy} ocupadas, {row.callsVoicemail} caixa postal, {row.callsUnansweredOther} outras) · {row.callsFailed} falhas ({row.callsWrongNumber} número incorreto, {row.callsChannelUnavailable} sem canal, {row.callsFailedOther} outras) · {row.callsWithoutOutcome} sem desfecho</td><td>{row.instagramMessagesSent} mensagens · {row.instagramFollowsCompleted} seguidos · {row.instagramFollowsAlreadyFollowing} já seguidos · {row.instagramMessagesProfileNotFound + row.instagramFollowsProfileNotFound} não encontrados · {row.instagramMessagesFailed + row.instagramFollowsFailed} falhas</td><td>{row.emailsSent}</td><td>{row.meetingsScheduled}</td></tr>)}</tbody></table>{screen.metrics.bySeller.length === 0 ? <p className={styles.empty}>Nenhum vendedor de prospecção está disponível neste recorte.</p> : null}</div>
     </section>
     <section className={styles.section} aria-labelledby="prospecting-email-cadence-title">
-      <div className={styles.sectionHeader}><div><h2 id="prospecting-email-cadence-title">E-mails por etapa · 30 dias</h2><p>Eventos persistidos da cadência, separados do Email 1 ao Email 6.</p></div></div>
+      <div className={styles.sectionHeader}><div><h2 id="prospecting-email-cadence-title">E-mails por etapa</h2><p>Eventos persistidos no período selecionado, separados do Email 1 ao Email 6.</p></div></div>
       <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Etapa</th><th>Programados</th><th>Enviados</th><th>Entregues</th><th>Respostas</th><th>Devolvidos</th><th>Falhas</th><th>Expirados</th><th>Cancelados</th><th>Spam</th><th>Descadastros</th></tr></thead><tbody>{screen.metrics.emailCadence.map((row) => <tr key={row.stepKey}><td><strong>Email {row.stepNumber}</strong><br />D{row.dayOffset}</td><td>{row.scheduled}</td><td><strong>{row.sent}</strong></td><td>{row.delivered}</td><td>{row.replied}</td><td>{row.bounced}</td><td>{row.failed}</td><td>{row.expired}</td><td>{row.cancelled}</td><td>{row.complaints}</td><td>{row.unsubscribed}</td></tr>)}</tbody></table></div>
     </section>
-    <p className={styles.empty}>Período: {date(screen.metrics.period.start, screen.timeZone)} até {date(screen.metrics.period.end, screen.timeZone)} · fuso {screen.metrics.period.timeZone}. Última evidência observada: {date(screen.metrics.lastSourceObservedAt, screen.timeZone)}.</p>
+    <p className={styles.periodEvidence}>Período: {localDate(selectedPeriod.fromDate)} a {localDate(selectedPeriod.toDate)} · fuso {selectedPeriod.timeZone}. Última evidência observada: {date(screen.metrics.lastSourceObservedAt, screen.timeZone)}.</p>
     <section className={styles.section}>
       <div className={styles.grid}>
-        <article className={styles.card}><h3>Resultados por atividade · 30 dias</h3>{screen.metrics.manualResultCounts.map((row) => <p key={`${row.channel}:${row.result}`}>{channelLabels[row.channel] ?? row.channel} · {resultLabels[row.result] ?? row.result}: <strong>{row.count}</strong></p>)}</article>
+        <article className={styles.card}><h3>Resultados por atividade</h3>{screen.metrics.manualResultCounts.map((row) => <p key={`${row.channel}:${row.result}`}>{channelLabels[row.channel] ?? row.channel} · {resultLabels[row.result] ?? row.result}: <strong>{row.count}</strong></p>)}</article>
         <article className={styles.card}><h3>Conclusão manual por canal</h3>{screen.metrics.manualCompletionCounts.map((row) => <p key={row.channel}>{channelLabels[row.channel] ?? row.channel}: <strong>{row.count}</strong></p>)}</article>
-        <article className={styles.card}><h3>Estoque por status</h3>{screen.metrics.candidateCounts.map((row) => <p key={row.status}>{statusLabels[row.status] ?? row.status}: <strong>{row.count}</strong></p>)}</article>
-        <article className={styles.card}><h3>Cadências</h3>{screen.metrics.cadenceCounts.map((row) => <p key={row.status}>{statusLabels[row.status] ?? row.status}: <strong>{row.count}</strong></p>)}</article>
         <article className={styles.card}><h3>Motivos de parada</h3>{screen.metrics.discardReasons.map((row) => <p key={row.reason}>{row.reason}: <strong>{row.count}</strong></p>)}</article>
-        <article className={styles.card}><h3>E-mails</h3>{screen.metrics.emailCounts.map((row) => <p key={row.status}>{row.status}: <strong>{row.count}</strong></p>)}</article>
+        <article className={styles.card}><h3>Estoque por status · atual</h3>{screen.metrics.candidateCounts.map((row) => <p key={row.status}>{statusLabels[row.status] ?? row.status}: <strong>{row.count}</strong></p>)}</article>
+        <article className={styles.card}><h3>Cadências · status atual</h3>{screen.metrics.cadenceCounts.map((row) => <p key={row.status}>{statusLabels[row.status] ?? row.status}: <strong>{row.count}</strong></p>)}</article>
+        <article className={styles.card}><h3>E-mails · status atual</h3>{screen.metrics.emailCounts.map((row) => <p key={row.status}>{row.status}: <strong>{row.count}</strong></p>)}</article>
       </div>
     </section>
     <section className={styles.section}><div className={styles.sectionHeader}><div><h2>Capacidade por data</h2><p>Projeção reconciliada de Tasks e ProspectRelease.</p></div></div><div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Data</th><th>Vendedor</th><th>Realizado</th><th>Agendado</th><th>Planejado</th><th>Total / limite</th></tr></thead><tbody>{screen.capacity.map((row) => <tr key={`${row.memberId}:${row.localDate}`}><td>{row.localDate}</td><td>{row.memberName}</td><td>{row.realized}</td><td>{row.scheduled}</td><td>{row.planned}</td><td>{row.projected}/{row.limit}{row.overCapacity ? " · excesso" : ""}</td></tr>)}</tbody></table></div></section>

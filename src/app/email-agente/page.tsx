@@ -17,6 +17,7 @@ import { getProspectingWorkspaceService } from "@/modules/prospecting/applicatio
 import { ensureActiveProspectingPipeline } from "@/modules/settings/application/production-foundation-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { getDatabaseClient } from "@/shared/core/database/client";
+import { ApplicationError } from "@/shared/core/errors/application-error";
 
 export const dynamic = "force-dynamic";
 
@@ -53,10 +54,14 @@ export default async function ActiveProspectingPage({ searchParams }: Readonly<{
         ...(first(params.page) ? { page: first(params.page) } : {}),
         ...(first(params.activityPage) ? { activityPage: first(params.activityPage) } : {}),
         ...(first(params.emailPage) ? { emailPage: first(params.emailPage) } : {}),
+        ...(first(params.metricsPreset) ? { metricsPreset: first(params.metricsPreset) } : {}),
+        ...(first(params.metricsFrom) ? { metricsFrom: first(params.metricsFrom) } : {}),
+        ...(first(params.metricsTo) ? { metricsTo: first(params.metricsTo) } : {}),
       });
     }
   } catch (error) {
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
+    if (error instanceof ApplicationError && error.code === "INVALID_INPUT" && view === "metrics") redirect("/email-agente?view=metrics&metricsPreset=LAST_30_DAYS");
     throw error;
   }
 

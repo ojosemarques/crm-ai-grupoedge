@@ -5,6 +5,10 @@ import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { resolveLeadVisibilityScope } from "@/modules/leads/application/lead-list-service";
 import { PROSPECTING_EMAIL_TEMPLATE_COUNT } from "@/modules/prospecting/domain/prospecting-email-sequence";
+import {
+  prospectingMetricsPeriodPresets,
+  resolveProspectingMetricsPeriod,
+} from "@/modules/prospecting/domain/prospecting-metrics-period";
 import { summarizeProspectingTaskResults } from "@/modules/prospecting/domain/prospecting-daily-metrics";
 import { summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
 import { countUnresolvedCallAttempts } from "@/modules/metrics/domain/unresolved-call-attempts";
@@ -20,6 +24,9 @@ const querySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   activityPage: z.coerce.number().int().positive().default(1),
   emailPage: z.coerce.number().int().positive().default(1),
+  metricsPreset: z.enum(prospectingMetricsPeriodPresets).catch("LAST_30_DAYS").default("LAST_30_DAYS"),
+  metricsFrom: z.string().optional(),
+  metricsTo: z.string().optional(),
 }).strict();
 
 type AuthorizationPort = Pick<ReturnType<typeof getAuthorizationService>, "assertAuthorized" | "authorize">;
@@ -78,6 +85,13 @@ export function createProspectingWorkspaceService(options: Readonly<{
     const todayLocal = workspaceDateAt(now, workspace.timeZone);
     const today = workspaceDayRange(todayLocal, workspace.timeZone);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 86_400_000);
+    const metricsPeriod = resolveProspectingMetricsPeriod(
+      query.metricsPreset,
+      query.metricsFrom,
+      query.metricsTo,
+      now,
+      workspace.timeZone,
+    );
     const capacityEndLocal = addLocalDays(todayLocal, 29);
     const candidateWhere = {
       workspaceId: context.workspaceId,
@@ -107,9 +121,16 @@ export function createProspectingWorkspaceService(options: Readonly<{
       templates,
       senders,
       cadenceCounts,
-      touchedToday,
-      releasesToday,
-      meetingsThirtyDays,
+      overviewTouchedToday,
+      overviewReleasesToday,
+      overviewMeetingsThirtyDays,
+      dailyTaskResults,
+      dailyActivityFacts,
+      dailyMeetingsScheduled,
+      dailyEffectiveContactFacts,
+      touchedInPeriod,
+      releasesInPeriod,
+      meetingsMovedInPeriod,
       lastResearch,
       lastEmailClient,
       overdueJobs,
@@ -121,14 +142,13 @@ export function createProspectingWorkspaceService(options: Readonly<{
       manualCompletionCounts,
       manualResultCounts,
       cadenceStopCounts,
-      releasesThirtyDays,
-      conversationsThirtyDays,
+      conversationsInPeriod,
       latestSourceObservation,
-      dailyTaskResults,
-      dailyActivityFacts,
-      dailyMeetingsScheduled,
-      meetingsCreatedThirtyDays,
-      dailyEffectiveContactFacts,
+      periodTaskResults,
+      periodActivityFacts,
+      periodMeetingsScheduled,
+      meetingsCreatedInPeriod,
+      periodEffectiveContactFacts,
       emailCadenceFacts,
     ] = await Promise.all([
       options.database.prospectingSettings.findUnique({ where: { workspaceId: context.workspaceId } }),
@@ -205,6 +225,43 @@ export function createProspectingWorkspaceService(options: Readonly<{
         distinct: ["leadId"],
         select: { leadId: true },
       }),
+      options.database.commercialMetricFact.groupBy({
+        by: ["creditedMemberId", "taskKind", "result"],
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, eventType: "TASK_COMPLETED", sourceEntityType: "Task", taskKind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] } },
+        _sum: { quantity: true },
+      }),
+      options.database.commercialMetricFact.groupBy({
+        by: ["creditedMemberId", "eventType", "result", "leadId"],
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, eventType: { in: ["CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
+        _sum: { quantity: true },
+      }),
+      options.database.commercialMetricFact.groupBy({
+        by: ["bookedByMemberId", "creditedMemberId"],
+        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", occurredAt: { gte: today.start, lt: today.end }, ...(scopedMemberIds === null ? {} : { OR: [{ bookedByMemberId: { in: scopedMemberIds } }, { bookedByMemberId: null, creditedMemberId: { in: scopedMemberIds } }] }) },
+        _sum: { quantity: true },
+      }),
+      options.database.commercialMetricFact.groupBy({
+        by: ["creditedMemberId", "eventType", "leadId"],
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, leadId: { not: null }, eventType: { in: ["CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED"] } },
+        _sum: { quantity: true },
+      }),
+      options.database.commercialMetricFact.groupBy({
+        by: ["eventType", "creditedMemberId", "leadId"],
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, leadId: { not: null }, eventType: { in: ["CALL_ATTEMPTED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
+        _sum: { quantity: true },
+      }),
+      options.database.prospectRelease.count({ where: { workspaceId: context.workspaceId, plannedMemberId: memberScope, releasedAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, status: "RELEASED" } }),
+      options.database.stageHistory.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          enteredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end },
+          leadId: { not: null },
+          stage: { stableKey: "active-prospecting.meeting-scheduled", deletedAt: null },
+          lead: { ownerMemberId: memberScope, deletedAt: null },
+        },
+        distinct: ["leadId"],
+        select: { leadId: true },
+      }),
       options.database.openDotRequestReceipt.findFirst({ where: { workspaceId: context.workspaceId, scope: { in: ["RESEARCH_WRITE", "RESEARCH_REVIEW"] } }, orderBy: { receivedAt: "desc" }, select: { receivedAt: true, clientId: true } }),
       options.database.openDotRequestReceipt.findFirst({ where: { workspaceId: context.workspaceId, scope: { in: ["EMAIL_CLAIM", "EMAIL_RECEIPT", "EMAIL_EVENT_WRITE"] } }, orderBy: { receivedAt: "desc" }, select: { receivedAt: true, clientId: true } }),
       options.database.prospectingEmailJob.count({ where: { workspaceId: context.workspaceId, ...leadScope, status: "SCHEDULED", scheduledAt: { lt: now } } }),
@@ -235,40 +292,39 @@ export function createProspectingWorkspaceService(options: Readonly<{
       }),
       options.database.task.groupBy({
         by: ["kind"],
-        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: thirtyDaysAgo }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
+        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
         _count: { _all: true },
       }),
       options.database.task.groupBy({
         by: ["kind", "result"],
-        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: thirtyDaysAgo }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
+        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
         _count: { _all: true },
       }),
-      options.database.prospectingCadenceInstance.groupBy({ by: ["stopReasonCode"], where: { workspaceId: context.workspaceId, ownerMemberId: memberScope, stoppedAt: { gte: thirtyDaysAgo } }, _count: { _all: true } }),
-      options.database.prospectRelease.count({ where: { workspaceId: context.workspaceId, plannedMemberId: memberScope, status: "RELEASED", releasedAt: { gte: thirtyDaysAgo } } }),
-      options.database.prospectingCadenceInstance.count({ where: { workspaceId: context.workspaceId, ownerMemberId: memberScope, status: "CONVERSATION_STARTED", stoppedAt: { gte: thirtyDaysAgo } } }),
+      options.database.prospectingCadenceInstance.groupBy({ by: ["stopReasonCode"], where: { workspaceId: context.workspaceId, ownerMemberId: memberScope, stoppedAt: { gte: metricsPeriod.start, lt: metricsPeriod.end } }, _count: { _all: true } }),
+      options.database.prospectingCadenceInstance.count({ where: { workspaceId: context.workspaceId, ownerMemberId: memberScope, status: "CONVERSATION_STARTED", stoppedAt: { gte: metricsPeriod.start, lt: metricsPeriod.end } } }),
       options.database.prospectCandidateSource.aggregate({ where: { workspaceId: context.workspaceId, ...(scopedMemberIds === null ? {} : { candidateId: { in: scopedCandidateIds } }) }, _max: { observedAt: true } }),
       options.database.commercialMetricFact.groupBy({
         by: ["creditedMemberId", "taskKind", "result"],
-        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, eventType: "TASK_COMPLETED", sourceEntityType: "Task", taskKind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] } },
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, eventType: "TASK_COMPLETED", sourceEntityType: "Task", taskKind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] } },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({
         by: ["creditedMemberId", "eventType", "result", "leadId"],
-        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, eventType: { in: ["CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, eventType: { in: ["CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({
         by: ["bookedByMemberId", "creditedMemberId"],
-        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", occurredAt: { gte: today.start, lt: today.end }, ...(scopedMemberIds === null ? {} : { OR: [{ bookedByMemberId: { in: scopedMemberIds } }, { bookedByMemberId: null, creditedMemberId: { in: scopedMemberIds } }] }) },
+        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, ...(scopedMemberIds === null ? {} : { OR: [{ bookedByMemberId: { in: scopedMemberIds } }, { bookedByMemberId: null, creditedMemberId: { in: scopedMemberIds } }] }) },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.aggregate({
-        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", occurredAt: { gte: thirtyDaysAgo, lt: now }, ...(scopedMemberIds === null ? {} : { OR: [{ bookedByMemberId: { in: scopedMemberIds } }, { bookedByMemberId: null, creditedMemberId: { in: scopedMemberIds } }] }) },
+        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, ...(scopedMemberIds === null ? {} : { OR: [{ bookedByMemberId: { in: scopedMemberIds } }, { bookedByMemberId: null, creditedMemberId: { in: scopedMemberIds } }] }) },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({
         by: ["creditedMemberId", "eventType", "leadId"],
-        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, leadId: { not: null }, eventType: { in: ["CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED"] } },
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, leadId: { not: null }, eventType: { in: ["CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED"] } },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({
@@ -276,7 +332,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
         where: {
           workspaceId: context.workspaceId,
           creditedMemberId: memberScope,
-          occurredAt: { gte: thirtyDaysAgo, lt: now },
+          occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end },
           cadenceStepKey: { not: null },
           eventType: { in: [...EMAIL_CADENCE_METRIC_EVENT_TYPES] },
         },
@@ -290,16 +346,24 @@ export function createProspectingWorkspaceService(options: Readonly<{
       _count: { _all: true },
     });
 
+    const periodSellerIds = [...new Set([
+      ...sellers.map((seller) => seller.memberId),
+      ...periodTaskResults.flatMap((row) => row.creditedMemberId ? [row.creditedMemberId] : []),
+      ...periodActivityFacts.flatMap((row) => row.creditedMemberId ? [row.creditedMemberId] : []),
+      ...periodEffectiveContactFacts.flatMap((row) => row.creditedMemberId ? [row.creditedMemberId] : []),
+      ...touchedInPeriod.flatMap((row) => row.creditedMemberId ? [row.creditedMemberId] : []),
+      ...periodMeetingsScheduled.map((row) => row.bookedByMemberId ?? row.creditedMemberId).filter((id): id is string => id !== null),
+    ])];
     const dailySellerIds = [...new Set([
       ...sellers.map((seller) => seller.memberId),
       ...dailyTaskResults.flatMap((row) => row.creditedMemberId ? [row.creditedMemberId] : []),
       ...dailyActivityFacts.flatMap((row) => row.creditedMemberId ? [row.creditedMemberId] : []),
       ...dailyEffectiveContactFacts.flatMap((row) => row.creditedMemberId ? [row.creditedMemberId] : []),
-      ...touchedToday.flatMap((row) => row.creditedMemberId ? [row.creditedMemberId] : []),
+      ...overviewTouchedToday.flatMap((row) => row.creditedMemberId ? [row.creditedMemberId] : []),
       ...dailyMeetingsScheduled.map((row) => row.bookedByMemberId ?? row.creditedMemberId).filter((id): id is string => id !== null),
     ])];
     const memberRows = await options.database.workspaceMember.findMany({
-      where: { workspaceId: context.workspaceId, id: { in: dailySellerIds } },
+      where: { workspaceId: context.workspaceId, id: { in: [...new Set([...periodSellerIds, ...dailySellerIds])] } },
       select: { id: true, status: true, leadReceivingPausedAt: true, user: { select: { displayName: true, status: true } } },
     });
     const sellerOptions = await options.database.workspaceMember.findMany({
@@ -308,6 +372,14 @@ export function createProspectingWorkspaceService(options: Readonly<{
       select: { id: true, user: { select: { displayName: true } } },
     });
     const memberById = new Map(memberRows.map((member) => [member.id, member]));
+    const periodMeetingsByMember = new Map<string, number>();
+    for (const row of periodMeetingsScheduled) {
+      const memberId = row.bookedByMemberId ?? row.creditedMemberId;
+      if (memberId) periodMeetingsByMember.set(memberId, (periodMeetingsByMember.get(memberId) ?? 0) + Number(row._sum.quantity ?? 0));
+    }
+    const effectiveContactsInPeriod = summarizeEffectiveContacts(periodEffectiveContactFacts.map((row) => ({
+      eventType: row.eventType, leadId: row.leadId, creditedMemberId: row.creditedMemberId, quantity: row._sum.quantity ?? 0,
+    })));
     const dailyMeetingsByMember = new Map<string, number>();
     for (const row of dailyMeetingsScheduled) {
       const memberId = row.bookedByMemberId ?? row.creditedMemberId;
@@ -316,18 +388,26 @@ export function createProspectingWorkspaceService(options: Readonly<{
     const effectiveContactsToday = summarizeEffectiveContacts(dailyEffectiveContactFacts.map((row) => ({
       eventType: row.eventType, leadId: row.leadId, creditedMemberId: row.creditedMemberId, quantity: row._sum.quantity ?? 0,
     })));
+    const periodTouchedByMember = new Map<string, Set<string>>();
     const dailyTouchedByMember = new Map<string, Set<string>>();
     const touchedLeadIds = new Set<string>();
     const touchedBalances = new Map<string, number>();
-    for (const row of touchedToday) {
+    const overviewTouchedLeadIds = new Set(overviewTouchedToday.flatMap((row) => row.leadId && (row._sum.quantity ?? 0) > 0 ? [row.leadId] : []));
+    for (const row of overviewTouchedToday) {
+      if (!row.leadId || !row.creditedMemberId || (row._sum.quantity ?? 0) <= 0) continue;
+      const touched = dailyTouchedByMember.get(row.creditedMemberId) ?? new Set<string>();
+      touched.add(row.leadId);
+      dailyTouchedByMember.set(row.creditedMemberId, touched);
+    }
+    for (const row of touchedInPeriod) {
       if (!row.leadId) continue;
       const balanceKey = `${row.eventType}:${row.leadId}`;
       touchedBalances.set(balanceKey, (touchedBalances.get(balanceKey) ?? 0) + (row._sum.quantity ?? 0));
       if ((row._sum.quantity ?? 0) <= 0) continue;
       if (!row.creditedMemberId) continue;
-      const touched = dailyTouchedByMember.get(row.creditedMemberId) ?? new Set<string>();
+      const touched = periodTouchedByMember.get(row.creditedMemberId) ?? new Set<string>();
       touched.add(row.leadId);
-      dailyTouchedByMember.set(row.creditedMemberId, touched);
+      periodTouchedByMember.set(row.creditedMemberId, touched);
     }
     for (const [key, balance] of touchedBalances) if (balance > 0) touchedLeadIds.add(key.slice(key.indexOf(":") + 1));
     const candidateCount = (status: string) => candidateCounts.find((row) => row.status === status)?._count._all ?? 0;
@@ -356,6 +436,50 @@ export function createProspectingWorkspaceService(options: Readonly<{
       ...(!settings?.privacyApprovedAt ? [{ level: "BLOCKED", code: "PRIVACY_APPROVAL_MISSING", message: "Aprovação de privacidade/compliance não registrada.", action: "Obter e registrar a aprovação formal." }] : []),
       ...(!settings?.canaryApprovedAt ? [{ level: "BLOCKED", code: "CANARY_APPROVAL_MISSING", message: "Canário real ainda não foi aprovado.", action: "Executar homologação controlada antes do egress." }] : []),
     ];
+    const buildSellerMetrics = (
+      sellerIds: readonly string[],
+      taskResults: typeof periodTaskResults,
+      activityFacts: typeof periodActivityFacts,
+      effectiveContacts: ReturnType<typeof summarizeEffectiveContacts>,
+      meetingsByMember: ReadonlyMap<string, number>,
+      touchedByMember: ReadonlyMap<string, Set<string>>,
+    ) => sellerIds.map((memberId) => {
+      const summary = summarizeProspectingTaskResults(taskResults.filter((row) => row.creditedMemberId === memberId).map((row) => ({ kind: row.taskKind ?? "", result: row.result, count: row._sum.quantity ?? 0 })));
+      const metricCount = (eventType: string, results?: readonly string[]) => activityFacts
+        .filter((fact) => fact.creditedMemberId === memberId && fact.eventType === eventType && (!results || (fact.result !== null && results.includes(fact.result))))
+        .reduce((total, fact) => total + (fact._sum.quantity ?? 0), 0);
+      const callsCompleted = metricCount("CALL_ATTEMPTED");
+      const callsConnected = metricCount("CALL_CONNECTED");
+      const callsUnanswered = metricCount("CALL_UNANSWERED");
+      const callsFailed = metricCount("CALL_FAILED");
+      return {
+        memberId,
+        memberName: memberById.get(memberId)?.user.displayName ?? "Membro indisponível",
+        politiciansWorked: touchedByMember.get(memberId)?.size ?? 0,
+        effectiveContacts: effectiveContacts.byMember.get(memberId) ?? 0,
+        meetingsScheduled: meetingsByMember.get(memberId) ?? 0,
+        ...summary,
+        callsCompleted,
+        callsConnected,
+        callsCallbackRequested: metricCount("CALL_CONNECTED", ["CALLBACK_REQUESTED"]),
+        callsWhatsappShared: metricCount("CALL_CONNECTED", ["WHATSAPP_SHARED"]),
+        callsNoAnswer: metricCount("CALL_UNANSWERED", ["NO_ANSWER"]),
+        callsBusy: metricCount("CALL_UNANSWERED", ["BUSY"]),
+        callsVoicemail: metricCount("CALL_UNANSWERED", ["VOICEMAIL"]),
+        callsUnanswered,
+        callsUnansweredOther: Math.max(0, callsUnanswered - metricCount("CALL_UNANSWERED", ["NO_ANSWER", "BUSY", "VOICEMAIL"])),
+        callsWrongNumber: metricCount("CALL_FAILED", ["WRONG_NUMBER"]),
+        callsChannelUnavailable: metricCount("CALL_FAILED", ["CHANNEL_UNAVAILABLE"]),
+        callsFailed,
+        callsFailedOther: Math.max(0, callsFailed - metricCount("CALL_FAILED", ["WRONG_NUMBER", "CHANNEL_UNAVAILABLE"])),
+        callsWithoutOutcome: countUnresolvedCallAttempts(activityFacts.filter((fact) => fact.creditedMemberId === memberId).map((fact) => ({
+          eventType: fact.eventType, leadId: fact.leadId, quantity: fact._sum.quantity ?? 0,
+        }))),
+        instagramMessagesSent: metricCount("INSTAGRAM_MESSAGE_SENT"),
+        instagramFollowsCompleted: metricCount("INSTAGRAM_FOLLOW_COMPLETED"),
+        emailsSent: metricCount("EMAIL_SENT"),
+      };
+    });
 
     return {
       generatedAt: now.toISOString(), timeZone: workspace.timeZone, today: todayLocal,
@@ -363,7 +487,9 @@ export function createProspectingWorkspaceService(options: Readonly<{
       settings: settings ? { ...settings, createdAt: settings.createdAt.toISOString(), updatedAt: settings.updatedAt.toISOString(), privacyApprovedAt: settings.privacyApprovedAt?.toISOString() ?? null, canaryApprovedAt: settings.canaryApprovedAt?.toISOString() ?? null } : null,
       overview: {
         stock: { total: candidateCounts.reduce((sum, row) => sum + row._count._all, 0), ready: candidateCount("READY"), review: candidateCount("REVIEW_REQUIRED"), rejected: candidateCount("REJECTED"), planned: candidateCount("PLANNED"), released: candidateCount("RELEASED"), coverageDays },
-        releasesToday, politiciansTouchedToday: touchedLeadIds.size, meetingsThirtyDays: meetingsThirtyDays.length,
+        releasesToday: overviewReleasesToday,
+        politiciansTouchedToday: overviewTouchedLeadIds.size,
+        meetingsThirtyDays: overviewMeetingsThirtyDays.length,
         pipeline: pipeline ? { id: pipeline.id, stages: pipeline.stages.map((stage) => ({ ...stage, leads: stage._count.currentLeads })) } : null,
         cadenceCounts: cadenceCounts.map((row) => ({ status: row.status, count: row._count._all })),
         emailCounts: jobCounts.map((row) => ({ status: row.status, count: row._count._all })),
@@ -392,61 +518,35 @@ export function createProspectingWorkspaceService(options: Readonly<{
       activities: { items: manualTasks.map((task) => ({ ...task, dueAt: task.dueAt.toISOString(), completedAt: task.completedAt?.toISOString() ?? null })), total: manualTaskTotal, page: query.activityPage, pageSize },
       email: { jobs: recentJobs.map((job) => ({ ...job, scheduledAt: job.scheduledAt.toISOString(), expiresAt: job.expiresAt.toISOString(), sentAt: job.sentAt?.toISOString() ?? null })), pagination: { total: emailJobTotal, page: query.emailPage, pageSize }, templates: templates.map((template) => ({ ...template, publishedAt: template.publishedAt?.toISOString() ?? null })), senders: senders.map((sender) => ({ ...sender, senderAddressNormalized: sensitiveDecision.allowed && sensitiveDecision.scope === "WORKSPACE" ? sender.senderAddressNormalized : "••••@" + sender.domain, lastSuccessAt: sender.lastSuccessAt?.toISOString() ?? null })) },
       metrics: {
-        period: { start: thirtyDaysAgo.toISOString(), end: now.toISOString(), timeZone: workspace.timeZone },
+        period: {
+          preset: metricsPeriod.preset,
+          fromDate: metricsPeriod.fromDate,
+          toDate: metricsPeriod.toDate,
+          start: metricsPeriod.start.toISOString(),
+          end: metricsPeriod.end.toISOString(),
+          timeZone: metricsPeriod.timeZone,
+        },
         candidateCounts: candidateCounts.map((row) => ({ status: row.status, count: row._count._all })),
         cadenceCounts: cadenceCounts.map((row) => ({ status: row.status, count: row._count._all })),
         emailCounts: jobCounts.map((row) => ({ status: row.status, count: row._count._all })),
         manualCompletionCounts: manualCompletionCounts.map((row) => ({ channel: row.kind, count: row._count._all })),
         manualResultCounts: manualResultCounts.map((row) => ({ channel: row.kind, result: row.result ?? "SEM_RESULTADO", count: row._count._all })),
         discardReasons: cadenceStopCounts.map((row) => ({ reason: row.stopReasonCode ?? "NONE", count: row._count._all })),
-        responseRateThirtyDays: releasesThirtyDays > 0 ? Math.round(conversationsThirtyDays / releasesThirtyDays * 10_000) / 100 : null,
-        releasesThirtyDays,
-        conversationsThirtyDays,
+        responseRate: releasesInPeriod > 0 ? Math.round(conversationsInPeriod / releasesInPeriod * 10_000) / 100 : null,
+        releases: releasesInPeriod,
+        conversations: conversationsInPeriod,
         lastSourceObservedAt: latestSourceObservation._max.observedAt?.toISOString() ?? null,
-        politiciansTouchedToday: touchedLeadIds.size, effectiveContactsToday: effectiveContactsToday.total, releasesToday, meetingsThirtyDays: meetingsThirtyDays.length,
-        meetingsCreatedThirtyDays: meetingsCreatedThirtyDays._sum.quantity ?? 0,
+        politiciansTouched: touchedLeadIds.size,
+        effectiveContacts: effectiveContactsInPeriod.total,
+        meetingsMoved: meetingsMovedInPeriod.length,
+        meetingsCreated: meetingsCreatedInPeriod._sum.quantity ?? 0,
         emailCadence: summarizeEmailCadenceMetrics(emailCadenceFacts.map((fact) => ({
           eventType: fact.eventType,
           cadenceStepKey: fact.cadenceStepKey,
           quantity: fact._sum.quantity ?? 0,
         }))),
-        dailyBySeller: dailySellerIds.map((memberId) => {
-          const summary = summarizeProspectingTaskResults(dailyTaskResults.filter((row) => row.creditedMemberId === memberId).map((row) => ({ kind: row.taskKind ?? "", result: row.result, count: row._sum.quantity ?? 0 })));
-          const metricCount = (eventType: string, results?: readonly string[]) => dailyActivityFacts
-            .filter((fact) => fact.creditedMemberId === memberId && fact.eventType === eventType && (!results || (fact.result !== null && results.includes(fact.result))))
-            .reduce((total, fact) => total + (fact._sum.quantity ?? 0), 0);
-          const callsCompleted = metricCount("CALL_ATTEMPTED");
-          const callsConnected = metricCount("CALL_CONNECTED");
-          const callsUnanswered = metricCount("CALL_UNANSWERED");
-          const callsFailed = metricCount("CALL_FAILED");
-          return {
-            memberId,
-            memberName: memberById.get(memberId)?.user.displayName ?? "Membro indisponível",
-            politiciansWorked: dailyTouchedByMember.get(memberId)?.size ?? 0,
-            effectiveContacts: effectiveContactsToday.byMember.get(memberId) ?? 0,
-            meetingsScheduled: dailyMeetingsByMember.get(memberId) ?? 0,
-            ...summary,
-            callsCompleted,
-            callsConnected,
-            callsCallbackRequested: metricCount("CALL_CONNECTED", ["CALLBACK_REQUESTED"]),
-            callsWhatsappShared: metricCount("CALL_CONNECTED", ["WHATSAPP_SHARED"]),
-            callsNoAnswer: metricCount("CALL_UNANSWERED", ["NO_ANSWER"]),
-            callsBusy: metricCount("CALL_UNANSWERED", ["BUSY"]),
-            callsVoicemail: metricCount("CALL_UNANSWERED", ["VOICEMAIL"]),
-            callsUnanswered,
-            callsUnansweredOther: Math.max(0, callsUnanswered - metricCount("CALL_UNANSWERED", ["NO_ANSWER", "BUSY", "VOICEMAIL"])),
-            callsWrongNumber: metricCount("CALL_FAILED", ["WRONG_NUMBER"]),
-            callsChannelUnavailable: metricCount("CALL_FAILED", ["CHANNEL_UNAVAILABLE"]),
-            callsFailed,
-            callsFailedOther: Math.max(0, callsFailed - metricCount("CALL_FAILED", ["WRONG_NUMBER", "CHANNEL_UNAVAILABLE"])),
-            callsWithoutOutcome: countUnresolvedCallAttempts(dailyActivityFacts.filter((fact) => fact.creditedMemberId === memberId).map((fact) => ({
-              eventType: fact.eventType, leadId: fact.leadId, quantity: fact._sum.quantity ?? 0,
-            }))),
-            instagramMessagesSent: metricCount("INSTAGRAM_MESSAGE_SENT"),
-            instagramFollowsCompleted: metricCount("INSTAGRAM_FOLLOW_COMPLETED"),
-            emailsSent: metricCount("EMAIL_SENT"),
-          };
-        }),
+        dailyBySeller: buildSellerMetrics(dailySellerIds, dailyTaskResults, dailyActivityFacts, effectiveContactsToday, dailyMeetingsByMember, dailyTouchedByMember),
+        bySeller: buildSellerMetrics(periodSellerIds, periodTaskResults, periodActivityFacts, effectiveContactsInPeriod, periodMeetingsByMember, periodTouchedByMember),
       },
     };
   }
