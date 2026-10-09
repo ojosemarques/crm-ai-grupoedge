@@ -490,7 +490,7 @@ function sources(database: PrismaClient, workspaceId: string): readonly Source[]
       fetch: async (cursor, take) => {
         const jobs = await database.prospectingEmailJob.findMany({
           where: { workspaceId, ...(cursor ? { id: { gt: cursor } } : {}) }, orderBy: { id: "asc" }, take,
-          select: { id: true, leadId: true, cadenceInstanceId: true, stepKey: true, status: true, attemptCount: true, createdAt: true, claimedAt: true, sentAt: true, finalizedAt: true },
+          select: { id: true, leadId: true, cadenceInstanceId: true, stepKey: true, status: true, attemptCount: true, createdAt: true, scheduledAt: true, claimedAt: true, sentAt: true, finalizedAt: true },
         });
         const cadences = await database.prospectingCadenceInstance.findMany({ where: { workspaceId, id: { in: jobs.map((job) => job.cadenceInstanceId) } }, select: { id: true, ownerMemberId: true } });
         const ownerByCadence = new Map(cadences.map((cadence) => [cadence.id, cadence.ownerMemberId]));
@@ -505,7 +505,7 @@ function sources(database: PrismaClient, workspaceId: string): readonly Source[]
             : job.status === "EXPIRED" ? ["EMAIL_EXPIRED", job.finalizedAt ?? job.createdAt] as const
               : job.status === "FAILED" ? ["EMAIL_FAILED", job.finalizedAt ?? job.createdAt] as const : null;
           return [
-            { ...common, eventKey: `prospecting-email-job:${job.id}:scheduled:v1`, eventType: "EMAIL_SCHEDULED" as const, occurredAt: job.createdAt, result: "SCHEDULED" },
+            { ...common, eventKey: `prospecting-email-job:${job.id}:scheduled:v1`, eventType: "EMAIL_SCHEDULED" as const, occurredAt: job.scheduledAt, result: "SCHEDULED" },
             ...(job.claimedAt && job.attemptCount > 0 ? [{ ...common, eventKey: `prospecting-email-job:${job.id}:attempt:${job.attemptCount}:claimed:v1`, eventType: "EMAIL_CLAIMED" as const, occurredAt: job.claimedAt, result: "CLAIMED" }] : []),
             ...(terminal ? [{ ...common, eventKey: `prospecting-email-job:${job.id}:attempt:${Math.max(1, job.attemptCount)}:${job.status.toLowerCase()}:v1`, eventType: terminal[0], occurredAt: terminal[1], result: job.status }] : []),
           ];

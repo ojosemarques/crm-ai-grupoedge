@@ -150,6 +150,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       meetingsCreatedInPeriod,
       periodEffectiveContactFacts,
       emailCadenceFacts,
+      scheduledEmailJobsInPeriod,
     ] = await Promise.all([
       options.database.prospectingSettings.findUnique({ where: { workspaceId: context.workspaceId } }),
       manageDecision.allowed ? options.database.prospectingReconciliationState.findUnique({
@@ -334,9 +335,18 @@ export function createProspectingWorkspaceService(options: Readonly<{
           creditedMemberId: memberScope,
           occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end },
           cadenceStepKey: { not: null },
-          eventType: { in: [...EMAIL_CADENCE_METRIC_EVENT_TYPES] },
+          eventType: { in: EMAIL_CADENCE_METRIC_EVENT_TYPES.filter((eventType) => eventType !== "EMAIL_SCHEDULED") },
         },
         _sum: { quantity: true },
+      }),
+      options.database.prospectingEmailJob.groupBy({
+        by: ["stepKey"],
+        where: {
+          workspaceId: context.workspaceId,
+          ...leadScope,
+          scheduledAt: { gte: metricsPeriod.start, lt: metricsPeriod.end },
+        },
+        _count: { _all: true },
       }),
     ]);
 
@@ -540,11 +550,18 @@ export function createProspectingWorkspaceService(options: Readonly<{
         effectiveContacts: effectiveContactsInPeriod.total,
         meetingsMoved: meetingsMovedInPeriod.length,
         meetingsCreated: meetingsCreatedInPeriod._sum.quantity ?? 0,
-        emailCadence: summarizeEmailCadenceMetrics(emailCadenceFacts.map((fact) => ({
-          eventType: fact.eventType,
-          cadenceStepKey: fact.cadenceStepKey,
-          quantity: fact._sum.quantity ?? 0,
-        }))),
+        emailCadence: summarizeEmailCadenceMetrics([
+          ...emailCadenceFacts.map((fact) => ({
+            eventType: fact.eventType,
+            cadenceStepKey: fact.cadenceStepKey,
+            quantity: fact._sum.quantity ?? 0,
+          })),
+          ...scheduledEmailJobsInPeriod.map((jobs) => ({
+            eventType: "EMAIL_SCHEDULED",
+            cadenceStepKey: jobs.stepKey,
+            quantity: jobs._count._all,
+          })),
+        ]),
         dailyBySeller: buildSellerMetrics(dailySellerIds, dailyTaskResults, dailyActivityFacts, effectiveContactsToday, dailyMeetingsByMember, dailyTouchedByMember),
         bySeller: buildSellerMetrics(periodSellerIds, periodTaskResults, periodActivityFacts, effectiveContactsInPeriod, periodMeetingsByMember, periodTouchedByMember),
       },

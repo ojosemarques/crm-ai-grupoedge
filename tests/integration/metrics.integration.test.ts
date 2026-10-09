@@ -765,6 +765,7 @@ describe("camada confiável de métricas", () => {
     ]));
     expect(result.performance.some((item) => item.role === "SDR" && item.volume > 0)).toBe(true);
     expect(result.performance.some((item) => item.role === "CLOSER" && item.meetings > 0)).toBe(true);
+    expect(result.cohortByStage.reduce((sum, segment) => sum + segment.value, 0)).toBe(3);
 
     const series = Object.fromEntries(result.timeSeries.map((item) => [item.id, item]));
     expect(series.leads!.granularity).toBe("DAY");
@@ -805,6 +806,7 @@ describe("camada confiável de métricas", () => {
     expect(empty.hasData).toBe(false);
     expect(empty.kpis.find((item) => item.id === "leads")?.value).toBe(0);
     expect(empty.funnel.every((item) => item.value === 0)).toBe(true);
+    expect(empty.cohortByStage).toEqual([]);
     expect(empty.timeSeries.find((item) => item.id === "leads")?.points.every((point) => point.value === 0)).toBe(true);
     expect(empty.timeSeries.find((item) => item.id === "lead-to-sale")?.points.every((point) => point.value === null)).toBe(true);
     expect(empty.comparisons.find((item) => item.id === "leads")).toMatchObject({

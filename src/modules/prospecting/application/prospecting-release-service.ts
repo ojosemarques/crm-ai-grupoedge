@@ -281,7 +281,7 @@ export function createProspectingReleaseService(options: Options) {
             emailJobId = job.id;
             await recordCommercialMetricFactInTransaction(transaction, {
               workspaceId: release.workspaceId, eventKey: `prospecting-email-job:${job.id}:scheduled:v1`, eventType: "EMAIL_SCHEDULED",
-              occurredAt: job.createdAt, sourceEntityType: "ProspectingEmailJob", sourceEntityId: job.id, leadId: lead.id,
+              occurredAt: job.scheduledAt, sourceEntityType: "ProspectingEmailJob", sourceEntityId: job.id, leadId: lead.id,
               creditedMemberId: member.id, leadOwnerMemberIdAtEvent: member.id, cadenceInstanceId: cadence.id,
               cadenceStepKey: step.stepKey, cadenceDay: step.dayNumber, channel: "EMAIL", direction: "OUTBOUND",
               executionMode: "AUTOMATION", result: job.status,

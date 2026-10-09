@@ -305,7 +305,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
 
       <div className={styles.primaryGrid}>
         <section className={`${styles.panel} ${styles.evolutionPanel}`}><header className={styles.panelHeader}><div><h2>Evolução comercial</h2><p>O ritmo da operação, dia após dia.</p></div><span className={styles.headerIcon}><Icon name="tendencia" size={16} /></span></header><CommercialEvolutionChart currentPeriodLabel={currentPeriodLabel} description="Evolução dos principais marcos comerciais" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Evolução comercial" /></section>
-        <StageDistribution segments={screen.backlogByStage.map((stage) => ({ ...stage, href: dashboardHref(q, stage.drilldownId) }))} totalHref={kpiById.get("backlog") ? dashboardHref(q, kpiById.get("backlog")!.drilldownId) : undefined} />
+        <StageDistribution segments={screen.cohortByStage.map((stage) => ({ ...stage, href: dashboardHref(q, stage.drilldownId) }))} totalHref={kpiById.get("leads") ? dashboardHref(q, kpiById.get("leads")!.drilldownId) : undefined} />
       </div>
 
       <FunnelPanel screen={screen} />

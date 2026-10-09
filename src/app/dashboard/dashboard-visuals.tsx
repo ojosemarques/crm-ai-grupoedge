@@ -9,9 +9,9 @@ export function StageDistribution({ segments, totalHref }: Readonly<{ segments: 
   const total = segments.reduce((sum, segment) => sum + segment.value, 0);
   let offset = 0;
   return <section className={`${styles.panel} ${styles.distributionPanel}`}>
-    <header className={styles.panelHeader}><div><h2>Distribuição por etapa</h2><p>Leads em aberto com etapa registrada</p></div><span className={styles.headerIcon} aria-hidden="true">◔</span></header>
+    <header className={styles.panelHeader}><div><h2>Leads do período por etapa</h2><p>Apenas leads recebidos no intervalo selecionado, na etapa em que estavam ao final do período</p></div><span className={styles.headerIcon} aria-hidden="true">◔</span></header>
     <div className={styles.donutWrap}>
-      <svg aria-label={`${total.toLocaleString("pt-BR")} leads distribuídos por etapa`} className={styles.donutSvg} role="img" viewBox="0 0 240 240">
+      <svg aria-label={`${total.toLocaleString("pt-BR")} leads do período distribuídos por etapa`} className={styles.donutSvg} role="img" viewBox="0 0 240 240">
         <circle cx="120" cy="120" fill="none" r="88" stroke="var(--border)" strokeWidth="30" />
         {total > 0 ? segments.map((segment, index) => {
           const percent = segment.value / total * 100;
@@ -19,10 +19,10 @@ export function StageDistribution({ segments, totalHref }: Readonly<{ segments: 
           offset += percent;
           return <circle cx="120" cy="120" fill="none" key={segment.id} pathLength="100" r="88" stroke={palette[index % palette.length]} strokeDasharray={`${percent} ${100 - percent}`} strokeDashoffset={-start} strokeWidth="30" transform="rotate(-90 120 120)"><title>{`${segment.label}: ${segment.value.toLocaleString("pt-BR")} leads (${percent.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%)`}</title></circle>;
         }) : null}
-        {totalHref ? <a aria-label="Abrir registros do total em etapas" href={totalHref}><text className={styles.donutCaption} textAnchor="middle" x="120" y="111">Nas etapas</text><text className={styles.donutValue} textAnchor="middle" x="120" y="145">{total.toLocaleString("pt-BR")}</text></a> : <><text className={styles.donutCaption} textAnchor="middle" x="120" y="111">Nas etapas</text><text className={styles.donutValue} textAnchor="middle" x="120" y="145">{total.toLocaleString("pt-BR")}</text></>}
+        {totalHref ? <a aria-label="Abrir leads recebidos no período" href={totalHref}><text className={styles.donutCaption} textAnchor="middle" x="120" y="111">No período</text><text className={styles.donutValue} textAnchor="middle" x="120" y="145">{total.toLocaleString("pt-BR")}</text></a> : <><text className={styles.donutCaption} textAnchor="middle" x="120" y="111">No período</text><text className={styles.donutValue} textAnchor="middle" x="120" y="145">{total.toLocaleString("pt-BR")}</text></>}
       </svg>
     </div>
-    {total > 0 ? <ul className={styles.donutLegend}>{segments.map((segment, index) => <li key={segment.id}><Link href={segment.href}><svg aria-hidden="true" height="8" width="8"><circle cx="4" cy="4" fill={palette[index % palette.length]} r="4" /></svg><span>{segment.label}</span><strong>{segment.value.toLocaleString("pt-BR")}</strong><small>{(segment.value / total * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</small></Link></li>)}</ul> : <p className={styles.donutEmpty}>Não há leads em aberto neste recorte.</p>}
+    {total > 0 ? <ul className={styles.donutLegend}>{segments.map((segment, index) => <li key={segment.id}><Link href={segment.href}><svg aria-hidden="true" height="8" width="8"><circle cx="4" cy="4" fill={palette[index % palette.length]} r="4" /></svg><span>{segment.label}</span><strong>{segment.value.toLocaleString("pt-BR")}</strong><small>{(segment.value / total * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</small></Link></li>)}</ul> : <p className={styles.donutEmpty}>Nenhum lead foi recebido neste período.</p>}
   </section>;
 }
 

@@ -425,6 +425,44 @@ function averageMoney(total: bigint, denominator: number): AverageMoneyMetric {
 }
 
 export function createMetricsService(options: MetricsServiceOptions) {
+  async function getScheduledProspectingEmailFacts(
+    context: AuthenticatedContext,
+    query: MetricsQuery,
+    scope: Readonly<{ scope: PermissionScope; teamIds: readonly string[] }>,
+  ): Promise<readonly IntegratedActivityFact[]> {
+    const jobs = await options.database.prospectingEmailJob.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        scheduledAt: { gte: new Date(query.from), lt: new Date(query.to) },
+      },
+      select: { id: true, scheduledAt: true },
+    });
+    if (jobs.length === 0) return Object.freeze([]);
+
+    const scopedWhere = await integratedFactWhere(options.database, context, scope, query);
+    const { occurredAt: periodConstraint, ...factScopeWhere } = scopedWhere;
+    void periodConstraint;
+    const rows = await options.database.commercialMetricFact.findMany({
+      where: {
+        ...factScopeWhere,
+        eventType: "EMAIL_SCHEDULED",
+        sourceEntityType: "ProspectingEmailJob",
+        sourceEntityId: { in: jobs.map((job) => job.id) },
+      },
+      select: {
+        id: true, eventType: true, sourceEntityType: true, sourceEntityId: true,
+        leadId: true, creditedMemberId: true, performedByMemberId: true, bookedByMemberId: true,
+        taskKind: true, result: true, cadenceStepKey: true, quantity: true, valueCents: true,
+      },
+    });
+    const scheduledAtByJobId = new Map(jobs.map((job) => [job.id, job.scheduledAt]));
+    return Object.freeze(rows.map(({ sourceEntityId, ...row }) => Object.freeze({
+      ...row,
+      occurredAt: scheduledAtByJobId.get(sourceEntityId)?.toISOString() ?? query.from,
+      valueCents: row.valueCents?.toString() ?? null,
+    })));
+  }
+
   async function getOverview(
     context: AuthenticatedContext,
     input: unknown,
@@ -1037,9 +1075,10 @@ export function createMetricsService(options: MetricsServiceOptions) {
     const workspace = await options.database.workspace.findFirst({ where: { id: context.workspaceId, status: "ACTIVE", deletedAt: null }, select: { timeZone: true } });
     if (!workspace) invalidInput("Workspace não encontrado.");
     const where = await integratedFactWhere(options.database, context, scope, query);
-    const [groups, leadFacts, latestBackfill, latestReconciliation] = await Promise.all([
+    const [groups, leadFacts, scheduledProspectingEmailFacts, latestBackfill, latestReconciliation] = await Promise.all([
       options.database.commercialMetricFact.groupBy({ by: ["eventType", "result", "sourceEntityType", "channel"], where, _sum: { quantity: true, valueCents: true }, _max: { occurredAt: true } }),
       options.database.commercialMetricFact.findMany({ where: { ...where, leadId: { not: null } }, select: { eventType: true, result: true, sourceEntityType: true, channel: true, leadId: true, quantity: true } }),
+      getScheduledProspectingEmailFacts(context, query, scope),
       options.database.commercialMetricBackfillRun.findFirst({ where: { workspaceId: context.workspaceId, mode: "APPLY" }, orderBy: [{ startedAt: "desc" }, { id: "desc" }] }),
       options.database.commercialMetricReconciliationRun.findFirst({ where: { workspaceId: context.workspaceId }, orderBy: [{ startedAt: "desc" }, { id: "desc" }] }),
     ]);
@@ -1073,7 +1112,10 @@ export function createMetricsService(options: MetricsServiceOptions) {
           leadFacts.filter((fact) => definition.denominatorEventTypes?.includes(fact.eventType)),
         )
         : null;
-      const numerator = cohort ? cohort.numerator : definition.aggregation === "DISTINCT_LEAD" ? distinct(definition.eventTypes, definition.results, definition.sourceEntityTypes, definition.channels) : definition.aggregation === "SUM_CENTS" ? cents(definition.eventTypes, definition.results, definition.sourceEntityTypes, definition.channels) : count(definition.eventTypes, definition.results, definition.sourceEntityTypes, definition.channels);
+      const numerator = definition.id === "email.scheduled"
+        ? count(definition.eventTypes, definition.results, ["MessageStatusEvent"], definition.channels)
+          + scheduledProspectingEmailFacts.reduce((total, fact) => total + fact.quantity, 0)
+        : cohort ? cohort.numerator : definition.aggregation === "DISTINCT_LEAD" ? distinct(definition.eventTypes, definition.results, definition.sourceEntityTypes, definition.channels) : definition.aggregation === "SUM_CENTS" ? cents(definition.eventTypes, definition.results, definition.sourceEntityTypes, definition.channels) : count(definition.eventTypes, definition.results, definition.sourceEntityTypes, definition.channels);
       const denominator = cohort ? cohort.denominator : definition.denominatorEventTypes
         ? definition.denominatorAggregation === "DISTINCT_LEAD" ? distinct(definition.denominatorEventTypes) : count(definition.denominatorEventTypes)
         : null;
@@ -1172,19 +1214,25 @@ export function createMetricsService(options: MetricsServiceOptions) {
     const query = parseMetricsQuery(input);
     const scope = await resolveMetricsScope(options.database, options.authorization, context);
     const where = await integratedFactWhere(options.database, context, scope, query);
-    const rows = await options.database.commercialMetricFact.findMany({
-      where: {
-        ...where,
-        eventType: { in: ["LEAD_CREATED", "TASK_COMPLETED", "STAGE_ENTERED", "CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INBOUND_MESSAGE_RECEIVED", "HUMAN_RESPONSE_CONFIRMED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SCHEDULED", "EMAIL_SENT", "EMAIL_DELIVERED", "EMAIL_REPLIED", "EMAIL_BOUNCED", "EMAIL_COMPLAINT", "EMAIL_UNSUBSCRIBED", "EMAIL_CANCELLED", "EMAIL_EXPIRED", "EMAIL_FAILED", "LEAD_QUALIFIED", "MEETING_SCHEDULED", "MEETING_COMPLETED", "PROPOSAL_REACHED", "SALE_WON"] },
-      },
-      orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
-      select: { id: true, eventType: true, sourceEntityType: true, occurredAt: true, leadId: true, creditedMemberId: true, performedByMemberId: true, bookedByMemberId: true, taskKind: true, result: true, cadenceStepKey: true, quantity: true, valueCents: true },
-    });
-    return Object.freeze(rows.map((row) => Object.freeze({
+    const [rows, scheduledProspectingEmailFacts] = await Promise.all([
+      options.database.commercialMetricFact.findMany({
+        where: {
+          ...where,
+          eventType: { in: ["LEAD_CREATED", "TASK_COMPLETED", "STAGE_ENTERED", "CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INBOUND_MESSAGE_RECEIVED", "HUMAN_RESPONSE_CONFIRMED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SCHEDULED", "EMAIL_SENT", "EMAIL_DELIVERED", "EMAIL_REPLIED", "EMAIL_BOUNCED", "EMAIL_COMPLAINT", "EMAIL_UNSUBSCRIBED", "EMAIL_CANCELLED", "EMAIL_EXPIRED", "EMAIL_FAILED", "LEAD_QUALIFIED", "MEETING_SCHEDULED", "MEETING_COMPLETED", "PROPOSAL_REACHED", "SALE_WON"] },
+          NOT: { eventType: "EMAIL_SCHEDULED", sourceEntityType: "ProspectingEmailJob" },
+        },
+        orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
+        select: { id: true, eventType: true, sourceEntityType: true, occurredAt: true, leadId: true, creditedMemberId: true, performedByMemberId: true, bookedByMemberId: true, taskKind: true, result: true, cadenceStepKey: true, quantity: true, valueCents: true },
+      }),
+      getScheduledProspectingEmailFacts(context, query, scope),
+    ]);
+    const facts = [...rows.map((row) => Object.freeze({
       ...row,
       occurredAt: row.occurredAt.toISOString(),
       valueCents: row.valueCents?.toString() ?? null,
-    })));
+    })), ...scheduledProspectingEmailFacts]
+      .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id));
+    return Object.freeze(facts);
   }
 
   return Object.freeze({ getOverview, getIntegratedOverview, getIntegratedDrilldown, getIntegratedActivityFacts });

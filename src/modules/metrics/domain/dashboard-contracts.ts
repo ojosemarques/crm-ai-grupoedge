@@ -229,6 +229,7 @@ export type DashboardScreen = Readonly<{
   performance: readonly DashboardPerformanceRow[];
   sellerActivity: readonly DashboardSellerActivity[];
   emailCadence: readonly EmailCadenceMetricsRow[];
+  cohortByStage: readonly DashboardSegment[];
   sources: readonly DashboardSegment[];
   sourceConversion: readonly DashboardSegment[];
   campaigns: readonly DashboardSegment[];

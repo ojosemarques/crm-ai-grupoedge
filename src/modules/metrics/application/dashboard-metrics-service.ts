@@ -1037,6 +1037,16 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "pt-BR"));
     };
     const sourceSegments = dimension("source", cohortLeads.map((lead) => ({ id: lead.source.id, label: lead.source.name, leadId: lead.id })));
+    const cohortByStage = dimension("cohort-stage", cohortLeads.map((lead) => {
+      const stageAtPeriodEnd = lead.stageHistory
+        .filter((history) => history.enteredAt < to && (history.exitedAt === null || history.exitedAt >= to))
+        .at(-1);
+      return {
+        id: stageAtPeriodEnd?.stageId ?? "none",
+        label: stageAtPeriodEnd?.stage.name ?? "Sem etapa registrada",
+        leadId: lead.id,
+      };
+    }));
     const campaignSegments = dimension("campaign", cohortLeads.map((lead) => ({ id: lead.campaign?.id ?? "none", label: lead.campaign?.name ?? "Sem campanha", leadId: lead.id })));
     const creativeSegments = dimension("creative", cohortLeads.map((lead) => ({ id: lead.creative?.id ?? "none", label: lead.creative?.name ?? "Sem criativo", leadId: lead.id })));
     const prioritySegments = dimension("priority", cohortLeads.map((lead) => ({
@@ -1250,6 +1260,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       sdrPerformance: Object.freeze(sdrPerformance), closerPerformance: Object.freeze(closerPerformance),
       performance: Object.freeze(performance), sellerActivity,
       emailCadence: summarizeEmailCadenceMetrics(activityFacts),
+      cohortByStage: Object.freeze(cohortByStage),
       sources: Object.freeze(sourceSegments), sourceConversion: Object.freeze(sourceConversion), campaigns: Object.freeze(campaignSegments), creatives: Object.freeze(creativeSegments), priorities: Object.freeze(prioritySegments),
       disqualificationReasons: Object.freeze(disqualificationReasons), lossReasons: Object.freeze(lossReasons), noShowReasons: Object.freeze(noShowReasons),
       pactoQuality: Object.freeze(pactoQuality), backlogByStage: Object.freeze(backlogByStage), agingByStage: Object.freeze(agingByStage),
