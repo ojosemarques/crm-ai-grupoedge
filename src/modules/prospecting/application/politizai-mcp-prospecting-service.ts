@@ -6,15 +6,15 @@ import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { McpAuthExtra } from "@/modules/prospecting/application/politizai-mcp-oauth-service";
 import { createProspectingStagingService } from "@/modules/prospecting/application/prospecting-staging-service";
 import { PROSPECTING_CONTRACT_VERSION } from "@/modules/prospecting/domain/prospecting-contracts";
-import { PROSPECTING_SOURCE_SNAPSHOTS } from "@/modules/prospecting/domain/politizai-mcp-config";
+import { POLITIZAI_AUTONOMY_RULES, PROSPECTING_SOURCE_SNAPSHOTS } from "@/modules/prospecting/domain/politizai-mcp-config";
 import type { OpenDotPrincipal } from "@/modules/prospecting/domain/open-dot-policy";
 import { normalizePhoneIdentity } from "@/modules/leads/domain/phone-normalizer";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const LEASE_MINUTES = 45;
-const AGENT_VERSION = "politizai-dot-mcp/1.5.2";
-const PROMPT_VERSION = "political-prospect-production/v8";
+const AGENT_VERSION = "politizai-dot-mcp/1.5.3";
+const PROMPT_VERSION = "political-prospect-production/v9";
 const BRAZILIAN_CAPITALS = [
   "Aracaju", "Belém", "Belo Horizonte", "Boa Vista", "Brasília", "Campo Grande", "Cuiabá", "Curitiba",
   "Florianópolis", "Fortaleza", "Goiânia", "João Pessoa", "Macapá", "Maceió", "Manaus",
@@ -292,6 +292,7 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         publicContactSources: ["TSE_2024", "DIVULGACANDCONTAS", "CITY_HALL", "CITY_COUNCIL", "OFFICIAL_GAZETTE", "INSTITUTIONAL_PROFILE"],
         researchSequence: ["TSE_2024_ELECTED_MATCH", "CURRENT_MUNICIPAL_MANDATE", "INDIVIDUAL_OFFICE_CONTACT", "DIVULGACANDCONTAS_2024_ALWAYS", "GOOGLE_TO_VALIDATED_INSTAGRAM_ALWAYS"],
         stopAfterFirstContact: false,
+        autonomy: POLITIZAI_AUTONOMY_RULES,
         inferContactData: false,
         directLeadCreation: false,
         emailSending: false,
