@@ -59,4 +59,76 @@ describe("planejador de capacidade da Prospecção Ativa", () => {
     loads.set("carlos:2026-10-05", 75);
     expect(chooseProspectingSeller({ sellers: withReserve, dates, loads })).toBeNull();
   });
+
+  it("preenche a meta diária com novos D1 sem consumir capacidade com cadências anteriores", async () => {
+    const cadenceGroupBy = vi.fn().mockResolvedValue([
+      { ownerMemberId: "jhon", _count: { _all: 74 } },
+    ]);
+    const candidateFindMany = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "candidate-with-phone" }]);
+    const releaseFindMany = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    const releaseUpsert = vi.fn().mockResolvedValue({
+      id: "release-id",
+      plannedDate: new Date("2026-10-05T00:00:00.000Z"),
+    });
+    const candidateUpdate = vi.fn().mockResolvedValue({ id: "candidate-with-phone" });
+    const database = {
+      workspace: { findUniqueOrThrow: vi.fn().mockResolvedValue({ timeZone: "America/Sao_Paulo" }) },
+      prospectingSettings: { upsert: vi.fn().mockResolvedValue({ releaseEnabled: true }) },
+      prospectingCalendarHoliday: { findMany: vi.fn().mockResolvedValue([]) },
+      prospectingSellerConfig: { findMany: vi.fn().mockResolvedValue([sellers[1]]) },
+      workspaceMember: { findMany: vi.fn().mockResolvedValue([{ id: "jhon" }]) },
+      prospectingCadenceInstance: { groupBy: cadenceGroupBy },
+      prospectRelease: {
+        findMany: releaseFindMany,
+        findUnique: vi.fn().mockResolvedValue(null),
+        upsert: releaseUpsert,
+      },
+      prospectCandidate: { findMany: candidateFindMany, update: candidateUpdate },
+      auditLog: { create: vi.fn() },
+      $queryRaw: vi.fn().mockResolvedValue([
+        { memberId: "jhon", localDate: new Date("2026-10-05T00:00:00.000Z"), touched: 75n },
+      ]),
+    };
+    const service = createProspectingPlannerService({
+      database: database as never,
+      now: () => new Date("2026-10-05T15:00:00.000Z"),
+    });
+
+    await expect(service.plan(database as never, {
+      workspaceId: "workspace-id",
+      actorId: "actor-id",
+      horizonStart: "2026-10-05",
+      horizonEnd: "2026-10-05",
+      limit: 1,
+    })).resolves.toMatchObject({ planned: 1, end: "2026-10-05" });
+
+    expect(cadenceGroupBy).toHaveBeenCalledWith({
+      by: ["ownerMemberId"],
+      where: {
+        workspaceId: "workspace-id",
+        d1Date: new Date("2026-10-05T00:00:00.000Z"),
+      },
+      _count: { _all: true },
+    });
+    expect(candidateFindMany.mock.calls.at(-1)?.[0]).toMatchObject({
+      where: {
+        workspaceId: "workspace-id",
+        status: "READY",
+        leadId: null,
+        OR: [
+          { normalizedPhone: { not: null } },
+          { normalizedPoliticianPhone: { not: null } },
+          { normalizedAdvisorPhone: { not: null } },
+          { normalizedWhatsapp: { not: null } },
+        ],
+      },
+    });
+    expect(database.$queryRaw).not.toHaveBeenCalled();
+    expect(releaseUpsert).toHaveBeenCalledOnce();
+    expect(candidateUpdate).toHaveBeenCalledOnce();
+  });
 });

@@ -1,21 +1,11 @@
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
-import { nextBusinessDate, PROSPECTING_CADENCE } from "@/modules/prospecting/domain/prospecting-cadence";
-import { addLocalDays, parseWorkspaceLocalDateTime, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
+import { nextBusinessDate } from "@/modules/prospecting/domain/prospecting-cadence";
+import { addLocalDays, workspaceDateAt } from "@/shared/core/time/workspace-time";
 import { getDatabaseClient } from "@/shared/core/database/client";
 
 type Database = PrismaClient | Prisma.TransactionClient;
-
-type LoadRow = Readonly<{ memberId: string; localDate: Date; touched: bigint }>;
-type DueTaskRow = Readonly<{
-  taskId: string;
-  leadId: string;
-  stepId: string;
-  stepKey: string;
-  cadenceStatus: "PENDING_D1" | "ACTIVE";
-  dueAt: Date;
-}>;
 
 function localDate(value: Date): string {
   return value.toISOString().slice(0, 10);
@@ -134,121 +124,20 @@ export function createProspectingPlannerService(options: Readonly<{ database: Pr
         replanned = futurePlans.length;
       }
 
-      const targetRange = workspaceDayRange(releaseDate, workspace.timeZone);
-      const nextDate = nextBusinessDate(addLocalDays(releaseDate, 1), holidays);
-      for (const seller of eligibleSellers) {
-        const completedRows = await database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
-          SELECT DISTINCT task."leadId"
-          FROM "tasks" task
-          JOIN "prospecting_cadence_steps" step
-            ON step."workspaceId" = task."workspaceId" AND step."taskId" = task."id"
-          JOIN "prospecting_cadence_instances" cadence
-            ON cadence."workspaceId" = step."workspaceId" AND cadence."id" = step."cadenceInstanceId"
-          WHERE task."workspaceId" = ${input.workspaceId}::uuid
-            AND task."assigneeMemberId" = ${seller.memberId}::uuid
-            AND task."status"::text = 'COMPLETED'
-            AND task."completedAt" >= ${targetRange.start}
-            AND task."completedAt" < ${targetRange.end}
-            AND COALESCE(task."result", '') <> 'CHANNEL_UNAVAILABLE'
-            AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
-            AND task."deletedAt" IS NULL
-        `);
-        const completedLeadIds = new Set(completedRows.map((row) => row.leadId));
-        const dueRows = await database.$queryRaw<DueTaskRow[]>(Prisma.sql`
-          SELECT task."id" AS "taskId", task."leadId", step."id" AS "stepId", step."stepKey",
-                 cadence."status"::text AS "cadenceStatus", task."dueAt"
-          FROM "tasks" task
-          JOIN "prospecting_cadence_steps" step
-            ON step."workspaceId" = task."workspaceId" AND step."taskId" = task."id"
-          JOIN "prospecting_cadence_instances" cadence
-            ON cadence."workspaceId" = step."workspaceId" AND cadence."id" = step."cadenceInstanceId"
-          WHERE task."workspaceId" = ${input.workspaceId}::uuid
-            AND task."assigneeMemberId" = ${seller.memberId}::uuid
-            AND task."status"::text IN ('OPEN', 'IN_PROGRESS')
-            AND task."dueAt" < ${targetRange.end}
-            AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
-            AND task."deletedAt" IS NULL
-          ORDER BY CASE WHEN cadence."status"::text = 'PENDING_D1' THEN 0 ELSE 1 END,
-                   task."dueAt" ASC, task."leadId" ASC, task."id" ASC
-        `);
-        const tasksByLead = new Map<string, DueTaskRow[]>();
-        for (const row of dueRows) {
-          const rows = tasksByLead.get(row.leadId) ?? [];
-          rows.push(row);
-          tasksByLead.set(row.leadId, rows);
-        }
-        const remainingSlots = Math.max(0, seller.dailyCapacity - completedLeadIds.size);
-        const rankedLeadIds = [...tasksByLead.keys()].sort((left, right) => {
-          const leftRows = tasksByLead.get(left)!;
-          const rightRows = tasksByLead.get(right)!;
-          const leftPendingD1 = leftRows.some((row) => row.cadenceStatus === "PENDING_D1");
-          const rightPendingD1 = rightRows.some((row) => row.cadenceStatus === "PENDING_D1");
-          return Number(rightPendingD1) - Number(leftPendingD1)
-            || leftRows[0]!.dueAt.getTime() - rightRows[0]!.dueAt.getTime()
-            || left.localeCompare(right);
-        });
-        const selected = new Set(rankedLeadIds.filter((leadId) => completedLeadIds.has(leadId)));
-        let newlySelected = 0;
-        for (const leadId of rankedLeadIds) {
-          if (selected.has(leadId)) continue;
-          if (newlySelected >= remainingSlots) break;
-          selected.add(leadId);
-          newlySelected += 1;
-        }
-        for (const leadId of rankedLeadIds) {
-          if (selected.has(leadId)) continue;
-          const movedTaskIds: string[] = [];
-          for (const row of tasksByLead.get(leadId) ?? []) {
-            const definition = PROSPECTING_CADENCE.find((step) => step.stepKey === row.stepKey);
-            if (!definition) continue;
-            const dueAt = parseWorkspaceLocalDateTime(`${nextDate}T${definition.timeOfDay}`, workspace.timeZone);
-            await database.task.update({ where: { id: row.taskId }, data: { dueAt, updatedByActorId: input.actorId } });
-            await database.prospectingCadenceStep.update({ where: { id: row.stepId }, data: { scheduledAt: dueAt } });
-            await database.lead.updateMany({
-              where: { id: leadId, workspaceId: input.workspaceId, nextActionTaskId: row.taskId },
-              data: { nextActionAt: dueAt, updatedByActorId: input.actorId },
-            });
-            movedTaskIds.push(row.taskId);
-          }
-          if (movedTaskIds.length > 0) {
-            await database.auditLog.create({
-              data: {
-                workspaceId: input.workspaceId,
-                actorId: input.actorId,
-                action: "prospecting.daily_queue.deferred",
-                entityType: "Lead",
-                entityId: leadId,
-                origin: "SYSTEM",
-                occurredAt: options.now(),
-                reason: "Capacidade diária de políticos distintos atingida.",
-                changes: { fromDate: releaseDate, toDate: nextDate, taskIds: movedTaskIds },
-              },
-            });
-          }
-        }
-      }
     }
 
-    const dayRange = workspaceDayRange(releaseDate, workspace.timeZone);
-    const rows = await database.$queryRaw<LoadRow[]>`
-      SELECT task."assigneeMemberId" AS "memberId",
-             ${releaseDate}::date AS "localDate",
-             COUNT(DISTINCT task."leadId")::bigint AS touched
-      FROM "tasks" task
-      JOIN "prospecting_cadence_steps" step
-        ON step."workspaceId" = task."workspaceId" AND step."taskId" = task."id"
-      JOIN "prospecting_cadence_instances" cadence
-        ON cadence."workspaceId" = step."workspaceId" AND cadence."id" = step."cadenceInstanceId"
-      WHERE task."workspaceId" = ${input.workspaceId}::uuid
-        AND task."assigneeMemberId" IN (${Prisma.join(eligibleSellers.map((seller) => seller.memberId))})
-        AND ((task."status"::text IN ('OPEN', 'IN_PROGRESS') AND task."dueAt" < ${dayRange.end})
-          OR (task."status"::text = 'COMPLETED' AND task."completedAt" >= ${dayRange.start} AND task."completedAt" < ${dayRange.end}
-            AND COALESCE(task."result", '') <> 'CHANNEL_UNAVAILABLE'))
-        AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
-        AND task."deletedAt" IS NULL
-      GROUP BY 1
-    `;
-    const loads = new Map(rows.map((row) => [loadKey(row.memberId, releaseDate), Number(row.touched)]));
+    const dailyNewProspects = await database.prospectingCadenceInstance.groupBy({
+      by: ["ownerMemberId"],
+      where: {
+        workspaceId: input.workspaceId,
+        d1Date: new Date(`${releaseDate}T00:00:00.000Z`),
+      },
+      _count: { _all: true },
+    });
+    const loads = new Map(dailyNewProspects.map((row) => [
+      loadKey(row.ownerMemberId, releaseDate),
+      row._count._all,
+    ]));
     const existingPlans = await database.prospectRelease.findMany({
       where: { workspaceId: input.workspaceId, status: { in: ["PLANNED", "CLAIMED"] }, plannedDate: new Date(`${releaseDate}T00:00:00.000Z`) },
       select: { plannedMemberId: true, plannedDate: true },
@@ -259,7 +148,17 @@ export function createProspectingPlannerService(options: Readonly<{ database: Pr
       loads.set(key, (loads.get(key) ?? 0) + 1);
     }
     const candidates = await database.prospectCandidate.findMany({
-      where: { workspaceId: input.workspaceId, status: "READY", leadId: null },
+      where: {
+        workspaceId: input.workspaceId,
+        status: "READY",
+        leadId: null,
+        OR: [
+          { normalizedPhone: { not: null } },
+          { normalizedPoliticianPhone: { not: null } },
+          { normalizedAdvisorPhone: { not: null } },
+          { normalizedWhatsapp: { not: null } },
+        ],
+      },
       orderBy: [{ mandateVerifiedAt: "asc" }, { id: "asc" }],
       take: input.limit ?? 2_000,
       select: { id: true },
@@ -319,7 +218,16 @@ export function createProspectingPlannerService(options: Readonly<{ database: Pr
 
   async function processNext(workerId: string) {
     const candidate = await options.database.prospectCandidate.findFirst({
-      where: { status: { in: ["READY", "PLANNED"] }, leadId: null },
+      where: {
+        status: { in: ["READY", "PLANNED"] },
+        leadId: null,
+        OR: [
+          { normalizedPhone: { not: null } },
+          { normalizedPoliticianPhone: { not: null } },
+          { normalizedAdvisorPhone: { not: null } },
+          { normalizedWhatsapp: { not: null } },
+        ],
+      },
       orderBy: [{ mandateVerifiedAt: "asc" }, { id: "asc" }],
       select: { workspaceId: true },
     });

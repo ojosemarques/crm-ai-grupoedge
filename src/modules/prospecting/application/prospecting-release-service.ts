@@ -125,6 +125,21 @@ export function createProspectingReleaseService(options: Options) {
           where: { id: release.candidateId, workspaceId: release.workspaceId, status: "PLANNED", leadId: null },
         });
         if (!candidate || !release.plannedMemberId) fail("Release sem candidato elegível ou vendedor planejado.", "PROSPECTING_RELEASE_INVALID");
+        const primaryPhone = candidate.normalizedPhone
+          ?? candidate.normalizedPoliticianPhone
+          ?? candidate.normalizedAdvisorPhone
+          ?? candidate.normalizedWhatsapp;
+        if (!primaryPhone) {
+          await transaction.prospectRelease.update({
+            where: { id: release.id },
+            data: { status: "DEFERRED", reasonCode: "CONTACT_REQUIRED", leaseExpiresAt: null },
+          });
+          await transaction.prospectCandidate.update({
+            where: { id: candidate.id },
+            data: { status: "READY", plannedReleaseDate: null, revision: { increment: 1 } },
+          });
+          return { releaseId: release.id, outcome: "DEFERRED" as const };
+        }
         if (candidate.mandateVerifiedAt < new Date(now.getTime() - 30 * 86_400_000)) {
           await transaction.prospectRelease.update({ where: { id: release.id }, data: { status: "DEFERRED", reasonCode: "MANDATE_EVIDENCE_STALE", leaseExpiresAt: null } });
           await transaction.prospectCandidate.update({ where: { id: candidate.id }, data: { status: "REVIEW_REQUIRED", reviewReasonCode: "MANDATE_EVIDENCE_STALE", plannedReleaseDate: null, revision: { increment: 1 } } });
@@ -153,10 +168,6 @@ export function createProspectingReleaseService(options: Options) {
         const source = await transaction.leadSource.findFirst({ where: { workspaceId: release.workspaceId, key: "open-dot-political-prospecting", deletedAt: null }, select: { id: true } })
           ?? await transaction.leadSource.create({ data: { workspaceId: release.workspaceId, key: "open-dot-political-prospecting", name: "Open-Dot — Prospecção política", type: "WEBHOOK", createdByActorId: actor.id, updatedByActorId: actor.id }, select: { id: true } });
         void source;
-        const primaryPhone = candidate.normalizedPhone
-          ?? candidate.normalizedPoliticianPhone
-          ?? candidate.normalizedAdvisorPhone
-          ?? candidate.normalizedWhatsapp;
         const primaryPhoneScope = candidate.normalizedPhone
           ? candidate.phoneScope
           : candidate.normalizedPoliticianPhone

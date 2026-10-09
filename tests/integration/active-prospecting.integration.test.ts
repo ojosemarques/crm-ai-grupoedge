@@ -300,7 +300,7 @@ describe("staging governado da Prospecção Ativa", () => {
     await expect(reconciliation.restoreOverwrittenSellerStages("integration:restore-stage:replay")).resolves.toEqual({ status: "IDLE", restored: 0 });
   });
 
-  it("libera prospect com apenas Instagram validado e suprime canais indisponíveis", async () => {
+  it("mantém no estoque prospect sem telefone mesmo quando possui Instagram", async () => {
     const base = candidate();
     const payload = candidate({
       idempotencyKey: "candidate:integration:instagram-only",
@@ -316,48 +316,12 @@ describe("staging governado da Prospecção Ativa", () => {
     expect(ingested.candidate.status).toBe("READY");
 
     const planner = createProspectingPlannerService({ database, now: () => clock });
-    await planner.plan(database, { workspaceId: principal.workspaceId, actorId: systemActorId, horizonStart: "2026-10-06", horizonEnd: "2026-11-04" });
-    const plannedRelease = await database.prospectRelease.findUniqueOrThrow({ where: { workspaceId_candidateId: { workspaceId: principal.workspaceId, candidateId: ingested.candidate.id } }, select: { plannedDate: true } });
-    clock = new Date(Math.max(clock.getTime(), plannedRelease.plannedDate.getTime() + 15 * 60 * 60_000));
-    let releaseOffset = 0;
-    const release = createProspectingReleaseService({ database, now: () => new Date(clock.getTime() + releaseOffset++) });
-    for (let index = 0; index < 20; index += 1) {
-      const current = await database.prospectCandidate.findUniqueOrThrow({ where: { id: ingested.candidate.id }, select: { status: true } });
-      if (current.status === "RELEASED") break;
-      await release.processNext(`worker-instagram-${index}`);
-    }
-
-    const released = await database.prospectCandidate.findUniqueOrThrow({ where: { id: ingested.candidate.id }, select: { status: true, leadId: true } });
-    expect(released.status).toBe("RELEASED");
-    const lead = await database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { contactId: true, normalizedPhone: true, normalizedEmail: true } });
-    expect(lead).toMatchObject({ normalizedPhone: null, normalizedEmail: null });
-    await expect(database.contactPoint.findMany({ where: { contactId: lead.contactId!, deletedAt: null }, select: { type: true, normalizedValue: true } })).resolves.toEqual([
-      { type: "INSTAGRAM", normalizedValue: "@somenteinstagram" },
-    ]);
-    const cadence = await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { workspaceId_leadId: { workspaceId: principal.workspaceId, leadId: released.leadId! } } });
-    await expect(database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id } })).resolves.toBe(0);
-    await expect(database.prospectingCadenceStep.findUniqueOrThrow({ where: { workspaceId_cadenceInstanceId_stepKey: { workspaceId: principal.workspaceId, cadenceInstanceId: cadence.id, stepKey: "call-1" } }, select: { status: true, resultCode: true } })).resolves.toEqual({ status: "COMPLETED", resultCode: "CHANNEL_UNAVAILABLE" });
-    await expect(database.prospectingCadenceStep.findUniqueOrThrow({ where: { workspaceId_cadenceInstanceId_stepKey: { workspaceId: principal.workspaceId, cadenceInstanceId: cadence.id, stepKey: "email-1" } }, select: { status: true, resultReason: true } })).resolves.toEqual({ status: "SUPPRESSED", resultReason: "CHANNEL_UNAVAILABLE" });
-    await expect(database.task.count({ where: { leadId: released.leadId!, kind: { in: ["INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, status: "OPEN" } })).resolves.toBeGreaterThan(0);
-
-    const sellerStage = await database.pipelineStage.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, pipelineId: (await database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { pipelineId: true } })).pipelineId, stableKey: "active-prospecting.meeting-scheduled" }, select: { id: true } });
-    const movedAt = new Date(clock.getTime() + 5_000);
-    await database.$transaction(async (transaction) => {
-      await transaction.stageHistory.updateMany({ where: { workspaceId: principal.workspaceId, leadId: released.leadId!, exitedAt: null }, data: { exitedAt: movedAt, exitedByActorId: systemActorId } });
-      const lead = await transaction.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { pipelineId: true } });
-      await transaction.stageHistory.create({ data: { workspaceId: principal.workspaceId, pipelineId: lead.pipelineId, stageId: sellerStage.id, leadId: released.leadId!, enteredAt: movedAt, enteredByActorId: systemActorId, transitionOrigin: "LEAD_CARD", transitionReason: "Etapa escolhida pelo vendedor." } });
-      await transaction.lead.update({ where: { id: released.leadId! }, data: { currentStageId: sellerStage.id, updatedByActorId: systemActorId } });
-    });
-    const openD1 = await database.prospectingCadenceStep.findMany({ where: { cadenceInstanceId: cadence.id, stepKey: { in: ["instagram-message-1", "instagram-follow"] } }, orderBy: { stepKey: "asc" } });
-    for (const step of openD1) {
-      const result = step.stepKey === "instagram-follow" ? "COMPLETED" : "SENT";
-      await database.$transaction(async (transaction) => {
-        await transaction.task.update({ where: { id: step.taskId! }, data: { status: "COMPLETED", completedAt: movedAt, result, updatedByActorId: systemActorId } });
-        await applyProspectingTaskCompletionInTransaction(transaction, { workspaceId: principal.workspaceId, leadId: released.leadId!, taskId: step.taskId!, result, actorId: systemActorId, completedAt: movedAt });
-      });
-    }
-    await expect(database.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id }, select: { status: true } })).resolves.toEqual({ status: "ACTIVE" });
-    await expect(database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { currentStageId: true } })).resolves.toEqual({ currentStageId: sellerStage.id });
+    await expect(planner.plan(database, { workspaceId: principal.workspaceId, actorId: systemActorId, horizonStart: "2026-10-06", horizonEnd: "2026-11-04" }))
+      .resolves.toMatchObject({ planned: expect.any(Number) });
+    await expect(database.prospectCandidate.findUniqueOrThrow({ where: { id: ingested.candidate.id }, select: { status: true, leadId: true, plannedReleaseDate: true } }))
+      .resolves.toEqual({ status: "READY", leadId: null, plannedReleaseDate: null });
+    await expect(database.prospectRelease.findUnique({ where: { workspaceId_candidateId: { workspaceId: principal.workspaceId, candidateId: ingested.candidate.id } } }))
+      .resolves.toBeNull();
   });
 
   it("cria todas as tarefas de Instagram sem perfil captado e aceita perfil não encontrado", async () => {
@@ -442,7 +406,7 @@ describe("staging governado da Prospecção Ativa", () => {
 
   it("repara Instagram ausente no contato canônico de candidato já liberado", async () => {
     const released = await database.prospectCandidate.findFirstOrThrow({
-      where: { workspaceId: principal.workspaceId, externalIdentityKey: "tse:2024:3550308:councilor:776", status: "RELEASED" },
+      where: { workspaceId: principal.workspaceId, externalIdentityKey: "tse:2024:3550308:councilor:777", status: "RELEASED" },
       select: { id: true, leadId: true, instagram: true },
     });
     const lead = await database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { contactId: true } });
@@ -456,7 +420,7 @@ describe("staging governado da Prospecção Ativa", () => {
     await expect(database.contactPoint.findMany({
       where: { workspaceId: principal.workspaceId, contactId: lead.contactId!, type: "INSTAGRAM", deletedAt: null },
       select: { normalizedValue: true, label: true, verificationStatus: true, quality: true },
-    })).resolves.toEqual([{ normalizedValue: "@somenteinstagram", label: "Direto", verificationStatus: "VERIFIED", quality: "VALID" }]);
+    })).resolves.toEqual([{ normalizedValue: "@fluxocompleto", label: "Direto", verificationStatus: "VERIFIED", quality: "VALID" }]);
     await expect(reconciliation.repairMissingInstagramContacts("integration:instagram-repair:replay")).resolves.toEqual({ status: "IDLE", repaired: 0 });
     await expect(database.auditLog.count({
       where: { workspaceId: principal.workspaceId, action: "prospecting.instagram_contact.repaired", entityId: released.id },
