@@ -115,6 +115,15 @@ export type SdrQueueScreen = Readonly<{
       cadence: number;
       newlyReleased: number;
       queueSize: number;
+      activityPlan: readonly Readonly<{
+        key: string;
+        label: string;
+        kind: "CALL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW" | "FOLLOW_UP";
+        dayNumber: number | null;
+        planned: number;
+        completed: number;
+        pending: number;
+      }>[];
     }>;
     calls: number;
     callsConnected: number;

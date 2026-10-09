@@ -179,6 +179,80 @@
   margin: 16px 0 0;
 }
 
+.prospectingGoal {
+  align-items: center;
+  background: color-mix(in oklab, var(--primary-soft) 82%, var(--surface));
+  border: 1px solid color-mix(in oklab, var(--primary) 22%, var(--border));
+  border-radius: 12px;
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, .45fr);
+  margin-top: 14px;
+  padding: 14px 16px;
+}
+
+.prospectingGoal span,
+.prospectingGoal small {
+  color: var(--muted-foreground);
+  display: block;
+  font-size: .68rem;
+}
+
+.prospectingGoal strong {
+  color: var(--foreground);
+  display: block;
+  font-size: 1rem;
+  margin: 3px 0;
+}
+
+.activityPlanGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.activityPlanGrid a {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-muted);
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px;
+  text-decoration: none;
+}
+
+.activityPlanGrid a:hover {
+  border-color: var(--primary);
+}
+
+.activityPlanGrid span,
+.activityPlanGrid > a > small {
+  color: var(--muted-foreground);
+  font-size: .68rem;
+  line-height: 1.35;
+}
+
+.activityPlanGrid strong {
+  color: var(--foreground);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.activityPlanGrid strong small {
+  color: var(--muted-foreground);
+  font-size: .65rem;
+  font-weight: 500;
+}
+
+.emptyActivityPlan {
+  color: var(--muted-foreground);
+  font-size: .72rem;
+  margin: 10px 0 0;
+}
+
 .goalDialog {
   max-width: 48rem;
   width: min(48rem, calc(100vw - 2rem));
@@ -804,7 +878,8 @@
 }
 
 @media (max-width: 1023px) {
-  .dailyGoal {
+  .dailyGoal,
+  .prospectingGoal {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -812,6 +887,10 @@
     text-align: left;
   }
   .productionGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .activityPlanGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -853,6 +932,10 @@
   }
 
   .productionGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .activityPlanGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

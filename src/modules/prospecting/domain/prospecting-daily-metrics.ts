@@ -1,3 +1,5 @@
+import { PROSPECTING_CADENCE } from "@/modules/prospecting/domain/prospecting-cadence";
+
 type ProspectingTaskResultRow = Readonly<{
   kind: string;
   result: string | null;
@@ -25,6 +27,73 @@ export type ProspectingTaskResultSummary = Readonly<{
   instagramFollowsProfileNotFound: number;
   instagramFollowsFailed: number;
 }>;
+
+export type ProspectingDailyActionRow = Readonly<{
+  stepKey: string;
+  action: string;
+  completed: number;
+  pending: number;
+}>;
+
+export type ProspectingDailyAction = Readonly<{
+  key: string;
+  label: string;
+  kind: "CALL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW" | "FOLLOW_UP";
+  dayNumber: number | null;
+  planned: number;
+  completed: number;
+  pending: number;
+}>;
+
+const manualCadenceSteps = PROSPECTING_CADENCE.filter((step) => step.executor === "SELLER");
+const cadenceStepByKey = new Map(manualCadenceSteps.map((step, index) => [step.stepKey, { ...step, index }]));
+
+function actionLabel(stepKey: string, action: ProspectingDailyAction["kind"]): string {
+  if (action === "FOLLOW_UP") return "Retornos";
+  const sequence = stepKey.match(/-(\d+)$/)?.[1];
+  if (action === "CALL") return sequence ? `Ligação ${sequence}` : "Ligação";
+  if (action === "INSTAGRAM_MESSAGE") return sequence ? `Mensagem no Instagram ${sequence}` : "Mensagem no Instagram";
+  return "Seguir no Instagram";
+}
+
+export function buildProspectingDailyActionPlan(
+  rows: readonly ProspectingDailyActionRow[],
+): readonly ProspectingDailyAction[] {
+  const supportedKinds = new Set<ProspectingDailyAction["kind"]>([
+    "CALL",
+    "INSTAGRAM_MESSAGE",
+    "INSTAGRAM_FOLLOW",
+    "FOLLOW_UP",
+  ]);
+
+  return rows
+    .filter((row) => supportedKinds.has(row.action as ProspectingDailyAction["kind"]))
+    .map((row) => {
+      const kind = row.action as ProspectingDailyAction["kind"];
+      const cadenceStep = cadenceStepByKey.get(row.stepKey);
+      return {
+        key: row.stepKey,
+        label: actionLabel(row.stepKey, kind),
+        kind,
+        dayNumber: cadenceStep?.dayNumber ?? null,
+        planned: row.completed + row.pending,
+        completed: row.completed,
+        pending: row.pending,
+        order: kind === "FOLLOW_UP" ? -1 : cadenceStep?.index ?? Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .filter((item) => item.planned > 0)
+    .sort((left, right) => left.order - right.order || left.label.localeCompare(right.label, "pt-BR"))
+    .map((item) => Object.freeze({
+      key: item.key,
+      label: item.label,
+      kind: item.kind,
+      dayNumber: item.dayNumber,
+      planned: item.planned,
+      completed: item.completed,
+      pending: item.pending,
+    }));
+}
 
 export function summarizeProspectingTaskResults(
   rows: readonly ProspectingTaskResultRow[],

@@ -689,6 +689,31 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
           </div>
           <div className={styles.productionActions}><Link href="/metas">Ver metas e quotas</Link>{screen.permissions.manageDailyGoals ? <Button disabled={screen.dailyGoalMemberOptions.length === 0} onClick={() => { setGoalEditorMemberId(screen.selectedMemberId ?? screen.dailyGoalMemberOptions[0]?.id ?? ""); setGoalNotice(null); setGoalEditorOpen(true); }} size="sm" type="button" variant="secondary">Configurar metas por pessoa</Button> : null}</div>
         </div>
+        <div className={styles.prospectingGoal}>
+          <div>
+            <span>Meta diária de políticos</span>
+            <strong>{screen.dailyProduction.prospecting.businessDay ? `${screen.dailyProduction.prospecting.queueSize} de ${screen.dailyProduction.prospecting.target} políticos` : `${screen.dailyProduction.prospecting.queueSize} políticos com atividade`}</strong>
+            <small>{screen.dailyProduction.prospecting.businessDay ? "Cada político conta uma vez, mesmo com várias atividades no dia." : "Meta pausada: dia não útil."}</small>
+          </div>
+          <div className={styles.progressSummary}>
+            <strong>{screen.dailyProduction.prospecting.worked} trabalhados</strong>
+            <small>{screen.dailyProduction.prospecting.pending} pendentes na prospecção fria</small>
+          </div>
+        </div>
+        <h3 className={styles.operationalDemandTitle}>Atividades da meta de hoje</h3>
+        {screen.dailyProduction.prospecting.activityPlan.length > 0 ? (
+          <div className={styles.activityPlanGrid}>
+            {screen.dailyProduction.prospecting.activityPlan.map((activity) => (
+              <Link href="/atividades" key={activity.key}>
+                <span>{activity.label}</span>
+                <strong>{activity.pending} <small>para fazer</small></strong>
+                <small>{activity.dayNumber ? `D${activity.dayNumber} da cadência · ` : ""}{activity.planned} planejadas · {activity.completed} concluídas</small>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <p className={styles.emptyActivityPlan}>{screen.dailyProduction.prospecting.businessDay ? "Nenhuma atividade de prospecção ou retorno está prevista para este recorte hoje." : "A meta e as atividades ficam pausadas em dias não úteis."}</p>
+        )}
         <div className={styles.dailyGoal}>
           <div>
             <span>Meta diária operacional</span>
@@ -708,10 +733,9 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         </div>
         <h3 className={styles.operationalDemandTitle}>Demandas operacionais de hoje</h3>
         <div className={styles.productionGrid}>
-          <Link href="/email-agente?view=metrics"><span>Meta de políticos</span><strong>{screen.dailyProduction.prospecting.queueSize} / {screen.dailyProduction.prospecting.target}</strong><small>{screen.dailyProduction.prospecting.businessDay ? "75 distintos por vendedor" : "Meta pausada: dia não útil"}</small></Link>
           <Link href="/email-agente?view=metrics"><span>Políticos já trabalhados</span><strong>{screen.dailyProduction.prospecting.worked}</strong><small>Um político conta uma vez no dia</small></Link>
           <Link href="/atividades"><span>Políticos pendentes</span><strong>{screen.dailyProduction.prospecting.pending}</strong><small>Com tarefa fria ainda aberta</small></Link>
-          <button onClick={() => selectSection("RETURN_TODAY")} type="button"><span>Retornos</span><strong>{screen.dailyProduction.prospecting.returns}</strong><small>Fora da meta de prospecção fria</small></button>
+          <button onClick={() => selectSection("RETURN_TODAY")} type="button"><span>Retornos</span><strong>{screen.dailyProduction.prospecting.returns}</strong><small>Priorizados antes de novas liberações</small></button>
           <Link href="/atividades"><span>Cadência</span><strong>{screen.dailyProduction.prospecting.cadence}</strong><small>Políticos em nova tentativa</small></Link>
           <Link href="/email-agente?view=stock"><span>Novos liberados</span><strong>{screen.dailyProduction.prospecting.newlyReleased}</strong><small>Usados para completar a meta</small></Link>
           <Link href="/atividades"><span>Ligações para fazer</span><strong>{screen.dailyProduction.callsPending}</strong><small>{screen.dailyProduction.calls} feitas · {screen.dailyProduction.callsConnected} contatos efetivos · {screen.dailyProduction.callsCallbackRequested} pediram retorno · {screen.dailyProduction.callsWhatsappShared} passaram WhatsApp · {screen.dailyProduction.callsNoAnswer} não atenderam · {screen.dailyProduction.callsBusy} ocupadas · {screen.dailyProduction.callsVoicemail} caixa postal · {screen.dailyProduction.callsWrongNumber} número incorreto · {screen.dailyProduction.callsChannelUnavailable} sem canal</small></Link>

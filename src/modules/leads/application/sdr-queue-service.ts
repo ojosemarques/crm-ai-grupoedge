@@ -19,7 +19,11 @@ import { getAuthorizationService } from "@/modules/users/permissions/authorizati
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { isBusinessDate } from "@/modules/prospecting/domain/prospecting-cadence";
-import { summarizeProspectingTaskResults } from "@/modules/prospecting/domain/prospecting-daily-metrics";
+import {
+  buildProspectingDailyActionPlan,
+  summarizeProspectingTaskResults,
+  type ProspectingDailyActionRow,
+} from "@/modules/prospecting/domain/prospecting-daily-metrics";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
@@ -462,6 +466,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       coldCadenceRows,
       newlyReleasedRows,
       returnRows,
+      prospectingDailyActionRows,
       prospectingSellerConfigs,
       calendarHolidays,
       dailyGoalProfiles,
@@ -679,6 +684,77 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           AND cadence."status"::text = 'MEETING_SCHEDULED'
           AND task."deletedAt" IS NULL
       `),
+      options.database.$queryRaw<ProspectingDailyActionRow[]>(Prisma.sql`
+        SELECT
+          step."stepKey" AS "stepKey",
+          step."action"::text AS "action",
+          COUNT(*) FILTER (
+            WHERE task."status"::text = 'COMPLETED'
+              AND task."completedAt" >= ${today.start}
+              AND task."completedAt" < ${today.end}
+          )::integer AS "completed",
+          COUNT(*) FILTER (
+            WHERE task."status"::text IN ('OPEN', 'IN_PROGRESS')
+              AND task."dueAt" < ${today.end}
+              AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
+          )::integer AS "pending"
+        FROM "tasks" task
+        JOIN "prospecting_cadence_steps" step
+          ON step."workspaceId" = task."workspaceId" AND step."taskId" = task."id"
+        JOIN "prospecting_cadence_instances" cadence
+          ON cadence."workspaceId" = step."workspaceId" AND cadence."id" = step."cadenceInstanceId"
+        WHERE task."workspaceId" = ${context.workspaceId}::uuid
+          ${productivityMemberSql}
+          AND step."executor"::text = 'SELLER'
+          AND task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
+          AND task."deletedAt" IS NULL
+          AND (
+            (
+              task."status"::text = 'COMPLETED'
+              AND task."completedAt" >= ${today.start}
+              AND task."completedAt" < ${today.end}
+            )
+            OR (
+              task."status"::text IN ('OPEN', 'IN_PROGRESS')
+              AND task."dueAt" < ${today.end}
+              AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE')
+            )
+          )
+        GROUP BY step."stepKey", step."action"
+
+        UNION ALL
+
+        SELECT
+          'follow-up' AS "stepKey",
+          'FOLLOW_UP' AS "action",
+          COUNT(*) FILTER (
+            WHERE task."status"::text = 'COMPLETED'
+              AND task."completedAt" >= ${today.start}
+              AND task."completedAt" < ${today.end}
+          )::integer AS "completed",
+          COUNT(*) FILTER (
+            WHERE task."status"::text IN ('OPEN', 'IN_PROGRESS')
+              AND task."dueAt" < ${today.end}
+          )::integer AS "pending"
+        FROM "tasks" task
+        WHERE task."workspaceId" = ${context.workspaceId}::uuid
+          ${productivityMemberSql}
+          AND task."sourceKey" LIKE 'active-prospecting:%'
+          AND task."kind"::text = 'FOLLOW_UP'
+          AND task."deletedAt" IS NULL
+          AND (
+            (
+              task."status"::text = 'COMPLETED'
+              AND task."completedAt" >= ${today.start}
+              AND task."completedAt" < ${today.end}
+            )
+            OR (
+              task."status"::text IN ('OPEN', 'IN_PROGRESS')
+              AND task."dueAt" < ${today.end}
+            )
+          )
+        HAVING COUNT(*) > 0
+      `),
       options.database.prospectingSellerConfig.findMany({
         where: { workspaceId: context.workspaceId, memberId: { in: productivityMemberIds }, active: true },
         select: { memberId: true, dailyCapacity: true },
@@ -752,7 +828,9 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     const politiciansTouchedTarget = businessDay
       ? prospectingSellerConfigs.reduce((total, seller) => total + seller.dailyCapacity, 0)
       : 0;
-    const dailyQueueLeadIds = new Set([...politiciansTouchedRows, ...coldPendingRows].map((row) => row.leadId));
+    const dailyQueueLeadIds = new Set(
+      [...politiciansTouchedRows, ...coldPendingRows, ...returnRows].map((row) => row.leadId),
+    );
 
     const sections: SdrQueueSection[] = sectionDefinitions.map((definition, index) => {
       const rawRows = rowsBySection[index] ?? [];
@@ -852,6 +930,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           cadence: coldCadenceRows.length,
           newlyReleased: newlyReleasedRows.length,
           queueSize: dailyQueueLeadIds.size,
+          activityPlan: buildProspectingDailyActionPlan(prospectingDailyActionRows),
         },
         calls,
         callsConnected: prospectingResults.callsConnected,
