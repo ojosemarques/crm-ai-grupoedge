@@ -71,6 +71,15 @@ describe("lista diária da prospecção no Copilot", () => {
     expect(dailyProspectingListIntent("Qual telefone da Maria?")).toBeNull();
   });
 
+  it("interpreta quantidade, abordagem e variações comuns de Instagram na meta de hoje", () => {
+    expect(dailyProspectingListIntent("quantos instagrans ou pessoas devo abordar hoje")).toBe("INSTAGRAM");
+    expect(dailyProspectingListIntent("Quantos Instagrams preciso fazer hoje?")).toBe("INSTAGRAM");
+    expect(dailyProspectingListIntent("O que devo abordar hoje?")).toBe("DAILY");
+    expect(dailyProspectingListIntent("Quais ações da meta preciso executar hoje?")).toBe("DAILY");
+    expect(dailyProspectingListIntent("Quantos seguidores tem o Instagram da Maria?")).toBeNull();
+    expect(dailyProspectingListIntent("Quais tarefas do cliente Acme?")).toBeNull();
+  });
+
   it("formata todos os itens e identifica explicitamente quem não tem Instagram", () => {
     const list: DailyProspectingList = {
       batch: instagramBatch,

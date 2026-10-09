@@ -80,6 +80,17 @@ describe("Copilot operacional", () => {
     expect(h.generate).not.toHaveBeenCalled();
   });
 
+  it("responde variações de quantidade e abordagem pela fila diária sem depender do modelo", async () => {
+    const h = harness();
+    const message = "quantos instagrans ou pessoas devo abordar hoje";
+
+    await h.service.command(context, { action: "CHAT", message });
+
+    expect(h.actions.dailyList).toHaveBeenCalledWith(context, "INSTAGRAM", message);
+    expect(h.generate).not.toHaveBeenCalled();
+    expect(h.loadContext).not.toHaveBeenCalled();
+  });
+
   it("conclui automaticamente as tarefas do resumo numerado pelo fluxo auditado", async () => {
     const h = harness();
     h.database.auditLog.findMany.mockResolvedValueOnce([{ metadata: { dailyProspectingBatch: { batchId: id(70), ...batchOwner, channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] } } }]);

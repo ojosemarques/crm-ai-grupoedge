@@ -56,11 +56,17 @@ function invalid(message: string): never {
 
 export function dailyProspectingListIntent(message: string): DailyProspectingChannel | null {
   const text = normalized(message);
-  const wantsList = /\b(lista|liste|listar|todos|todas|nomes?|contatos|pessoas|quem|quantas?|mostre|mostrar)\b/.test(text);
-  const dailyScope = /\b(meta|diari[ao]|hoje|meu dia|fila de tarefas|leads?|politicos?)\b/.test(text);
-  if (!wantsList || !dailyScope) return null;
-  if (/\b(instagram|insta)\b/.test(text)) return "INSTAGRAM";
-  if (/\b(ligacao|ligacoes|ligar|telefonar)\b/.test(text)) return "CALL";
+  const instagramIntent = /\binsta(?:gra[mn])?s?\b/.test(text);
+  const callIntent = /\b(ligacao|ligacoes|ligar|telefonar|telefonemas?)\b/.test(text);
+  const wantsList = /\b(lista|liste|listar|todos|todas|nomes?|contatos|pessoas|quem|qual|quais|quanto|quantos|quanta|quantas|mostre|mostrar)\b/.test(text)
+    || /\bo que\b/.test(text);
+  const wantsDailyWork = /\b(abordar|abordagens?|chamar|contatar|contactar|falar|fazer|faco|executar|trabalhar|preciso|devo|pendente|pendentes)\b/.test(text)
+    || /\btenho que\b/.test(text);
+  const dailyScope = /\b(meta|diari[ao]s?|hoje|meu dia|fila de tarefas|leads?|politicos?|prospeccao)\b/.test(text)
+    || ((instagramIntent || callIntent) && wantsDailyWork);
+  if ((!wantsList && !wantsDailyWork) || !dailyScope) return null;
+  if (instagramIntent) return "INSTAGRAM";
+  if (callIntent) return "CALL";
   return "DAILY";
 }
 
