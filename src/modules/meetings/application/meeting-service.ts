@@ -86,6 +86,8 @@ const agendaQuerySchema = z.object({
 
 const leadMeetingsQuerySchema = z.object({ leadId: z.string().uuid() }).strict();
 const meetingQuerySchema = z.object({ meetingId: z.string().uuid() }).strict();
+const leadOptionSearchSchema = z.object({ query: z.string().trim().min(2).max(80) }).strict();
+const WORKSPACE_MEETING_SCHEDULER_EMAILS = new Set(["carloshenrique@politizai.com"]);
 
 const scheduleSchema = z.object({
   leadId: z.string().uuid(),
@@ -395,10 +397,13 @@ export function createMeetingService(options: MeetingServiceOptions) {
 
   function schedulingScope(context: AuthenticatedContext, decision: AuthorizationDecision): PermissionScope | null {
     if (!decision.allowed) return null;
-    return context.roleKey === AccessRoleKeys.SDR ? "WORKSPACE" : decision.scope;
+    const normalizedEmail = context.email?.trim().toLowerCase();
+    return context.roleKey === AccessRoleKeys.SDR || (normalizedEmail && WORKSPACE_MEETING_SCHEDULER_EMAILS.has(normalizedEmail))
+      ? "WORKSPACE"
+      : decision.scope;
   }
 
-  async function leadOptions(context: AuthenticatedContext) {
+  async function leadOptions(context: AuthenticatedContext, query = "") {
     const permission = await options.authorization.authorize(context, PermissionKeys.LEADS_READ, {
       workspaceId: context.workspaceId,
       resourceType: "MeetingLeadOptions",
@@ -415,13 +420,22 @@ export function createMeetingService(options: MeetingServiceOptions) {
       where: {
         workspaceId: context.workspaceId,
         deletedAt: null,
-        AND: [leadVisibilityWhere(context, visibility)],
+        AND: [
+          leadVisibilityWhere(context, visibility),
+          ...(query ? [{ fullName: { contains: query, mode: "insensitive" as const } }] : []),
+        ],
       },
       orderBy: [{ fullName: "asc" }, { id: "asc" }],
-      take: 200,
+      take: query ? 20 : 200,
       select: { id: true, fullName: true, opportunities: { where: { status: "OPEN", deletedAt: null }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], select: { id: true, name: true } } },
     });
     return rows.map((row) => ({ id: row.id, name: row.fullName, opportunities: row.opportunities }));
+  }
+
+  async function searchLeadOptions(context: AuthenticatedContext, payload: unknown) {
+    const parsed = leadOptionSearchSchema.safeParse(payload);
+    if (!parsed.success) invalidInput(parsed.error);
+    return leadOptions(context, parsed.data.query);
   }
 
   async function getAgenda(context: AuthenticatedContext, payload: unknown): Promise<AgendaScreen> {
@@ -1368,7 +1382,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
     });
   }
 
-  return Object.freeze({ getAgenda, getLeadMeetings, schedule, act, getBriefing, recordTranscript });
+  return Object.freeze({ getAgenda, getLeadMeetings, searchLeadOptions, schedule, act, getBriefing, recordTranscript });
 }
 
 let service: ReturnType<typeof createMeetingService> | undefined;

@@ -56,6 +56,7 @@ async function humanContext(email: string): Promise<AuthenticatedContext> {
     roleKey: member.role.key,
     roleName: member.role.name,
     displayName: member.user.displayName,
+    email,
   });
 }
 
@@ -403,6 +404,54 @@ describe("agenda interna e reuniões", () => {
     await expect(schedule(lead.leadId, closer, "2035-02-18T09:00", closer1Id)).resolves.toMatchObject({
       meetingId: expect.any(String),
     });
+  });
+
+  it("permite que Carlos Henrique agende para outro closer sem ampliar outros vendedores", async () => {
+    clock = new Date("2035-02-17T16:00:00.000Z");
+    const lead = await qualifyLead("CRM15 agenda Carlos Henrique");
+    const role = await database.role.findFirstOrThrow({ where: { workspaceId, key: "closer", deletedAt: null } });
+    const user = await database.user.create({
+      data: {
+        email: "carloshenrique@politizai.com",
+        normalizedEmail: "carloshenrique@politizai.com",
+        displayName: "Carlos Henrique",
+      },
+    });
+    const member = await database.workspaceMember.create({
+      data: {
+        workspaceId,
+        userId: user.id,
+        roleId: role.id,
+        status: "ACTIVE",
+        joinedAt: clock,
+        createdByActorId: systemContext.actorId,
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+    await database.actor.create({
+      data: { workspaceId, userId: user.id, type: "HUMAN", key: `user:${user.id}`, displayName: user.displayName },
+    });
+    await database.lead.update({ where: { id: lead.leadId }, data: { ownerMemberId: member.id } });
+    const carlos = await humanContext("carloshenrique@politizai.com");
+
+    const agenda = await meetings().getLeadMeetings(carlos, { leadId: lead.leadId });
+    expect(agenda.closerOptions.map((closer) => closer.id)).toEqual(expect.arrayContaining([closer1Id, closer2Id]));
+    await expect(schedule(lead.leadId, carlos, "2035-02-18T10:30", closer2Id)).resolves.toMatchObject({
+      meetingId: expect.any(String),
+    });
+  });
+
+  it("pesquisa leads da agenda sem escapar do escopo autorizado", async () => {
+    const visible = await qualifyLead(`CRM15 busca agenda ${randomUUID().slice(0, 8)}`);
+    const hidden = await qualifyLead(`CRM15 busca oculta ${randomUUID().slice(0, 8)}`);
+    const closer = await contextByMember(closer1Id);
+    await database.lead.update({ where: { id: visible.leadId }, data: { ownerMemberId: closer1Id } });
+    await database.lead.update({ where: { id: hidden.leadId }, data: { ownerMemberId: closer2Id } });
+
+    const results = await meetings().searchLeadOptions(closer, { query: "CRM15 busca" });
+    expect(results.map((lead) => lead.id)).toContain(visible.leadId);
+    expect(results.map((lead) => lead.id)).not.toContain(hidden.leadId);
+    await expect(meetings().searchLeadOptions(closer, { query: "x" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
   it("marca horário passado sem resultado como pendência e entrega briefing persistido", async () => {

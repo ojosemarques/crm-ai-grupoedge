@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import styles from "./agenda-workspace.module.css";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
@@ -11,7 +11,7 @@ import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
-import type { AgendaScreen } from "@/modules/meetings/domain/meeting-contracts";
+import type { AgendaScreen, LeadOption } from "@/modules/meetings/domain/meeting-contracts";
 import { MeetingActions } from "@/modules/meetings/ui/meeting-actions";
 
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
@@ -58,6 +58,12 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
   const [display, setDisplay] = useState<"calendar" | "list">("calendar");
   const [showSchedule, setShowSchedule] = useState(Boolean(scopedInitialLeadId));
   const [scheduleLeadId, setScheduleLeadId] = useState(scopedInitialLeadId);
+  const [leadQuery, setLeadQuery] = useState("");
+  const [leadSearchOptions, setLeadSearchOptions] = useState<readonly LeadOption[]>([]);
+  const [leadSearchState, setLeadSearchState] = useState<"IDLE" | "LOADING" | "ERROR">("IDLE");
+  const [selectedLeadOption, setSelectedLeadOption] = useState<LeadOption | null>(
+    initialScreen.leadOptions.find((lead) => lead.id === scopedInitialLeadId) ?? null,
+  );
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
   const [hiddenStatuses, setHiddenStatuses] = useState<string[]>([]);
   const selectedMeeting = screen.meetings.find((meeting) => meeting.id === selectedMeetingId);
@@ -76,6 +82,44 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
   }
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const normalizedLeadQuery = leadQuery.trim();
+  const selectableLeadOptions = normalizedLeadQuery.length >= 2 ? leadSearchOptions : screen.leadOptions;
+  const selectedLead = selectableLeadOptions.find((lead) => lead.id === scheduleLeadId)
+    ?? screen.leadOptions.find((lead) => lead.id === scheduleLeadId)
+    ?? selectedLeadOption;
+
+  useEffect(() => {
+    if (!showSchedule || normalizedLeadQuery.length < 2) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void fetch(`/api/meetings/leads?q=${encodeURIComponent(normalizedLeadQuery)}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      }).then(async (response) => {
+        const body: unknown = await response.json().catch(() => null);
+        if (!response.ok || !body || typeof body !== "object" || !("result" in body) || !Array.isArray(body.result)) {
+          throw new Error("Falha ao pesquisar leads.");
+        }
+        setLeadSearchOptions(body.result as LeadOption[]);
+        setLeadSearchState("IDLE");
+      }).catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setLeadSearchOptions([]);
+        setLeadSearchState("ERROR");
+      });
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [normalizedLeadQuery, showSchedule]);
+
+  function closeSchedule() {
+    setShowSchedule(false);
+    setLeadQuery("");
+    setLeadSearchOptions([]);
+    setLeadSearchState("IDLE");
+  }
 
   async function refresh() {
     const query = new URLSearchParams({ view: screen.view, date: screen.selectedDate });
@@ -110,6 +154,9 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       await responseMessage(response);
       form.reset();
       setScheduleLeadId("");
+      setLeadQuery("");
+      setLeadSearchOptions([]);
+      setSelectedLeadOption(null);
       setNotice("Reunião agendada, tarefa criada e pipeline atualizado.");
       await refresh();
       setShowSchedule(false);
@@ -155,10 +202,12 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
         })}</div></div> : <div className={styles.meetingList}>{visibleMeetings.length ? visibleMeetings.map((meeting) => <article className={styles.listCard} key={meeting.id}><h3>{meeting.title}</h3>{meetingDetail(meeting)}</article>) : <EmptyState description="Selecione outro período ou ajuste os filtros da agenda." title="Nenhuma reunião neste período" />}</div>}
       </section>
       {selectedMeeting ? <AccessibleDialog className={styles.dialog!} labelledBy="meeting-title" onDismiss={() => setSelectedMeetingId(null)}><div className={styles.dialogHeader}><div><span>Reunião</span><h2 id="meeting-title">{selectedMeeting.title}</h2></div><button aria-label="Fechar detalhes" onClick={() => setSelectedMeetingId(null)} type="button">×</button></div>{meetingDetail(selectedMeeting)}</AccessibleDialog> : null}
-      {showSchedule ? <AccessibleDialog busy={pending} className={styles.dialog!} labelledBy="schedule-title" onDismiss={() => setShowSchedule(false)}><div className={styles.dialogHeader}><div><span>Agenda</span><h2 id="schedule-title">Agendar reunião</h2></div><button aria-label="Fechar agendamento" disabled={pending} onClick={() => setShowSchedule(false)} type="button">×</button></div>{screen.canSchedule ? <form className={styles.scheduleForm} onSubmit={schedule}>
-        <label>Lead<select className={inputClass} name="leadId" onChange={(event) => setScheduleLeadId(event.target.value)} required value={scheduleLeadId}><option value="">Selecione o lead</option>{screen.leadOptions.map((lead) => <option key={lead.id} value={lead.id}>{lead.name}</option>)}</select></label>
+      {showSchedule ? <AccessibleDialog busy={pending} className={styles.dialog!} labelledBy="schedule-title" onDismiss={closeSchedule}><div className={styles.dialogHeader}><div><span>Agenda</span><h2 id="schedule-title">Agendar reunião</h2></div><button aria-label="Fechar agendamento" disabled={pending} onClick={closeSchedule} type="button">×</button></div>{screen.canSchedule ? <form className={styles.scheduleForm} onSubmit={schedule}>
+        <label>Pesquisar lead<input aria-describedby="lead-search-status" className={inputClass} onChange={(event) => { const value = event.target.value; setLeadQuery(value); setLeadSearchOptions([]); setLeadSearchState(value.trim().length >= 2 ? "LOADING" : "IDLE"); }} placeholder="Digite pelo menos 2 caracteres" type="search" value={leadQuery} /></label>
+        <label>Lead<select className={inputClass} name="leadId" onChange={(event) => { const nextLead = selectableLeadOptions.find((lead) => lead.id === event.target.value) ?? null; setScheduleLeadId(event.target.value); setSelectedLeadOption(nextLead); }} required value={scheduleLeadId}><option value="">Selecione o lead</option>{selectedLead && !selectableLeadOptions.some((lead) => lead.id === selectedLead.id) ? <option value={selectedLead.id}>{selectedLead.name}</option> : null}{selectableLeadOptions.map((lead) => <option key={lead.id} value={lead.id}>{lead.name}</option>)}</select></label>
+        <p className={styles.fullWidth} id="lead-search-status" role="status">{normalizedLeadQuery.length < 2 ? "Digite um nome para filtrar todos os leads disponíveis." : leadSearchState === "LOADING" ? "Pesquisando leads…" : leadSearchState === "ERROR" ? "Não foi possível pesquisar leads agora." : `${leadSearchOptions.length} lead${leadSearchOptions.length === 1 ? "" : "s"} encontrado${leadSearchOptions.length === 1 ? "" : "s"}.`}</p>
         <label>Closer<select className={inputClass} name="closerId" required><option value="">Selecione o responsável</option>{screen.schedulingCloserOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
-        <label className={styles.fullWidth}>Oportunidade<select className={inputClass} name="opportunityId"><option value="">Sem vínculo explícito</option>{screen.leadOptions.find((lead) => lead.id === scheduleLeadId)?.opportunities.map((opportunity) => <option key={opportunity.id} value={opportunity.id}>{opportunity.name}</option>)}</select></label>
+        <label>Oportunidade<select className={inputClass} name="opportunityId"><option value="">Sem vínculo explícito</option>{selectedLead?.opportunities.map((opportunity) => <option key={opportunity.id} value={opportunity.id}>{opportunity.name}</option>)}</select></label>
         <label className={styles.fullWidth}>Título<input className={inputClass} name="title" required /></label>
         <label>Data e horário<input className={inputClass} defaultValue={`${screen.selectedDate}T09:00`} name="startsAtLocal" required type="datetime-local" /></label>
         <label>Duração<select className={inputClass} defaultValue={screen.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
