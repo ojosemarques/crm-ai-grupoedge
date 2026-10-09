@@ -149,6 +149,42 @@ export type DashboardPerformanceRow = Readonly<{
   drilldownId: string;
 }>;
 
+export type DashboardSellerActivity = Readonly<{
+  id: string;
+  name: string;
+  tasksCompleted: number;
+  stageEntries: number;
+  calls: number;
+  connected: number;
+  effectiveContacts: number;
+  unanswered: number;
+  callbackRequested: number;
+  whatsappShared: number;
+  noAnswer: number;
+  busy: number;
+  voicemail: number;
+  otherUnanswered: number;
+  callFailed: number;
+  wrongNumber: number;
+  channelUnavailable: number;
+  otherFailures: number;
+  withoutOutcome: number;
+  instagramMessages: number;
+  instagramFollows: number;
+  emailsSent: number;
+  instagramMessagesProfileNotFound: number;
+  instagramMessagesFailed: number;
+  instagramFollowsAlreadyFollowing: number;
+  instagramFollowsProfileNotFound: number;
+  instagramFollowsFailed: number;
+  qualified: number;
+  meetingsScheduled: number;
+  meetingStageMarked: number;
+  proposals: number;
+  sales: number;
+  salesValueCents: string;
+}>;
+
 export type DashboardSegment = Readonly<{
   id: string;
   label: string;
@@ -190,6 +226,7 @@ export type DashboardScreen = Readonly<{
   sdrPerformance: readonly DashboardSegment[];
   closerPerformance: readonly DashboardSegment[];
   performance: readonly DashboardPerformanceRow[];
+  sellerActivity: readonly DashboardSellerActivity[];
   sources: readonly DashboardSegment[];
   sourceConversion: readonly DashboardSegment[];
   campaigns: readonly DashboardSegment[];

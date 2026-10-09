@@ -29,6 +29,10 @@ import {
   stopColdCadenceInTransaction,
 } from "@/modules/prospecting/application/prospecting-cadence-service";
 import { recordTaskCompletionMetricFactsInTransaction } from "@/modules/metrics/application/task-completion-metric-facts";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
+import { manualActivityCorrectionFacts } from "@/modules/metrics/application/manual-activity-correction-facts";
+import { manualActivityMetricCorrection, manualActivityMetricEvents } from "@/modules/metrics/domain/manual-activity-metric-events";
+import { summarizeCorrectedContactHistory } from "@/modules/metrics/domain/corrected-contact-history";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
@@ -155,6 +159,7 @@ const recordActivitySchema = z
     meetingId: z.string().uuid().optional(),
     type: z.enum(activityTypes),
     direction: z.enum(["INBOUND", "OUTBOUND", "INTERNAL"]).default("INTERNAL"),
+    channel: z.enum(["INSTAGRAM", "WHATSAPP", "OTHER"]).optional(),
     result: z.enum(activityResults).optional(),
     subject: z.string().trim().min(2).max(200),
     observation: z.string().trim().max(5_000).optional(),
@@ -204,6 +209,11 @@ type LeadForOperation = Readonly<{
   id: string;
   status: LeadStatus;
   ownerMemberId: string | null;
+  sourceId: string | null;
+  campaignId: string | null;
+  creativeId: string | null;
+  pipelineId: string;
+  currentStageId: string;
   queueId: string | null;
   routingQueueId: string | null;
   contactPreference: "UNKNOWN" | "CONSENTED" | "NOT_CONSENTED" | "DO_NOT_CONTACT";
@@ -287,6 +297,11 @@ async function getTransactionalLead(
       id: true,
       status: true,
       ownerMemberId: true,
+      sourceId: true,
+      campaignId: true,
+      creativeId: true,
+      pipelineId: true,
+      currentStageId: true,
       queueId: true,
       routingQueueId: true,
       contactPreference: true,
@@ -612,6 +627,38 @@ async function applyContactFacts(
   return { firstHumanAttemptRecorded, firstConnectedRecorded };
 }
 
+async function refreshCorrectedConnectionProjection(
+  transaction: Prisma.TransactionClient,
+  input: Readonly<{ workspaceId: string; leadId: string; originalOccurredAt: Date; correctedResult: "CONNECTED" | "NOT_CONNECTED"; firstRespondedAt: Date | null }>,
+) {
+  const activities = await transaction.activity.findMany({
+    where: { workspaceId: input.workspaceId, leadId: input.leadId, deletedAt: null, type: { in: ["CALL", "CALL_CONNECTED", "CALL_UNANSWERED", "MESSAGE_RECEIVED"] } },
+    select: { id: true, type: true, direction: true, result: true, occurredAt: true, createdAt: true, correctsActivityId: true, newValues: true },
+  });
+  const connectedAt = summarizeCorrectedContactHistory(activities).connectedAt;
+  const cycles = await transaction.leadSlaCycle.findMany({
+    where: { workspaceId: input.workspaceId, leadId: input.leadId },
+    select: { id: true, receivedAt: true, firstConnectedAt: true },
+  });
+  for (const cycle of cycles) {
+    const next = connectedAt.find((at) => at >= cycle.receivedAt) ?? null;
+    const wasOriginal = cycle.firstConnectedAt?.getTime() === input.originalOccurredAt.getTime();
+    const newlyEarlier = input.correctedResult === "CONNECTED" && next && (!cycle.firstConnectedAt || next < cycle.firstConnectedAt);
+    if (!wasOriginal && !newlyEarlier) continue;
+    if (cycle.firstConnectedAt?.getTime() === next?.getTime()) continue;
+    await transaction.leadSlaCycle.update({
+      where: { id: cycle.id },
+      data: { firstConnectedAt: next, firstResponseTimeSeconds: next ? Math.floor((next.getTime() - cycle.receivedAt.getTime()) / 1_000) : null },
+    });
+  }
+  const nextFirstResponse = connectedAt[0] ?? null;
+  const originalWasFirst = input.firstRespondedAt?.getTime() === input.originalOccurredAt.getTime();
+  const responseNewlyEarlier = input.correctedResult === "CONNECTED" && nextFirstResponse && (!input.firstRespondedAt || nextFirstResponse < input.firstRespondedAt);
+  if ((originalWasFirst || responseNewlyEarlier) && input.firstRespondedAt?.getTime() !== nextFirstResponse?.getTime()) {
+    await transaction.lead.update({ where: { id: input.leadId }, data: { firstRespondedAt: nextFirstResponse } });
+  }
+}
+
 export function createOperationalHistoryService(
   options: OperationalHistoryServiceOptions,
 ) {
@@ -625,6 +672,11 @@ export function createOperationalHistoryService(
         id: true,
         status: true,
         ownerMemberId: true,
+        sourceId: true,
+        campaignId: true,
+        creativeId: true,
+        pipelineId: true,
+        currentStageId: true,
         queueId: true,
         routingQueueId: true,
         contactPreference: true,
@@ -1050,7 +1102,10 @@ export function createOperationalHistoryService(
           ...(parsed.data.previousValues
             ? { previousValues: parsed.data.previousValues }
             : {}),
-          ...(parsed.data.newValues ? { newValues: parsed.data.newValues } : {}),
+          ...(parsed.data.newValues || parsed.data.type === "MESSAGE_SENT" ? { newValues: {
+            ...parsed.data.newValues,
+            ...(parsed.data.type === "MESSAGE_SENT" ? { communicationChannel: parsed.data.channel ?? "OTHER" } : {}),
+          } } : {}),
           createdByActorId: context.actorId,
           updatedByActorId: context.actorId,
           createdAt: occurredAt,
@@ -1058,6 +1113,36 @@ export function createOperationalHistoryService(
         },
         select: { id: true },
       });
+      const performingMemberId = "memberId" in context ? context.memberId : null;
+      for (const event of manualActivityMetricEvents(parsed.data.type, result, parsed.data.direction, parsed.data.channel)) {
+        await recordCommercialMetricFactInTransaction(transaction, {
+          workspaceId: context.workspaceId,
+          eventKey: `activity:${activity.id}:${event.eventKeySuffix}:v1`,
+          eventType: event.eventType,
+          occurredAt,
+          sourceEntityType: "Activity",
+          sourceEntityId: activity.id,
+          leadId: lead.id,
+          opportunityId: parsed.data.opportunityId ?? null,
+          meetingId: parsed.data.meetingId ?? null,
+          activityId: activity.id,
+          creditedMemberId: event.eventType === "HUMAN_RESPONSE_CONFIRMED" || event.eventType === "INBOUND_MESSAGE_RECEIVED"
+            ? currentLead.ownerMemberId ?? performingMemberId : performingMemberId,
+          performedByMemberId: performingMemberId,
+          leadOwnerMemberIdAtEvent: currentLead.ownerMemberId,
+          sourceId: currentLead.sourceId,
+          campaignId: currentLead.campaignId,
+          creativeId: currentLead.creativeId,
+          pipelineId: currentLead.pipelineId,
+          stageId: currentLead.currentStageId,
+          teamId: currentLead.routingQueue?.teamId ?? currentLead.queue?.teamId ?? null,
+          direction: parsed.data.direction,
+          channel: event.channel,
+          activityType: parsed.data.type,
+          result: event.metricResult ?? result,
+          executionMode: "actorType" in context ? context.actorType === "AUTOMATION" ? "AUTOMATION" : "SYSTEM" : "MANUAL",
+        });
+      }
       await transaction.auditLog.create({
         data: {
           workspaceId: context.workspaceId,
@@ -1274,12 +1359,43 @@ export function createOperationalHistoryService(
         select: {
           id: true,
           type: true,
+          direction: true,
+          occurredAt: true,
+          opportunityId: true,
+          meetingId: true,
+          createdByActorId: true,
+          correctsActivityId: true,
           subject: true,
           description: true,
           result: true,
+          durationSeconds: true,
+          phoneCallId: true,
+          messageId: true,
         },
       });
       if (!original) notFound("Atividade original não encontrada.");
+      if (original.correctsActivityId) conflict("ACTIVITY_CORRECTION_CHAIN", "Corrija a atividade original, não um evento corretivo.");
+      if (parsed.data.correctedResult !== undefined && !["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"].includes(original.type)) {
+        conflict("ACTIVITY_RESULT_CORRECTION_UNSUPPORTED", "O resultado desta atividade não pode ser corrigido por este registro. Corrija o envio na fonte operacional.");
+      }
+      const correctedResult = parsed.data.correctedResult === undefined ? null
+        : original.type === "CALL" || original.type === "CALL_CONNECTED" || original.type === "CALL_UNANSWERED"
+          ? parsed.data.correctedResult === "CONNECTED" || parsed.data.correctedResult === "NOT_CONNECTED"
+            ? parsed.data.correctedResult
+            : conflict("CALL_RESULT_REQUIRED", "Uma ligação corrigida exige resultado conectado ou não atendido.")
+          : inferredResult(original.type, parsed.data.correctedResult);
+      const priorCorrections = await transaction.activity.findMany({
+        where: { workspaceId: context.workspaceId, correctsActivityId: original.id },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { createdAt: true, newValues: true },
+      });
+      const correctionRecordedAt = new Date(Math.max(options.now().getTime(), (priorCorrections[0]?.createdAt.getTime() ?? 0) + 1));
+      let previousResult = original.result;
+      for (const prior of priorCorrections) {
+        const values = prior.newValues;
+        const candidate = values && typeof values === "object" && !Array.isArray(values) ? values.result : null;
+        if (candidate === "CONNECTED" || candidate === "NOT_CONNECTED") { previousResult = candidate; break; }
+      }
       const nextTask = await findNextTask(transaction, context.workspaceId, lead.id);
       const correction = await transaction.activity.create({
         data: {
@@ -1306,11 +1422,65 @@ export function createOperationalHistoryService(
           correctsActivityId: original.id,
           createdByActorId: context.actorId,
           updatedByActorId: context.actorId,
-          createdAt: occurredAt,
-          updatedAt: occurredAt,
+          createdAt: correctionRecordedAt,
+          updatedAt: correctionRecordedAt,
         },
         select: { id: true },
       });
+      if (correctedResult !== null && manualActivityMetricCorrection(original.type, original.direction, previousResult, correctedResult).length > 0) {
+        const recorded = await transaction.auditLog.findFirst({
+          where: { workspaceId: context.workspaceId, action: "activity.recorded", entityType: "Activity", entityId: original.id },
+          select: { id: true },
+        });
+        const standaloneCall = original.direction === "OUTBOUND"
+          && original.phoneCallId === null && original.messageId === null;
+        if (recorded || standaloneCall) {
+          const currentLead = await getTransactionalLead(transaction, context.workspaceId, lead.id);
+          const originalActor = await transaction.actor.findFirstOrThrow({
+            where: { workspaceId: context.workspaceId, id: original.createdByActorId },
+            select: { userId: true, type: true },
+          });
+          const originalMember = originalActor.userId ? await transaction.workspaceMember.findFirst({
+            where: { workspaceId: context.workspaceId, userId: originalActor.userId }, select: { id: true },
+          }) : null;
+          const performer = originalMember?.id ?? null;
+          const originalFacts = [];
+          for (const event of manualActivityMetricEvents(original.type, original.result, original.direction)) {
+            const eventKey = `activity:${original.id}:${event.eventKeySuffix}:v1`;
+            const existing = await transaction.commercialMetricFact.findUnique({ where: { workspaceId_eventKey: { workspaceId: context.workspaceId, eventKey } } });
+            if (existing) { originalFacts.push(existing); continue; }
+            const created = await recordCommercialMetricFactInTransaction(transaction, {
+              workspaceId: context.workspaceId, eventKey, eventType: event.eventType,
+              occurredAt: original.occurredAt, sourceEntityType: "Activity", sourceEntityId: original.id,
+              leadId: lead.id, opportunityId: original.opportunityId, meetingId: original.meetingId, activityId: original.id,
+              creditedMemberId: event.eventType === "HUMAN_RESPONSE_CONFIRMED" || event.eventType === "INBOUND_MESSAGE_RECEIVED" ? currentLead.ownerMemberId ?? performer : performer,
+              performedByMemberId: performer, leadOwnerMemberIdAtEvent: currentLead.ownerMemberId,
+              sourceId: currentLead.sourceId, campaignId: currentLead.campaignId, creativeId: currentLead.creativeId,
+              pipelineId: currentLead.pipelineId, stageId: currentLead.currentStageId,
+              teamId: currentLead.routingQueue?.teamId ?? currentLead.queue?.teamId ?? null,
+              direction: original.direction, channel: event.channel, activityType: original.type,
+              result: event.metricResult ?? original.result,
+              ...(standaloneCall && event.eventType !== "CALL_ATTEMPTED" ? { durationSeconds: original.durationSeconds } : {}),
+              executionMode: originalActor.type === "HUMAN" ? "MANUAL" : originalActor.type === "AUTOMATION" ? "AUTOMATION" : "SYSTEM",
+            });
+            originalFacts.push(created.fact);
+          }
+          for (const fact of manualActivityCorrectionFacts({
+            workspaceId: context.workspaceId, originalId: original.id, correctionId: correction.id,
+            originalOccurredAt: original.occurredAt, correctionOccurredAt: occurredAt,
+            reason: parsed.data.reason, type: original.type, direction: original.direction,
+            previousResult, correctedResult, originalFacts,
+          })) {
+            await recordCommercialMetricFactInTransaction(transaction, fact);
+          }
+          if (correctedResult === "CONNECTED" || correctedResult === "NOT_CONNECTED") {
+            await refreshCorrectedConnectionProjection(transaction, {
+              workspaceId: context.workspaceId, leadId: lead.id, originalOccurredAt: original.occurredAt,
+              correctedResult, firstRespondedAt: currentLead.firstRespondedAt,
+            });
+          }
+        } else conflict("ACTIVITY_RESULT_CORRECTION_UNSUPPORTED", "O resultado desta atividade pertence a outra fonte operacional e deve ser corrigido nela.");
+      }
       await transaction.lead.update({
         where: { id: lead.id },
         data: {
@@ -1391,7 +1561,7 @@ export function createOperationalHistoryService(
     }
     const routingTeamId = lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null;
 
-    const [workspace, publicLead, tasks, activities, activityBreakdown, taskBreakdown, assignmentTargets] =
+    const [workspace, publicLead, tasks, activities, activityBreakdown, callActivities, taskBreakdown, assignmentTargets] =
       await Promise.all([
       options.database.workspace.findUniqueOrThrow({
         where: { id: context.workspaceId },
@@ -1560,8 +1730,14 @@ export function createOperationalHistoryService(
           workspaceId: context.workspaceId,
           leadId: lead.id,
           deletedAt: null,
+          correctsActivityId: null,
         },
         _count: { _all: true },
+      }),
+      options.database.activity.findMany({
+        where: { workspaceId: context.workspaceId, leadId: lead.id, deletedAt: null, type: { in: ["CALL", "CALL_CONNECTED", "CALL_UNANSWERED", "MESSAGE_RECEIVED"] } },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { id: true, type: true, direction: true, result: true, occurredAt: true, createdAt: true, correctsActivityId: true, newValues: true },
       }),
       options.database.task.groupBy({
         by: ["kind", "status"],
@@ -1601,9 +1777,7 @@ export function createOperationalHistoryService(
     const completedFollowUps = taskBreakdown
       .filter((row) => row.status === "COMPLETED" && row.kind === "FOLLOW_UP")
       .reduce((total, row) => total + row._count._all, 0);
-    const connectedCalls = activityBreakdown
-      .filter((row) => row.type === "CALL_CONNECTED" || (row.type === "CALL" && row.result === "CONNECTED"))
-      .reduce((total, row) => total + row._count._all, 0);
+    const contactSummary = summarizeCorrectedContactHistory(callActivities);
     const activeTasks = tasks.filter(
       (task) => task.status === "OPEN" || task.status === "IN_PROGRESS",
     );
@@ -1751,8 +1925,8 @@ export function createOperationalHistoryService(
       summary: {
         activities: {
           total: countActivities(),
-          calls: countActivities(["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"]),
-          connectedCalls,
+          calls: contactSummary.outboundCalls,
+          connectedCalls: contactSummary.connectedCalls,
           messages: countActivities(["MESSAGE", "MESSAGE_SENT", "MESSAGE_RECEIVED", "AUDIO"]),
           emails: countActivities(["EMAIL"]),
           meetings: countActivities(["MEETING"]),

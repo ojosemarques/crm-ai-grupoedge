@@ -142,6 +142,23 @@ describe("CRM-43 inbox omnichannel canônico", () => {
     expect(await database.messageStatusEvent.count({ where: { workspaceId: admin.workspaceId, providerKey: "LOCAL_SIMULATOR", externalEventId: deliveredId } })).toBe(1);
   });
 
+  it("registra resposta simulada no log e mantém um único primeiro contato humano", async () => {
+    const lead = await intake("4308");
+    const point = lead.contact!.points.find((item) => item.type === "PHONE")!;
+    const received = await service.receiveLocal(manager, { externalEventId: `evt:${randomUUID()}`, channel: "INTERNAL_SIMULATOR", address: point.normalizedValue, body: "Pode responder", occurredAt: now.toISOString(), scenario: "RECEIVED" });
+    const expectedRevision = await assignAndRevision(received.conversationId!);
+    const outbound = await allowedService.composeAndEnqueue(manager, { conversationId: received.conversationId!, expectedRevision, body: "Resposta autorizada", idempotencyKey: `send:${randomUUID()}`, clientCorrelationId: `correlation:${randomUUID()}` });
+    const externalEventId = `callback:${randomUUID()}`;
+    await allowedService.simulateDelivery(manager, { messageId: outbound.messageId, scenario: "REPLY", externalEventId });
+    await expect(allowedService.simulateDelivery(manager, { messageId: outbound.messageId, scenario: "REPLY", externalEventId })).resolves.toMatchObject({ idempotent: true });
+    const reply = await database.message.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, replyToMessageId: outbound.messageId, direction: "INBOUND" } });
+    const facts = await database.commercialMetricFact.findMany({ where: { workspaceId: admin.workspaceId, leadId: lead.id, eventType: { in: ["INBOUND_MESSAGE_RECEIVED", "HUMAN_RESPONSE_CONFIRMED"] } } });
+    expect(facts.filter((fact) => fact.eventType === "INBOUND_MESSAGE_RECEIVED" && fact.messageId === reply.id)).toHaveLength(1);
+    expect(facts.filter((fact) => fact.eventType === "HUMAN_RESPONSE_CONFIRMED")).toHaveLength(1);
+    expect(await database.activity.count({ where: { workspaceId: admin.workspaceId, leadId: lead.id, messageId: reply.id, type: "MESSAGE_RECEIVED" } })).toBe(1);
+    expect((await database.lead.findUniqueOrThrow({ where: { id: lead.id } })).lastInboundResponseAt).toEqual(now);
+  });
+
   it("cancela retry compatível quando surge opt-out", async () => {
     const lead = await intake("4304");
     const point = lead.contact!.points.find((item) => item.type === "PHONE")!;

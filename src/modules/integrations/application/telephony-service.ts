@@ -32,6 +32,7 @@ import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
+import { phoneCallMetricEventType } from "@/modules/metrics/domain/phone-call-metric-events";
 
 type Tx = Prisma.TransactionClient;
 type Options = Readonly<{ database: PrismaClient; now: () => Date }>;
@@ -213,11 +214,7 @@ export async function applyTelephonyEventInTransaction(tx: Tx, input: Readonly<{
   }
   await tx.phoneCall.update({ where: { id: call.id }, data });
   await tx.message.update({ where: { id: call.messageId }, data: { ...(laterTransferLegEvent ? {} : { status: messageStatus(input.event.status) }), lastProviderStatusAt: input.event.occurredAt, revision: { increment: 1 } } });
-  const factEventType = input.event.status === "INITIATED" ? "CALL_ATTEMPTED" as const
-    : input.event.status === "ANSWERED" ? "CALL_CONNECTED" as const
-    : ["BUSY", "NO_ANSWER", "VOICEMAIL"].includes(input.event.status) ? "CALL_UNANSWERED" as const
-    : ["FAILED", "CANCELLED"].includes(input.event.status) ? "CALL_FAILED" as const
-    : null;
+  const factEventType = phoneCallMetricEventType(input.event.status);
   if (factEventType) {
     await recordCommercialMetricFactInTransaction(tx, {
       workspaceId: input.workspaceId,

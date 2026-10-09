@@ -104,6 +104,7 @@ export type SdrQueueScreen = Readonly<{
   }>[];
   dailyProduction: Readonly<{
     politiciansTouched: number;
+    outreachLeadsTouched: number;
     politiciansTouchedTarget: number;
     politiciansTouchedOverCapacity: boolean;
     prospecting: Readonly<{
@@ -129,12 +130,16 @@ export type SdrQueueScreen = Readonly<{
     callsConnected: number;
     callsCallbackRequested: number;
     callsWhatsappShared: number;
+    callsUnanswered: number;
     callsNoAnswer: number;
     callsBusy: number;
     callsVoicemail: number;
+    callsUnansweredOther: number;
     callsWrongNumber: number;
     callsChannelUnavailable: number;
     callsFailed: number;
+    callsFailedOther: number;
+    callsWithoutOutcome: number;
     callsPending: number;
     messages: number;
     instagramMessagesCompleted: number;

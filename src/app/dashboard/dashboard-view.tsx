@@ -66,18 +66,21 @@ function integratedValue(metric: CanonicalMetricValue) {
   return Number(metric.value ?? 0).toLocaleString("pt-BR");
 }
 
-function integratedHref(query: DashboardQuery, metricId: string) {
-  const params = new URLSearchParams({ metricId, from: query.from, to: query.to });
+function integratedHref(query: DashboardQuery, metricId: string, memberId?: string, period?: Readonly<{ from: string; to: string }>) {
+  const params = new URLSearchParams({ metricId, from: period?.from ?? query.from, to: period?.to ?? query.to });
   const mappings = [
-    ["sdrMemberIds", query.filters.sdrMemberIds], ["closerMemberIds", query.filters.closerMemberIds], ["teamIds", query.filters.teamIds],
+    ["sdrMemberIds", memberId ? [memberId] : query.filters.sdrMemberIds], ["closerMemberIds", memberId ? [] : query.filters.closerMemberIds], ["teamIds", query.filters.teamIds],
     ["sourceIds", query.filters.sourceIds], ["campaignIds", query.filters.campaignIds], ["creativeIds", query.filters.creativeIds],
+    ["priorityCodes", query.filters.priorityCodes], ["productIds", query.filters.productIds],
   ] as const;
   for (const [key, values] of mappings) for (const value of values) params.append(key, value);
   return `/api/metrics/integrated/drilldown?${params.toString()}`;
 }
 
-function metricValue(metric: DashboardKpi) {
-  return formatValue(metric.kind, metric.value);
+function comparisonHref(query: DashboardQuery, drilldownId: string, period: Readonly<{ from: string; to: string }>) {
+  return drilldownId.startsWith("integrated:")
+    ? integratedHref(query, drilldownId.slice("integrated:".length), undefined, period)
+    : dashboardHref(query, drilldownId);
 }
 
 function periodLabel(fromDate: string, toDate: string) {
@@ -109,9 +112,9 @@ function ComparisonCard({ comparison, featured, query, series }: Readonly<{ comp
   return (
     <article className={`${styles.comparisonCard} ${featured ? styles.comparisonFeatured : ""}`} data-interpretation={comparison.interpretation}>
       <div className={styles.comparisonHeader}><span>{comparison.label}</span><span className={styles.comparisonIcon}><Icon name={comparisonIcons[comparison.id] ?? "tendencia"} size={15} /></span></div>
-      <div className={styles.comparisonMeasure}><Link aria-label={`${comparison.label}: ver fórmula e registros`} href={dashboardHref(query, comparison.current.drilldownId)}><strong className={styles.comparisonValue}>{formatValue(comparison.kind, comparison.current.value)}</strong></Link><KpiSparkline label={comparison.label} series={series} /></div>
+      <div className={styles.comparisonMeasure}><Link aria-label={`${comparison.label}: ver fórmula e registros`} href={comparisonHref(query, comparison.current.drilldownId, comparison.currentPeriod)}><strong className={styles.comparisonValue}>{formatValue(comparison.kind, comparison.current.value)}</strong></Link><KpiSparkline label={comparison.label} series={series} /></div>
       <p className={styles.comparisonDelta}><span aria-hidden="true">{comparison.direction === "UP" ? "↑" : comparison.direction === "DOWN" ? "↓" : "→"}</span>{comparisonSentence(comparison)}</p>
-      <div className={styles.comparisonFooter}><details className={styles.comparisonFacts}><summary>Comparação</summary><div><p><span>Anterior</span><Link href={dashboardHref(query, comparison.previous.drilldownId)}><strong>{formatValue(comparison.kind, comparison.previous.value)}</strong></Link></p><p>{periodLabel(comparison.previousPeriod.fromDate, comparison.previousPeriod.toDate)}</p>{comparison.current.denominator !== null ? <p>Base: {Number(comparison.current.numerator).toLocaleString("pt-BR")} de {comparison.current.denominator.toLocaleString("pt-BR")}</p> : null}</div></details><Link aria-label={`${comparison.label}: abrir registros`} className={styles.cardLink} href={dashboardHref(query, comparison.current.drilldownId)}>Registros <Icon name="seta-direita" size={12} /></Link></div>
+      <div className={styles.comparisonFooter}><details className={styles.comparisonFacts}><summary>Comparação</summary><div><p><span>Anterior</span><Link href={comparisonHref(query, comparison.previous.drilldownId, comparison.previousPeriod)}><strong>{formatValue(comparison.kind, comparison.previous.value)}</strong></Link></p><p>{periodLabel(comparison.previousPeriod.fromDate, comparison.previousPeriod.toDate)}</p>{comparison.current.denominator !== null ? <p>Base: {Number(comparison.current.numerator).toLocaleString("pt-BR")} de {comparison.current.denominator.toLocaleString("pt-BR")}</p> : null}</div></details><Link aria-label={`${comparison.label}: abrir registros`} className={styles.cardLink} href={comparisonHref(query, comparison.current.drilldownId, comparison.currentPeriod)}>Registros <Icon name="seta-direita" size={12} /></Link></div>
     </article>
   );
 }
@@ -147,10 +150,13 @@ function SegmentList({ title, description, segments, query, secondaryKind = "COU
 }
 
 function FunnelPanel({ screen }: Readonly<{ screen: DashboardScreen }>) {
+  const cohortMilestones = ["attempts", "connected", "qualified", "scheduled"]
+    .flatMap((id) => screen.kpis.find((kpi) => kpi.id === id) ?? []);
   return (
     <section className={`${styles.panel} ${styles.funnelPanel}`}>
-      <header className={styles.panelHeader}><div><h2>Seu funil, do primeiro contato à venda</h2><p>Volume de leads que alcançaram cada marco da jornada.</p></div></header>
+      <header className={styles.panelHeader}><div><h2>Conversão dos leads recebidos no período</h2><p>O funil conta apenas leads que seguiram a sequência de etapas. Marcos alcançados por outros caminhos e atividades em leads antigos aparecem em Operação integrada e Performance da equipe.</p></div></header>
       <ConnectedFunnel stages={screen.fullFunnel.stages.map((stage) => ({ ...stage, href: dashboardHref(screen.query, stage.drilldownId) }))} />
+      <details className={styles.chartTableDetails}><summary>Todos os marcos da coorte, incluindo caminhos alternativos</summary><div className={styles.outcomeGrid}>{cohortMilestones.map((milestone) => <Link className={styles.outcome} href={dashboardHref(screen.query, milestone.drilldownId)} key={milestone.id}><span>{milestone.label}</span><strong>{formatValue(milestone.kind, milestone.value)}</strong><small>Leads distintos recebidos no período</small></Link>)}</div></details>
       <div className={styles.outcomeGrid} aria-label="Desfechos do funil">
         {screen.fullFunnel.outcomes.map((outcome) => <Link className={styles.outcome} data-outcome={outcome.id} href={dashboardHref(screen.query, outcome.drilldownId)} key={outcome.id}><span>{outcome.label}</span><strong>{outcome.value.toLocaleString("pt-BR")}</strong><small>{outcome.percentage === null ? "Sem denominador" : `${outcome.percentage.toLocaleString("pt-BR")}% a partir de ${outcome.branchFrom === "received" ? "Entrada" : "Proposta"}`}</small></Link>)}
       </div>
@@ -191,10 +197,15 @@ function SlaPanel({ screen }: Readonly<{ screen: DashboardScreen }>) {
 function PerformancePanel({ screen }: Readonly<{ screen: DashboardScreen }>) {
   return (
     <section className={`${styles.panel} ${styles.performancePanel}`}>
-      <header className={styles.panelHeader}><div><h2>Performance da equipe</h2><p>Resultados e ritmo de atendimento de cada pessoa.</p></div></header>
-      {screen.performance.length === 0 ? <div className={styles.segmentEmpty}>Sem atividade atribuída no período.</div> : (
+      <header className={styles.panelHeader}><div><h2>Performance da equipe</h2><p>Atividades e resultados registrados por vendedor no período selecionado.</p></div></header>
+      <div className={styles.performanceScroll}><table className={styles.performanceTable}><thead><tr><th>Pessoa</th><th>Tarefas</th><th>Entradas em etapa</th><th>Ligações</th><th>Conectadas</th><th>Leads conectados</th><th>Retorno</th><th>WhatsApp</th><th>Não atendidas</th><th>Não atendeu</th><th>Ocupado</th><th>Caixa postal</th><th>Outras sem atendimento</th><th>Falhas</th><th>Número errado</th><th>Sem canal</th><th>Outras falhas</th><th>Sem desfecho</th><th>Instagram</th><th>Seguiu</th><th>E-mails</th><th>Outros resultados Instagram</th><th>Qualificados</th><th>Reuniões</th><th>Etapa reunião</th><th>Propostas</th><th>Vendas</th><th>Receita</th></tr></thead><tbody>{screen.sellerActivity.map((row) => {
+        const cell = (metricId: string, value: number) => <td><a href={integratedHref(screen.query, metricId, row.id)}>{value.toLocaleString("pt-BR")}</a></td>;
+        return <tr key={row.id}><td><strong>{row.name}</strong></td>{cell("work.tasks_completed", row.tasksCompleted)}{cell("funnel.stage_entries", row.stageEntries)}{cell("outreach.calls_attempted", row.calls)}{cell("outreach.calls_connected", row.connected)}{cell("outreach.effective_contacts", row.effectiveContacts)}{cell("outreach.calls_callback_requested", row.callbackRequested)}{cell("outreach.calls_whatsapp_shared", row.whatsappShared)}{cell("outreach.calls_unanswered", row.unanswered)}{cell("outreach.calls_no_answer", row.noAnswer)}{cell("outreach.calls_busy", row.busy)}{cell("outreach.calls_voicemail", row.voicemail)}<td>{row.otherUnanswered.toLocaleString("pt-BR")}</td>{cell("outreach.calls_failed", row.callFailed)}{cell("outreach.calls_wrong_number", row.wrongNumber)}{cell("outreach.calls_channel_unavailable", row.channelUnavailable)}<td>{row.otherFailures.toLocaleString("pt-BR")}</td><td>{row.withoutOutcome.toLocaleString("pt-BR")}</td>{cell("outreach.instagram_messages", row.instagramMessages)}{cell("outreach.instagram_follows", row.instagramFollows)}{cell("email.sent", row.emailsSent)}<td>{row.instagramMessagesProfileNotFound} mensagens sem perfil · {row.instagramMessagesFailed} mensagens com falha · {row.instagramFollowsAlreadyFollowing} já seguia · {row.instagramFollowsProfileNotFound} perfis não encontrados · {row.instagramFollowsFailed} tentativas de seguir com falha</td>{cell("qualification.leads", row.qualified)}{cell("meetings.scheduled", row.meetingsScheduled)}{cell("meetings.stage_marked", row.meetingStageMarked)}{cell("sales.proposals", row.proposals)}{cell("sales.won", row.sales)}<td><a href={integratedHref(screen.query, "sales.won_value", row.id)}>{formatMoney(row.salesValueCents)}</a></td></tr>;
+      })}</tbody></table></div>
+      <p className={styles.qualityNote}>“Conectadas” são ligações atendidas; “Leads conectados” reúne leads distintos com ligação atendida ou mensagem inbound. Reuniões são registros da agenda; “Etapa reunião” conta cards movidos sem criar reunião. Os outros resultados de Instagram vêm de tarefas concluídas; envios e novos seguimentos incluem os demais registros do log. Tarefas executadas por uma pessoa são creditadas a ela; ações automáticas mantêm o responsável registrado no evento.{screen.overview.scope !== "WORKSPACE" ? " A tabela exibe apenas pessoas do seu escopo; os totais incluem os fatos de leads que você pode acessar." : ""}</p>
+      <details><summary>Ver conversão e SLA por coorte</summary>{screen.performance.length === 0 ? <div className={styles.segmentEmpty}>Sem atividade atribuída no período.</div> : (
         <div className={styles.performanceScroll}><table className={styles.performanceTable}><thead><tr><th>Pessoa</th><th>Volume</th><th>Conversão</th><th>Receita</th><th>SLA</th><th>Reuniões</th><th>Show rate</th><th><span className={styles.srOnly}>Ação</span></th></tr></thead><tbody>{screen.performance.map((row) => { const href = dashboardHref(screen.query, row.drilldownId); return <tr key={`${row.role}:${row.id}`}><td><span className={styles.roleBadge}>{row.role}</span><strong>{row.name}</strong></td><td><Link href={href}>{row.volume.toLocaleString("pt-BR")}</Link></td><td><Link href={href}>{row.conversionPercentage === null ? "—" : `${row.conversionPercentage.toLocaleString("pt-BR")}%`}</Link></td><td><Link href={href}>{formatMoney(row.revenueCents)}</Link></td><td><Link href={href}>{formatDuration(row.slaSeconds)}</Link></td><td><Link href={href}>{row.meetings.toLocaleString("pt-BR")}</Link></td><td><Link href={href}>{row.showRate === null ? "—" : `${row.showRate.toLocaleString("pt-BR")}%`}</Link></td><td><Link href={href}>Ver registros</Link></td></tr>; })}</tbody></table></div>
-      )}
+      )}</details>
     </section>
   );
 }
@@ -215,11 +226,20 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
   const comparisonById = new Map(screen.comparisons.map((comparison) => [comparison.id, comparison]));
   const primaryComparisons = ["revenue", "sales", "lead-to-sale", "sla-median"].flatMap((id) => comparisonById.get(id) ?? []);
   const kpiById = new Map(screen.kpis.map((metric) => [metric.id, metric]));
-  const operationalPulse = ["leads", "connected", "qualified", "scheduled", "opportunities", "proposals"].flatMap((id) => kpiById.get(id) ?? []);
+  const operationalPulse = [
+    ["contacts.leads_created", "Leads recebidos"],
+    ["outreach.effective_contacts", "Leads conectados"],
+    ["qualification.leads", "Qualificados"],
+    ["meetings.scheduled", "Reuniões agendadas"],
+    ["sales.opportunities_created", "Oportunidades"],
+    ["sales.proposals", "Propostas"],
+  ] as const;
   const integratedMetricIds = [
     "work.tasks_completed",
+    "work.politicians_touched",
     "outreach.calls_attempted",
     "outreach.calls_connected",
+    "outreach.calls_unanswered",
     "outreach.calls_callback_requested",
     "outreach.calls_whatsapp_shared",
     "outreach.calls_no_answer",
@@ -232,6 +252,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
     "outreach.instagram_follows",
     "outreach.inbound_responses",
     "meetings.scheduled",
+    "meetings.stage_marked",
     "meetings.completed",
     "email.sent",
     "email.delivery_rate",
@@ -241,6 +262,14 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
   const integratedPulse = integratedMetricIds.flatMap((id) => screen.integrated.values.find((metric) => metric.metricId === id) ?? []);
   const integratedLabelById = new Map(integratedMetricRegistry.map((metric) => [metric.id, metric.label]));
   const ticketKpi = kpiById.get("ticket");
+  const salesComparison = comparisonById.get("sales");
+  const revenueComparison = comparisonById.get("revenue");
+  const integratedSales = salesComparison?.current.drilldownId.startsWith("integrated:") ?? false;
+  const salesCount = Number(salesComparison?.current.value ?? 0);
+  const ticketValue = integratedSales
+    ? salesCount > 0 ? (BigInt(revenueComparison?.current.value ?? 0) / BigInt(salesCount)).toString() : "0"
+    : screen.overview.averageTicket.cents;
+  const ticketHref = integratedSales ? integratedHref(q, "sales.won_value") : ticketKpi ? dashboardHref(q, ticketKpi.drilldownId) : null;
   const scopeLabel = { WORKSPACE: "Todo o workspace", TEAM: "Minha equipe", OWN: "Meus registros" }[screen.overview.scope];
   const focusAction = roleKey === "closer" ? { href: "/agenda", label: "Abrir agenda" } : roleKey === "viewer" ? { href: "/leads", label: "Explorar registros" } : { href: "/meu-dia", label: roleKey === "sdr" ? "Atender agora" : "Ver operação" };
   const currentPeriodLabel = periodLabel(q.fromDate, q.toDate);
@@ -280,8 +309,8 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
 
       <div className={styles.commercialGrid}>
         <div className={styles.resultsStack}>
-          <section className={`${styles.panel} ${styles.revenuePanel}`}><header className={styles.panelHeader}><div><h2>Receita e vendas</h2><p>Resultados que movimentam o seu negócio.</p></div>{ticketKpi?<Link className={styles.ticketBadge} href={dashboardHref(q,ticketKpi.drilldownId)}>Ticket médio <strong>{formatMoney(screen.overview.averageTicket.cents)}</strong></Link>:<span className={styles.ticketBadge}>Ticket médio <strong>{formatMoney(screen.overview.averageTicket.cents)}</strong></span>}</header><RevenueSalesChart currentPeriodLabel={currentPeriodLabel} description="Receita e vendas por período" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Receita e vendas" /></section>
-          <section className={styles.pulseStrip} aria-label="Marcos operacionais do período">{operationalPulse.map((metric) => <Link href={dashboardHref(q, metric.drilldownId)} key={metric.id}><span>{metric.label}</span><strong>{metricValue(metric)}</strong><small>{metric.denominator === null ? `${metric.numerator} registros` : `${metric.numerator} de ${metric.denominator}`}</small></Link>)}</section>
+          <section className={`${styles.panel} ${styles.revenuePanel}`}><header className={styles.panelHeader}><div><h2>Receita e vendas</h2><p>Resultados que movimentam o seu negócio.</p></div>{ticketHref?<Link className={styles.ticketBadge} href={ticketHref}>Ticket médio <strong>{formatMoney(ticketValue)}</strong></Link>:<span className={styles.ticketBadge}>Ticket médio <strong>{formatMoney(ticketValue)}</strong></span>}</header><RevenueSalesChart currentPeriodLabel={currentPeriodLabel} description="Receita e vendas por período" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Receita e vendas" /></section>
+          <section className={styles.pulseStrip} aria-label="Marcos operacionais do período">{operationalPulse.map(([id, label]) => { const metric = screen.integrated.values.find((item) => item.metricId === id); return metric ? <a href={integratedHref(q, id)} key={id}><span>{label}</span><strong>{integratedValue(metric)}</strong><small>{metric.reason}</small></a> : null; })}</section>
         </div>
         <AttentionPanel items={screen.attention} query={q} />
       </div>
@@ -294,7 +323,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
         <p className={styles.qualityNote}>{screen.integrated.quality.reason} · {screen.integrated.quality.totalFacts.toLocaleString("pt-BR")} fatos no recorte.</p>
       </section>
 
-      <section className={`${styles.panel} ${styles.flowPanel}`}><header className={styles.panelHeader}><div><h2>Atividade ao longo do período</h2><p>Entradas, qualificações, agendamentos e vendas.</p></div></header><CommercialFlowChart series={screen.timeSeries} /></section>
+      <section className={`${styles.panel} ${styles.flowPanel}`}><header className={styles.panelHeader}><div><h2>Atividade ao longo do período</h2><p>Entradas, ligações, conexões, qualificações, agendamentos e vendas.</p></div></header><CommercialFlowChart series={screen.timeSeries} /></section>
 
       <SlaPanel screen={screen} />
 

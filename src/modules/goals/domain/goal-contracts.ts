@@ -10,15 +10,15 @@ export const goalMetricUnits = {
 } as const;
 
 export const goalMetricCatalog = [
-  { key: "LEADS_ASSIGNED", label: "Leads recebidos", unit: "COUNT", fact: "leads.createdAt", direction: "HIGHER_IS_BETTER" },
-  { key: "HUMAN_ATTEMPTS", label: "Tentativas humanas", unit: "COUNT", fact: "activities.occurredAt", direction: "HIGHER_IS_BETTER" },
-  { key: "MEETINGS_HELD", label: "Reuniões realizadas", unit: "COUNT", fact: "meetings.completedAt", direction: "HIGHER_IS_BETTER" },
-  { key: "OPPORTUNITIES_WON", label: "Vendas", unit: "COUNT", fact: "opportunities.closedAt", direction: "HIGHER_IS_BETTER" },
-  { key: "REVENUE_WON_CENTS", label: "Receita ganha", unit: "CURRENCY_CENTS", fact: "opportunities.amountCents", direction: "HIGHER_IS_BETTER" },
-  { key: "NEW_MRR_CENTS", label: "Novo MRR", unit: "CURRENCY_CENTS", fact: "opportunities.mrrCents", direction: "HIGHER_IS_BETTER" },
-  { key: "EXPANSION_MRR_CENTS", label: "MRR de expansão", unit: "CURRENCY_CENTS", fact: "revenue_movements.deltaMrrCents", direction: "HIGHER_IS_BETTER" },
-  { key: "RENEWALS_COMPLETED", label: "Renovações decididas", unit: "COUNT", fact: "renewals.decidedAt", direction: "HIGHER_IS_BETTER" },
-  { key: "LEAD_TO_SALE_BPS", label: "Conversão lead → venda", unit: "BASIS_POINTS", fact: "opportunities.closedAt / leads.createdAt", direction: "HIGHER_IS_BETTER" },
+  { key: "LEADS_ASSIGNED", label: "Leads recebidos", unit: "COUNT", fact: "LEAD_CREATED", direction: "HIGHER_IS_BETTER" },
+  { key: "HUMAN_ATTEMPTS", label: "Ações de contato", unit: "COUNT", fact: "CALL_ATTEMPTED + EMAIL_SENT + INSTAGRAM_MESSAGE_SENT", direction: "HIGHER_IS_BETTER" },
+  { key: "MEETINGS_HELD", label: "Reuniões realizadas", unit: "COUNT", fact: "MEETING_COMPLETED", direction: "HIGHER_IS_BETTER" },
+  { key: "OPPORTUNITIES_WON", label: "Vendas", unit: "COUNT", fact: "SALE_WON", direction: "HIGHER_IS_BETTER" },
+  { key: "REVENUE_WON_CENTS", label: "Receita ganha", unit: "CURRENCY_CENTS", fact: "soma de SALE_WON.valueCents", direction: "HIGHER_IS_BETTER" },
+  { key: "NEW_MRR_CENTS", label: "Novo MRR", unit: "CURRENCY_CENTS", fact: "soma de REVENUE_MOVEMENT_POSTED.valueCents (NEW)", direction: "HIGHER_IS_BETTER" },
+  { key: "EXPANSION_MRR_CENTS", label: "MRR de expansão", unit: "CURRENCY_CENTS", fact: "soma de REVENUE_MOVEMENT_POSTED.valueCents (EXPANSION)", direction: "HIGHER_IS_BETTER" },
+  { key: "RENEWALS_COMPLETED", label: "Renovações decididas", unit: "COUNT", fact: "REVENUE_MOVEMENT_POSTED (RENEWAL)", direction: "HIGHER_IS_BETTER" },
+  { key: "LEAD_TO_SALE_BPS", label: "Conversão lead → venda", unit: "BASIS_POINTS", fact: "leads da coorte com SALE_WON / LEAD_CREATED", direction: "HIGHER_IS_BETTER" },
 ] as const;
 
 const id = z.string().uuid();

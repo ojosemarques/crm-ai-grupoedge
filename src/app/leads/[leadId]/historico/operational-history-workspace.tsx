@@ -163,6 +163,11 @@ function formText(form: FormData, name: string): string | undefined {
   return value || undefined;
 }
 
+function correctedCallLabel(value: unknown): string | null {
+  const result = value && typeof value === "object" && !Array.isArray(value) && "result" in value ? value.result : null;
+  return result === "CONNECTED" ? "Atendida" : result === "NOT_CONNECTED" ? "Não atendida" : null;
+}
+
 function nullableFormText(form: FormData, name: string): string | null {
   return formText(form, name) ?? null;
 }
@@ -335,6 +340,7 @@ export function OperationalHistoryWorkspace({
   const [score, setScore] = useState(initialScore);
   const [activeTab, setActiveTab] = useState<TabKey>("timeline");
   const [activityType, setActivityType] = useState("CALL_UNANSWERED");
+  const [quickActivityType, setQuickActivityType] = useState("CALL_UNANSWERED");
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [correctionId, setCorrectionId] = useState<string | null>(null);
@@ -533,7 +539,10 @@ export function OperationalHistoryWorkspace({
         : {
             type: completedActivityType,
             direction: "OUTBOUND",
-            result: formText(form, "activityResult"),
+            result: completedActivityType === "CALL_CONNECTED" ? "CONNECTED"
+              : completedActivityType === "CALL_UNANSWERED" ? "NOT_CONNECTED"
+              : completedActivityType === "MESSAGE_SENT" || completedActivityType === "EMAIL" ? "SENT" : "INFORMATION",
+            ...(completedActivityType === "MESSAGE_SENT" ? { channel: formText(form, "activityChannel") } : {}),
             subject: formText(form, "subject"),
             observation: resultDescription,
             nextTask,
@@ -718,6 +727,7 @@ export function OperationalHistoryWorkspace({
       const saved = await mutate("RECORD_ACTIVITY", {
         type,
         direction: formText(form, "direction"),
+        ...(type === "MESSAGE_SENT" ? { channel: formText(form, "channel") } : {}),
         ...(formText(form, "result") ? { result: formText(form, "result") } : {}),
         subject: formText(form, "subject"),
         ...(formText(form, "observation")
@@ -794,6 +804,9 @@ export function OperationalHistoryWorkspace({
       correctedSubject: formText(form, "correctedSubject"),
       ...(formText(form, "correctedObservation")
         ? { correctedObservation: formText(form, "correctedObservation") }
+        : {}),
+      ...(formText(form, "correctedResult")
+        ? { correctedResult: formText(form, "correctedResult") }
         : {}),
     });
     if (saved) {
@@ -969,8 +982,8 @@ export function OperationalHistoryWorkspace({
               </fieldset>
             ) : !quickCurrentTask || quickCurrentTask.kind === "IMMEDIATE_CALL" ? (
               <div className="grid gap-4 sm:grid-cols-3">
-                <label className="text-sm">Atividade realizada<select className={inputClass} defaultValue="CALL_UNANSWERED" name="activityType"><option value="CALL_UNANSWERED">Ligação não atendida</option><option value="CALL_CONNECTED">Ligação atendida</option><option value="MESSAGE_SENT">Mensagem enviada</option><option value="EMAIL">E-mail enviado</option><option value="NOTE">Nota interna</option></select></label>
-                <label className="text-sm">Resultado<select className={inputClass} defaultValue="NOT_CONNECTED" name="activityResult"><option value="NOT_CONNECTED">Não conectado</option><option value="CONNECTED">Conectado</option><option value="SENT">Enviado</option><option value="INFORMATION">Informativo</option><option value="OTHER">Outro</option></select></label>
+                <label className="text-sm">Atividade realizada<select className={inputClass} name="activityType" onChange={(event) => setQuickActivityType(event.target.value)} value={quickActivityType}><option value="CALL_UNANSWERED">Ligação não atendida</option><option value="CALL_CONNECTED">Ligação atendida</option><option value="MESSAGE_SENT">Mensagem enviada</option><option value="EMAIL">E-mail enviado</option><option value="NOTE">Nota interna</option></select></label>
+                {quickActivityType === "MESSAGE_SENT" ? <label className="text-sm">Canal<select className={inputClass} defaultValue="OTHER" name="activityChannel"><option value="OTHER">Outro canal</option><option value="INSTAGRAM">Instagram</option><option value="WHATSAPP">WhatsApp</option></select></label> : null}
                 <label className="text-sm">Assunto<input className={inputClass} defaultValue="Atendimento concluído" name="subject" required /></label>
               </div>
             ) : null}
@@ -1125,7 +1138,7 @@ export function OperationalHistoryWorkspace({
               <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Retornos concluídos</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.completedFollowUps}</dd></div>
               <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Tarefas concluídas</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.completedTasks}</dd></div>
               <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Ligações</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.calls}</dd></div>
-              <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Contatos efetivos</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.connectedCalls}</dd></div>
+              <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Ligações atendidas</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.connectedCalls}</dd></div>
               <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Mensagens</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.messages}</dd></div>
               <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">E-mails</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.emails}</dd></div>
               <div className="rounded-xl border bg-[var(--surface-subtle)] p-4"><dt className="text-xs text-muted-foreground">Reuniões</dt><dd className="mt-1 text-2xl font-semibold">{operations.summary.activities.meetings}</dd></div>
@@ -1247,6 +1260,7 @@ export function OperationalHistoryWorkspace({
                     <label className="text-sm">Tipo<select className={inputClass} name="type" onChange={(event) => setActivityType(event.target.value)} value={activityType}>{activityOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                     <label className="text-sm">Direção<select className={inputClass} defaultValue="OUTBOUND" name="direction"><option value="OUTBOUND">Saída</option><option value="INBOUND">Entrada</option><option value="INTERNAL">Interna</option></select></label>
                     <label className="text-sm">Resultado<select className={inputClass} defaultValue="" name="result"><option value="">Pelo tipo</option><option value="CONNECTED">Conectado</option><option value="NOT_CONNECTED">Não conectado</option><option value="SENT">Enviado</option><option value="RECEIVED">Recebido</option><option value="INFORMATION">Informativo</option><option value="OTHER">Outro</option></select></label>
+                    {activityType === "MESSAGE_SENT" ? <label className="text-sm">Canal<select className={inputClass} defaultValue="OTHER" name="channel"><option value="OTHER">Outro canal</option><option value="INSTAGRAM">Instagram</option><option value="WHATSAPP">WhatsApp</option></select></label> : null}
                   </div>
                   <label className="text-sm">Assunto<input className={inputClass} name="subject" required /></label>
                   <label className="text-sm">Observação<textarea className={textareaClass} name="observation" /></label>
@@ -1329,7 +1343,7 @@ export function OperationalHistoryWorkspace({
               </summary>
               <div className="pt-4">
                 {operations.timeline.length === 0 ? <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">Nenhum fato histórico registrado.</p> : (
-                  <ol className="space-y-3">{operations.timeline.map((entry) => <li className="rounded-md border p-3" key={entry.id}><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-medium">{entry.subject}</p><p className="mt-1 text-xs text-muted-foreground">{activityLabels[entry.type] ?? entry.type} · {formatDate(entry.occurredAt, operations.timeZone)}</p></div><span className="rounded-full border px-2 py-0.5 text-xs">{actorLabels[entry.actor.type] ?? entry.actor.type}: {entry.actor.name}</span></div>{entry.description ? <p className="mt-2 text-sm">{entry.description}</p> : null}{entry.result ? <p className="mt-2 text-xs">Resultado: {entry.result}</p> : null}{entry.nextActionDescription && entry.nextActionAt ? <p className="mt-2 text-xs text-muted-foreground">Próxima ação registrada: {entry.nextActionDescription} · {formatDate(entry.nextActionAt, operations.timeZone)}</p> : null}{entry.correctsActivityId ? <p className="mt-2 text-xs text-amber-800">Evento corretivo de {entry.correctsActivityId}</p> : null}{operations.permissions.canWrite ? <Button className="mt-3" onClick={() => setCorrectionId(entry.id)} size="sm" type="button" variant="secondary">Registrar correção</Button> : null}</li>)}</ol>
+                  <ol className="space-y-3">{operations.timeline.map((entry) => <li className="rounded-md border p-3" key={entry.id}><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-medium">{entry.subject}</p><p className="mt-1 text-xs text-muted-foreground">{activityLabels[entry.type] ?? entry.type} · {formatDate(entry.occurredAt, operations.timeZone)}</p></div><span className="rounded-full border px-2 py-0.5 text-xs">{actorLabels[entry.actor.type] ?? entry.actor.type}: {entry.actor.name}</span></div>{entry.description ? <p className="mt-2 text-sm">{entry.description}</p> : null}{entry.result && !entry.correctsActivityId ? <p className="mt-2 text-xs">Resultado registrado: {entry.result}</p> : null}{entry.nextActionDescription && entry.nextActionAt ? <p className="mt-2 text-xs text-muted-foreground">Próxima ação registrada: {entry.nextActionDescription} · {formatDate(entry.nextActionAt, operations.timeZone)}</p> : null}{entry.correctsActivityId ? <p className="mt-2 text-xs text-amber-800">Evento corretivo de {entry.correctsActivityId}{correctedCallLabel(entry.newValues) ? ` · Resultado corrigido: ${correctedCallLabel(entry.newValues)}` : ""}</p> : null}{operations.permissions.canWrite && !entry.correctsActivityId ? <Button className="mt-3" onClick={() => setCorrectionId(entry.id)} size="sm" type="button" variant="secondary">Registrar correção</Button> : null}</li>)}</ol>
                 )}
                 {operations.nextCursor ? <Button className="mt-4" disabled={pending} onClick={loadMore} type="button" variant="secondary">Carregar mais</Button> : null}
               </div>
@@ -1345,7 +1359,7 @@ export function OperationalHistoryWorkspace({
             {correctionId ? (
               <article className="rounded-lg border border-amber-300 bg-amber-50 p-5 text-amber-950">
                 <h2 className="text-lg font-semibold">Evento corretivo</h2><p className="mt-1 text-xs">O fato original não será alterado nem apagado.</p>
-                <form className="mt-4 grid gap-3" onSubmit={submitCorrection}><label className="text-sm">Motivo da correção<textarea className={textareaClass} name="reason" required /></label><label className="text-sm">Assunto corrigido<input className={inputClass} name="correctedSubject" required /></label><label className="text-sm">Observação corrigida<textarea className={textareaClass} name="correctedObservation" /></label><div className="flex gap-2"><Button disabled={pending} type="submit">Registrar correção</Button><Button onClick={() => setCorrectionId(null)} type="button" variant="secondary">Cancelar</Button></div></form>
+                <form className="mt-4 grid gap-3" onSubmit={submitCorrection}><label className="text-sm">Motivo da correção<textarea className={textareaClass} name="reason" required /></label><label className="text-sm">Assunto corrigido<input className={inputClass} name="correctedSubject" required /></label><label className="text-sm">Observação corrigida<textarea className={textareaClass} name="correctedObservation" /></label>{["CALL", "CALL_CONNECTED", "CALL_UNANSWERED"].includes(operations.timeline.find((entry) => entry.id === correctionId)?.type ?? "") ? <label className="text-sm">Resultado da ligação<select className={inputClass} defaultValue="" name="correctedResult"><option value="">Manter resultado</option><option value="CONNECTED">Atendida</option><option value="NOT_CONNECTED">Não atendida</option></select></label> : null}<div className="flex gap-2"><Button disabled={pending} type="submit">Registrar correção</Button><Button onClick={() => setCorrectionId(null)} type="button" variant="secondary">Cancelar</Button></div></form>
               </article>
             ) : null}
           </section>

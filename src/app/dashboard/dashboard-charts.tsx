@@ -32,6 +32,8 @@ type TrendChartProps = Readonly<{
 
 const flowSeries = [
   { id: "leads", label: "Recebidos", color: "#f98b52" },
+  { id: "calls", label: "Ligações", color: "#f2ad55" },
+  { id: "connected", label: "Conectados", color: "#4db7e4" },
   { id: "qualified", label: "Qualificados", color: "#6c8cff" },
   { id: "scheduled", label: "Agendados", color: "#b475fa" },
   { id: "sales", label: "Vendas", color: "#43c7a0" },
@@ -249,7 +251,7 @@ export function CommercialEvolutionChart(props: Omit<TrendChartProps, "allowedSe
   return (
     <TrendChart
       {...props}
-      allowedSeries={["leads", "connected", "qualified", "scheduled", "sales"]}
+      allowedSeries={["leads", "calls", "connected", "qualified", "scheduled", "sales"]}
       defaultSeries="leads"
     />
   );

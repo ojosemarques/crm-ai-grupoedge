@@ -694,8 +694,8 @@ describe("camada confiável de métricas", () => {
   it("aplica escopos TEAM e WORKSPACE e mantém indicadores restritos à gestão", async () => {
     expect((await metrics(manager)).scope).toBe("TEAM");
     expect((await metrics(admin)).scope).toBe("WORKSPACE");
-    await expect(metrics(sdr1)).rejects.toBeInstanceOf(AccessDeniedError);
-    await expect(metrics(sdr2)).rejects.toBeInstanceOf(AccessDeniedError);
+    expect((await metrics(sdr1)).scope).toBe("OWN");
+    expect((await metrics(sdr2)).scope).toBe("OWN");
     await expect(metrics(viewer)).rejects.toBeInstanceOf(AccessDeniedError);
     await expect(metrics(denied)).rejects.toBeInstanceOf(AccessDeniedError);
   });
@@ -753,7 +753,7 @@ describe("camada confiável de métricas", () => {
       ["meeting", 2], ["opportunity", 2], ["proposal", 1],
     ]);
     expect(result.fullFunnel.outcomes.map((item) => [item.id, item.value, item.branchFrom])).toEqual([
-      ["won", 1, "proposal"], ["lost", 1, "proposal"], ["disqualified", 1, "received"],
+      ["won", 1, "proposal"], ["lost", 0, "proposal"], ["disqualified", 1, "received"],
     ]);
     expect(result.attention.map((item) => item.id)).toEqual([
       "without-next-action", "critical-sla", "stalled-leads", "meetings-without-pacto",
@@ -890,7 +890,7 @@ describe("camada confiável de métricas", () => {
       expect(previous.drilldown.title).toContain("período anterior");
       expect(previous.period).toMatchObject({ fromDate: "2041-12-22", toDate: "2041-12-31" });
 
-      await expect(service.getScreen(sdr2, input)).rejects.toBeInstanceOf(AccessDeniedError);
+      expect((await service.getScreen(sdr2, input)).overview.scope).toBe("OWN");
     } finally {
       await database.lead.updateMany({
         where: { workspaceId, sourceId: comparisonSource.id },
@@ -905,8 +905,8 @@ describe("camada confiável de métricas", () => {
 
   it("mantém o universo do dashboard sob RBAC e não permite drilldown por adivinhação", async () => {
     expect((await dashboard(admin)).overview.scope).toBe("WORKSPACE");
-    await expect(dashboard(sdr1)).rejects.toBeInstanceOf(AccessDeniedError);
-    await expect(dashboard(sdr2)).rejects.toBeInstanceOf(AccessDeniedError);
+    expect((await dashboard(sdr1)).overview.scope).toBe("OWN");
+    expect((await dashboard(sdr2)).overview.scope).toBe("OWN");
     await expect(dashboard(denied)).rejects.toBeInstanceOf(AccessDeniedError);
     await expect(createDashboardMetricsService({ database, authorization, now: () => now }).getDrilldown(manager, {
       preset: "CUSTOM", fromDate: "2042-01-01", toDate: "2042-01-10", source: [sourceId], view: "kpi.inexistente",

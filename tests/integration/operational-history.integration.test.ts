@@ -221,7 +221,7 @@ describe("histórico operacional baseado em eventos", () => {
     expect(metricFacts).toEqual([{
       eventType: "TASK_COMPLETED",
       result: "Contexto confirmado com o responsável.",
-      creditedMemberId: storedTask.assigneeMemberId,
+      creditedMemberId: managerContext.memberId,
       performedByMemberId: managerContext.memberId,
     }]);
     const summary = await service.getLeadOperations(managerContext, {
@@ -304,14 +304,43 @@ describe("histórico operacional baseado em eventos", () => {
       lastInboundResponseAt: inboundAt,
       awaitingHumanResponse: true,
     });
+    const manualFacts = await database.commercialMetricFact.findMany({
+      where: { workspaceId: managerContext.workspaceId, leadId: lead.leadId, sourceEntityType: "Activity" },
+      select: { eventType: true, creditedMemberId: true, performedByMemberId: true },
+    });
+    const manualCallFacts = manualFacts.filter((fact) => fact.eventType.startsWith("CALL_"));
+    expect(manualCallFacts).toHaveLength(6);
+    expect(manualCallFacts.filter((fact) => fact.eventType === "CALL_ATTEMPTED")).toHaveLength(3);
+    expect(manualCallFacts.filter((fact) => fact.eventType === "CALL_UNANSWERED")).toHaveLength(2);
+    expect(manualCallFacts.filter((fact) => fact.eventType === "CALL_CONNECTED")).toHaveLength(1);
+    expect(manualCallFacts.every((fact) => fact.creditedMemberId === managerContext.memberId && fact.performedByMemberId === managerContext.memberId)).toBe(true);
+    expect(manualFacts.filter((fact) => fact.eventType === "INBOUND_MESSAGE_RECEIVED" || fact.eventType === "HUMAN_RESPONSE_CONFIRMED")).toHaveLength(2);
 
     await service.recordActivity(managerContext, {
       leadId: lead.leadId,
       type: "MESSAGE_SENT",
       direction: "OUTBOUND",
+      channel: "INSTAGRAM",
       subject: "Resposta enviada ao lead",
       occurredAt: new Date(base.getTime() + 210_000),
     });
+    const manualEmail = await service.recordActivity(managerContext, {
+      leadId: lead.leadId,
+      type: "EMAIL",
+      direction: "OUTBOUND",
+      subject: "E-mail enviado ao lead",
+      occurredAt: new Date(base.getTime() + 220_000),
+    });
+    expect(await database.commercialMetricFact.count({
+      where: { workspaceId: managerContext.workspaceId, leadId: lead.leadId, sourceEntityType: "Activity", eventType: "EMAIL_SENT" },
+    })).toBe(1);
+    expect(await database.commercialMetricFact.count({
+      where: { workspaceId: managerContext.workspaceId, leadId: lead.leadId, sourceEntityType: "Activity", eventType: "INSTAGRAM_MESSAGE_SENT" },
+    })).toBe(1);
+    await expect(service.correctActivity(managerContext, {
+      leadId: lead.leadId, activityId: manualEmail.id,
+      reason: "Resultado do envio incorreto", correctedSubject: "E-mail revisado", correctedResult: "OTHER",
+    })).rejects.toMatchObject({ code: "ACTIVITY_RESULT_CORRECTION_UNSUPPORTED" });
     const storedLead = await database.lead.findUniqueOrThrow({
       where: { id: lead.leadId },
     });
@@ -429,6 +458,7 @@ describe("histórico operacional baseado em eventos", () => {
       observation: "Texto que precisa de correção posterior.",
       occurredAt: new Date(base.getTime() + 30_000),
     });
+    const originalCount = (await service.getLeadOperations(managerContext, { leadId: lead.leadId })).summary.activities.total;
     clock = new Date(base.getTime() + 60_000);
     const correction = await service.correctActivity(managerContext, {
       leadId: lead.leadId,
@@ -450,6 +480,9 @@ describe("histórico operacional baseado em eventos", () => {
       result: "CORRECTED",
       correctsActivityId: original.id,
     });
+    const operations = await service.getLeadOperations(managerContext, { leadId: lead.leadId });
+    expect(operations.summary.activities.total).toBe(originalCount);
+    expect(operations.timeline.some((entry) => entry.id === correction.id)).toBe(true);
     await expect(
       database.activity.update({
         where: { id: original.id },
@@ -459,6 +492,72 @@ describe("histórico operacional baseado em eventos", () => {
     await expect(
       database.activity.delete({ where: { id: original.id } }),
     ).rejects.toThrow(/append-only/);
+  });
+
+  it("reclassifica uma ligação corrigida no ledger sem duplicar tentativas", async () => {
+    const base = new Date("2032-07-18T15:00:00.000Z");
+    const lead = await createLead(base);
+    const service = historyService();
+    const original = await service.recordActivity(managerContext, {
+      leadId: lead.leadId, type: "CALL", direction: "OUTBOUND", result: "NOT_CONNECTED",
+      subject: "Ligação não atendida", occurredAt: new Date(base.getTime() + 30_000),
+      nextTask: { title: "Retomar contato", kind: "FOLLOW_UP", priority: "MEDIUM", dueAt: new Date(base.getTime() + 86_400_000) },
+    });
+    const counts = async () => {
+      const rows = await database.commercialMetricFact.groupBy({
+        by: ["eventType"],
+        where: { workspaceId: managerContext.workspaceId, leadId: lead.leadId, sourceEntityType: "Activity" },
+        _sum: { quantity: true },
+      });
+      return Object.fromEntries(rows.map((row) => [row.eventType, row._sum.quantity ?? 0]));
+    };
+    expect(await counts()).toMatchObject({ CALL_ATTEMPTED: 1, CALL_UNANSWERED: 1 });
+    await service.correctActivity(managerContext, {
+      leadId: lead.leadId, activityId: original.id, reason: "Resultado lançado incorretamente",
+      correctedSubject: "Ligação atendida", correctedResult: "CONNECTED",
+    });
+    expect(await counts()).toMatchObject({ CALL_ATTEMPTED: 1, CALL_UNANSWERED: 0, CALL_CONNECTED: 1 });
+    expect((await service.getLeadOperations(managerContext, { leadId: lead.leadId })).summary.activities).toMatchObject({ calls: 1, connectedCalls: 1 });
+    expect((await database.leadSlaCycle.findUniqueOrThrow({ where: { id: lead.slaCycleId } })).firstConnectedAt).toEqual(new Date(base.getTime() + 30_000));
+    expect((await database.lead.findUniqueOrThrow({ where: { id: lead.leadId } })).firstRespondedAt).toEqual(new Date(base.getTime() + 30_000));
+    await service.correctActivity(managerContext, {
+      leadId: lead.leadId, activityId: original.id, reason: "Cliente confirmou ausência de contato",
+      correctedSubject: "Ligação sem atendimento", correctedResult: "NOT_CONNECTED",
+    });
+    expect(await counts()).toMatchObject({ CALL_ATTEMPTED: 1, CALL_UNANSWERED: 1, CALL_CONNECTED: 0 });
+    expect((await service.getLeadOperations(managerContext, { leadId: lead.leadId })).summary.activities).toMatchObject({ calls: 1, connectedCalls: 0 });
+    expect((await database.leadSlaCycle.findUniqueOrThrow({ where: { id: lead.slaCycleId } })).firstConnectedAt).toBeNull();
+    expect((await database.lead.findUniqueOrThrow({ where: { id: lead.leadId } })).firstRespondedAt).toBeNull();
+  });
+
+  it("permite corrigir ligação legada independente e registra a correção no ledger", async () => {
+    const base = new Date("2032-07-18T17:00:00.000Z");
+    const lead = await createLead(base);
+    const original = await database.activity.create({ data: {
+      workspaceId: managerContext.workspaceId, leadId: lead.leadId,
+      type: "CALL_UNANSWERED", direction: "OUTBOUND", result: "NOT_CONNECTED",
+      subject: "Ligação legada sem auditoria", occurredAt: new Date(base.getTime() + 30_000),
+      durationSeconds: 90, createdByActorId: managerContext.actorId, updatedByActorId: managerContext.actorId,
+    } });
+    clock = new Date(base.getTime() + 60_000);
+    const correction = await historyService().correctActivity(managerContext, {
+      leadId: lead.leadId, activityId: original.id,
+      reason: "Resultado histórico conferido", correctedSubject: "Ligação atendida",
+      correctedResult: "CONNECTED",
+    });
+    const facts = await database.commercialMetricFact.groupBy({
+      by: ["eventType"],
+      where: { workspaceId: managerContext.workspaceId, leadId: lead.leadId, sourceEntityType: "Activity" },
+      _sum: { quantity: true },
+    });
+    expect(Object.fromEntries(facts.map((fact) => [fact.eventType, fact._sum.quantity ?? 0]))).toMatchObject({
+      CALL_ATTEMPTED: 1, CALL_UNANSWERED: 0, CALL_CONNECTED: 1,
+    });
+    expect(await database.commercialMetricFact.count({ where: {
+      workspaceId: managerContext.workspaceId, sourceEntityId: correction.id, sourceEntityType: "Activity",
+    } })).toBe(4);
+    expect((await historyService().getLeadOperations(managerContext, { leadId: lead.leadId })).summary.activities)
+      .toMatchObject({ calls: 1, connectedCalls: 1 });
   });
 
   it("detecta tarefa vencida e lead aberto sem próxima ação, permitindo correção explícita", async () => {

@@ -5,6 +5,7 @@ import { PermissionKeys, type PermissionKey } from "@/modules/users/permissions/
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { getDatabaseClient } from "@/shared/core/database/client";
+import { contactActionEventTypes } from "@/modules/metrics/domain/integrated-metric-registry";
 
 type Options = { database: PrismaClient; authorization: ReturnType<typeof getAuthorizationService>; now: () => Date };
 const SERIALIZABLE_MAX_ATTEMPTS = 4;
@@ -27,9 +28,9 @@ async function withSerializableRetry<T>(database: PrismaClient, operation: (tx: 
 
 function drilldown(metricKey: GoalMetricKey, memberIds: readonly string[], from: Date, to: Date) {
   const integratedMetric = {
-    LEADS_ASSIGNED: "contacts.leads_created", HUMAN_ATTEMPTS: "outreach.calls_attempted", MEETINGS_HELD: "meetings.completed",
-    OPPORTUNITIES_WON: "sales.won", REVENUE_WON_CENTS: "sales.won_value", NEW_MRR_CENTS: "revenue.mrr_movements",
-    EXPANSION_MRR_CENTS: "revenue.mrr_movements", RENEWALS_COMPLETED: "revenue.mrr_movements", LEAD_TO_SALE_BPS: "sales.won",
+    LEADS_ASSIGNED: "contacts.leads_created", HUMAN_ATTEMPTS: "outreach.contact_actions", MEETINGS_HELD: "meetings.completed",
+    OPPORTUNITIES_WON: "sales.won", REVENUE_WON_CENTS: "sales.won_value", NEW_MRR_CENTS: "revenue.new_mrr",
+    EXPANSION_MRR_CENTS: "revenue.expansion_mrr", RENEWALS_COMPLETED: "revenue.renewals_completed", LEAD_TO_SALE_BPS: "sales.won",
   } satisfies Record<GoalMetricKey, string>;
   const params = new URLSearchParams({ metricId: integratedMetric[metricKey], from: from.toISOString(), to: to.toISOString() });
   for (const memberId of memberIds) params.append("closerMemberIds", memberId);
@@ -162,7 +163,7 @@ export function createGoalService(options: Options) {
     if (to <= periodStart) return { value: 0n, state: "ZERO" as GoalProgressState, evidenceCount: 0, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
     if (memberIds.length === 0) return { value: null, state: "PARTIAL" as GoalProgressState, evidenceCount: 0, href: drilldown(quota.metricKey, memberIds, periodStart, to) };
     const typeMap = {
-      LEADS_ASSIGNED: ["LEAD_CREATED"], HUMAN_ATTEMPTS: ["CALL_ATTEMPTED", "EMAIL_SENT", "INSTAGRAM_MESSAGE_SENT"], MEETINGS_HELD: ["MEETING_COMPLETED"],
+      LEADS_ASSIGNED: ["LEAD_CREATED"], HUMAN_ATTEMPTS: contactActionEventTypes, MEETINGS_HELD: ["MEETING_COMPLETED"],
       OPPORTUNITIES_WON: ["SALE_WON"], REVENUE_WON_CENTS: ["SALE_WON"], NEW_MRR_CENTS: ["REVENUE_MOVEMENT_POSTED"],
       EXPANSION_MRR_CENTS: ["REVENUE_MOVEMENT_POSTED"], RENEWALS_COMPLETED: ["REVENUE_MOVEMENT_POSTED"], LEAD_TO_SALE_BPS: ["SALE_WON"],
     } as const;
@@ -179,13 +180,18 @@ export function createGoalService(options: Options) {
     const evidenceCount = facts.reduce((sum, fact) => sum + fact.quantity, 0);
     const href = drilldown(quota.metricKey, memberIds, periodStart, to);
     if (quota.metricKey === "LEAD_TO_SALE_BPS") {
-      const leads = await options.database.commercialMetricFact.findMany({ where: { workspaceId, creditedMemberId: { in: memberIds }, occurredAt: { gte: periodStart, lt: to }, eventType: "LEAD_CREATED", leadId: { not: null } }, distinct: ["leadId"], select: { leadId: true } });
-      if (leads.length === 0) return { value: null, state: "NO_DENOMINATOR" as const, evidenceCount: 0, href };
-      const wonLeadIds = new Set(facts.flatMap((fact) => fact.leadId ? [fact.leadId] : []));
-      return { value: BigInt(Math.round(wonLeadIds.size * 10_000 / leads.length)), state: wonLeadIds.size ? "VALUE" as const : "ZERO" as const, evidenceCount: wonLeadIds.size, href };
+      const leads = await options.database.commercialMetricFact.findMany({ where: { workspaceId, creditedMemberId: { in: memberIds }, occurredAt: { gte: periodStart, lt: to }, eventType: "LEAD_CREATED", leadId: { not: null } }, select: { leadId: true, quantity: true } });
+      const leadBalances = new Map<string, number>();
+      for (const lead of leads) if (lead.leadId) leadBalances.set(lead.leadId, (leadBalances.get(lead.leadId) ?? 0) + lead.quantity);
+      const cohort = new Set([...leadBalances].filter(([, balance]) => balance > 0).map(([leadId]) => leadId));
+      if (cohort.size === 0) return { value: null, state: "NO_DENOMINATOR" as const, evidenceCount: 0, href };
+      const winBalances = new Map<string, number>();
+      for (const fact of facts) if (fact.leadId && cohort.has(fact.leadId)) winBalances.set(fact.leadId, (winBalances.get(fact.leadId) ?? 0) + fact.quantity);
+      const wonLeadCount = [...winBalances.values()].filter((balance) => balance > 0).length;
+      return { value: BigInt(Math.round(wonLeadCount * 10_000 / cohort.size)), state: wonLeadCount ? "VALUE" as const : "ZERO" as const, evidenceCount: wonLeadCount, href };
     }
     const value = ["REVENUE_WON_CENTS", "NEW_MRR_CENTS", "EXPANSION_MRR_CENTS"].includes(quota.metricKey)
-      ? facts.reduce((sum, fact) => sum + (fact.valueCents ?? 0n) * BigInt(fact.quantity), 0n)
+      ? facts.reduce((sum, fact) => sum + (fact.valueCents ?? 0n), 0n)
       : BigInt(evidenceCount);
     return { value, state: value === 0n ? "ZERO" as const : "VALUE" as const, evidenceCount, href };
   }

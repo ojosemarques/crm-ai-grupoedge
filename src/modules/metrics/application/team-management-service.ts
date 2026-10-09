@@ -6,8 +6,6 @@ import type { TeamManagementPerson, TeamManagementScreen } from "@/modules/metri
 import { getDatabaseClient } from "@/shared/core/database/client";
 
 const EMPTY_UUID = "00000000-0000-0000-0000-000000000000";
-const teamEventTypes = ["TASK_CREATED", "TASK_COMPLETED", "CALL_ATTEMPTED", "CALL_CONNECTED", "EMAIL_SENT", "INSTAGRAM_MESSAGE_SENT", "INBOUND_MESSAGE_RECEIVED", "HUMAN_RESPONSE_CONFIRMED", "MEETING_SCHEDULED", "MEETING_COMPLETED"] as const;
-
 type MutablePerson = {
   id: string; name: string; roles: Set<"SDR" | "CLOSER">; contacts: number; meetings: number;
   averageFirstResponseSeconds: number | null; sdrConversionPercentage: number | null;
@@ -40,8 +38,8 @@ export async function getTeamManagementScreen(
 
   const [metricFacts, alertLeads] = await Promise.all([
     database.commercialMetricFact.groupBy({
-      by: ["creditedMemberId", "eventType"],
-      where: { workspaceId: context.workspaceId, leadId: { in: [...scopedLeadIds] }, occurredAt: { gte: from, lt: to }, creditedMemberId: { not: null }, eventType: { in: [...teamEventTypes] } },
+      by: ["creditedMemberId"],
+      where: { workspaceId: context.workspaceId, leadId: { in: [...scopedLeadIds] }, occurredAt: { gte: from, lt: to }, creditedMemberId: { not: null }, eventType: "TASK_CREATED" },
       _sum: { quantity: true },
     }),
     database.lead.findMany({
@@ -76,10 +74,13 @@ export async function getTeamManagementScreen(
     if (!member) continue;
     const person = ensure(member.id, member.user.displayName);
     const quantity = fact._sum.quantity ?? 0;
-    if (fact.eventType === "TASK_CREATED") person.tasksTotal += quantity;
-    else if (fact.eventType === "TASK_COMPLETED") person.tasksCompleted += quantity;
-    else if (fact.eventType === "MEETING_SCHEDULED") person.meetings += quantity;
-    else if (["CALL_ATTEMPTED", "CALL_CONNECTED", "EMAIL_SENT", "INSTAGRAM_MESSAGE_SENT", "INBOUND_MESSAGE_RECEIVED", "HUMAN_RESPONSE_CONFIRMED"].includes(fact.eventType)) person.contacts += quantity;
+    person.tasksTotal += quantity;
+  }
+  for (const seller of dashboard.sellerActivity) {
+    const person = ensure(seller.id, seller.name);
+    person.tasksCompleted = seller.tasksCompleted;
+    person.meetings = seller.meetingsScheduled;
+    person.contacts = seller.calls + seller.instagramMessages + seller.emailsSent;
   }
   const withoutNextAction = new Set(dashboard.overview.evidence.leadsWithoutNextActionIds);
   const forgotten = new Set(dashboard.overview.evidence.stalledLeadIds);
@@ -125,7 +126,7 @@ export async function getTeamManagementScreen(
       { label: "Primeira resposta", formula: "Média do tempo entre recebimento e primeira tentativa humana nos ciclos de SLA atribuídos ao SDR." },
       { label: "Conversão SDR", formula: "Leads qualificados ÷ leads recebidos atribuídos ao SDR no período." },
       { label: "Conversão vendedor", formula: "Oportunidades ganhas ÷ oportunidades criadas para o vendedor no período." },
-      { label: "Contatos", formula: "Fatos canônicos de ligação, e-mail, Instagram e resposta humana creditados à pessoa no período." },
+      { label: "Ações de contato", formula: "Ligações iniciadas, e-mails e mensagens Instagram enviadas e atribuídas à pessoa no período; cada ligação conta uma vez." },
     ]),
   });
 }

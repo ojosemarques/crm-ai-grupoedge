@@ -56,13 +56,13 @@ export default async function TeamManagementPage({ searchParams }: Readonly<{ se
       <article data-tone="success"><Icon name="auditoria" size={18}/><span>Fila trabalhada corretamente</span><strong>{screen.summary.workingQueueCorrectly}</strong><small>sem pendência operacional</small></article>
       <article data-tone={screen.summary.leadsWithoutNextAction ? "danger" : "success"}><Icon name="alerta" size={18}/><span>Sem próxima ação</span><strong>{screen.summary.leadsWithoutNextAction}</strong><small>leads abertos</small></article>
       <article data-tone={screen.summary.forgottenLeads ? "warning" : "success"}><Icon name="relogio" size={18}/><span>Leads esquecidos</span><strong>{screen.summary.forgottenLeads}</strong><small>acima do limite da etapa</small></article>
-      <article><Icon name="inbox" size={18}/><span>Contatos registrados</span><strong>{screen.summary.contacts}</strong><small>ligações, mensagens e e-mails</small></article>
+      <article><Icon name="inbox" size={18}/><span>Ações de contato</span><strong>{screen.summary.contacts}</strong><small>ligações, mensagens e e-mails enviados</small></article>
       <article><Icon name="agenda" size={18}/><span>Reuniões</span><strong>{screen.summary.meetings}</strong><small>atribuídas no período</small></article>
     </section>
 
     <section className={styles.panel}>
       <header><div><h2>Execução por pessoa</h2><p>O selo de fila correta combina tarefas concluídas, próxima ação e estagnação.</p></div><span>{screen.people.length} pessoa(s)</span></header>
-      {screen.people.length ? <div className={styles.tableScroll}><table><thead><tr><th>Pessoa</th><th>Fila</th><th>Sem ação</th><th>1ª resposta</th><th>Contatos</th><th>Reuniões</th><th>Conv. SDR</th><th>Conv. vendas</th><th>Tarefas</th><th>Esquecidos</th></tr></thead><tbody>
+      {screen.people.length ? <div className={styles.tableScroll}><table><thead><tr><th>Pessoa</th><th>Fila</th><th>Sem ação</th><th>1ª resposta</th><th>Ações de contato</th><th>Reuniões</th><th>Conv. SDR</th><th>Conv. vendas</th><th>Tarefas</th><th>Esquecidos</th></tr></thead><tbody>
         {screen.people.map((person) => <tr key={person.id}><td><strong>{person.name}</strong><small>{roles(person)}</small></td><td><span className={styles.queueStatus} data-ok={person.workedQueueCorrectly}>{person.workedQueueCorrectly ? "Em dia" : "Revisar"}</span></td><td className={person.leadsWithoutNextAction ? styles.danger : undefined}>{person.leadsWithoutNextAction}</td><td>{duration(person.averageFirstResponseSeconds)}</td><td>{person.contacts}</td><td>{person.meetings}</td><td>{percentage(person.sdrConversionPercentage)}</td><td>{percentage(person.sellerConversionPercentage)}</td><td>{person.tasksCompleted}/{person.tasksTotal}<small>{percentage(person.taskCompletionPercentage)}</small></td><td className={person.forgottenLeads ? styles.warning : undefined}>{person.forgottenLeads}</td></tr>)}
       </tbody></table></div> : <div className={styles.empty}><strong>Sem atividade atribuída neste período.</strong><p>Altere o período ou registre tarefas, contatos e oportunidades para iniciar o acompanhamento.</p></div>}
     </section>

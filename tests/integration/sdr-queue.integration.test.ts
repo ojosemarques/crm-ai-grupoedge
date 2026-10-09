@@ -10,6 +10,7 @@ import { createLeadDistributionService } from "@/modules/leads/application/lead-
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { createLeadListService } from "@/modules/leads/application/lead-list-service";
 import { createSdrQueueService } from "@/modules/leads/application/sdr-queue-service";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -30,7 +31,6 @@ let managerContext: AuthenticatedContext;
 let adminContext: AuthenticatedContext;
 let sdr1Context: AuthenticatedContext;
 let sdr2Context: AuthenticatedContext;
-let sdr3Context: AuthenticatedContext;
 let isolatedSdrContext: AuthenticatedContext;
 let legacySellerMemberId: string;
 
@@ -199,12 +199,11 @@ beforeAll(async () => {
     actorKey: "system",
     actorType: "SYSTEM",
   });
-  [managerContext, adminContext, sdr1Context, sdr2Context, sdr3Context] = await Promise.all([
+  [managerContext, adminContext, sdr1Context, sdr2Context] = await Promise.all([
     humanContext("gestor@demo.politizai.local"),
     humanContext("admin@demo.politizai.local"),
     humanContext("sdr1@demo.politizai.local"),
     humanContext("sdr2@demo.politizai.local"),
-    humanContext("sdr3@demo.politizai.local"),
   ]);
   const sdrRole = await database.role.findFirstOrThrow({ where: { workspaceId, key: "sdr", deletedAt: null } });
   const closerRole = await database.role.findFirstOrThrow({ where: { workspaceId, key: "closer", deletedAt: null } });
@@ -457,7 +456,7 @@ describe("fila priorizada do SDR", () => {
           updatedByActorId: systemContext.actorId,
         },
       });
-      await transaction.task.create({
+      const previousCall = await transaction.task.create({
         data: {
           workspaceId,
           leadId: lead.leadId,
@@ -472,6 +471,30 @@ describe("fila priorizada do SDR", () => {
           createdByActorId: systemContext.actorId,
           updatedByActorId: systemContext.actorId,
         },
+      });
+      await recordCommercialMetricFactInTransaction(transaction, {
+        workspaceId,
+        eventKey: `task:${previousCall.id}:call-attempted:v1`,
+        eventType: "CALL_ATTEMPTED",
+        occurredAt: now,
+        sourceEntityType: "Task",
+        sourceEntityId: previousCall.id,
+        taskId: previousCall.id,
+        leadId: lead.leadId,
+        creditedMemberId: isolatedSdrContext.memberId,
+        result: "NO_ANSWER",
+      });
+      await recordCommercialMetricFactInTransaction(transaction, {
+        workspaceId,
+        eventKey: `task:${previousCall.id}:call-unanswered:v1`,
+        eventType: "CALL_UNANSWERED",
+        occurredAt: now,
+        sourceEntityType: "Task",
+        sourceEntityId: previousCall.id,
+        taskId: previousCall.id,
+        leadId: lead.leadId,
+        creditedMemberId: isolatedSdrContext.memberId,
+        result: "NO_ANSWER",
       });
       await transaction.task.create({
         data: {
@@ -635,6 +658,8 @@ describe("fila priorizada do SDR", () => {
     const after = await queueService().getScreen(sdr1Context, {});
     expect(after.sections.find((section) => section.key === "RESPONDED")?.items.map((item) => item.id)).toContain(lead.leadId);
     expect(after.sections.find((section) => section.key === "NOW")?.items.find((item) => item.id === lead.leadId)?.recommendation).toMatchObject({ code: "RESPOND_NOW" });
+    const effectiveContacts = (screen: typeof before) => BigInt(screen.dailyProduction.dailyGoal.metrics.find((metric) => metric.key === "EFFECTIVE_CONTACTS")?.actualValue ?? "0");
+    expect(effectiveContacts(after) - effectiveContacts(before)).toBe(1n);
   });
 
   it("detecta reunião de hoje pelo timezone do workspace", async () => {
@@ -683,17 +708,37 @@ describe("fila priorizada do SDR", () => {
   });
 
   it("reconcilia cada contagem com o mesmo recorte da lista CRM-09", async () => {
-    const queue = await queueService().getScreen(managerContext, { memberId: sdr3Context.memberId });
+    const email = `crm10-reconciliation-${randomUUID()}@local.test`;
+    const user = await database.user.create({ data: { email, normalizedEmail: email, displayName: "SDR de reconciliação CRM-10" } });
+    const role = await database.role.findFirstOrThrow({ where: { workspaceId, key: "sdr", deletedAt: null } });
+    const member = await database.workspaceMember.create({ data: {
+      workspaceId, userId: user.id, roleId: role.id, status: "ACTIVE", joinedAt: now,
+      createdByActorId: systemContext.actorId, updatedByActorId: systemContext.actorId,
+    } });
+    const lead = await createLead(`CRM10 reconciliação ${randomUUID().slice(0, 8)}`);
+    const dueAt = new Date(now.getTime() - 60_000);
+    await database.$transaction(async (transaction) => {
+      const stored = await transaction.lead.findUniqueOrThrow({ where: { id: lead.leadId }, select: { nextActionTaskId: true } });
+      if (!stored.nextActionTaskId) throw new Error("Fixture sem próxima tarefa.");
+      await transaction.task.update({ where: { id: stored.nextActionTaskId }, data: {
+        assigneeMemberId: member.id, queueId: null, dueAt, updatedByActorId: systemContext.actorId,
+      } });
+      await transaction.lead.update({ where: { id: lead.leadId }, data: {
+        ownerMemberId: member.id, queueId: null, nextActionAt: dueAt, updatedByActorId: systemContext.actorId,
+      } });
+    });
+    const queue = await queueService().getScreen(adminContext, { memberId: member.id });
     const list = await createLeadListService({
       database,
       authorization,
       distribution: distributionService(),
       now: () => now,
-    }).getScreen(managerContext, {
-      responsibles: `member:${sdr3Context.memberId}`,
+    }).getScreen(adminContext, {
+      responsibles: `member:${member.id}`,
       operationalBucket: "OVERDUE",
       pageSize: 1,
     });
+    expect(queue.sections.find((section) => section.key === "OVERDUE")?.total).toBe(1);
     expect(queue.sections.find((section) => section.key === "OVERDUE")?.total).toBe(list.list.total);
   });
 });

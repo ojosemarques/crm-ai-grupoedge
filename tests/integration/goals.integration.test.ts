@@ -4,6 +4,7 @@ import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createGoalBackfillService } from "@/modules/goals/application/goal-backfill-service";
 import { createGoalService } from "@/modules/goals/application/goal-service";
+import { recordCommercialMetricCorrectionInTransaction, recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { seedGoalDemoData } from "@/modules/settings/application/goal-demo-seed-service";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -61,6 +62,44 @@ describe("CRM-55 metas e quotas", () => {
     expect(screen.progress.every((item) => item.actualValue !== null || ["NO_DENOMINATOR", "PARTIAL", "NOT_APPLICABLE"].includes(item.state))).toBe(true);
     expect(screen.progress.every((item) => item.drilldownHref.startsWith("/"))).toBe(true);
     expect(screen.definitions.precedence).toContain("membro > equipe > função");
+  });
+
+  it("não inverte estorno monetário ao calcular receita ganha", async () => {
+    const key = `meta-estorno-${randomUUID()}`;
+    const plan = await service.createDraft(admin, {
+      key, name: "Meta de receita com estorno", periodStartDate: "2032-07-01", periodEndDate: "2032-07-31",
+      idempotencyKey: `crm55:test:revenue:${randomUUID()}`,
+      quotas: [
+        { targetType: "MEMBER", memberId: sdr.memberId, metricKey: "REVENUE_WON_CENTS", unit: "CURRENCY_CENTS", targetValue: "1000", targetLabel: "Receita" },
+        { targetType: "MEMBER", memberId: sdr.memberId, metricKey: "LEAD_TO_SALE_BPS", unit: "BASIS_POINTS", targetValue: "5000", targetLabel: "Conversão" },
+      ],
+    });
+    await service.act(admin, plan.id, { action: "PUBLISH", expectedRevision: plan.revision, reason: "Teste de estorno.", idempotencyKey: `crm55:test:publish:${randomUUID()}` });
+    const sourceEntityId = randomUUID();
+    const original = await recordCommercialMetricFactInTransaction(database, {
+      workspaceId, eventKey: `crm55:${sourceEntityId}:won:v1`, eventType: "SALE_WON", occurredAt: new Date("2032-07-12T12:00:00.000Z"),
+      sourceEntityType: "OpportunityOutcomeSnapshot", sourceEntityId, creditedMemberId: sdr.memberId, valueCents: 1_000n,
+    });
+    await recordCommercialMetricCorrectionInTransaction(database, {
+      workspaceId, eventKey: `crm55:${sourceEntityId}:reversed:v1`, eventType: "SALE_WON", occurredAt: new Date("2032-07-12T13:00:00.000Z"),
+      sourceEntityType: "OpportunityOutcomeSnapshot", sourceEntityId, creditedMemberId: sdr.memberId, valueCents: -1_000n,
+      quantity: -1, correctionOfFactId: original.fact.id, reversalReason: "Estorno no mesmo período.",
+    });
+    const [cohortLead, otherCohortLead, oldLead] = [randomUUID(), randomUUID(), randomUUID()];
+    for (const leadId of [cohortLead, otherCohortLead]) await recordCommercialMetricFactInTransaction(database, {
+      workspaceId, eventKey: `crm55:${leadId}:created:v1`, eventType: "LEAD_CREATED", occurredAt: new Date("2032-07-12T10:00:00.000Z"),
+      sourceEntityType: "Lead", sourceEntityId: leadId, leadId, creditedMemberId: sdr.memberId,
+    });
+    for (const leadId of [cohortLead, oldLead]) {
+      const outcomeId = randomUUID();
+      await recordCommercialMetricFactInTransaction(database, {
+        workspaceId, eventKey: `crm55:${outcomeId}:won:v1`, eventType: "SALE_WON", occurredAt: new Date("2032-07-12T14:00:00.000Z"),
+        sourceEntityType: "OpportunityOutcomeSnapshot", sourceEntityId: outcomeId, leadId, creditedMemberId: sdr.memberId,
+      });
+    }
+    const screen = await service.screen(sdr, { planId: plan.id, asOf: "2032-07-13T15:00:00.000Z" });
+    expect(screen.progress.find((item) => item.metricKey === "REVENUE_WON_CENTS")?.actualValue).toBe("0");
+    expect(screen.progress.find((item) => item.metricKey === "LEAD_TO_SALE_BPS")?.actualValue).toBe("5000");
   });
 
   it("aplica RBAC no servidor e não aceita workspace adulterado", async () => {

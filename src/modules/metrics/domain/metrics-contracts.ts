@@ -69,6 +69,21 @@ export type IntegratedMetricsOverview = Readonly<{
   }>;
 }>;
 
+export type IntegratedActivityFact = Readonly<{
+  id: string;
+  eventType: string;
+  sourceEntityType: string;
+  occurredAt: string;
+  leadId: string | null;
+  creditedMemberId: string | null;
+  performedByMemberId: string | null;
+  bookedByMemberId: string | null;
+  taskKind: string | null;
+  result: string | null;
+  quantity: number;
+  valueCents: string | null;
+}>;
+
 export type MetricsQuery = Readonly<{
   from: string;
   to: string;

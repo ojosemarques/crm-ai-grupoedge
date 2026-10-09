@@ -224,6 +224,9 @@ export const defaultRoleDefinitions: ReadonlyArray<
       [PermissionKeys.CALENDAR_SYNC, "OWN"],
       [PermissionKeys.AI_USE, "OWN"],
       [PermissionKeys.AUTOMATIONS_READ, "OWN"],
+      [PermissionKeys.METRICS_READ, "OWN"],
+      [PermissionKeys.GOALS_READ, "OWN"],
+      [PermissionKeys.FORECAST_READ, "OWN"],
     ],
   },
   {
@@ -295,6 +298,8 @@ export const defaultRoleDefinitions: ReadonlyArray<
       [PermissionKeys.GEOGRAPHY_READ, "OWN"],
       [PermissionKeys.AI_USE, "OWN"],
       [PermissionKeys.AUTOMATIONS_READ, "OWN"],
+      [PermissionKeys.FORECAST_READ, "OWN"],
+      [PermissionKeys.FORECAST_SUBMIT, "OWN"],
     ],
   },
   {

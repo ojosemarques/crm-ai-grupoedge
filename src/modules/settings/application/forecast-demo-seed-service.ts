@@ -9,7 +9,7 @@ export async function seedForecastDemoData(database: PrismaClient) {
   const system = await database.actor.findUniqueOrThrow({ where: { workspaceId_key: { workspaceId: workspace.id, key: "system" } } });
   const plan = await database.goalPlan.findFirstOrThrow({ where: { workspaceId: workspace.id, key: "metas-mensais-2026-09", status: "PUBLISHED" } });
   const team = await database.team.findFirstOrThrow({ where: { workspaceId: workspace.id, name: "Vendas", deletedAt: null } });
-  const members = await database.workspaceMember.findMany({ where: { workspaceId: workspace.id, status: "ACTIVE", deletedAt: null, teamMemberships: { some: { teamId: team.id, function: "CLOSER", deletedAt: null } } }, include: { user: true }, orderBy: { id: "asc" } });
+  const members = await database.workspaceMember.findMany({ where: { workspaceId: workspace.id, status: "ACTIVE", deletedAt: null, teamMemberships: { some: { teamId: team.id, function: "CLOSER", deletedAt: null } } }, include: { user: true }, orderBy: [{ user: { normalizedEmail: "asc" } }, { id: "asc" }] });
   const manager = await database.workspaceMember.findFirstOrThrow({ where: { workspaceId: workspace.id, role: { key: "commercial_manager" }, deletedAt: null } });
   const candidates = await database.opportunity.findMany({ where: { workspaceId: workspace.id, ownerMemberId: { in: members.map((item) => item.id) }, status: "OPEN", amountCents: { gt: 0 }, currency: "BRL", expectedCloseAt: { gte: plan.periodStart, lt: plan.periodEnd }, deletedAt: null }, include: { currentStage: true, owner: { include: { user: true } } }, orderBy: [{ expectedCloseAt: "asc" }, { id: "asc" }] });
   const first = members[0] ? candidates.find((row) => row.ownerMemberId === members[0]!.id) : undefined;
@@ -17,6 +17,21 @@ export async function seedForecastDemoData(database: PrismaClient) {
   const third = candidates.find((row) => row.id !== first?.id && row.id !== second?.id);
   if (members.length < 2 || !first || !second || !third) throw new Error("Dados mínimos de closers/oportunidades ausentes para seed CRM-56.");
   const rows = [first, second, third] as const;
+  await database.opportunityEvidence.createMany({
+    data: rows.map((row) => ({
+      id: stableId(`evidence:${row.id}:diagnosis:v1`),
+      workspaceId: workspace.id,
+      opportunityId: row.id,
+      type: "DIAGNOSIS",
+      version: 1,
+      summary: "Diagnóstico fictício confirmado para o forecast demonstrativo.",
+      idempotencyKey: `crm56:seed:evidence:${row.id}:diagnosis:v1`,
+      confirmedAt: new Date("2026-09-05T15:00:00.000Z"),
+      recordedByActorId: system.id,
+      createdAt: new Date("2026-09-05T15:00:00.000Z"),
+    })),
+    skipDuplicates: true,
+  });
   const cycleId = stableId("cycle:2026-09:sales:v1");
   if (!await database.forecastCycle.findUnique({ where: { id: cycleId } })) await database.forecastCycle.create({ data: { id: cycleId, workspaceId: workspace.id, goalPlanId: plan.id, key: "forecast-vendas-2026-09", version: 1, name: "Forecast comercial — setembro de 2026", periodStart: plan.periodStart, periodEnd: plan.periodEnd, timeZone: plan.timeZone, scopeType: "TEAM", teamId: team.id, currency: "BRL", status: "OPEN", idempotencyKey: "crm56:seed:cycle:2026-09", createdByActorId: system.id, updatedByActorId: system.id, createdAt: plan.periodStart, updatedAt: plan.periodStart } });
 

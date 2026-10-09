@@ -14,6 +14,8 @@ import {
 } from "@/modules/leads/domain/sdr-queue-contracts";
 import { staleContactCutoff } from "@/modules/leads/domain/lead-operational-policy";
 import { buildDailyGoalProgress } from "@/modules/goals/domain/daily-goal-contracts";
+import { summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
+import { countUnresolvedCallAttempts } from "@/modules/metrics/domain/unresolved-call-attempts";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -390,8 +392,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       ${memberFilter}
     `;
     const order = operationalOrderSql(now);
-    const [rowsBySection, productivityMembers] = await Promise.all([
-      Promise.all(
+    const rowsBySection = await Promise.all(
       sectionDefinitions.map((definition) =>
         options.database.$queryRaw<RawQueueRow[]>(Prisma.sql`
           SELECT
@@ -430,35 +431,19 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           LIMIT ${definition.limit}
         `),
       ),
-      ),
-      options.database.workspaceMember.findMany({
-        where: { workspaceId: context.workspaceId, id: { in: productivityMemberIds }, deletedAt: null },
-        select: { userId: true },
-      }),
-    ]);
-
-    const actorIds = (await options.database.actor.findMany({
-      where: {
-        workspaceId: context.workspaceId,
-        type: "HUMAN",
-        userId: { in: productivityMembers.map((member) => member.userId) },
-      },
-      select: { id: true },
-    })).map((actor) => actor.id);
+    );
     const today = workspaceDayRange(workspaceDateAt(now, workspace.timeZone), workspace.timeZone);
     const todayLocal = workspaceDateAt(now, workspace.timeZone);
     const productivityMemberSql = productivityMemberIds.length === 0
       ? Prisma.sql`AND FALSE`
       : Prisma.sql`AND task."assigneeMemberId" IN (${Prisma.join(productivityMemberIds)})`;
     const [
-      activityCounts,
       taskCounts,
       meetingsToday,
       meetingsCompleted,
-      effectiveContacts,
-      connectedProspectingRows,
+      effectiveContactFacts,
       qualifications,
-      meetingsMarked,
+      meetingsScheduledFacts,
       proposals,
       salesValue,
       politiciansTouchedRows,
@@ -471,18 +456,8 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       calendarHolidays,
       dailyGoalProfiles,
       prospectingTaskResultCounts,
+      dailyMetricFacts,
     ] = await Promise.all([
-      options.database.activity.groupBy({
-        by: ["type"],
-        where: {
-          workspaceId: context.workspaceId,
-          createdByActorId: { in: actorIds },
-          occurredAt: { gte: today.start, lt: today.end },
-          deletedAt: null,
-          type: { in: ["CALL", "CALL_CONNECTED", "CALL_UNANSWERED", "MESSAGE_SENT", "EMAIL"] },
-        },
-        _count: { _all: true },
-      }),
       options.database.task.groupBy({
         by: ["kind", "status"],
         where: {
@@ -556,69 +531,59 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           deletedAt: null,
         },
       }),
-      options.database.activity.findMany({
+      options.database.commercialMetricFact.groupBy({
+        by: ["eventType", "leadId"],
+        where: {
+          workspaceId: context.workspaceId,
+          creditedMemberId: { in: productivityMemberIds },
+          occurredAt: { gte: today.start, lt: today.end },
+          eventType: { in: ["CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED"] },
+          leadId: { not: null },
+        },
+        _sum: { quantity: true },
+      }),
+      options.database.commercialMetricFact.groupBy({
+        by: ["leadId"],
+        where: {
+          workspaceId: context.workspaceId,
+          eventType: "LEAD_QUALIFIED",
+          occurredAt: { gte: today.start, lt: today.end },
+          creditedMemberId: { in: productivityMemberIds },
+          leadId: { not: null },
+        },
+        _sum: { quantity: true },
+      }),
+      options.database.commercialMetricFact.aggregate({
         where: {
           workspaceId: context.workspaceId,
           occurredAt: { gte: today.start, lt: today.end },
-          deletedAt: null,
+          eventType: "MEETING_SCHEDULED",
+          sourceEntityType: "MeetingHistory",
           OR: [
-            { createdByActorId: { in: actorIds }, type: "CALL_CONNECTED" },
-            { type: "MESSAGE_RECEIVED", lead: { ownerMemberId: { in: productivityMemberIds } } },
+            { bookedByMemberId: { in: productivityMemberIds } },
+            { bookedByMemberId: null, creditedMemberId: { in: productivityMemberIds } },
           ],
         },
-        distinct: ["leadId"],
-        select: { leadId: true },
+        _sum: { quantity: true },
       }),
-      options.database.task.findMany({
+      options.database.commercialMetricFact.aggregate({
         where: {
           workspaceId: context.workspaceId,
-          assigneeMemberId: { in: productivityMemberIds },
-          sourceKey: { startsWith: "active-prospecting:" },
-          kind: "CALL",
-          status: "COMPLETED",
-          result: "CONNECTED",
-          completedAt: { gte: today.start, lt: today.end },
-          deletedAt: null,
+          eventType: "PROPOSAL_REACHED",
+          sourceEntityType: "Offer",
+          occurredAt: { gte: today.start, lt: today.end },
+          creditedMemberId: { in: productivityMemberIds },
         },
-        distinct: ["leadId"],
-        select: { leadId: true },
+        _sum: { quantity: true },
       }),
-      options.database.leadQualification.count({
+      options.database.commercialMetricFact.aggregate({
         where: {
           workspaceId: context.workspaceId,
-          status: "COMPLETED",
-          validatedAt: { gte: today.start, lt: today.end },
-          validatedByActorId: { in: actorIds },
+          eventType: "SALE_WON",
+          occurredAt: { gte: today.start, lt: today.end },
+          creditedMemberId: { in: productivityMemberIds },
         },
-      }),
-      options.database.stageHistory.findMany({
-        where: {
-          workspaceId: context.workspaceId,
-          enteredAt: { gte: today.start, lt: today.end },
-          enteredByActorId: { in: actorIds },
-          leadId: { not: null },
-          stage: { stableKey: "active-prospecting.meeting-scheduled", deletedAt: null },
-        },
-        distinct: ["leadId"],
-        select: { leadId: true },
-      }),
-      options.database.offer.count({
-        where: {
-          workspaceId: context.workspaceId,
-          createdAt: { gte: today.start, lt: today.end },
-          createdByActorId: { in: actorIds },
-          deletedAt: null,
-        },
-      }),
-      options.database.opportunity.aggregate({
-        where: {
-          workspaceId: context.workspaceId,
-          ownerMemberId: { in: productivityMemberIds },
-          status: "WON",
-          closedAt: { gte: today.start, lt: today.end },
-          deletedAt: null,
-        },
-        _sum: { amountCents: true },
+        _sum: { valueCents: true },
       }),
       options.database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
         SELECT DISTINCT task."leadId"
@@ -767,26 +732,32 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         where: { workspaceId: context.workspaceId, memberId: { in: dailyGoalProfileMemberIds } },
         orderBy: { memberId: "asc" },
       }),
-      options.database.task.groupBy({
-        by: ["kind", "result"],
+      options.database.commercialMetricFact.groupBy({
+        by: ["taskKind", "result"],
         where: {
           workspaceId: context.workspaceId,
-          assigneeMemberId: { in: productivityMemberIds },
-          sourceKey: { startsWith: "active-prospecting:" },
-          kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] },
-          status: "COMPLETED",
-          completedAt: { gte: today.start, lt: today.end },
-          deletedAt: null,
+          creditedMemberId: { in: productivityMemberIds },
+          taskKind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] },
+          eventType: "TASK_COMPLETED",
+          sourceEntityType: "Task",
+          occurredAt: { gte: today.start, lt: today.end },
         },
-        _count: { _all: true },
+        _sum: { quantity: true },
+      }),
+      options.database.commercialMetricFact.groupBy({
+        by: ["eventType", "result", "leadId"],
+        where: {
+          workspaceId: context.workspaceId,
+          creditedMemberId: { in: productivityMemberIds },
+          occurredAt: { gte: today.start, lt: today.end },
+          eventType: { in: ["CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] },
+        },
+        _sum: { quantity: true },
       }),
     ]);
     const productivityDailyGoalProfiles = dailyGoalProfiles.filter((profile) =>
       productivityMemberIds.includes(profile.memberId),
     );
-    const activityCount = (types: readonly string[]) => activityCounts
-      .filter((item) => types.includes(item.type))
-      .reduce((total, item) => total + item._count._all, 0);
     const taskCount = (kinds: readonly string[], statuses: readonly string[]) => taskCounts
       .filter((item) => kinds.includes(item.kind) && statuses.includes(item.status))
       .reduce((total, item) => total + item._count._all, 0);
@@ -794,25 +765,41 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     const actionableKinds = ["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "EMAIL", "FOLLOW_UP"];
     const tasksDue = taskCount(actionableKinds, openStatuses);
     const prospectingResults = summarizeProspectingTaskResults(prospectingTaskResultCounts.map((row) => ({
-      kind: row.kind,
+      kind: row.taskKind ?? "",
       result: row.result,
-      count: row._count._all,
+      count: row._sum.quantity ?? 0,
     })));
-    const calls = prospectingResults.callsCompleted;
-    const messages = prospectingResults.instagramMessagesCompleted;
-    const effectiveContactLeadIds = new Set([
-      ...effectiveContacts.map((row) => row.leadId),
-      ...connectedProspectingRows.map((row) => row.leadId),
-    ]);
+    const metricCount = (eventType: string, results?: readonly string[]) => dailyMetricFacts
+      .filter((fact) => fact.eventType === eventType && (!results || (fact.result !== null && results.includes(fact.result))))
+      .reduce((total, fact) => total + (fact._sum.quantity ?? 0), 0);
+    const calls = metricCount("CALL_ATTEMPTED");
+    const messages = metricCount("INSTAGRAM_MESSAGE_SENT");
+    const callsUnanswered = metricCount("CALL_UNANSWERED");
+    const callsFailed = metricCount("CALL_FAILED");
+    const callsUnansweredOther = Math.max(0, callsUnanswered - metricCount("CALL_UNANSWERED", ["NO_ANSWER", "BUSY", "VOICEMAIL"]));
+    const callsFailedOther = Math.max(0, callsFailed - metricCount("CALL_FAILED", ["WRONG_NUMBER", "CHANNEL_UNAVAILABLE"]));
+    const callsWithoutOutcome = countUnresolvedCallAttempts(dailyMetricFacts.map((fact) => ({
+      eventType: fact.eventType, leadId: fact.leadId, quantity: fact._sum.quantity ?? 0,
+    })));
+    const touchedBalances = new Map<string, number>();
+    for (const fact of dailyMetricFacts) {
+      if (!fact.leadId || !["CALL_ATTEMPTED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"].includes(fact.eventType)) continue;
+      const key = `${fact.eventType}:${fact.leadId}`;
+      touchedBalances.set(key, (touchedBalances.get(key) ?? 0) + (fact._sum.quantity ?? 0));
+    }
+    const outreachLeadsTouched = new Set([...touchedBalances].filter(([, balance]) => balance > 0).map(([key]) => key.slice(key.indexOf(":") + 1))).size;
+    const effectiveContacts = summarizeEffectiveContacts(effectiveContactFacts.map((fact) => ({
+      eventType: fact.eventType, leadId: fact.leadId, quantity: fact._sum.quantity ?? 0,
+    }))).total;
     const dailyGoalProgress = buildDailyGoalProgress(
       {
         calls: BigInt(calls),
         messages: BigInt(messages),
-        effectiveContacts: BigInt(effectiveContactLeadIds.size),
-        qualifications: BigInt(qualifications),
-        meetingsScheduled: BigInt(meetingsMarked.length),
-        proposals: BigInt(proposals),
-        salesValueCents: salesValue._sum.amountCents ?? 0n,
+        effectiveContacts: BigInt(effectiveContacts),
+        qualifications: BigInt(qualifications.filter((row) => (row._sum.quantity ?? 0) > 0).length),
+        meetingsScheduled: BigInt(meetingsScheduledFacts._sum.quantity ?? 0),
+        proposals: BigInt(proposals._sum.quantity ?? 0),
+        salesValueCents: salesValue._sum.valueCents ?? 0n,
       },
       {
         calls: productivityDailyGoalProfiles.reduce((total, item) => total + BigInt(item.callsTarget), 0n),
@@ -919,6 +906,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       })) : [],
       dailyProduction: {
         politiciansTouched: politiciansTouchedRows.length,
+        outreachLeadsTouched,
         politiciansTouchedTarget,
         politiciansTouchedOverCapacity: politiciansTouchedRows.length > politiciansTouchedTarget,
         prospecting: {
@@ -933,31 +921,35 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           activityPlan: buildProspectingDailyActionPlan(prospectingDailyActionRows),
         },
         calls,
-        callsConnected: prospectingResults.callsConnected,
-        callsCallbackRequested: prospectingResults.callsCallbackRequested,
-        callsWhatsappShared: prospectingResults.callsWhatsappShared,
-        callsNoAnswer: prospectingResults.callsNoAnswer,
-        callsBusy: prospectingResults.callsBusy,
-        callsVoicemail: prospectingResults.callsVoicemail,
-        callsWrongNumber: prospectingResults.callsWrongNumber,
-        callsChannelUnavailable: prospectingResults.callsChannelUnavailable,
-        callsFailed: prospectingResults.callsFailed,
+        callsConnected: metricCount("CALL_CONNECTED"),
+        callsUnanswered,
+        callsUnansweredOther,
+        callsCallbackRequested: metricCount("CALL_CONNECTED", ["CALLBACK_REQUESTED"]),
+        callsWhatsappShared: metricCount("CALL_CONNECTED", ["WHATSAPP_SHARED"]),
+        callsNoAnswer: metricCount("CALL_UNANSWERED", ["NO_ANSWER"]),
+        callsBusy: metricCount("CALL_UNANSWERED", ["BUSY"]),
+        callsVoicemail: metricCount("CALL_UNANSWERED", ["VOICEMAIL"]),
+        callsWrongNumber: metricCount("CALL_FAILED", ["WRONG_NUMBER"]),
+        callsChannelUnavailable: metricCount("CALL_FAILED", ["CHANNEL_UNAVAILABLE"]),
+        callsFailed,
+        callsFailedOther,
+        callsWithoutOutcome,
         callsPending: taskCount(["IMMEDIATE_CALL", "CALL"], openStatuses),
         messages,
         instagramMessagesCompleted: prospectingResults.instagramMessagesCompleted,
-        instagramMessagesSent: prospectingResults.instagramMessagesSent,
+        instagramMessagesSent: metricCount("INSTAGRAM_MESSAGE_SENT"),
         instagramMessagesProfileNotFound: prospectingResults.instagramMessagesProfileNotFound,
         instagramMessagesFailed: prospectingResults.instagramMessagesFailed,
         instagramFollowsAttempted: prospectingResults.instagramFollowsAttempted,
-        instagramFollowsCompleted: prospectingResults.instagramFollowsCompleted,
+        instagramFollowsCompleted: metricCount("INSTAGRAM_FOLLOW_COMPLETED"),
         instagramFollowsAlreadyFollowing: prospectingResults.instagramFollowsAlreadyFollowing,
         instagramFollowsProfileNotFound: prospectingResults.instagramFollowsProfileNotFound,
         instagramFollowsFailed: prospectingResults.instagramFollowsFailed,
         messagesPending: taskCount(["MESSAGE", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"], openStatuses),
-        emails: activityCount(["EMAIL"]),
+        emails: metricCount("EMAIL_SENT"),
         tasksDue,
         overdueFollowUps: sections.find((section) => section.key === "OVERDUE")?.total ?? 0,
-        meetingsScheduled: meetingsMarked.length,
+        meetingsScheduled: meetingsScheduledFacts._sum.quantity ?? 0,
         meetingsToday,
         meetingsCompleted,
         staleLeads: sections.find((section) => section.key === "STALE_CONTACT")?.total ?? 0,

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { Prisma, type CommercialMetricEventType, type ConversationChannel, type MessageStatus, type PrismaClient } from "@/generated/prisma/client";
+import { Prisma, type ConversationChannel, type MessageStatus, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import {
   channelCapabilities,
@@ -31,6 +31,7 @@ import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
+import { messageStatusMetricEventType } from "@/modules/metrics/domain/message-status-metric-events";
 
 type Tx = Prisma.TransactionClient;
 type Authorization = ReturnType<typeof getAuthorizationService>;
@@ -44,21 +45,6 @@ type Options = Readonly<{
 
 const MESSAGE_JOB_MAX_ATTEMPTS = 5;
 const RETRY_DELAY_SECONDS = 30;
-const emailStatusFactTypes: Readonly<Partial<Record<MessageStatus, CommercialMetricEventType>>> = Object.freeze({
-  QUEUED: "EMAIL_SCHEDULED",
-  SENT: "EMAIL_SENT",
-  DELIVERED: "EMAIL_DELIVERED",
-  REPLIED: "EMAIL_REPLIED",
-  BOUNCED: "EMAIL_BOUNCED",
-  SOFT_BOUNCE: "EMAIL_BOUNCED",
-  HARD_BOUNCE: "EMAIL_BOUNCED",
-  COMPLAINT: "EMAIL_COMPLAINT",
-  UNSUBSCRIBED: "EMAIL_UNSUBSCRIBED",
-  CANCELLED: "EMAIL_CANCELLED",
-  FAILED: "EMAIL_FAILED",
-  FAILED_PERMANENT: "EMAIL_FAILED",
-  FAILED_TRANSIENT: "EMAIL_FAILED",
-});
 const SERIALIZABLE_MAX_ATTEMPTS = 4;
 
 function fail(message: string, code: string, statusCode = 400): never {
@@ -173,11 +159,7 @@ async function appendStatus(
       },
     });
   }
-  const emailType = message.conversation.channel === "EMAIL" ? emailStatusFactTypes[input.status] : undefined;
-  const instagramType = (message.conversation.channel === "INSTAGRAM" || message.conversation.channel === "INSTAGRAM_MESSAGING") && input.status === "SENT"
-    ? "INSTAGRAM_MESSAGE_SENT" as const
-    : undefined;
-  const metricType = emailType ?? instagramType;
+  const metricType = messageStatusMetricEventType(input.status, message.conversation.channel, message.direction);
   if (metricType) {
     const actor = input.actorId ? await tx.actor.findFirst({ where: { id: input.actorId, workspaceId: input.workspaceId }, select: { type: true, userId: true } }) : null;
     const member = actor?.userId ? await tx.workspaceMember.findFirst({ where: { workspaceId: input.workspaceId, userId: actor.userId, deletedAt: null }, select: { id: true } }) : null;
@@ -733,7 +715,32 @@ export function createOmnichannelService(options: Options) {
         const foundation = await localFoundation(tx, context.workspaceId, message.conversation.channel as SupportedConversationChannel);
         const reply = await tx.message.create({ data: { workspaceId: context.workspaceId, conversationId: message.conversationId, senderActorId: foundation.actor.id, replyToMessageId: message.id, direction: "INBOUND", status: "RECEIVED", body: "SIMULAÇÃO LOCAL — resposta recebida.", bodyHash: sha256("SIMULAÇÃO LOCAL — resposta recebida."), providerKey: "LOCAL_SIMULATOR", externalMessageId: `${input.externalEventId}:reply`, idempotencyKey: `reply:${input.externalEventId}`, clientCorrelationId: input.externalEventId, isSimulated: true, simulationLabel: "Resposta criada pelo simulador local.", occurredAt: now, receivedAt: now } });
         await appendStatus(tx, { workspaceId: context.workspaceId, messageId: reply.id, status: "RECEIVED", source: "LOCAL_SIMULATOR", actorId: foundation.actor.id, externalEventId: `${input.externalEventId}:reply`, providerOccurredAt: now, providerReported: true, reasonCode: "SIMULATED_REPLY", now });
-        await tx.conversation.update({ where: { id: message.conversationId }, data: { status: "PENDING_INTERNAL", unreadCount: { increment: 1 }, waitingSince: now, slaDueAt: new Date(now.getTime() + message.conversation.slaTargetSeconds * 1_000), lastMessageAt: now, updatedByActorId: foundation.actor.id, revision: { increment: 1 } } });
+        await tx.conversation.update({ where: { id: message.conversationId }, data: { status: "PENDING_INTERNAL", unreadCount: { increment: 1 }, firstInboundAt: message.conversation.firstInboundAt ?? now, lastCustomerInboundAt: now, waitingSince: now, slaDueAt: new Date(now.getTime() + message.conversation.slaTargetSeconds * 1_000), lastMessageAt: now, updatedByActorId: foundation.actor.id, revision: { increment: 1 } } });
+        if (message.conversation.leadId) {
+          const lead = await tx.lead.findFirstOrThrow({ where: { id: message.conversation.leadId, workspaceId: context.workspaceId } });
+          const activity = await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: lead.id, opportunityId: message.conversation.opportunityId, messageId: reply.id, type: "MESSAGE_RECEIVED", direction: "INBOUND", result: "RECEIVED", subject: "Resposta simulada recebida", occurredAt: now, createdByActorId: foundation.actor.id, updatedByActorId: foundation.actor.id } });
+          const responseDimensions = {
+            workspaceId: context.workspaceId, occurredAt: now, leadId: lead.id, contactId: lead.contactId,
+            accountId: lead.accountId, activityId: activity.id, messageId: reply.id,
+            opportunityId: message.conversation.opportunityId, creditedMemberId: lead.ownerMemberId,
+            leadOwnerMemberIdAtEvent: lead.ownerMemberId, sourceId: lead.sourceId,
+            campaignId: lead.campaignId, creativeId: lead.creativeId,
+            channel: message.conversation.channel, direction: "INBOUND", result: "REPLY",
+            executionMode: "SYSTEM" as const,
+          };
+          await recordCommercialMetricFactInTransaction(tx, {
+            ...responseDimensions, eventKey: `message:${reply.id}:inbound-received:v1`,
+            eventType: "INBOUND_MESSAGE_RECEIVED", sourceEntityType: "Message", sourceEntityId: reply.id,
+          });
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`commercial-metric:first-human-response:${context.workspaceId}:${lead.id}`}, 0))`;
+          const firstHumanResponse = await tx.commercialMetricFact.findFirst({ where: { workspaceId: context.workspaceId, leadId: lead.id, eventType: "HUMAN_RESPONSE_CONFIRMED" }, select: { id: true } });
+          if (!firstHumanResponse) await recordCommercialMetricFactInTransaction(tx, {
+            ...responseDimensions, eventKey: `lead:${lead.id}:first-human-response:${reply.id}:v1`,
+            eventType: "HUMAN_RESPONSE_CONFIRMED", sourceEntityType: "Message", sourceEntityId: reply.id,
+          });
+          await tx.lead.update({ where: { id: lead.id }, data: { awaitingHumanResponse: true, lastInboundResponseAt: now, lastActivityAt: now, updatedByActorId: foundation.actor.id } });
+          await cancelIncompatibleAccountPlanActionsForLeadInTransaction(tx, { workspaceId: context.workspaceId, leadId: lead.id, actorId: foundation.actor.id, at: now, event: "RESPONSE" });
+        }
       }
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "communication.delivery.simulated", entityType: "Message", entityId: message.id, requestId: input.externalEventId, changes: json({ scenario: input.scenario, status, externalEgress: false }) } });
       return { messageId: message.id, status, idempotent: false, retryAt: retryAt?.toISOString() ?? null };

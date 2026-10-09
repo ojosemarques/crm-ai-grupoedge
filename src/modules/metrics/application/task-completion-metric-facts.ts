@@ -31,7 +31,7 @@ export async function recordTaskCompletionMetricFactsInTransaction(
     opportunityId: input.opportunityId,
     taskId: input.taskId,
     activityId: input.activityId,
-    creditedMemberId: input.assigneeMemberId,
+    creditedMemberId: input.performedByMemberId ?? input.assigneeMemberId,
     performedByMemberId: input.performedByMemberId,
     leadOwnerMemberIdAtEvent: input.leadOwnerMemberId,
     taskKind: input.kind,

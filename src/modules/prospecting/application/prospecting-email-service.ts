@@ -263,9 +263,13 @@ export function createProspectingEmailService(options: Readonly<{ database: Pris
     const cadence = await database.prospectingCadenceInstance.findFirst({ where: { id: job.cadenceInstanceId, workspaceId: principal.workspaceId }, select: { ownerMemberId: true } });
     const eventType = ({ DELIVERED: "EMAIL_DELIVERED", REPLIED: "EMAIL_REPLIED", BOUNCED: "EMAIL_BOUNCED", COMPLAINT: "EMAIL_COMPLAINT", UNSUBSCRIBED: "EMAIL_UNSUBSCRIBED" } as const)[input.type];
     const occurredAt = new Date(input.occurredAt);
-    const common = { workspaceId: principal.workspaceId, occurredAt, sourceEntityType: "ProspectingEmailEvent", sourceEntityId: recorded.id, leadId: job.leadId, creditedMemberId: cadence?.ownerMemberId ?? null, cadenceInstanceId: job.cadenceInstanceId, cadenceStepKey: job.stepKey, channel: "EMAIL", direction: "INBOUND", result: input.type, executionMode: "AUTOMATION" as const };
+    const common = { workspaceId: principal.workspaceId, occurredAt, sourceEntityType: "ProspectingEmailEvent", sourceEntityId: recorded.id, leadId: job.leadId, creditedMemberId: cadence?.ownerMemberId ?? null, cadenceInstanceId: job.cadenceInstanceId, cadenceStepKey: job.stepKey, channel: "EMAIL", direction: input.type === "REPLIED" ? "INBOUND" as const : "OUTBOUND" as const, result: input.type, executionMode: "AUTOMATION" as const };
     await recordCommercialMetricFactInTransaction(database, { ...common, eventKey: `prospecting-email-event:${recorded.id}:${eventType.toLowerCase()}:v1`, eventType });
     if (input.type === "REPLIED") {
+      if (!input.automaticReply) await recordCommercialMetricFactInTransaction(database, {
+        ...common, eventKey: `prospecting-email-event:${recorded.id}:inbound_message_received:v1`,
+        eventType: "INBOUND_MESSAGE_RECEIVED",
+      });
       const responseType = input.automaticReply ? "AUTO_RESPONSE_RECEIVED" as const : "HUMAN_RESPONSE_CONFIRMED" as const;
       if (responseType === "HUMAN_RESPONSE_CONFIRMED") await database.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`commercial-metric:first-human-response:${principal.workspaceId}:${job.leadId}`}, 0))`;
       const existingResponse = responseType === "HUMAN_RESPONSE_CONFIRMED" ? await database.commercialMetricFact.findFirst({ where: { workspaceId: principal.workspaceId, leadId: job.leadId, eventType: responseType }, select: { id: true } }) : null;

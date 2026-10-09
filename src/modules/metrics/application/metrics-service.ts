@@ -8,6 +8,7 @@ import type { AuthenticatedContext } from "@/modules/auth/application/authentica
 import {
   type AverageMoneyMetric,
   type CanonicalMetricValue,
+  type IntegratedActivityFact,
   type IntegratedMetricsOverview,
   type MetricsFilters,
   type MetricsOverview,
@@ -16,6 +17,8 @@ import {
   type StageDurationMetric,
 } from "@/modules/metrics/domain/metrics-contracts";
 import { INTEGRATED_METRIC_REGISTRY_VERSION, integratedMetricRegistry } from "@/modules/metrics/domain/integrated-metric-registry";
+import { commercialMetricQuality } from "@/modules/metrics/domain/commercial-metric-quality";
+import { summarizeLeadCohortRate } from "@/modules/metrics/domain/metric-cohort";
 import {
   countMetric,
   durationStatistics,
@@ -219,6 +222,46 @@ async function integratedFactWhere(
   }) : [];
   const scopedMembers = uniqueSorted(scopeMemberships.map((item) => item.workspaceMemberId));
   const selectedMembers = uniqueSorted([...query.filters.sdrMemberIds, ...query.filters.closerMemberIds]);
+  const fallbackLeadIds = async (where: Prisma.LeadWhereInput) => (await database.lead.findMany({
+    where: { workspaceId: context.workspaceId, ...where }, select: { id: true },
+  })).map((lead) => lead.id);
+  const [sourceLeadIds, campaignLeadIds, creativeLeadIds, teamLeadIds, filteredTeamMembers] = await Promise.all([
+    query.filters.sourceIds.length ? fallbackLeadIds({ sourceId: { in: [...query.filters.sourceIds] } }) : null,
+    query.filters.campaignIds.length ? fallbackLeadIds({ campaignId: { in: [...query.filters.campaignIds] } }) : null,
+    query.filters.creativeIds.length ? fallbackLeadIds({ creativeId: { in: [...query.filters.creativeIds] } }) : null,
+    query.filters.teamIds.length ? fallbackLeadIds({ OR: [
+      { queue: { teamId: { in: [...query.filters.teamIds] } } },
+      { routingQueue: { teamId: { in: [...query.filters.teamIds] } } },
+    ] }) : null,
+    query.filters.teamIds.length ? database.teamMember.findMany({
+      where: { workspaceId: context.workspaceId, teamId: { in: [...query.filters.teamIds] }, deletedAt: null },
+      select: { workspaceMemberId: true },
+    }) : [],
+  ]);
+  const filteredTeamMemberIds = filteredTeamMembers.map((membership) => membership.workspaceMemberId);
+  const dimensionLeadIds = query.filters.priorityCodes.length > 0 || query.filters.productIds.length > 0
+    ? (await database.lead.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          createdAt: { lt: new Date(query.to) },
+          OR: [{ deletedAt: null }, { deletedAt: { gte: new Date(query.from) } }],
+          ...(query.filters.productIds.length > 0 ? { AND: [{ OR: [
+            { opportunities: { some: { productId: { in: [...query.filters.productIds] } } } },
+            { opportunityOutcomeSnapshots: { some: { productId: { in: [...query.filters.productIds] } } } },
+          ] }] } : {}),
+        },
+        select: {
+          id: true,
+          scores: { where: { calculatedAt: { lt: new Date(query.to) }, currentRevision: { not: null } }, orderBy: [{ currentRevision: "desc" }, { calculatedAt: "desc" }, { id: "desc" }], take: 1, select: { priorityBandCode: true } },
+          slaCycles: { where: { receivedAt: { lt: new Date(query.to) } }, orderBy: [{ receivedAt: "desc" }, { id: "desc" }], take: 1, select: { priorityBand: { select: { code: true } } } },
+        },
+      })).filter((lead) => {
+        if (query.filters.priorityCodes.length === 0) return true;
+        const priority = lead.scores[0]?.priorityBandCode ?? lead.slaCycles[0]?.priorityBand.code;
+        return priority ? query.filters.priorityCodes.includes(priority) : false;
+      })
+      .map((lead) => lead.id)
+    : null;
   const visibility: Prisma.CommercialMetricFactWhereInput = scope.scope === "WORKSPACE" ? {} : scope.scope === "OWN" ? {
     OR: [
       { creditedMemberId: context.memberId }, { performedByMemberId: context.memberId },
@@ -234,12 +277,31 @@ async function integratedFactWhere(
   return {
     workspaceId: context.workspaceId,
     occurredAt: { gte: new Date(query.from), lt: new Date(query.to) },
-    AND: [visibility],
-    ...(selectedMembers.length ? { creditedMemberId: { in: selectedMembers } } : {}),
-    ...(query.filters.teamIds.length ? { teamId: { in: [...query.filters.teamIds] } } : {}),
-    ...(query.filters.sourceIds.length ? { sourceId: { in: [...query.filters.sourceIds] } } : {}),
-    ...(query.filters.campaignIds.length ? { campaignId: { in: [...query.filters.campaignIds] } } : {}),
-    ...(query.filters.creativeIds.length ? { creativeId: { in: [...query.filters.creativeIds] } } : {}),
+    AND: [
+      visibility,
+      ...(dimensionLeadIds === null ? [] : [{ leadId: { in: dimensionLeadIds } }]),
+      ...(selectedMembers.length ? [{ OR: [
+        { eventType: "MEETING_SCHEDULED" as const, bookedByMemberId: { in: selectedMembers } },
+        { eventType: "MEETING_SCHEDULED" as const, bookedByMemberId: null, creditedMemberId: { in: selectedMembers } },
+        { eventType: "STAGE_ENTERED" as const, performedByMemberId: { in: selectedMembers } },
+        { eventType: { notIn: ["MEETING_SCHEDULED" as const, "STAGE_ENTERED" as const] }, creditedMemberId: { in: selectedMembers } },
+      ] }] : []),
+      ...(query.filters.teamIds.length ? [{ OR: [
+        { teamId: { in: [...query.filters.teamIds] } },
+        { creditedMemberId: { in: filteredTeamMemberIds } },
+        { performedByMemberId: { in: filteredTeamMemberIds } },
+        { teamId: null, leadId: { in: teamLeadIds ?? [] } },
+      ] }] : []),
+      ...(sourceLeadIds === null ? [] : [{ OR: [
+        { sourceId: { in: [...query.filters.sourceIds] } }, { sourceId: null, leadId: { in: sourceLeadIds } },
+      ] }]),
+      ...(campaignLeadIds === null ? [] : [{ OR: [
+        { campaignId: { in: [...query.filters.campaignIds] } }, { campaignId: null, leadId: { in: campaignLeadIds } },
+      ] }]),
+      ...(creativeLeadIds === null ? [] : [{ OR: [
+        { creativeId: { in: [...query.filters.creativeIds] } }, { creativeId: null, leadId: { in: creativeLeadIds } },
+      ] }]),
+    ],
     ...(query.filters.pipelineIds?.length ? { pipelineId: { in: [...query.filters.pipelineIds] } } : {}),
     ...(query.filters.stageIds?.length ? { stageId: { in: [...query.filters.stageIds] } } : {}),
     ...(query.filters.channels?.length ? { channel: { in: [...query.filters.channels] } } : {}),
@@ -976,19 +1038,22 @@ export function createMetricsService(options: MetricsServiceOptions) {
     if (!workspace) invalidInput("Workspace não encontrado.");
     const where = await integratedFactWhere(options.database, context, scope, query);
     const [groups, leadFacts, latestBackfill, latestReconciliation] = await Promise.all([
-      options.database.commercialMetricFact.groupBy({ by: ["eventType", "result"], where, _sum: { quantity: true, valueCents: true }, _max: { occurredAt: true } }),
-      options.database.commercialMetricFact.findMany({ where: { ...where, leadId: { not: null } }, select: { eventType: true, result: true, leadId: true, quantity: true } }),
-      options.database.commercialMetricBackfillRun.findFirst({ where: { workspaceId: context.workspaceId }, orderBy: [{ startedAt: "desc" }, { id: "desc" }] }),
+      options.database.commercialMetricFact.groupBy({ by: ["eventType", "result", "sourceEntityType", "channel"], where, _sum: { quantity: true, valueCents: true }, _max: { occurredAt: true } }),
+      options.database.commercialMetricFact.findMany({ where: { ...where, leadId: { not: null } }, select: { eventType: true, result: true, sourceEntityType: true, channel: true, leadId: true, quantity: true } }),
+      options.database.commercialMetricBackfillRun.findFirst({ where: { workspaceId: context.workspaceId, mode: "APPLY" }, orderBy: [{ startedAt: "desc" }, { id: "desc" }] }),
       options.database.commercialMetricReconciliationRun.findFirst({ where: { workspaceId: context.workspaceId }, orderBy: [{ startedAt: "desc" }, { id: "desc" }] }),
     ]);
+    const qualityGate = commercialMetricQuality(latestBackfill, latestReconciliation);
     const eligibleResult = (result: string | null, results?: readonly string[]) => !results || (result !== null && results.includes(result));
-    const count = (types: readonly CommercialMetricEventType[], results?: readonly string[]) => groups
-      .filter((group) => types.includes(group.eventType) && eligibleResult(group.result, results))
+    const eligibleSource = (source: string, sources?: readonly string[]) => !sources || sources.includes(source);
+    const eligibleChannel = (channel: string | null, channels?: readonly string[]) => !channels || (channel !== null && channels.includes(channel));
+    const count = (types: readonly CommercialMetricEventType[], results?: readonly string[], sources?: readonly string[], channels?: readonly string[]) => groups
+      .filter((group) => types.includes(group.eventType) && eligibleResult(group.result, results) && eligibleSource(group.sourceEntityType, sources) && eligibleChannel(group.channel, channels))
       .reduce((sum, group) => sum + Number(group._sum.quantity ?? 0), 0);
-    const distinct = (types: readonly CommercialMetricEventType[], results?: readonly string[]) => {
+    const distinct = (types: readonly CommercialMetricEventType[], results?: readonly string[], sources?: readonly string[], channels?: readonly string[]) => {
       const balances = new Map<string, number>();
       for (const fact of leadFacts) {
-        if (!types.includes(fact.eventType) || !eligibleResult(fact.result, results)) continue;
+        if (!types.includes(fact.eventType) || !eligibleResult(fact.result, results) || !eligibleSource(fact.sourceEntityType, sources) || !eligibleChannel(fact.channel, channels)) continue;
         const key = `${fact.eventType}:${fact.leadId}`;
         balances.set(key, (balances.get(key) ?? 0) + fact.quantity);
       }
@@ -996,14 +1061,20 @@ export function createMetricsService(options: MetricsServiceOptions) {
       for (const [key, balance] of balances) if (balance > 0) leads.add(key.slice(key.indexOf(":") + 1));
       return leads.size;
     };
-    const cents = (types: readonly CommercialMetricEventType[], results?: readonly string[]) => groups
-      .filter((group) => types.includes(group.eventType) && eligibleResult(group.result, results))
+    const cents = (types: readonly CommercialMetricEventType[], results?: readonly string[], sources?: readonly string[], channels?: readonly string[]) => groups
+      .filter((group) => types.includes(group.eventType) && eligibleResult(group.result, results) && eligibleSource(group.sourceEntityType, sources) && eligibleChannel(group.channel, channels))
       .reduce((sum, group) => sum + (group._sum.valueCents ?? 0n), 0n);
     const newest = groups.flatMap((group) => group._max.occurredAt ? [group._max.occurredAt] : []).sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
     const period = Object.freeze({ from: query.from, to: query.to, timeZone: workspace.timeZone, interval: "HALF_OPEN" as const });
     const values: CanonicalMetricValue[] = integratedMetricRegistry.map((definition) => {
-      const numerator = definition.aggregation === "DISTINCT_LEAD" ? distinct(definition.eventTypes, definition.results) : definition.aggregation === "SUM_CENTS" ? cents(definition.eventTypes, definition.results) : count(definition.eventTypes, definition.results);
-      const denominator = definition.denominatorEventTypes
+      const cohort = definition.aggregation === "RATE" && definition.denominatorAggregation === "DISTINCT_LEAD" && definition.denominatorEventTypes
+        ? summarizeLeadCohortRate(
+          leadFacts.filter((fact) => definition.eventTypes.includes(fact.eventType) && eligibleResult(fact.result, definition.results) && eligibleSource(fact.sourceEntityType, definition.sourceEntityTypes) && eligibleChannel(fact.channel, definition.channels)),
+          leadFacts.filter((fact) => definition.denominatorEventTypes?.includes(fact.eventType)),
+        )
+        : null;
+      const numerator = cohort ? cohort.numerator : definition.aggregation === "DISTINCT_LEAD" ? distinct(definition.eventTypes, definition.results, definition.sourceEntityTypes, definition.channels) : definition.aggregation === "SUM_CENTS" ? cents(definition.eventTypes, definition.results, definition.sourceEntityTypes, definition.channels) : count(definition.eventTypes, definition.results, definition.sourceEntityTypes, definition.channels);
+      const denominator = cohort ? cohort.denominator : definition.denominatorEventTypes
         ? definition.denominatorAggregation === "DISTINCT_LEAD" ? distinct(definition.denominatorEventTypes) : count(definition.denominatorEventTypes)
         : null;
       const noDenominator = definition.aggregation === "RATE" && denominator === 0;
@@ -1018,7 +1089,7 @@ export function createMetricsService(options: MetricsServiceOptions) {
         numerator: definition.aggregation === "SUM_CENTS" ? (numerator as bigint).toString() : Number(numerator),
         denominator,
         sampleCount: definition.aggregation === "RATE" ? denominator : definition.aggregation === "DISTINCT_LEAD" ? Number(numerator) : null,
-        coverageBasisPoints: latestBackfill?.status === "COMPLETED" ? 10_000 : null,
+        coverageBasisPoints: qualityGate.historicalCoverageBasisPoints,
         period,
         asOf: to.toISOString(),
         filters: query.filters,
@@ -1033,26 +1104,17 @@ export function createMetricsService(options: MetricsServiceOptions) {
     const unattributed = await options.database.commercialMetricFact.aggregate({ where: { ...where, creditedMemberId: null }, _sum: { quantity: true } });
     const unattributedFacts = Number(unattributed._sum.quantity ?? 0);
     const coverageBasisPoints = totalFacts === 0 ? null : Math.max(0, Math.round((totalFacts - unattributedFacts) * 10_000 / totalFacts));
-    const reconciliationState = latestReconciliation?.status === "RUNNING" ? "DELAYED" as const
-      : latestReconciliation?.status === "COMPLETED" && latestReconciliation.divergentCheckCount === 0 ? "AVAILABLE" as const
-        : latestReconciliation?.status === "COMPLETED" ? "PARTIAL" as const
-          : "UNAVAILABLE" as const;
-    const reconciliationReason = latestReconciliation?.status === "COMPLETED"
-      ? latestReconciliation.divergentCheckCount === 0
-        ? `Reconciliação ${latestReconciliation.id} sem divergências.`
-        : `Reconciliação ${latestReconciliation.id} encontrou ${latestReconciliation.divergentCheckCount} divergência(s).`
-      : latestReconciliation ? `Reconciliação mais recente: ${latestReconciliation.status}.` : "Reconciliação ainda não executada neste workspace.";
     return Object.freeze({
       registryVersion: INTEGRATED_METRIC_REGISTRY_VERSION,
       generatedAt: options.now().toISOString(),
       values: Object.freeze(values),
       quality: Object.freeze({
         totalFacts, unattributedFacts, coverageBasisPoints, freshnessAt: newest?.toISOString() ?? null,
-        reconciliationState, reconciliationRunId: latestReconciliation?.id ?? null,
+        reconciliationState: qualityGate.reconciliationState, reconciliationRunId: latestReconciliation?.id ?? null,
         reconciliationExpectedCount: latestReconciliation?.expectedCount ?? null,
         reconciliationActualCount: latestReconciliation?.actualCount ?? null,
         divergentCheckCount: latestReconciliation?.divergentCheckCount ?? null,
-        reason: `${latestBackfill ? `Último backfill: ${latestBackfill.status}.` : "Backfill ainda não executado."} ${reconciliationReason}`,
+        reason: qualityGate.reason,
       }),
     });
   }
@@ -1074,6 +1136,8 @@ export function createMetricsService(options: MetricsServiceOptions) {
       where: {
         ...baseWhere,
         eventType: { in: [...definition.eventTypes] },
+        ...(definition.sourceEntityTypes ? { sourceEntityType: { in: [...definition.sourceEntityTypes] } } : {}),
+        ...(definition.channels ? { channel: { in: [...definition.channels] } } : {}),
         ...(definition.results ? { result: { in: [...definition.results] } } : {}),
         ...(cursorFact ? { OR: [{ occurredAt: { lt: cursorFact.occurredAt } }, { occurredAt: cursorFact.occurredAt, id: { lt: cursorFact.id } }] } : {}),
       },
@@ -1104,7 +1168,26 @@ export function createMetricsService(options: MetricsServiceOptions) {
     });
   }
 
-  return Object.freeze({ getOverview, getIntegratedOverview, getIntegratedDrilldown });
+  async function getIntegratedActivityFacts(context: AuthenticatedContext, input: unknown): Promise<readonly IntegratedActivityFact[]> {
+    const query = parseMetricsQuery(input);
+    const scope = await resolveMetricsScope(options.database, options.authorization, context);
+    const where = await integratedFactWhere(options.database, context, scope, query);
+    const rows = await options.database.commercialMetricFact.findMany({
+      where: {
+        ...where,
+        eventType: { in: ["LEAD_CREATED", "TASK_COMPLETED", "STAGE_ENTERED", "CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INBOUND_MESSAGE_RECEIVED", "HUMAN_RESPONSE_CONFIRMED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT", "LEAD_QUALIFIED", "MEETING_SCHEDULED", "MEETING_COMPLETED", "PROPOSAL_REACHED", "SALE_WON"] },
+      },
+      orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
+      select: { id: true, eventType: true, sourceEntityType: true, occurredAt: true, leadId: true, creditedMemberId: true, performedByMemberId: true, bookedByMemberId: true, taskKind: true, result: true, quantity: true, valueCents: true },
+    });
+    return Object.freeze(rows.map((row) => Object.freeze({
+      ...row,
+      occurredAt: row.occurredAt.toISOString(),
+      valueCents: row.valueCents?.toString() ?? null,
+    })));
+  }
+
+  return Object.freeze({ getOverview, getIntegratedOverview, getIntegratedDrilldown, getIntegratedActivityFacts });
 }
 
 let metricsService: ReturnType<typeof createMetricsService> | undefined;

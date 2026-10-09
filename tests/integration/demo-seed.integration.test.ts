@@ -171,7 +171,10 @@ async function getStructuralSnapshot(workspaceId: string) {
       },
     }),
     database.pipelineStage.findMany({
-      where: { workspaceId },
+      where: {
+        workspaceId,
+        NOT: { pipeline: { name: "Pré-vendas" }, stableKey: "active-prospecting.conversation-started" },
+      },
       orderBy: { id: "asc" },
       select: {
         id: true,
@@ -312,7 +315,7 @@ describe("seed estrutural de demonstração", () => {
     expect(snapshot.users.every(({ credential }) => credential !== null)).toBe(true);
     expect(snapshot.actors).toHaveLength(11);
     expect(snapshot.roles).toHaveLength(5);
-    expect(snapshot.grants).toHaveLength(462);
+    expect(snapshot.grants).toHaveLength(471);
     expect(snapshot.members).toHaveLength(8);
     expect(snapshot.teams).toHaveLength(2);
     expect(snapshot.teamMembers).toHaveLength(7);
