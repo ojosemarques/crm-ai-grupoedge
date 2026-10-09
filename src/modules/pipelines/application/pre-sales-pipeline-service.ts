@@ -247,6 +247,34 @@ const pipelineCardInclude = {
 
 type PipelineCardRow = Prisma.LeadGetPayload<{ include: typeof pipelineCardInclude }>;
 
+async function orderedStageCardRows(
+  database: PrismaClient,
+  input: Readonly<{
+    workspaceId: string;
+    pipelineId: string;
+    stageId: string;
+    leadWhere: Prisma.LeadWhereInput;
+    skip?: number;
+    take: number;
+  }>,
+): Promise<PipelineCardRow[]> {
+  const histories = await database.stageHistory.findMany({
+    where: {
+      workspaceId: input.workspaceId,
+      pipelineId: input.pipelineId,
+      stageId: input.stageId,
+      leadId: { not: null },
+      exitedAt: null,
+      lead: { is: input.leadWhere },
+    },
+    orderBy: [{ enteredAt: "desc" }, { id: "desc" }],
+    ...(input.skip === undefined ? {} : { skip: input.skip }),
+    take: input.take,
+    select: { lead: { include: pipelineCardInclude } },
+  });
+  return histories.flatMap((history) => history.lead ? [history.lead] : []);
+}
+
 function toPipelineCard(lead: PipelineCardRow, stageName: string): LeadPipelineCard {
   const task = lead.tasks[0] ?? null;
   return {
@@ -736,11 +764,12 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       Promise.all(pipeline.stages.map(async (stage) => {
         if (!isLeadStageCode(stage.leadStageCode)) return [];
         if (parsed.data.stageCode !== "ALL" && parsed.data.stageCode !== stage.leadStageCode) return [];
-        return options.database.lead.findMany({
-          where: { ...baseWhere, currentStageId: stage.id },
-          orderBy: [{ nextActionAt: "asc" }, { lastActivityAt: "asc" }, { id: "asc" }],
+        return orderedStageCardRows(options.database, {
+          workspaceId: context.workspaceId,
+          pipelineId: pipeline.id,
+          stageId: stage.id,
+          leadWhere: { ...baseWhere, currentStageId: stage.id },
           take: cardLimitPerStage,
-          include: pipelineCardInclude,
         });
       })),
       options.database.lead.findMany({
@@ -861,12 +890,13 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
     };
     const [total, rows] = await Promise.all([
       options.database.lead.count({ where }),
-      options.database.lead.findMany({
-        where,
-        orderBy: [{ nextActionAt: "asc" }, { lastActivityAt: "asc" }, { id: "asc" }],
+      orderedStageCardRows(options.database, {
+        workspaceId: context.workspaceId,
+        pipelineId: pipeline.id,
+        stageId: stage.id,
+        leadWhere: where,
         skip: parsed.data.offset,
         take: parsed.data.limit,
-        include: pipelineCardInclude,
       }),
     ]);
     return Object.freeze({

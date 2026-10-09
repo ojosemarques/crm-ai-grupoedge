@@ -180,6 +180,56 @@ describe("pipeline de pré-vendas e transições", () => {
       .rejects.toBeInstanceOf(AccessDeniedError);
   });
 
+  it("mantém a ordem dos cards pela entrada na etapa após atualizar dados operacionais", async () => {
+    clock = new Date("2035-02-11T12:00:00.000Z");
+    const first = await createLead("CRM14 ordem primeiro");
+    clock = new Date(clock.getTime() + 60_000);
+    const second = await createLead("CRM14 ordem segundo");
+
+    await Promise.all([
+      database.lead.update({
+        where: { id: first.leadId },
+        data: { nextActionAt: new Date("2035-02-11T14:00:00.000Z"), updatedByActorId: systemContext.actorId },
+      }),
+      database.lead.update({
+        where: { id: second.leadId },
+        data: { nextActionAt: new Date("2035-02-11T13:00:00.000Z"), updatedByActorId: systemContext.actorId },
+      }),
+    ]);
+
+    const before = await pipelineService().getScreen(managerContext, { q: "CRM14 ordem" });
+    const newStage = before.stages.find((stage) => stage.code === "NEW");
+    const beforeIds = newStage?.leads.map((lead) => lead.id);
+    expect(beforeIds).toEqual([second.leadId, first.leadId]);
+    await expect(pipelineService().getStagePage(managerContext, {
+      pipelineId: before.pipelineId,
+      q: "CRM14 ordem",
+      stageId: newStage?.id,
+      offset: 0,
+      limit: 20,
+    })).resolves.toMatchObject({ leads: [{ id: second.leadId }, { id: first.leadId }] });
+
+    await database.lead.update({
+      where: { id: first.leadId },
+      data: {
+        nextActionAt: new Date("2035-02-11T12:30:00.000Z"),
+        lastActivityAt: new Date("2035-02-11T12:01:30.000Z"),
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+
+    const after = await pipelineService().getScreen(managerContext, { q: "CRM14 ordem" });
+    const afterIds = after.stages.find((stage) => stage.code === "NEW")?.leads.map((lead) => lead.id);
+    expect(afterIds).toEqual(beforeIds);
+    await expect(pipelineService().getStagePage(managerContext, {
+      pipelineId: after.pipelineId,
+      q: "CRM14 ordem",
+      stageId: newStage?.id,
+      offset: 0,
+      limit: 20,
+    })).resolves.toMatchObject({ leads: [{ id: second.leadId }, { id: first.leadId }] });
+  });
+
   it("localiza o lead por telefone principal ou telefone adicional com e sem máscara", async () => {
     const lead = await createLead("CRM14 busca telefone");
     const stored = await database.lead.findUniqueOrThrow({
