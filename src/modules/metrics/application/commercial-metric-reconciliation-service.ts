@@ -38,7 +38,7 @@ async function expectedChecks(database: PrismaClient, workspaceId: string): Prom
     database.task.count({ where: { workspaceId, status: "COMPLETED", completedAt: { not: null } } }),
     database.task.count({ where: { workspaceId, status: "CANCELLED" } }),
     database.task.count({ where: { workspaceId, kind: "CALL", status: "COMPLETED", completedAt: { not: null } } }),
-    database.task.count({ where: { workspaceId, kind: "CALL", result: "CONNECTED", status: "COMPLETED", completedAt: { not: null } } }),
+    database.task.count({ where: { workspaceId, kind: "CALL", result: { in: ["CONNECTED", "CALLBACK_REQUESTED", "WHATSAPP_SHARED"] }, status: "COMPLETED", completedAt: { not: null } } }),
     database.task.count({ where: { workspaceId, kind: "CALL", result: { in: ["NO_ANSWER", "BUSY", "VOICEMAIL"] }, status: "COMPLETED", completedAt: { not: null } } }),
     database.task.count({ where: { workspaceId, kind: "CALL", result: { in: ["WRONG_NUMBER", "CHANNEL_UNAVAILABLE"] }, status: "COMPLETED", completedAt: { not: null } } }),
     database.task.count({ where: { workspaceId, kind: "INSTAGRAM_MESSAGE", result: "SENT", status: "COMPLETED", completedAt: { not: null } } }),

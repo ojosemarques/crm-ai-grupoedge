@@ -37,6 +37,36 @@ describe("razão comercial integrada", () => {
   it("reconstrói as fontes e persiste reconciliação sem divergência", async () => {
     const backfill = createCommercialMetricBackfillService({ database, now: () => now });
     const reconciliation = createCommercialMetricReconciliationService({ database, now: () => now });
+    const source = await database.leadSource.findFirstOrThrow({ where: { workspaceId: context.workspaceId } });
+    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId: context.workspaceId, entityType: "LEAD" } });
+    const stage = await database.pipelineStage.findFirstOrThrow({ where: { workspaceId: context.workspaceId, pipelineId: pipeline.id } });
+    const completedAt = new Date("2052-04-19T12:00:00.000Z");
+    const lead = await database.lead.create({ data: {
+      workspaceId: context.workspaceId,
+      sourceId: source.id,
+      pipelineId: pipeline.id,
+      currentStageId: stage.id,
+      ownerMemberId: context.memberId,
+      fullName: "Lead de reconciliação de chamadas",
+      slaStartedAt: now,
+      slaDueAt: now,
+      lastActivityAt: now,
+      createdByActorId: context.actorId,
+      updatedByActorId: context.actorId,
+    } });
+    await database.task.createMany({ data: ["CALLBACK_REQUESTED", "WHATSAPP_SHARED"].map((result) => ({
+      workspaceId: context.workspaceId,
+      leadId: lead.id,
+      assigneeMemberId: context.memberId,
+      title: `Ligação concluída — ${result}`,
+      kind: "CALL",
+      status: "COMPLETED",
+      dueAt: completedAt,
+      completedAt,
+      result,
+      createdByActorId: context.actorId,
+      updatedByActorId: context.actorId,
+    })) });
     const result = await backfill.run(context, { mode: "APPLY", runKey: `commercial-metrics:test:${randomUUID()}`, batchSize: 100 });
     expect(result.status).toBe("COMPLETED");
     expect(result.failedCount).toBe(0);
