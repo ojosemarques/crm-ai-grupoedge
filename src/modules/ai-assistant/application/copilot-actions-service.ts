@@ -7,12 +7,13 @@ import { createAnalyticsBuilderService } from "@/modules/analytics-builder/appli
 import { analyticsWidgetInputSchema, validateWidgetCompatibility } from "@/modules/analytics-builder/domain/analytics-builder-contracts";
 import { createRevenueMetricsService } from "@/modules/metrics/application/revenue-metrics-service";
 import { revenueMetricRegistry } from "@/modules/metrics/domain/revenue-metric-registry";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { createAccountService } from "@/modules/accounts/application/account-service";
 import { createOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
 import { copilotActionSchema, type CopilotAction, type CopilotActionOptions, type CopilotActionPreview } from "@/modules/ai-assistant/domain/copilot-action-contracts";
+import { dailyProspectingBatchSchema, type DailyProspectingChannel, type DailyProspectingEntry, type DailyProspectingList } from "@/modules/ai-assistant/domain/copilot-daily-prospecting";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createFinanceService } from "@/modules/finance/application/finance-service";
 import { createLeadListService } from "@/modules/leads/application/lead-list-service";
@@ -24,6 +25,7 @@ import { createAuthorizationService, type ResourceScope } from "@/modules/users/
 import { PermissionKeys, type PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 
 type Options = { database: PrismaClient; now: () => Date };
 type ActionResult = { answer: string; result: unknown; targetType: string; targetId: string; links: Array<{ label: string; href: string; entityType: string }> };
@@ -33,9 +35,15 @@ function fail(message: string, code = "COPILOT_ACTION_INVALID", statusCode = 409
 const fieldLabels: Record<string, string> = { fullName: "Nome", email: "E-mail", organizationName: "Empresa", jobTitle: "Cargo", city: "Cidade", stateCode: "UF", interestSummary: "Interesse", priorityBandCode: "Prioridade", budgetBrl: "Orçamento", name: "Nome", legalName: "Razão social", domain: "Site/domínio", segment: "Segmento", size: "Porte" };
 const fieldDetail = ([key, value]: [string, unknown]) => ({ label: fieldLabels[key] ?? key, after: value === "UNKNOWN" ? "Não informado" : String(value) });
 const money = (value: string) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value) / 100);
+const prospectingResultLabels: Record<string, string> = {
+  CONNECTED: "Atendeu", NO_ANSWER: "Não atendeu", BUSY: "Ocupado", VOICEMAIL: "Caixa postal",
+  WRONG_NUMBER: "Número incorreto", CHANNEL_UNAVAILABLE: "Canal indisponível", SENT: "Mensagem enviada",
+  FAILED: "Falhou", PROFILE_NOT_FOUND: "Instagram não encontrado", COMPLETED: "Seguiu",
+  ALREADY_FOLLOWING: "Já seguia",
+};
 const linksFor = (kind: CopilotAction["kind"], id?: string) => [{
-  label: kind === "CREATE_TASK" ? "Tarefas do lead" : kind === "UPDATE_CUSTOMER" ? "Cliente" : kind === "RECORD_PAYMENT" ? "Cobranças" : "Financeiro",
-  href: kind === "CREATE_TASK" ? `/leads/${id}` : kind === "UPDATE_CUSTOMER" ? `/contas/${id}` : kind === "RECORD_PAYMENT" ? `/pagamentos/${id}` : "/financeiro", entityType: "MODULE",
+  label: kind === "COMPLETE_PROSPECTING_TASKS" ? "Meu Dia" : kind === "CREATE_TASK" ? "Tarefas do lead" : kind === "UPDATE_CUSTOMER" ? "Cliente" : kind === "RECORD_PAYMENT" ? "Cobranças" : "Financeiro",
+  href: kind === "COMPLETE_PROSPECTING_TASKS" ? "/meu-dia" : kind === "CREATE_TASK" ? `/leads/${id}` : kind === "UPDATE_CUSTOMER" ? `/contas/${id}` : kind === "RECORD_PAYMENT" ? `/pagamentos/${id}` : "/financeiro", entityType: "MODULE",
 }];
 
 // Compose existing domain services inside one transaction, including the replay
@@ -56,6 +64,105 @@ export function createCopilotActionsService(options: Options) {
     const [result] = await database.$queryRaw<Array<{ allowed: boolean }>>`SELECT bool_and(has_table_privilege(current_user, format('%I.%I', current_schema(), table_name), 'SELECT') AND has_table_privilege(current_user, format('%I.%I', current_schema(), table_name), 'INSERT')) AS allowed FROM unnest(ARRAY['analytics_dashboards','analytics_widgets','analytics_mutation_receipts']) AS table_name`;
     return result?.allowed === true;
   }
+  async function loadAuthorizedProspectingTasks(database: PrismaClient, context: AuthenticatedContext, action: Extract<CopilotAction, { kind: "COMPLETE_PROSPECTING_TASKS" }>) {
+    const taskIds = action.items.map((item) => item.taskId);
+    if (new Set(taskIds).size !== taskIds.length) fail("A mesma tarefa foi informada mais de uma vez.", "COPILOT_DUPLICATE_TASK");
+    const tasks = await database.task.findMany({
+      where: { id: { in: taskIds }, workspaceId: context.workspaceId, deletedAt: null },
+      include: { lead: { include: { routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } } },
+      orderBy: [{ leadId: "asc" }, { dueAt: "asc" }, { id: "asc" }],
+    });
+    if (tasks.length !== taskIds.length) fail("Uma ou mais tarefas não existem ou não pertencem a esta empresa.", "COPILOT_UNKNOWN_RESOURCE", 403);
+    const authorization = createAuthorizationService({ database });
+    for (const task of tasks) {
+      const item = action.items.find((candidate) => candidate.taskId === task.id)!;
+      if (task.leadId !== item.leadId || task.kind !== item.taskKind || task.assigneeMemberId !== context.memberId || !task.sourceKey?.startsWith("active-prospecting:") || !["OPEN", "IN_PROGRESS"].includes(task.status)) {
+        fail("A lista diária mudou. Solicite a lista novamente antes de concluir as tarefas.", "COPILOT_DAILY_LIST_STALE");
+      }
+      const scope = { workspaceId: context.workspaceId, resourceType: "Lead", resourceId: task.lead.id, ownerMemberId: task.lead.ownerMemberId, queueId: task.lead.queueId, teamId: task.lead.routingQueue?.teamId ?? task.lead.queue?.teamId ?? null };
+      for (const key of [PermissionKeys.LEADS_READ, PermissionKeys.TASKS_READ, PermissionKeys.TASKS_WRITE]) await authorization.assertAuthorized(context, key, scope);
+    }
+    return tasks;
+  }
+
+  async function dailyList(context: AuthenticatedContext, channel: DailyProspectingChannel): Promise<DailyProspectingList> {
+    const database = options.database;
+    const authorization = createAuthorizationService({ database });
+    const workspace = await database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
+    const localDate = workspaceDateAt(options.now(), workspace.timeZone);
+    const range = workspaceDayRange(localDate, workspace.timeZone);
+    const config = await database.prospectingSellerConfig.findUnique({ where: { workspaceId_memberId: { workspaceId: context.workspaceId, memberId: context.memberId } }, select: { dailyCapacity: true } });
+    const target = Math.min(config?.dailyCapacity ?? 75, 75);
+    const taskKinds = channel === "CALL" ? ["CALL" as const] : ["INSTAGRAM_FOLLOW" as const, "INSTAGRAM_MESSAGE" as const];
+    const tasks = await database.task.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        assigneeMemberId: context.memberId,
+        sourceKey: { startsWith: "active-prospecting:" },
+        kind: { in: taskKinds },
+        status: { in: ["OPEN", "IN_PROGRESS"] },
+        dueAt: { lt: range.end },
+        deletedAt: null,
+        lead: { deletedAt: null, status: { in: ["OPEN", "QUALIFIED"] }, contactPreference: { not: "DO_NOT_CONTACT" }, currentStage: { stableKey: { not: "active-prospecting.conversation-started" } } },
+      },
+      orderBy: [{ dueAt: "asc" }, { leadId: "asc" }, { id: "asc" }],
+      select: {
+        id: true, leadId: true, kind: true,
+        lead: {
+          select: {
+            id: true, fullName: true, city: true, jobTitle: true, normalizedPhone: true, ownerMemberId: true, queueId: true,
+            routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } },
+            contact: { select: { points: { where: { deletedAt: null, doNotContact: false, type: { in: ["PHONE", "WHATSAPP", "INSTAGRAM"] } }, orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], select: { type: true, originalValue: true, normalizedValue: true } } } },
+          },
+        },
+      },
+    });
+    const grouped = new Map<string, typeof tasks>();
+    for (const task of tasks) {
+      const rows = grouped.get(task.leadId) ?? [];
+      if (!rows.some((row) => row.kind === task.kind)) rows.push(task);
+      grouped.set(task.leadId, rows);
+    }
+    const selectedGroups: typeof tasks[] = [];
+    for (const rows of grouped.values()) {
+      const lead = rows[0]!.lead;
+      const hasPhone = Boolean(lead.normalizedPhone?.trim()) || Boolean(lead.contact?.points.some((point) => (point.type === "PHONE" || point.type === "WHATSAPP") && Boolean((point.originalValue || point.normalizedValue)?.trim())));
+      if (channel === "CALL" && !hasPhone) continue;
+      const scope = { workspaceId: context.workspaceId, resourceType: "Lead", resourceId: lead.id, ownerMemberId: lead.ownerMemberId, queueId: lead.queueId, teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null };
+      const decisions = await Promise.all([PermissionKeys.LEADS_READ, PermissionKeys.TASKS_READ, PermissionKeys.TASKS_WRITE].map((key) => authorization.authorize(context, key, scope)));
+      if (decisions.every((decision) => decision.allowed)) selectedGroups.push(rows);
+      if (selectedGroups.length >= target) break;
+    }
+    const candidateRows = await database.prospectCandidate.findMany({
+      where: { workspaceId: context.workspaceId, leadId: { in: selectedGroups.map((rows) => rows[0]!.leadId) }, status: "RELEASED" },
+      select: { leadId: true, instagram: true },
+    });
+    const instagramByLead = new Map(candidateRows.map((candidate) => [candidate.leadId!, candidate.instagram]));
+    const entries: DailyProspectingEntry[] = selectedGroups.flatMap((rows, index) => {
+      const lead = rows[0]!.lead;
+      const phones = [...new Set([
+        lead.normalizedPhone,
+        ...(lead.contact?.points.filter((point) => point.type === "PHONE" || point.type === "WHATSAPP").map((point) => point.originalValue || point.normalizedValue) ?? []),
+      ].filter((value): value is string => Boolean(value?.trim())))];
+      const instagramPoint = lead.contact?.points.find((point) => point.type === "INSTAGRAM");
+      return [{
+        number: index + 1,
+        leadId: lead.id,
+        name: lead.fullName,
+        city: lead.city,
+        role: lead.jobTitle,
+        phones,
+        instagram: instagramPoint?.originalValue || instagramPoint?.normalizedValue || instagramByLead.get(lead.id) || null,
+        tasks: rows.map((task) => ({ taskId: task.id, kind: task.kind as "CALL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW" })),
+      }];
+    }).map((entry, index) => ({ ...entry, number: index + 1 }));
+    const expiresAt = range.end;
+    const batch = dailyProspectingBatchSchema.parse({
+      batchId: randomUUID(), channel, localDate, expiresAt: expiresAt.toISOString(),
+      items: entries.map((entry) => ({ number: entry.number, leadId: entry.leadId, tasks: entry.tasks })),
+    });
+    return { batch, target, truncated: grouped.size > selectedGroups.length, entries };
+  }
   async function authorized(database: PrismaClient, context: AuthenticatedContext, action: CopilotAction) {
     const authorization = createAuthorizationService({ database });
     const check = (key: PermissionKey, scope: ResourceScope) => authorization.assertAuthorized(context, key, scope);
@@ -68,6 +175,8 @@ export function createCopilotActionsService(options: Options) {
     } else if (action.kind === "CREATE_INDICATOR") {
       for (const key of [PermissionKeys.METRICS_READ, PermissionKeys.OPERATIONS_MANAGE]) await check(key, { workspaceId: context.workspaceId, resourceType: "AnalyticsDashboard", memberId: context.memberId });
       if (!await indicatorRuntimeAvailable(database)) fail("A criação de indicadores aguarda habilitação das permissões do banco. As outras ações do Copilot continuam disponíveis.", "COPILOT_INDICATOR_UNAVAILABLE", 503);
+    } else if (action.kind === "COMPLETE_PROSPECTING_TASKS") {
+      await loadAuthorizedProspectingTasks(database, context, action);
     } else if (action.kind === "CREATE_TASK" || action.kind === "MOVE_LEAD") {
       const lead = await database.lead.findFirst({ where: { id: action.leadId, workspaceId: context.workspaceId, deletedAt: null }, include: { routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } });
       if (!lead) fail("Lead inexistente ou não autorizado.", "NOT_FOUND", 404);
@@ -137,6 +246,22 @@ export function createCopilotActionsService(options: Options) {
         { label: "Responsável", after: lead.owner?.user.displayName ?? lead.queue?.name ?? "Fila do lead" },
         { label: "Prazo", after: action.dueAt }, { label: "Prioridade", after: action.priority }, { label: "Tipo", after: action.taskKind },
       ], impact: ["Cria uma tarefa aberta vinculada ao lead e ao responsável atual.", "Atualiza a próxima ação e registra o histórico operacional."], bindings: { leadId: lead.id, ownerMemberId: lead.ownerMemberId, queueId: lead.queueId, opportunityId: action.opportunityId ?? null }, links: linksFor(action.kind, lead.id) };
+    }
+    if (action.kind === "COMPLETE_PROSPECTING_TASKS") {
+      const tasks = await loadAuthorizedProspectingTasks(database, context, action);
+      const itemByTask = new Map(action.items.map((item) => [item.taskId, item]));
+      return {
+        kind: action.kind,
+        title: "Concluir tarefas da prospecção",
+        summary: `${new Set(action.items.map((item) => item.leadId)).size} político(s) · ${action.items.length} tarefa(s)`,
+        details: tasks.map((task) => ({
+          label: task.lead.fullName,
+          before: task.title,
+          after: prospectingResultLabels[itemByTask.get(task.id)!.result] ?? itemByTask.get(task.id)!.result,
+        })),
+        impact: ["Conclui somente as tarefas listadas, registra atividades, métricas e auditoria no CRM.", "Resultados de contato podem avançar ou interromper a cadência conforme as regras já publicadas."],
+        links: linksFor(action.kind),
+      };
     }
     if (action.kind === "UPDATE_CUSTOMER") {
       const account = await database.account.findUniqueOrThrow({ where: { id: action.accountId } });
@@ -215,6 +340,20 @@ export function createCopilotActionsService(options: Options) {
         const { kind: _kind, taskKind, ...input } = action; void _kind;
         const task = await createOperationalHistoryService({ database, authorization, now: options.now }).createTask(context, { ...input, kind: taskKind });
         result = { answer: "Tarefa criada e incluída no histórico do lead.", result: task, targetType: "Task", targetId: task.id, links: linksFor(action.kind, action.leadId) };
+      } else if (action.kind === "COMPLETE_PROSPECTING_TASKS") {
+        const history = createOperationalHistoryService({ database, authorization, now: options.now });
+        const completedAt = options.now();
+        const completed = [];
+        for (const item of [...action.items].sort((left, right) => left.leadId.localeCompare(right.leadId) || left.taskId.localeCompare(right.taskId))) {
+          completed.push(await history.completeTask(context, { leadId: item.leadId, taskId: item.taskId, result: item.result, completedAt }));
+        }
+        result = {
+          answer: `${completed.length} tarefa(s) da prospecção concluída(s). Meu Dia, métricas, histórico e cards foram atualizados pelo fluxo oficial.`,
+          result: { completedTaskIds: completed.map((item) => item.id), leadCount: new Set(action.items.map((item) => item.leadId)).size },
+          targetType: "TaskBatch",
+          targetId: confirmation.idempotencyKey,
+          links: linksFor(action.kind),
+        };
       } else if (action.kind === "UPDATE_CUSTOMER") {
         const account = await createAccountService({ database, authorization, now: options.now }).update(context, action.accountId, { expectedRevision: action.expectedRevision, ...action.changes });
         result = { answer: "Cadastro do cliente atualizado conforme a prévia.", result: { id: account.id, revision: account.revision }, targetType: "Account", targetId: account.id, links: linksFor(action.kind, account.id) };
@@ -231,7 +370,7 @@ export function createCopilotActionsService(options: Options) {
       }
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "ai.copilot.action.executed", entityType: result.targetType, entityId: result.targetId, changes: { kind: action.kind, confirmed: true }, metadata: json({ idempotencyKey: confirmation.idempotencyKey, fingerprint, result }) } });
       return result;
-    }, { isolationLevel: "Serializable", timeout: 30_000 });
+    }, { isolationLevel: "Serializable", timeout: action.kind === "COMPLETE_PROSPECTING_TASKS" ? 60_000 : 30_000 });
   }
 
   async function formOptions(context: AuthenticatedContext, query = ""): Promise<CopilotActionOptions> {
@@ -298,7 +437,7 @@ export function createCopilotActionsService(options: Options) {
     }
     return result;
   }
-  return { authorize, preview, execute, options: formOptions };
+  return { authorize, preview, execute, options: formOptions, dailyList };
 }
 
 export function getCopilotActionsService() { return createCopilotActionsService({ database: getDatabaseClient(), now: () => new Date() }); }

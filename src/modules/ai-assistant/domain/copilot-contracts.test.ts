@@ -20,9 +20,18 @@ const id = "10000000-0000-4000-8000-000000000001";
 const at = "2026-10-01T10:00:00-03:00";
 
 describe("contrato fornecido ao modelo do Copilot", () => {
+  it("aceita conclusão em lote somente com resultados compatíveis com o canal", () => {
+    const base = {
+      kind: "COMPLETE_PROSPECTING_TASKS",
+      items: [{ leadId: id, taskId: id, taskKind: "CALL", result: "NO_ANSWER" }],
+    };
+    expect(copilotOutputSchema.safeParse({ answer: "Confira", sources: [], operation: base }).success).toBe(true);
+    expect(copilotOutputSchema.safeParse({ answer: "Confira", sources: [], operation: { ...base, items: [{ ...base.items[0], result: "SENT" }] } }).success).toBe(false);
+  });
+
   it("publica todos os tipos de ação e campos obrigatórios no schema de resposta", () => {
     expect(response.required).toEqual(expect.arrayContaining(["answer", "sources", "sale", "operation", "searches"]));
-    expect(operations.map((schema) => schema.properties!.kind!.const)).toEqual(["CREATE_LEAD", "MOVE_LEAD", "CREATE_CUSTOMER", "CREATE_INCOME", "CREATE_INDICATOR", "CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT"]);
+    expect(operations.map((schema) => schema.properties!.kind!.const)).toEqual(["CREATE_LEAD", "MOVE_LEAD", "CREATE_CUSTOMER", "CREATE_INCOME", "CREATE_INDICATOR", "CREATE_TASK", "COMPLETE_PROSPECTING_TASKS", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT"]);
     expect(operation("CREATE_EXPENSE").required).toEqual(expect.arrayContaining(["categoryId", "financialAccountId", "amountCents", "competenceAt", "dueAt", "status"]));
     expect(operation("RECORD_PAYMENT").required).toEqual(expect.arrayContaining(["invoiceId", "expectedRevision", "receivedAt", "method", "reference", "receiptConfirmed"]));
     expect(operation("RECORD_PAYMENT").properties!.reference!.maxLength).toBe(180);
@@ -49,7 +58,7 @@ describe("contrato fornecido ao modelo do Copilot", () => {
   });
 
   it("complementa no guia as regras relacionais e origens dos IDs", () => {
-    expect(Object.keys(copilotActionInputGuide)).toHaveLength(10);
+    expect(Object.keys(copilotActionInputGuide)).toHaveLength(11);
     expect(copilotActionInputGuide.CREATE_TASK.outputField).toBe("operation");
     expect(copilotActionInputGuide.CREATE_TASK.references.leadId).toBe("actionOptions.leads[].id");
     expect(copilotActionInputGuide.CLOSE_SALE.outputField).toBe("sale");

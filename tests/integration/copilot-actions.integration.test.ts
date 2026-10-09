@@ -50,6 +50,46 @@ const confirmation = () => ({ confirmed: true as const, idempotencyKey: randomUU
 const expense = (): CopilotAction => ({ kind: "CREATE_EXPENSE", categoryId, financialAccountId, description: "Licença de software", amountCents: "15000", competenceAt: now().toISOString(), dueAt: now().toISOString(), status: "SETTLED", settledAt: now().toISOString(), paymentConfirmed: true });
 
 describe("ações operacionais do Copilot", () => {
+  it("lista somente tarefas diárias do vendedor e conclui ligação pelo fluxo canônico", async () => {
+    const task = await database.task.create({ data: {
+      workspaceId, leadId, assigneeMemberId: admin.memberId,
+      title: "Ligação da meta diária pelo Copilot", kind: "CALL",
+      sourceKey: `active-prospecting:copilot-test:${randomUUID()}:call-1`,
+      status: "OPEN", priority: "HIGH", dueAt: now(),
+      createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
+    } });
+    const list = await actions.dailyList(admin, "CALL");
+    const entry = list.entries.find((item) => item.tasks.some((candidate) => candidate.taskId === task.id));
+    expect(entry).toMatchObject({ leadId, name: "Lead Copilot", phones: expect.arrayContaining(["+5511998877665"]) });
+    expect((await actions.dailyList(viewer, "CALL")).entries.some((item) => item.leadId === leadId)).toBe(false);
+
+    const sourceLead = await database.lead.findUniqueOrThrow({ where: { id: leadId } });
+    const phoneLessLeadId = randomUUID();
+    await database.lead.create({ data: { ...sourceLead, id: phoneLessLeadId, contactId: null, normalizedPhone: null, normalizedEmail: null, fullName: "Lead sem telefone", nextActionTaskId: null, nextActionAt: null, nextActionDescription: null } });
+    try {
+      await database.task.create({ data: {
+        workspaceId, leadId: phoneLessLeadId, assigneeMemberId: admin.memberId,
+        title: "Ligação inválida sem telefone", kind: "CALL",
+        sourceKey: `active-prospecting:copilot-test:${randomUUID()}:call-1`,
+        status: "OPEN", priority: "HIGH", dueAt: now(),
+        createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
+      } });
+      expect((await actions.dailyList(admin, "CALL")).entries.some((item) => item.leadId === phoneLessLeadId)).toBe(false);
+    } finally {
+      await database.task.deleteMany({ where: { workspaceId, leadId: phoneLessLeadId } });
+      await database.lead.delete({ where: { id: phoneLessLeadId } });
+    }
+
+    const action: CopilotAction = { kind: "COMPLETE_PROSPECTING_TASKS", items: [{ leadId, taskId: task.id, taskKind: "CALL", result: "NO_ANSWER" }] };
+    expect(await actions.preview(admin, action)).toMatchObject({ kind: "COMPLETE_PROSPECTING_TASKS", title: "Concluir tarefas da prospecção" });
+    await expect(actions.preview(viewer, action)).rejects.toMatchObject({ code: "COPILOT_DAILY_LIST_STALE" });
+    const result = await actions.execute(admin, action, confirmation());
+    expect(result).toMatchObject({ targetType: "TaskBatch", result: { completedTaskIds: [task.id], leadCount: 1 } });
+    expect(await database.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "COMPLETED", result: "NO_ANSWER", assigneeMemberId: admin.memberId });
+    expect(await database.activity.count({ where: { workspaceId, leadId, type: "TASK", description: "NO_ANSWER" } })).toBeGreaterThan(0);
+    expect(await database.auditLog.count({ where: { workspaceId, action: "task.completed", entityId: task.id } })).toBe(1);
+  });
+
   it("prévia não altera dados; confirmação cria tarefa uma vez, com responsável e histórico", async () => {
     const action: CopilotAction = { kind: "CREATE_TASK", leadId, title: "Ligar para confirmar onboarding", taskKind: "CALL", priority: "HIGH", dueAt: "2026-10-01T15:00:00Z" };
     const before = await database.task.count({ where: { workspaceId, leadId } });
@@ -141,6 +181,9 @@ describe("ações operacionais do Copilot", () => {
     await expect(database.aIAssistantProposal.create({ data: base })).rejects.toThrow(/type_check/);
     await expect(database.aIAssistantProposal.create({ data: { ...base, type: "AGENT", status: "PUBLISHED", publishedTargetType: "GovernedAgent", publishedTargetId: randomUUID() } })).rejects.toThrow(/published_state_check/);
     await expect(database.aIAssistantProposal.create({ data: { ...base, type: "CREATE_TASK", status: "PUBLISHED" } })).rejects.toThrow(/published_state_check/);
+    const batch = await database.aIAssistantProposal.create({ data: { ...base, type: "COMPLETE_PROSPECTING_TASKS", status: "PUBLISHED", requestFingerprint: "f".repeat(64), publishedTargetType: "TaskBatch", publishedTargetId: randomUUID() } });
+    expect(batch.type).toBe("COMPLETE_PROSPECTING_TASKS");
+    await database.aIAssistantProposal.delete({ where: { id: batch.id } });
   });
 
   it("refazer proposta expirada preserva histórico e não colide com índice de rascunhos", async () => {

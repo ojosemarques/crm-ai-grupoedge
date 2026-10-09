@@ -28,6 +28,8 @@ type Screen = { mode: "LOCAL" | "OPENAI"; pending: Proposal[]; history: HistoryI
 type Message = Readonly<{ id: string; role: "USER" | "COPILOT"; text: string; result?: QueryResult }>;
 
 const suggestions = [
+  "Liste todos os nomes e telefones dos meus leads da meta diária.",
+  "Mostre o Instagram de todos os políticos da minha meta diária.",
   "Quero cadastrar um lead. Pergunte os dados necessários.",
   "Quero mover um lead no pipeline. Ajude a localizar o cadastro e a etapa.",
   "Quero registrar uma entrada ou despesa no financeiro.",
@@ -40,7 +42,7 @@ const suggestions = [
   "Prepare os briefings das próximas reuniões.",
   "Qual atividade devo executar agora?",
 ];
-const labels: Record<CopilotAction["kind"] | "CLOSE_SALE" | "ACTION_PLAN", string> = { CREATE_LEAD: "Cadastrar lead", MOVE_LEAD: "Mover lead", CREATE_CUSTOMER: "Cadastrar cliente", CREATE_INCOME: "Registrar entrada", CREATE_INDICATOR: "Criar indicador", CREATE_TASK: "Criar tarefa", UPDATE_CUSTOMER: "Atualizar cliente", CREATE_EXPENSE: "Registrar despesa", RECORD_PAYMENT: "Registrar recebimento", CLOSE_SALE: "Fechar venda", ACTION_PLAN: "Plano de ações" };
+const labels: Record<CopilotAction["kind"] | "CLOSE_SALE" | "ACTION_PLAN", string> = { CREATE_LEAD: "Cadastrar lead", MOVE_LEAD: "Mover lead", CREATE_CUSTOMER: "Cadastrar cliente", CREATE_INCOME: "Registrar entrada", CREATE_INDICATOR: "Criar indicador", CREATE_TASK: "Criar tarefa", COMPLETE_PROSPECTING_TASKS: "Concluir prospecção", UPDATE_CUSTOMER: "Atualizar cliente", CREATE_EXPENSE: "Registrar despesa", RECORD_PAYMENT: "Registrar recebimento", CLOSE_SALE: "Fechar venda", ACTION_PLAN: "Plano de ações" };
 const statusLabels: Record<string, string> = { DRAFT: "Aguardando confirmação", EXECUTING: "Confirmação em andamento", EXECUTION_FAILED: "Recuperação disponível", PUBLISHED: "Executada", CANCELLED: "Cancelada", EXPIRED: "Expirada" };
 const currency = (cents: string) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(cents) / 100);
 const date = (value: string) => new Date(value).toLocaleDateString("pt-BR");

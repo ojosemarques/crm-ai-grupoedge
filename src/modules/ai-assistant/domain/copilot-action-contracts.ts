@@ -3,6 +3,19 @@ import { z } from "zod";
 const id = z.string().uuid();
 const at = z.string().datetime({ offset: true });
 const cents = z.string().regex(/^[1-9]\d*$/).refine((value) => /^[1-9]\d*$/.test(value) && BigInt(value) <= BigInt(Number.MAX_SAFE_INTEGER), "Valor inválido ou acima do limite permitido.");
+const prospectingTaskCompletionSchema = z.object({
+  leadId: id,
+  taskId: id,
+  taskKind: z.enum(["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"]),
+  result: z.enum(["CONNECTED", "NO_ANSWER", "BUSY", "VOICEMAIL", "WRONG_NUMBER", "CHANNEL_UNAVAILABLE", "SENT", "FAILED", "PROFILE_NOT_FOUND", "COMPLETED", "ALREADY_FOLLOWING"]),
+}).strict().superRefine((item, ctx) => {
+  const accepted = item.taskKind === "CALL"
+    ? ["CONNECTED", "NO_ANSWER", "BUSY", "VOICEMAIL", "WRONG_NUMBER", "CHANNEL_UNAVAILABLE"]
+    : item.taskKind === "INSTAGRAM_MESSAGE"
+      ? ["SENT", "FAILED", "PROFILE_NOT_FOUND", "CHANNEL_UNAVAILABLE"]
+      : ["COMPLETED", "ALREADY_FOLLOWING", "FAILED", "PROFILE_NOT_FOUND", "CHANNEL_UNAVAILABLE"];
+  if (!accepted.includes(item.result)) ctx.addIssue({ code: "custom", path: ["result"], message: "Resultado incompatível com o tipo da tarefa." });
+});
 
 export const copilotActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("CREATE_LEAD"), pipelineId: id, fullName: z.string().trim().min(2).max(200), phone: z.string().trim().min(1).max(80), email: z.string().email().max(320).optional(), organizationName: z.string().trim().min(2).max(200).optional(), jobTitle: z.string().trim().max(160).optional(), city: z.string().trim().max(120).optional(), stateCode: z.string().length(2).optional(), interestSummary: z.string().trim().max(2000).optional(), sourceKey: z.string().trim().min(1).max(120).default("manual"), priorityBandCode: z.enum(["P1","P2","P3"]).default("P2"), budgetBrl: z.string().max(40).optional() }).strict(),
@@ -15,6 +28,10 @@ export const copilotActionSchema = z.discriminatedUnion("kind", [
     title: z.string().trim().min(2).max(200), description: z.string().trim().max(2000).optional(),
     taskKind: z.enum(["GENERAL", "CALL", "MESSAGE", "EMAIL", "MEETING", "FOLLOW_UP"]).default("GENERAL"),
     priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).default("MEDIUM"), dueAt: at,
+  }).strict(),
+  z.object({
+    kind: z.literal("COMPLETE_PROSPECTING_TASKS"),
+    items: z.array(prospectingTaskCompletionSchema).min(1).max(150),
   }).strict(),
   z.object({
     kind: z.literal("UPDATE_CUSTOMER"), accountId: id, expectedRevision: z.number().int().positive(),

@@ -2,6 +2,7 @@ import { canonicalJson, sha256 } from "@/modules/integrations/domain/integration
 import type { AIAssistantProposal, Prisma, PrismaClient } from "@/generated/prisma/client";
 import { copilotCommandSchema, copilotOutputSchema, copilotSaleSchema, copilotSystemPrompt, copilotResponseSchema, copilotActionInputGuide, type CopilotSale } from "@/modules/ai-assistant/domain/copilot-contracts";
 import { copilotActionSchema, type CopilotAction } from "@/modules/ai-assistant/domain/copilot-action-contracts";
+import { buildDailyProspectingAction, dailyProspectingBatchSchema, dailyProspectingListIntent, dailyProspectingSummaryIntent, formatDailyProspectingList } from "@/modules/ai-assistant/domain/copilot-daily-prospecting";
 import { getCopilotActionsService } from "@/modules/ai-assistant/application/copilot-actions-service";
 import { getAssistantService } from "@/modules/ai-assistant/application/assistant-service";
 import { loadCopilotContext, type CopilotContext } from "@/modules/ai-assistant/application/copilot-context";
@@ -32,7 +33,7 @@ type Options = {
     preview: (context: AuthenticatedContext, payload: CopilotSale) => Promise<unknown>;
     execute: (context: AuthenticatedContext, payload: CopilotSale & { confirmed: true; idempotencyKey: string }) => Promise<unknown>;
   };
-  actions: Pick<ReturnType<typeof getCopilotActionsService>, "preview" | "execute" | "options" | "authorize">;
+  actions: Pick<ReturnType<typeof getCopilotActionsService>, "preview" | "execute" | "options" | "authorize" | "dailyList">;
   fallback: (context: AuthenticatedContext, message: string) => Promise<unknown>;
   now: () => Date;
 };
@@ -40,7 +41,7 @@ type Options = {
 const json = (value: unknown) => JSON.parse(JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item)) as Prisma.InputJsonValue;
 // Compare previews independent of the key order used by PostgreSQL JSONB.
 const hash = (value: unknown) => sha256(canonicalJson(json(value)));
-const proposalTypes = ["CLOSE_SALE", "CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT", "CREATE_LEAD", "MOVE_LEAD", "CREATE_CUSTOMER", "CREATE_INCOME", "CREATE_INDICATOR"];
+const proposalTypes = ["CLOSE_SALE", "CREATE_TASK", "COMPLETE_PROSPECTING_TASKS", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT", "CREATE_LEAD", "MOVE_LEAD", "CREATE_CUSTOMER", "CREATE_INCOME", "CREATE_INDICATOR"];
 const lifetimeMs = 30 * 60_000;
 function fail(message: string, code: string, statusCode = 409): never { throw new ApplicationError(message, { code, statusCode, expose: true }); }
 const redactSecrets = (text: string) => text.replace(/\bsk-[a-zA-Z0-9_-]{12,}\b/g, "[SEGREDO_REMOVIDO]").replace(/\b(?:bearer|token|password|senha|secret)\s*[:= ]\s*[^\s,;]+/gi, "[SEGREDO_REMOVIDO]");
@@ -127,6 +128,29 @@ export function createCopilotService(options: Options) {
     return present(row);
   }
 
+  async function dailySummaryAction(context: AuthenticatedContext, message: string) {
+    if (!dailyProspectingSummaryIntent(message)) return null;
+    const audits = await options.database.auditLog.findMany({
+      where: { workspaceId: context.workspaceId, actorId: context.actorId, action: "ai.copilot.daily_prospecting_listed", occurredAt: { gt: new Date(options.now().getTime() - 24 * 60 * 60_000) } },
+      orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+      take: 6,
+      select: { metadata: true },
+    });
+    let lastError: unknown = null;
+    const seenChannels = new Set<string>();
+    for (const audit of audits) {
+      const metadata = audit.metadata && typeof audit.metadata === "object" && !Array.isArray(audit.metadata) ? audit.metadata as Record<string, unknown> : {};
+      const parsed = dailyProspectingBatchSchema.safeParse(metadata.dailyProspectingBatch);
+      if (!parsed.success || new Date(parsed.data.expiresAt) <= options.now()) continue;
+      if (seenChannels.has(parsed.data.channel)) continue;
+      seenChannels.add(parsed.data.channel);
+      try { return buildDailyProspectingAction(parsed.data, message); }
+      catch (error) { lastError ??= error; }
+    }
+    if (lastError) throw lastError;
+    return null;
+  }
+
   function verifyActionContext(action: CopilotAction, data: CopilotContext, available: Awaited<ReturnType<Options["actions"]["options"]>>, evidence: CopilotSearchEvidence[] = []) {
     const has = (records: readonly { id: string }[], id: string) => records.some((record) => record.id === id);
     const found = (entity: string, id: string, revision?: number) => evidence.some(({ result }) => result?.entity === entity && result.records.some((record) => record.id === id && (revision === undefined || record.data.revision === revision)));
@@ -164,6 +188,25 @@ export function createCopilotService(options: Options) {
       return { answer: "Confira os dados e os efeitos abaixo. A ação só será executada após sua confirmação.", sources: [], links: [], proposal, mode: "LOCAL" };
     }
     if (input.action === "CHAT") {
+      const listIntent = dailyProspectingListIntent(input.message);
+      if (listIntent) {
+        const list = await options.actions.dailyList(context, listIntent);
+        if (list.entries.length > 0) await options.database.auditLog.create({ data: {
+          workspaceId: context.workspaceId,
+          actorId: context.actorId,
+          action: "ai.copilot.daily_prospecting_listed",
+          entityType: "Workspace",
+          entityId: context.workspaceId,
+          changes: { channel: listIntent, count: list.entries.length, target: list.target, domainMutationExecuted: false },
+          metadata: json({ dailyProspectingBatch: list.batch }),
+        } });
+        return { answer: formatDailyProspectingList(list), sources: [], links: [{ label: "Abrir Meu Dia", href: "/meu-dia", entityType: "MODULE" }], proposal: null, mode: "LOCAL" };
+      }
+      const dailyAction = await dailySummaryAction(context, input.message);
+      if (dailyAction) {
+        const proposal = await propose(context, "Resumo numerado da lista diária da prospecção", dailyAction, false);
+        return { answer: "Confira os resultados interpretados abaixo. As tarefas só serão concluídas depois da sua confirmação.", sources: [], links: [{ label: "Abrir Meu Dia", href: "/meu-dia", entityType: "MODULE" }], proposal, mode: "LOCAL" };
+      }
       if (!options.generate) {
         const normalized = input.message.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
         if (/\b(crie|criar|cadastre|cadastrar|registre|registrar|atualize|atualizar|altere|alterar|baixe|baixar|feche|fechar)\b/.test(normalized)) return { answer: "A interpretação de ações por conversa precisa da conexão com a OpenAI e da governança habilitadas nesta empresa. Nenhuma ação foi executada. Você pode continuar operando pelos módulos do CRM.", sources: [], links: [{ label: "Pipeline de vendas", href: "/oportunidades", entityType: "MODULE" }], proposal: null, mode: "LOCAL" };
