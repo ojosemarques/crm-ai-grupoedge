@@ -66,6 +66,20 @@ describe("Copilot operacional", () => {
     expect(h.database.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "ai.copilot.daily_prospecting_listed", metadata: expect.objectContaining({ dailyProspectingBatch: expect.any(Object) }) }) }));
   });
 
+  it("entende o pedido singular de Instagram dos leads de um vendedor", async () => {
+    const h = harness();
+    const message = "Nos leads do Carlos Henrique me dê o nome, cidade e cargo dos que não tiverem Instagram; dos que tiverem, nome e @Instagram";
+    h.actions.dailyList.mockResolvedValueOnce({
+      batch: { batchId: id(70), ...batchOwner, memberName: "Carlos Henrique", channel: "INSTAGRAM", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [] },
+      target: 75, totalPoliticians: 0, activitySummary: [], truncated: false, entries: [],
+    });
+
+    await h.service.command(context, { action: "CHAT", message });
+
+    expect(h.actions.dailyList).toHaveBeenCalledWith(context, "INSTAGRAM", message);
+    expect(h.generate).not.toHaveBeenCalled();
+  });
+
   it("conclui automaticamente as tarefas do resumo numerado pelo fluxo auditado", async () => {
     const h = harness();
     h.database.auditLog.findMany.mockResolvedValueOnce([{ metadata: { dailyProspectingBatch: { batchId: id(70), ...batchOwner, channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] } } }]);

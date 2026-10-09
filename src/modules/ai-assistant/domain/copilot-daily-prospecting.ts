@@ -56,12 +56,21 @@ function invalid(message: string): never {
 
 export function dailyProspectingListIntent(message: string): DailyProspectingChannel | null {
   const text = normalized(message);
-  const wantsList = /\b(lista|liste|listar|todos|todas|nomes|contatos|pessoas|quem|quantas?|mostre|mostrar)\b/.test(text);
+  const wantsList = /\b(lista|liste|listar|todos|todas|nomes?|contatos|pessoas|quem|quantas?|mostre|mostrar)\b/.test(text);
   const dailyScope = /\b(meta|diari[ao]|hoje|meu dia|fila de tarefas|leads?|politicos?)\b/.test(text);
   if (!wantsList || !dailyScope) return null;
   if (/\b(instagram|insta)\b/.test(text)) return "INSTAGRAM";
   if (/\b(ligacao|ligacoes|ligar|telefonar)\b/.test(text)) return "CALL";
   return "DAILY";
+}
+
+function formatInstagram(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("@")) return trimmed;
+  const profilePath = trimmed.match(/^(?:https?:\/\/)?(?:www\.)?instagram\.com\/([^/?#]+)/i)?.[1];
+  if (profilePath && /^[a-z0-9._]+$/i.test(profilePath)) return `@${profilePath}`;
+  if (/^[a-z0-9._]+$/i.test(trimmed)) return `@${trimmed}`;
+  return trimmed;
 }
 
 export function dailyProspectingSummaryIntent(message: string): boolean {
@@ -82,12 +91,26 @@ export function formatDailyProspectingList(list: DailyProspectingList): string {
     if (list.batch.channel === "DAILY") return `Não há atividades pendentes na meta diária de ${list.batch.memberName}.`;
     return `Não há tarefas pendentes de ${channel} na meta diária de ${list.batch.memberName}.${otherActivities}`;
   }
-  const lines = list.entries.map((entry) => {
-    const activities = entry.tasks.map((task) => task.label).join(", ");
-    if (list.batch.channel === "CALL") return `${entry.number}. ${entry.name} — ${entry.phones.join(", ") || "não tem telefone"} — ${activities}`;
-    if (list.batch.channel === "INSTAGRAM") return `${entry.number}. ${entry.name} — ${entry.city ?? "cidade não informada"} — ${entry.role ?? "cargo não informado"} — ${entry.instagram ?? "não tem Instagram"} — ${activities}`;
-    return `${entry.number}. ${entry.name} — ${entry.city ?? "cidade não informada"} — ${entry.role ?? "cargo não informado"}\n   Telefone: ${entry.phones.join(", ") || "não tem telefone"}\n   Instagram: ${entry.instagram ?? "não tem Instagram"}\n   Atividades: ${activities}`;
-  });
+  const entryActivities = (entry: DailyProspectingEntry) => entry.tasks.map((task) => task.label).join(", ");
+  let lines: string;
+  if (list.batch.channel === "INSTAGRAM") {
+    const withInstagram = list.entries
+      .filter((entry) => entry.instagram)
+      .map((entry) => `${entry.number}. ${entry.name} — ${formatInstagram(entry.instagram!)}\n   Atividades: ${entryActivities(entry)}`);
+    const withoutInstagram = list.entries
+      .filter((entry) => !entry.instagram)
+      .map((entry) => `${entry.number}. ${entry.name} — ${entry.city ?? "cidade não informada"} — ${entry.role ?? "cargo não informado"} — não tem Instagram\n   Atividades: ${entryActivities(entry)}`);
+    lines = [
+      withInstagram.length ? `Com Instagram:\n${withInstagram.join("\n")}` : "",
+      withoutInstagram.length ? `Sem Instagram:\n${withoutInstagram.join("\n")}` : "",
+    ].filter(Boolean).join("\n\n");
+  } else {
+    lines = list.entries.map((entry) => {
+      const activities = entryActivities(entry);
+      if (list.batch.channel === "CALL") return `${entry.number}. ${entry.name} — ${entry.phones.join(", ") || "não tem telefone"} — ${activities}`;
+      return `${entry.number}. ${entry.name} — ${entry.city ?? "cidade não informada"} — ${entry.role ?? "cargo não informado"}\n   Telefone: ${entry.phones.join(", ") || "não tem telefone"}\n   Instagram: ${entry.instagram ? formatInstagram(entry.instagram) : "não tem Instagram"}\n   Atividades: ${activities}`;
+    }).join("\n");
+  }
   const limitation = list.truncated ? `\nA fila tem mais políticos, mas esta lista respeita sua meta configurada de ${list.target}.` : "";
   const examples = list.batch.channel === "DAILY"
     ? "Exemplo: `1 - não atendeu, segui e enviei mensagem` ou `2 - não achei Instagram`. Só serão concluídas as atividades descritas."
@@ -95,7 +118,7 @@ export function formatDailyProspectingList(list: DailyProspectingList): string {
     ? "Exemplo: `1 - atendeu` ou `2 - não atendeu`."
     : "Exemplo: `1 - segui e enviei mensagem` ou `2 - não achei Instagram`.";
   const heading = list.batch.channel === "DAILY" ? `Lista pendente da meta diária de ${list.batch.memberName}` : `Lista pendente de ${channel} da meta diária de ${list.batch.memberName}`;
-  return `${heading} (${list.entries.length} político(s) nesta lista; ${list.totalPoliticians} na meta; capacidade diária: ${list.target}).\nAtividades pendentes: ${activitySummary}.\n\n${lines.join("\n")}\n\nResponda usando os números desta lista. ${examples}${limitation}`;
+  return `${heading} (${list.entries.length} político(s) nesta lista; ${list.totalPoliticians} na meta; capacidade diária: ${list.target}).\nAtividades pendentes: ${activitySummary}.\n\n${lines}\n\nResponda usando os números desta lista. ${examples}${limitation}`;
 }
 
 function numberedResults(message: string): Array<{ number: number; text: string }> {

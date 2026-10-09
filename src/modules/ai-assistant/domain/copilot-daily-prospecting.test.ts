@@ -89,9 +89,29 @@ describe("lista diária da prospecção no Copilot", () => {
 
     const answer = formatDailyProspectingList(list);
     expect(answer).toContain("meta diária de Ede Rafael");
-    expect(answer).toContain("1. Ana Silva — Itu — Vereadora — @anasilva — Seguir perfil no Instagram, Mensagem Instagram nº 1");
-    expect(answer).toContain("2. José Lima — Lages — Prefeito — não tem Instagram — Mensagem Instagram nº 1");
+    expect(answer).toContain("Com Instagram:\n1. Ana Silva — @anasilva\n   Atividades: Seguir perfil no Instagram, Mensagem Instagram nº 1");
+    expect(answer).toContain("Sem Instagram:\n2. José Lima — Lages — Prefeito — não tem Instagram\n   Atividades: Mensagem Instagram nº 1");
     expect(answer).toContain("Responda usando os números desta lista");
+  });
+
+  it("separa os leads com e sem Instagram no formato pedido pelo vendedor", () => {
+    expect(dailyProspectingListIntent("Nos leads do Carlos Henrique me dê o nome, cidade e cargo dos que não tiverem Instagram; dos que tiverem, nome e @Instagram")).toBe("INSTAGRAM");
+
+    const answer = formatDailyProspectingList({
+      batch: instagramBatch,
+      target: 75,
+      totalPoliticians: 2,
+      activitySummary: [{ kind: "INSTAGRAM_FOLLOW", label: "Seguir perfil no Instagram", count: 2 }],
+      truncated: false,
+      entries: [
+        { number: 1, leadId: id(12), name: "Ana Silva", city: "Itu", role: "Vereadora", phones: [], instagram: "https://www.instagram.com/anasilva/", tasks: [{ taskId: id(22), kind: "INSTAGRAM_FOLLOW", label: "Seguir perfil no Instagram" }] },
+        { number: 2, leadId: id(13), name: "José Lima", city: "Lages", role: "Prefeito", phones: [], instagram: null, tasks: [{ taskId: id(24), kind: "INSTAGRAM_MESSAGE", label: "Mensagem Instagram nº 1" }] },
+      ],
+    });
+
+    expect(answer).toContain("Com Instagram:\n1. Ana Silva — @anasilva");
+    expect(answer).toContain("Sem Instagram:\n2. José Lima — Lages — Prefeito — não tem Instagram");
+    expect(answer).not.toContain("Ana Silva — Itu — Vereadora");
   });
 
   it("mantém políticos sem telefone na lista de ligações", () => {
