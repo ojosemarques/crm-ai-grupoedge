@@ -1,4 +1,5 @@
 import { canonicalJson, sha256 } from "@/modules/integrations/domain/integration-policy";
+import { randomUUID } from "node:crypto";
 import type { AIAssistantProposal, Prisma, PrismaClient } from "@/generated/prisma/client";
 import { copilotCommandSchema, copilotOutputSchema, copilotSaleSchema, copilotSystemPrompt, copilotResponseSchema, copilotActionInputGuide, type CopilotSale } from "@/modules/ai-assistant/domain/copilot-contracts";
 import { copilotActionSchema, type CopilotAction } from "@/modules/ai-assistant/domain/copilot-action-contracts";
@@ -190,22 +191,23 @@ export function createCopilotService(options: Options) {
     if (input.action === "CHAT") {
       const listIntent = dailyProspectingListIntent(input.message);
       if (listIntent) {
-        const list = await options.actions.dailyList(context, listIntent);
+        const list = await options.actions.dailyList(context, listIntent, input.message);
         if (list.entries.length > 0) await options.database.auditLog.create({ data: {
           workspaceId: context.workspaceId,
           actorId: context.actorId,
           action: "ai.copilot.daily_prospecting_listed",
           entityType: "Workspace",
           entityId: context.workspaceId,
-          changes: { channel: listIntent, count: list.entries.length, target: list.target, domainMutationExecuted: false },
+          changes: { channel: listIntent, count: list.entries.length, target: list.target, targetMemberId: list.batch.memberId, targetMemberName: list.batch.memberName, domainMutationExecuted: false },
           metadata: json({ dailyProspectingBatch: list.batch }),
         } });
         return { answer: formatDailyProspectingList(list), sources: [], links: [{ label: "Abrir Meu Dia", href: "/meu-dia", entityType: "MODULE" }], proposal: null, mode: "LOCAL" };
       }
       const dailyAction = await dailySummaryAction(context, input.message);
       if (dailyAction) {
-        const proposal = await propose(context, "Resumo numerado da lista diária da prospecção", dailyAction, false);
-        return { answer: "Confira os resultados interpretados abaixo. As tarefas só serão concluídas depois da sua confirmação.", sources: [], links: [{ label: "Abrir Meu Dia", href: "/meu-dia", entityType: "MODULE" }], proposal, mode: "LOCAL" };
+        const preview = await options.actions.preview(context, dailyAction);
+        const result = await options.actions.execute(context, dailyAction, { confirmed: true, idempotencyKey: randomUUID(), expectedPreview: preview }) as { answer?: string; links?: Array<{ label: string; href: string; entityType: string }> };
+        return { answer: result.answer ?? "Resultados registrados no CRM.", sources: [], links: result.links ?? [{ label: "Abrir Meu Dia", href: "/meu-dia", entityType: "MODULE" }], proposal: null, mode: "LOCAL" };
       }
       if (!options.generate) {
         const normalized = input.message.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();

@@ -12,6 +12,7 @@ import type { DailyProspectingList } from "../domain/copilot-daily-prospecting";
 const id = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const now = new Date("2026-09-30T12:00:00.000Z");
 const context: AuthenticatedContext = { workspaceId: id(1), workspaceSlug: "test", sessionId: id(2), userId: id(3), memberId: id(4), actorId: id(5), roleId: id(6), roleKey: "administrator", roleName: "Admin", displayName: "Admin" };
+const batchOwner = { memberId: context.memberId, memberName: context.displayName };
 const sale = { opportunityId: id(10), expectedRevision: 3, sellerMemberId: id(4), totalCents: "1800000", upfrontCents: "0", monthlyCents: "300000", durationMonths: 6, startsAt: now.toISOString(), templateVersionId: id(11) };
 type Row = Record<string, unknown>;
 
@@ -40,7 +41,7 @@ function harness() {
   const actionOptions: CopilotActionOptions = { pipelines: [{ id: id(60), name: "Pré-vendas", stages: [{ id: id(61), name: "Contato" }] }], leadSources: [{ key: "manual", name: "Manual" }], moveLeads: [{ id: id(50), name: "Maria", pipelineId: id(60), stageId: id(62), updatedAt: now.toISOString() }], incomeCategories: [{ id: id(63), name: "Receita" }], metrics: [{ id: "cash.received", name: "Recebido", dateBases: ["receivedAt"] }], capabilities: ["CREATE_LEAD", "MOVE_LEAD", "CREATE_CUSTOMER", "CREATE_INCOME", "CREATE_INDICATOR", "CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT"], leads: [{ id: id(50), name: "Maria" }], customers: [{ id: id(51), name: "Cliente", revision: 1, legalName: null, domain: null, segment: "UNKNOWN", size: "UNKNOWN" }], categories: [{ id: id(52), name: "Operacional" }], financialAccounts: [{ id: id(53), name: "Conta" }], invoices: [{ id: id(54), label: "Fatura 1", revision: 1, outstandingCents: "10000" }], truncated: false };
   const actions = {
     options: vi.fn(async () => actionOptions), authorize: vi.fn(async () => undefined),
-    dailyList: vi.fn(async (): Promise<DailyProspectingList> => ({ batch: { batchId: id(70), channel: "CALL" as const, localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [] }, target: 75, truncated: false, entries: [] })),
+    dailyList: vi.fn(async (): Promise<DailyProspectingList> => ({ batch: { batchId: id(70), ...batchOwner, channel: "CALL" as const, localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [] }, target: 75, truncated: false, entries: [] })),
     preview: vi.fn(async (_context: AuthenticatedContext, action: CopilotAction): Promise<CopilotActionPreview> => ({ kind: action.kind, title: "Ação", summary: "Revise", details: [{ label: "Nome", before: "Anterior", after: "Novo" }], impact: ["Altera registro"], links: [] })),
     execute: vi.fn(async (_context: AuthenticatedContext, _action: CopilotAction, _confirmation: { confirmed: true; idempotencyKey: string; expectedPreview?: unknown }) => { void _context; void _action; void _confirmation; return { answer: "Registrado.", result: { id: id(55) }, targetType: "Task", targetId: id(55), links: [] }; }),
   };
@@ -53,31 +54,33 @@ describe("Copilot operacional", () => {
   it("lista contatos da meta diária deterministicamente sem enviar dados ao provedor", async () => {
     const h = harness();
     h.actions.dailyList.mockResolvedValueOnce({
-      batch: { batchId: id(70), channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] },
+      batch: { batchId: id(70), ...batchOwner, channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] },
       target: 75, truncated: false,
       entries: [{ number: 1, leadId: id(50), name: "Maria", city: "Itu", role: "Vereadora", phones: ["+5511999999999"], instagram: null, tasks: [{ taskId: id(71), kind: "CALL" }] }],
     });
-    const result = await h.service.command(context, { action: "CHAT", message: "Liste nomes e telefones dos meus leads da meta diária" });
+    const message = "Liste nomes e telefones dos meus leads da meta diária";
+    const result = await h.service.command(context, { action: "CHAT", message });
     expect(result).toMatchObject({ answer: expect.stringContaining("1. Maria — +5511999999999"), proposal: null, mode: "LOCAL" });
+    expect(h.actions.dailyList).toHaveBeenCalledWith(context, "CALL", message);
     expect(h.generate).not.toHaveBeenCalled();
     expect(h.database.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "ai.copilot.daily_prospecting_listed", metadata: expect.objectContaining({ dailyProspectingBatch: expect.any(Object) }) }) }));
   });
 
-  it("transforma o resumo numerado em prévia, sem concluir tarefa antes da confirmação", async () => {
+  it("conclui automaticamente as tarefas do resumo numerado pelo fluxo auditado", async () => {
     const h = harness();
-    h.database.auditLog.findMany.mockResolvedValueOnce([{ metadata: { dailyProspectingBatch: { batchId: id(70), channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] } } }]);
+    h.database.auditLog.findMany.mockResolvedValueOnce([{ metadata: { dailyProspectingBatch: { batchId: id(70), ...batchOwner, channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] } } }]);
     const result = await h.service.command(context, { action: "CHAT", message: "1 - não atendeu" });
-    expect(result).toMatchObject({ proposal: { type: "COMPLETE_PROSPECTING_TASKS" } });
+    expect(result).toMatchObject({ answer: "Registrado.", proposal: null, mode: "LOCAL" });
     expect(h.actions.preview).toHaveBeenCalledWith(context, { kind: "COMPLETE_PROSPECTING_TASKS", items: [{ leadId: id(50), taskId: id(71), taskKind: "CALL", result: "NO_ANSWER" }] });
-    expect(h.actions.execute).not.toHaveBeenCalled();
+    expect(h.actions.execute).toHaveBeenCalledWith(context, { kind: "COMPLETE_PROSPECTING_TASKS", items: [{ leadId: id(50), taskId: id(71), taskKind: "CALL", result: "NO_ANSWER" }] }, { confirmed: true, idempotencyKey: expect.any(String), expectedPreview: expect.any(Object) });
     expect(h.generate).not.toHaveBeenCalled();
   });
 
   it("não reutiliza uma lista antiga do mesmo canal quando a numeração da lista atual não corresponde", async () => {
     const h = harness();
     h.database.auditLog.findMany.mockResolvedValueOnce([
-      { metadata: { dailyProspectingBatch: { batchId: id(70), channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] } } },
-      { metadata: { dailyProspectingBatch: { batchId: id(72), channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 2, leadId: id(51), tasks: [{ taskId: id(73), kind: "CALL" }] }] } } },
+      { metadata: { dailyProspectingBatch: { batchId: id(70), ...batchOwner, channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] } } },
+      { metadata: { dailyProspectingBatch: { batchId: id(72), ...batchOwner, channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 2, leadId: id(51), tasks: [{ taskId: id(73), kind: "CALL" }] }] } } },
     ]);
 
     await expect(h.service.command(context, { action: "CHAT", message: "2 - atendeu" })).rejects.toMatchObject({ code: "COPILOT_DAILY_SUMMARY_INVALID" });
@@ -87,7 +90,7 @@ describe("Copilot operacional", () => {
 
   it("não confunde uma mensagem numerada comum com o resumo da lista diária", async () => {
     const h = harness();
-    h.database.auditLog.findMany.mockResolvedValueOnce([{ metadata: { dailyProspectingBatch: { batchId: id(70), channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] } } }]);
+    h.database.auditLog.findMany.mockResolvedValueOnce([{ metadata: { dailyProspectingBatch: { batchId: id(70), ...batchOwner, channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] } } }]);
 
     await expect(h.service.command(context, { action: "CHAT", message: "1 - revisar a proposta comercial" })).resolves.toMatchObject({ proposal: { type: "CLOSE_SALE" } });
     expect(h.generate).toHaveBeenCalledOnce();

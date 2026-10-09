@@ -23,6 +23,7 @@ const authorization = createAuthorizationService({ database });
 const finance = createFinanceService({ database, authorization, now });
 let admin: AuthenticatedContext;
 let viewer: AuthenticatedContext;
+let sdr: AuthenticatedContext;
 let workspaceId: string;
 let leadId: string;
 let accountId: string;
@@ -36,7 +37,7 @@ async function context(email: string): Promise<AuthenticatedContext> {
 }
 beforeAll(async () => {
   workspaceId = (await seedDemoDatabase(database, { DATABASE_URL: process.env.DATABASE_URL!, NODE_ENV: "test" })).workspaceId;
-  admin = await context("admin@demo.politizai.local"); viewer = await context("viewer@demo.politizai.local");
+  admin = await context("admin@demo.politizai.local"); viewer = await context("viewer@demo.politizai.local"); sdr = await context("sdr1@demo.politizai.local");
   const actor = await database.actor.findFirstOrThrow({ where: { workspaceId, type: "SYSTEM" } });
   const intake = await createLeadIntakeService({ database, authorization, now }).intake({ channel: "MANUAL", idempotencyKey: `copilot-test:${randomUUID()}`, fullName: "Lead Copilot", phone: "+5511998877665", sourceKey: "manual", priorityBandCode: "P1", interestSummary: "Operação Copilot integrada", rawPayload: { test: true } }, { workspaceId, actorId: actor.id, actorKey: actor.key, actorType: "SYSTEM" });
   if (intake.outcome === "REJECTED") throw new Error(intake.code);
@@ -59,6 +60,7 @@ describe("ações operacionais do Copilot", () => {
       createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
     } });
     const list = await actions.dailyList(admin, "CALL");
+    expect(list.batch).toMatchObject({ memberId: admin.memberId, memberName: admin.displayName });
     const entry = list.entries.find((item) => item.tasks.some((candidate) => candidate.taskId === task.id));
     expect(entry).toMatchObject({ leadId, name: "Lead Copilot", phones: expect.arrayContaining(["+5511998877665"]) });
     expect((await actions.dailyList(viewer, "CALL")).entries.some((item) => item.leadId === leadId)).toBe(false);
@@ -74,20 +76,35 @@ describe("ações operacionais do Copilot", () => {
         status: "OPEN", priority: "HIGH", dueAt: now(),
         createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
       } });
-      expect((await actions.dailyList(admin, "CALL")).entries.some((item) => item.leadId === phoneLessLeadId)).toBe(false);
+      expect((await actions.dailyList(admin, "CALL")).entries.find((item) => item.leadId === phoneLessLeadId)).toMatchObject({ phones: [] });
     } finally {
       await database.task.deleteMany({ where: { workspaceId, leadId: phoneLessLeadId } });
       await database.lead.delete({ where: { id: phoneLessLeadId } });
     }
 
+    const delegatedTask = await database.task.create({ data: {
+      workspaceId, leadId, assigneeMemberId: sdr.memberId,
+      title: "Ligação diária do SDR consultada pelo gestor", kind: "CALL",
+      sourceKey: `active-prospecting:copilot-test:${randomUUID()}:call-1`,
+      status: "OPEN", priority: "HIGH", dueAt: now(),
+      createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
+    } });
+    const delegatedList = await actions.dailyList(admin, "CALL", `Liste quem ${sdr.displayName} precisa ligar hoje`);
+    expect(delegatedList.batch).toMatchObject({ memberId: sdr.memberId, memberName: sdr.displayName });
+    expect(delegatedList.entries.some((item) => item.tasks.some((candidate) => candidate.taskId === delegatedTask.id))).toBe(true);
+
     const action: CopilotAction = { kind: "COMPLETE_PROSPECTING_TASKS", items: [{ leadId, taskId: task.id, taskKind: "CALL", result: "NO_ANSWER" }] };
     expect(await actions.preview(admin, action)).toMatchObject({ kind: "COMPLETE_PROSPECTING_TASKS", title: "Concluir tarefas da prospecção" });
-    await expect(actions.preview(viewer, action)).rejects.toMatchObject({ code: "COPILOT_DAILY_LIST_STALE" });
+    await expect(actions.preview(viewer, action)).rejects.toMatchObject({ code: "ACCESS_DENIED" });
     const result = await actions.execute(admin, action, confirmation());
     expect(result).toMatchObject({ targetType: "TaskBatch", result: { completedTaskIds: [task.id], leadCount: 1 } });
     expect(await database.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "COMPLETED", result: "NO_ANSWER", assigneeMemberId: admin.memberId });
     expect(await database.activity.count({ where: { workspaceId, leadId, type: "TASK", description: "NO_ANSWER" } })).toBeGreaterThan(0);
     expect(await database.auditLog.count({ where: { workspaceId, action: "task.completed", entityId: task.id } })).toBe(1);
+
+    const delegatedAction: CopilotAction = { kind: "COMPLETE_PROSPECTING_TASKS", items: [{ leadId, taskId: delegatedTask.id, taskKind: "CALL", result: "CONNECTED" }] };
+    await actions.execute(admin, delegatedAction, confirmation());
+    expect(await database.task.findUniqueOrThrow({ where: { id: delegatedTask.id } })).toMatchObject({ status: "COMPLETED", result: "CONNECTED", assigneeMemberId: sdr.memberId });
   });
 
   it("prévia não altera dados; confirmação cria tarefa uma vez, com responsável e histórico", async () => {

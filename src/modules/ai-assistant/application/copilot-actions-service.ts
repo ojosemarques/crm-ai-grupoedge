@@ -16,13 +16,14 @@ import { copilotActionSchema, type CopilotAction, type CopilotActionOptions, typ
 import { dailyProspectingBatchSchema, type DailyProspectingChannel, type DailyProspectingEntry, type DailyProspectingList } from "@/modules/ai-assistant/domain/copilot-daily-prospecting";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createFinanceService } from "@/modules/finance/application/finance-service";
-import { createLeadListService } from "@/modules/leads/application/lead-list-service";
+import { createLeadListService, resolveLeadVisibilityScope } from "@/modules/leads/application/lead-list-service";
 import { createLeadDistributionService } from "@/modules/leads/application/lead-distribution-service";
 import { copilotSearchTerms, searchCopilotPages } from "@/modules/ai-assistant/domain/copilot-search";
 import { canonicalJson } from "@/modules/integrations/domain/integration-policy";
 import { createPaymentService } from "@/modules/payments/application/payment-service";
 import { createAuthorizationService, type ResourceScope } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys, type PermissionKey } from "@/modules/users/permissions/permission-keys";
+import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
@@ -74,9 +75,11 @@ export function createCopilotActionsService(options: Options) {
     });
     if (tasks.length !== taskIds.length) fail("Uma ou mais tarefas não existem ou não pertencem a esta empresa.", "COPILOT_UNKNOWN_RESOURCE", 403);
     const authorization = createAuthorizationService({ database });
+    const assigneeMemberIds = new Set(tasks.map((task) => task.assigneeMemberId).filter((memberId): memberId is string => Boolean(memberId)));
+    if (assigneeMemberIds.size !== 1 || tasks.some((task) => !task.assigneeMemberId)) fail("A lista diária mistura responsáveis ou possui tarefa sem responsável. Solicite a lista novamente.", "COPILOT_DAILY_LIST_STALE");
     for (const task of tasks) {
       const item = action.items.find((candidate) => candidate.taskId === task.id)!;
-      if (task.leadId !== item.leadId || task.kind !== item.taskKind || task.assigneeMemberId !== context.memberId || !task.sourceKey?.startsWith("active-prospecting:") || !["OPEN", "IN_PROGRESS"].includes(task.status)) {
+      if (task.leadId !== item.leadId || task.kind !== item.taskKind || !task.sourceKey?.startsWith("active-prospecting:") || !["OPEN", "IN_PROGRESS"].includes(task.status)) {
         fail("A lista diária mudou. Solicite a lista novamente antes de concluir as tarefas.", "COPILOT_DAILY_LIST_STALE");
       }
       const scope = { workspaceId: context.workspaceId, resourceType: "Lead", resourceId: task.lead.id, ownerMemberId: task.lead.ownerMemberId, queueId: task.lead.queueId, teamId: task.lead.routingQueue?.teamId ?? task.lead.queue?.teamId ?? null };
@@ -85,19 +88,60 @@ export function createCopilotActionsService(options: Options) {
     return tasks;
   }
 
-  async function dailyList(context: AuthenticatedContext, channel: DailyProspectingChannel): Promise<DailyProspectingList> {
+  async function resolveDailyProspectingMember(context: AuthenticatedContext, request: string) {
     const database = options.database;
     const authorization = createAuthorizationService({ database });
-    const workspace = await database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
+    const visibility = await resolveLeadVisibilityScope(database, authorization, context, PermissionKeys.LEADS_READ);
+    const members = await database.workspaceMember.findMany({
+      where: commercialMemberWhere({
+        workspaceId: context.workspaceId,
+        functions: ["SDR", "CLOSER"],
+        ...(visibility.scope === "OWN" ? { memberId: context.memberId } : {}),
+        ...(visibility.scope === "TEAM" ? { teamIds: visibility.teamIds } : {}),
+      }),
+      orderBy: [{ user: { displayName: "asc" } }, { id: "asc" }],
+      select: { id: true, user: { select: { displayName: true } } },
+    });
+    const text = request.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const contains = (name: string) => ` ${text} `.includes(` ${name} `);
+    const named = members.map((member) => ({ id: member.id, name: member.user.displayName, normalizedName: member.user.displayName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() }));
+    const fullMatches = named.filter((member) => contains(member.normalizedName));
+    const firstNameMatches = fullMatches.length ? [] : named.filter((member) => contains(member.normalizedName.split(" ")[0] ?? ""));
+    const explicitWho = text.match(/\bquem\s+([a-z0-9]{4,})\b/)?.[1];
+    const isSingleTypo = (left: string, right: string) => {
+      if (Math.abs(left.length - right.length) > 1) return false;
+      if (left.length === right.length) {
+        const differences = [...left].flatMap((value, index) => value === right[index] ? [] : [index]);
+        return differences.length === 1 || (differences.length === 2 && left[differences[0]!] === right[differences[1]!] && left[differences[1]!] === right[differences[0]!]);
+      }
+      const [shorter, longer] = left.length < right.length ? [left, right] : [right, left];
+      for (let index = 0; index < longer.length; index += 1) if (longer.slice(0, index) + longer.slice(index + 1) === shorter) return true;
+      return false;
+    };
+    const typoMatches = fullMatches.length || firstNameMatches.length || !explicitWho ? [] : named.filter((member) => isSingleTypo(explicitWho, member.normalizedName.split(" ")[0] ?? ""));
+    const matches = fullMatches.length ? fullMatches : firstNameMatches.length ? firstNameMatches : typoMatches;
+    if (matches.length > 1) fail("Há mais de um vendedor com esse nome. Informe o nome completo para consultar a meta diária correta.", "COPILOT_DAILY_SELLER_AMBIGUOUS", 400);
+    if (matches[0]) return matches[0];
+    if (/\bquem\s+[a-z0-9]/.test(text)) fail("Não encontrei esse vendedor entre os responsáveis que você pode consultar. Confira o nome completo.", "COPILOT_DAILY_SELLER_NOT_FOUND", 404);
+    return { id: context.memberId, name: context.displayName };
+  }
+
+  async function dailyList(context: AuthenticatedContext, channel: DailyProspectingChannel, request = ""): Promise<DailyProspectingList> {
+    const database = options.database;
+    const authorization = createAuthorizationService({ database });
+    const [workspace, targetMember] = await Promise.all([
+      database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } }),
+      resolveDailyProspectingMember(context, request),
+    ]);
     const localDate = workspaceDateAt(options.now(), workspace.timeZone);
     const range = workspaceDayRange(localDate, workspace.timeZone);
-    const config = await database.prospectingSellerConfig.findUnique({ where: { workspaceId_memberId: { workspaceId: context.workspaceId, memberId: context.memberId } }, select: { dailyCapacity: true } });
+    const config = await database.prospectingSellerConfig.findUnique({ where: { workspaceId_memberId: { workspaceId: context.workspaceId, memberId: targetMember.id } }, select: { dailyCapacity: true } });
     const target = Math.min(config?.dailyCapacity ?? 75, 75);
     const taskKinds = channel === "CALL" ? ["CALL" as const] : ["INSTAGRAM_FOLLOW" as const, "INSTAGRAM_MESSAGE" as const];
     const tasks = await database.task.findMany({
       where: {
         workspaceId: context.workspaceId,
-        assigneeMemberId: context.memberId,
+        assigneeMemberId: targetMember.id,
         sourceKey: { startsWith: "active-prospecting:" },
         kind: { in: taskKinds },
         status: { in: ["OPEN", "IN_PROGRESS"] },
@@ -126,8 +170,6 @@ export function createCopilotActionsService(options: Options) {
     const selectedGroups: typeof tasks[] = [];
     for (const rows of grouped.values()) {
       const lead = rows[0]!.lead;
-      const hasPhone = Boolean(lead.normalizedPhone?.trim()) || Boolean(lead.contact?.points.some((point) => (point.type === "PHONE" || point.type === "WHATSAPP") && Boolean((point.originalValue || point.normalizedValue)?.trim())));
-      if (channel === "CALL" && !hasPhone) continue;
       const scope = { workspaceId: context.workspaceId, resourceType: "Lead", resourceId: lead.id, ownerMemberId: lead.ownerMemberId, queueId: lead.queueId, teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null };
       const decisions = await Promise.all([PermissionKeys.LEADS_READ, PermissionKeys.TASKS_READ, PermissionKeys.TASKS_WRITE].map((key) => authorization.authorize(context, key, scope)));
       if (decisions.every((decision) => decision.allowed)) selectedGroups.push(rows);
@@ -158,7 +200,7 @@ export function createCopilotActionsService(options: Options) {
     }).map((entry, index) => ({ ...entry, number: index + 1 }));
     const expiresAt = range.end;
     const batch = dailyProspectingBatchSchema.parse({
-      batchId: randomUUID(), channel, localDate, expiresAt: expiresAt.toISOString(),
+      batchId: randomUUID(), memberId: targetMember.id, memberName: targetMember.name, channel, localDate, expiresAt: expiresAt.toISOString(),
       items: entries.map((entry) => ({ number: entry.number, leadId: entry.leadId, tasks: entry.tasks })),
     });
     return { batch, target, truncated: grouped.size > selectedGroups.length, entries };

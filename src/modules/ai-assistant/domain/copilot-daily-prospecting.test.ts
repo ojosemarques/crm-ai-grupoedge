@@ -12,6 +12,8 @@ const id = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, "0")
 
 const phoneBatch: DailyProspectingBatch = {
   batchId: id(1),
+  memberId: id(30),
+  memberName: "Jhon Cunha",
   channel: "CALL",
   localDate: "2026-10-08",
   expiresAt: "2026-10-09T03:00:00.000Z",
@@ -23,6 +25,8 @@ const phoneBatch: DailyProspectingBatch = {
 
 const instagramBatch: DailyProspectingBatch = {
   batchId: id(2),
+  memberId: id(31),
+  memberName: "Ede Rafael",
   channel: "INSTAGRAM",
   localDate: "2026-10-08",
   expiresAt: "2026-10-09T03:00:00.000Z",
@@ -57,9 +61,21 @@ describe("lista diária da prospecção no Copilot", () => {
     };
 
     const answer = formatDailyProspectingList(list);
+    expect(answer).toContain("meta diária de Ede Rafael");
     expect(answer).toContain("1. Ana Silva — Itu — Vereadora — @anasilva");
     expect(answer).toContain("2. José Lima — Lages — Prefeito — não tem Instagram");
     expect(answer).toContain("Responda usando os números desta lista");
+  });
+
+  it("mantém políticos sem telefone na lista de ligações", () => {
+    const answer = formatDailyProspectingList({
+      batch: phoneBatch,
+      target: 75,
+      truncated: false,
+      entries: [{ number: 1, leadId: id(10), name: "Carlos Souza", city: null, role: null, phones: [], instagram: null, tasks: phoneBatch.items[0]!.tasks }],
+    });
+
+    expect(answer).toContain("1. Carlos Souza — não tem telefone");
   });
 
   it("converte resultados de ligação em uma única ação em lote", () => {

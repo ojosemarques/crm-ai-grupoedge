@@ -14,6 +14,8 @@ const taskSchema = z.object({
 
 export const dailyProspectingBatchSchema = z.object({
   batchId: z.string().uuid(),
+  memberId: z.string().uuid(),
+  memberName: z.string().trim().min(1).max(200),
   channel: z.enum(dailyProspectingChannels),
   localDate: z.iso.date(),
   expiresAt: z.iso.datetime({ offset: true }),
@@ -68,16 +70,16 @@ export function dailyProspectingSummaryIntent(message: string): boolean {
 
 export function formatDailyProspectingList(list: DailyProspectingList): string {
   const channel = list.batch.channel === "CALL" ? "ligações" : "Instagram";
-  if (list.entries.length === 0) return `Não há tarefas pendentes de ${channel} na sua meta diária.`;
+  if (list.entries.length === 0) return `Não há tarefas pendentes de ${channel} na meta diária de ${list.batch.memberName}.`;
   const lines = list.entries.map((entry) => {
-    if (list.batch.channel === "CALL") return `${entry.number}. ${entry.name} — ${entry.phones.join(", ")}`;
+    if (list.batch.channel === "CALL") return `${entry.number}. ${entry.name} — ${entry.phones.join(", ") || "não tem telefone"}`;
     return `${entry.number}. ${entry.name} — ${entry.city ?? "cidade não informada"} — ${entry.role ?? "cargo não informado"} — ${entry.instagram ?? "não tem Instagram"}`;
   });
   const limitation = list.truncated ? `\nA fila tem mais políticos, mas esta lista respeita sua meta configurada de ${list.target}.` : "";
   const examples = list.batch.channel === "CALL"
     ? "Exemplo: `1 - atendeu` ou `2 - não atendeu`."
     : "Exemplo: `1 - segui e enviei mensagem` ou `2 - não achei Instagram`.";
-  return `Lista pendente de ${channel} da meta diária (${list.entries.length}/${list.target}):\n\n${lines.join("\n")}\n\nResponda usando os números desta lista. ${examples}${limitation}`;
+  return `Lista pendente de ${channel} da meta diária de ${list.batch.memberName} (${list.entries.length} político(s); capacidade diária: ${list.target}):\n\n${lines.join("\n")}\n\nResponda usando os números desta lista. ${examples}${limitation}`;
 }
 
 function numberedResults(message: string): Array<{ number: number; text: string }> {
