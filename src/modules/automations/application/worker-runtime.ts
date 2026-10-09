@@ -18,6 +18,7 @@ import { getProspectingReleaseService } from "@/modules/prospecting/application/
 import { getProspectingCadenceService } from "@/modules/prospecting/application/prospecting-cadence-service";
 import { getProspectingPlannerService } from "@/modules/prospecting/application/prospecting-planner-service";
 import { getProspectingReconciliationService } from "@/modules/prospecting/application/prospecting-reconciliation-service";
+import { createMillionSendProspectingWorker } from "@/modules/prospecting/application/millionsend-prospecting-worker";
 import type { ApplicationConfig } from "@/shared/core/config/application-config";
 import { getDatabaseClient } from "@/shared/core/database/client";
 
@@ -50,12 +51,14 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
   const prospectingCadenceWorker = getProspectingCadenceService();
   const prospectingPlannerWorker = getProspectingPlannerService();
   const prospectingReconciliationWorker = getProspectingReconciliationService();
+  const millionSendProspectingWorker = createMillionSendProspectingWorker();
 
   return Object.freeze({
     database,
     runner: createWorkerBatchRunner({
       scanDue: lifecycleScanner.scanDue,
       processors: [
+        { key: "millionsend-prospecting-email", processNext: millionSendProspectingWorker.processNext },
         { key: "prospecting-reconciliation", processNext: prospectingReconciliationWorker.processNext },
         { key: "prospecting-planner", processNext: prospectingPlannerWorker.processNext },
         { key: "prospecting-release", processNext: async (workerId) => {
