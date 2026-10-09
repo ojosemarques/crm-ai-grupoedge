@@ -4,6 +4,7 @@ import {
   ProspectingEmails,
   ProspectingSettings,
 } from "@/app/email-agente/prospecting-workspace";
+import { ProspectingLaunchActions } from "@/app/email-agente/configuracoes/prospecting-launch-actions";
 import { PageHeader } from "@/components/layout/page-header";
 import { requirePageAuthentication } from "@/modules/auth/http/authentication-guards";
 import { getProspectingWorkspaceService } from "@/modules/prospecting/application/prospecting-workspace-service";
@@ -29,6 +30,12 @@ export default async function ProspectingSettingsPage() {
         eyebrow="Prospecção ativa"
         title="Configuração de e-mail"
       />
+      {screen.permissions.manage ? (
+        <ProspectingLaunchActions
+          canaryApproved={Boolean(screen.settings?.canaryApprovedAt)}
+          privacyApproved={Boolean(screen.settings?.privacyApprovedAt)}
+        />
+      ) : null}
       <ProspectingSettings screen={screen} />
       <ProspectingEmails screen={screen} />
     </main>

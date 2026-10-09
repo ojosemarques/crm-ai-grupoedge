@@ -50,7 +50,14 @@ async function eligibility(database: Database, workspaceId: string, jobId: strin
     database.prospectingSettings.findUnique({ where: { workspaceId } }),
     database.workspace.findUnique({ where: { id: workspaceId }, select: { timeZone: true } }),
     database.prospectingCadenceInstance.findUnique({ where: { id: job.cadenceInstanceId } }),
-    database.lead.findFirst({ where: { id: job.leadId, workspaceId, deletedAt: null } }),
+    database.lead.findFirst({
+      where: {
+        id: job.leadId,
+        workspaceId,
+        deletedAt: null,
+        currentStage: { stableKey: "active-prospecting.active-cadence", deletedAt: null },
+      },
+    }),
     job.templateVersionId ? database.prospectingEmailTemplateVersion.findFirst({ where: { id: job.templateVersionId, workspaceId, published: true } }) : null,
     job.senderProfileId ? database.emailConnectionProfile.findFirst({ where: { id: job.senderProfileId, workspaceId } }) : null,
     database.emailSuppression.findFirst({ where: { workspaceId, normalizedEmail: job.recipientEmail, purposeKey: "active-prospecting" }, orderBy: { effectiveAt: "desc" } }),
