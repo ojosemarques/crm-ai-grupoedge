@@ -34,9 +34,11 @@ async function readOptional<T>(read: () => Promise<T>): Promise<OptionalAccessRe
 export async function LeadHistoryContent({
   leadId,
   embedded = false,
+  autoOpenActivityPanel = true,
 }: Readonly<{
   leadId: string;
   embedded?: boolean;
+  autoOpenActivityPanel?: boolean;
 }>) {
   const context = await requirePageAuthentication();
   let operations;
@@ -99,6 +101,7 @@ export async function LeadHistoryContent({
         <span>{operations.lead.fullName}</span>
       </nav>
       <OperationalHistoryWorkspace
+        autoOpenActivityPanel={autoOpenActivityPanel}
         key={leadId}
         initialOperations={operations}
         initialQualifications={qualifications}

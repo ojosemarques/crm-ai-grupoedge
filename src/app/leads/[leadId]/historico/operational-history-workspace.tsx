@@ -301,6 +301,7 @@ export function OperationalHistoryWorkspace({
   initialScore,
   initialMeetings,
   initialOpportunities,
+  autoOpenActivityPanel = true,
   showJourneyAndScoring = true,
   showOpportunities = true,
   initialContactIdentity,
@@ -317,6 +318,7 @@ export function OperationalHistoryWorkspace({
   initialScore: LeadScoreView;
   initialMeetings: LeadMeetingsScreen;
   initialOpportunities: LeadOpportunityScreen;
+  autoOpenActivityPanel?: boolean;
   showJourneyAndScoring?: boolean;
   showOpportunities?: boolean;
   initialContactIdentity: LeadContactView | null;
@@ -377,6 +379,7 @@ export function OperationalHistoryWorkspace({
     const openLinkedPanel = () => {
       if (["#registrar-atividade", "#criar-tarefa", "#tarefas"].includes(window.location.hash)) {
         setActiveTab("timeline");
+        if (window.location.hash === "#registrar-atividade" && !autoOpenActivityPanel) return;
         window.setTimeout(() => {
           const target = document.getElementById(window.location.hash.slice(1));
           if (target instanceof HTMLDetailsElement) target.open = true;
@@ -391,7 +394,7 @@ export function OperationalHistoryWorkspace({
     openLinkedPanel();
     window.addEventListener("hashchange", openLinkedPanel);
     return () => window.removeEventListener("hashchange", openLinkedPanel);
-  }, [showOpportunities]);
+  }, [autoOpenActivityPanel, showOpportunities]);
 
   async function refresh() {
     const [operationsResponse, scoreResponse, pipelineResponse, contactResponse] = await Promise.all([

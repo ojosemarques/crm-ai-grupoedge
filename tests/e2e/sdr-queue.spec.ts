@@ -121,6 +121,8 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(leadName, { exact: true }).first()).toBeVisible();
   const activity = dialog.locator("#registrar-atividade");
+  await expect(activity).not.toHaveAttribute("open", "");
+  await activity.locator("summary").click();
   await activity.locator('select[name="type"]').selectOption("CALL_UNANSWERED");
   await activity.getByLabel("Assunto").fill("Primeira tentativa pelo Meu Dia");
   await activity.locator('input[name="nextTitle"]').fill("Retornar amanhã");

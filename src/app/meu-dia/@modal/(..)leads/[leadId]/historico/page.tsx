@@ -9,7 +9,7 @@ export default async function MyDayLeadHistoryModalPage({
   const { leadId } = await params;
   return (
     <LeadHistoryModal closeLabel="Fechar ficha e voltar ao Meu Dia" refreshOnClose>
-      <LeadHistoryContent embedded leadId={leadId} />
+      <LeadHistoryContent autoOpenActivityPanel={false} embedded leadId={leadId} />
     </LeadHistoryModal>
   );
 }
