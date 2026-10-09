@@ -4,6 +4,7 @@ import {
   addWorkspaceCalendarDays,
   parseWorkspaceLocalDateTime,
   workspaceDateAt,
+  workspaceLocalDateTimeAt,
   workspaceDayRange,
   workspaceWeekRange,
 } from "@/shared/core/time/workspace-time";
@@ -17,6 +18,8 @@ describe("datas do workspace", () => {
   it("mantém o dia local perto da virada em UTC", () => {
     expect(workspaceDateAt(new Date("2035-02-11T01:30:00.000Z"), "America/Sao_Paulo"))
       .toBe("2035-02-10");
+    expect(workspaceLocalDateTimeAt(new Date("2035-02-11T01:30:00.000Z"), "America/Sao_Paulo"))
+      .toBe("2035-02-10T22:30");
   });
 
   it("calcula dia e semana de segunda a domingo no fuso", () => {

@@ -50,11 +50,13 @@ export const copilotActionInputGuide = {
     references: {
       leadId: "actionOptions.leads[].id",
       opportunityId: "Opcional: context.sources[key=oportunidades].data.opportunities[].id; deve pertencer ao lead selecionado.",
+      closerId: "Para taskKind MEETING: actionOptions.meetingLeads[] do lead selecionado, campo closers[].id. Pode omitir apenas se o responsável atual do lead for um closer autorizado ou houver um único closer autorizado.",
     },
     rules: [
       "Informe título e prazo com hora/fuso. taskKind e priority usam os enums de responseSchema; GENERAL/MEDIUM são os padrões quando não especificados.",
-      "O responsável é o responsável atual do lead. Não envie assigneeMemberId, ownerMemberId ou promessa de atribuir a outra pessoa.",
-      "Criar tarefa não envia mensagem, não agenda uma reunião e não registra atividade concluída.",
+      "Para tarefa comum, o responsável é o responsável atual do lead. Não envie assigneeMemberId ou ownerMemberId.",
+      "Quando o usuário pedir para agendar reunião, use taskKind MEETING: a confirmação cria reunião na Agenda, tarefa vinculada, histórico, métricas e sincronização com o Google Agenda do closer se ele tiver conectado a conta. Informe closerId se o closer for identificado pelo nome; durationMinutes pode ser 30 ou 40. Se a data vier sem horário, pergunte o horário antes de propor.",
+      "Para outros taskKind, criar tarefa não envia mensagem nem registra atividade concluída.",
     ],
   },
   COMPLETE_PROSPECTING_TASKS: {

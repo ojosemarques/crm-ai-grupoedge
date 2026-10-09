@@ -92,6 +92,11 @@ export function workspaceDateAt(instant: Date, timeZone: string): string {
   return `${parts.year.toString().padStart(4, "0")}-${parts.month.toString().padStart(2, "0")}-${parts.day.toString().padStart(2, "0")}`;
 }
 
+export function workspaceLocalDateTimeAt(instant: Date, timeZone: string): string {
+  const parts = partsAt(instant, timeZone);
+  return `${workspaceDateAt(instant, timeZone)}T${parts.hour.toString().padStart(2, "0")}:${parts.minute.toString().padStart(2, "0")}`;
+}
+
 export function addWorkspaceCalendarDays(
   instant: Date,
   days: number,

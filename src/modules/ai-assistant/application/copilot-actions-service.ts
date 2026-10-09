@@ -12,6 +12,7 @@ import { z } from "zod";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { createAccountService } from "@/modules/accounts/application/account-service";
 import { createOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
+import { createMeetingService } from "@/modules/meetings/application/meeting-service";
 import { copilotActionSchema, type CopilotAction, type CopilotActionOptions, type CopilotActionPreview } from "@/modules/ai-assistant/domain/copilot-action-contracts";
 import { dailyProspectingBatchSchema, type DailyProspectingChannel, type DailyProspectingEntry, type DailyProspectingList } from "@/modules/ai-assistant/domain/copilot-daily-prospecting";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
@@ -26,7 +27,7 @@ import { PermissionKeys, type PermissionKey } from "@/modules/users/permissions/
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
-import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
+import { parseWorkspaceLocalDateTime, workspaceDateAt, workspaceDayRange, workspaceLocalDateTimeAt } from "@/shared/core/time/workspace-time";
 
 type Options = { database: PrismaClient; now: () => Date };
 type ActionResult = { answer: string; result: unknown; targetType: string; targetId: string; links: Array<{ label: string; href: string; entityType: string }> };
@@ -61,6 +62,25 @@ function withinTransaction(tx: Prisma.TransactionClient): PrismaClient {
 
 export function createCopilotActionsService(options: Options) {
   const indicatorWidget = (action: Extract<CopilotAction, { kind: "CREATE_INDICATOR" }>) => analyticsWidgetInputSchema.parse({ title: action.name, metricKey: action.metricKey, type: "KPI", aggregation: "LATEST", dateBasis: action.dateBasis, period: { preset: action.period } });
+  async function meetingInput(database: PrismaClient, context: AuthenticatedContext, action: Extract<CopilotAction, { kind: "CREATE_TASK" }>) {
+    const authorization = createAuthorizationService({ database });
+    const screen = await createMeetingService({ database, authorization, now: options.now }).getLeadMeetings(context, { leadId: action.leadId });
+    if (!screen.canSchedule) fail("Este lead já possui reunião ativa ou não há closer autorizado para agendar.", "COPILOT_MEETING_UNAVAILABLE");
+    const lead = await database.lead.findFirstOrThrow({ where: { id: action.leadId, workspaceId: context.workspaceId }, select: { ownerMemberId: true } });
+    const closer = screen.closerOptions.find((item) => item.id === action.closerId)
+      ?? (action.closerId ? null : screen.closerOptions.find((item) => item.id === lead.ownerMemberId) ?? (screen.closerOptions.length === 1 ? screen.closerOptions[0] : null));
+    if (!closer) fail(action.closerId ? "Closer não autorizado para esta reunião." : "Informe qual closer receberá esta reunião.", "COPILOT_MEETING_CLOSER_REQUIRED", 400);
+    const startsAt = new Date(action.dueAt);
+    if (startsAt.getUTCSeconds() !== 0 || startsAt.getUTCMilliseconds() !== 0) fail("Informe o horário da reunião com precisão de minutos.", "COPILOT_MEETING_TIME_INVALID", 400);
+    const startsAtLocal = workspaceLocalDateTimeAt(startsAt, screen.timeZone);
+    if (parseWorkspaceLocalDateTime(startsAtLocal, screen.timeZone).getTime() !== startsAt.getTime()) fail("Este horário é ambíguo no fuso da empresa. Informe outro horário.", "COPILOT_MEETING_TIME_INVALID", 400);
+    if (action.opportunityId && !screen.opportunityOptions.some((item) => item.id === action.opportunityId)) fail("A oportunidade da reunião precisa estar aberta e vinculada ao lead.", "COPILOT_MEETING_OPPORTUNITY_INVALID");
+    const googleConnected = Boolean(await database.googleCalendarAccount.findFirst({ where: { workspaceId: context.workspaceId, memberId: closer.id, status: "CONNECTED" }, select: { id: true } }));
+    return {
+      input: { leadId: action.leadId, opportunityId: action.opportunityId, closerId: closer.id, title: action.title, startsAtLocal, durationMinutes: action.durationMinutes ?? screen.defaultDurationMinutes, observation: action.description, taskPriority: action.priority },
+      closerName: closer.name, googleConnected, timeZone: screen.timeZone,
+    };
+  }
   async function indicatorRuntimeAvailable(database: PrismaClient) {
     const [result] = await database.$queryRaw<Array<{ allowed: boolean }>>`SELECT bool_and(has_table_privilege(current_user, format('%I.%I', current_schema(), table_name), 'SELECT') AND has_table_privilege(current_user, format('%I.%I', current_schema(), table_name), 'INSERT')) AS allowed FROM unnest(ARRAY['analytics_dashboards','analytics_widgets','analytics_mutation_receipts']) AS table_name`;
     return result?.allowed === true;
@@ -243,7 +263,7 @@ export function createCopilotActionsService(options: Options) {
       const lead = await database.lead.findFirst({ where: { id: action.leadId, workspaceId: context.workspaceId, deletedAt: null }, include: { routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } });
       if (!lead) fail("Lead inexistente ou não autorizado.", "NOT_FOUND", 404);
       const scope = { workspaceId: context.workspaceId, resourceType: "Lead", resourceId: lead.id, ownerMemberId: lead.ownerMemberId, queueId: lead.queueId, teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null };
-      for (const key of action.kind === "MOVE_LEAD" ? [PermissionKeys.LEADS_READ, PermissionKeys.LEADS_WRITE] : [PermissionKeys.LEADS_READ, PermissionKeys.TASKS_READ, PermissionKeys.TASKS_WRITE]) await check(key, scope);
+      for (const key of action.kind === "MOVE_LEAD" ? [PermissionKeys.LEADS_READ, PermissionKeys.LEADS_WRITE] : action.taskKind === "MEETING" ? [PermissionKeys.LEADS_READ, PermissionKeys.TASKS_READ, PermissionKeys.TASKS_WRITE, PermissionKeys.MEETINGS_READ, PermissionKeys.MEETINGS_WRITE] : [PermissionKeys.LEADS_READ, PermissionKeys.TASKS_READ, PermissionKeys.TASKS_WRITE]) await check(key, scope);
       if (action.kind === "CREATE_TASK" && action.opportunityId) {
         const opportunity = await database.opportunity.findFirst({ where: { workspaceId: context.workspaceId, id: action.opportunityId, leadId: lead.id, deletedAt: null } });
         if (!opportunity) fail("A oportunidade não pertence ao lead selecionado.");
@@ -301,6 +321,17 @@ export function createCopilotActionsService(options: Options) {
     if (action.kind === "CREATE_TASK") {
       const lead = await database.lead.findUniqueOrThrow({ where: { id: action.leadId }, include: { owner: { include: { user: { select: { displayName: true } } } }, queue: true } });
       const opportunity = action.opportunityId ? await database.opportunity.findUniqueOrThrow({ where: { id: action.opportunityId }, select: { name: true } }) : null;
+      if (action.taskKind === "MEETING") {
+        const meeting = await meetingInput(database, context, action);
+        return { kind: action.kind, title: "Agendar reunião", summary: `${action.title} · ${lead.fullName}`, details: [
+          { label: "Lead", after: lead.fullName }, { label: "Reunião", after: action.title },
+          { label: "Closer", after: meeting.closerName }, { label: "Início", after: `${meeting.input.startsAtLocal} (${meeting.timeZone})` },
+          { label: "Duração", after: `${meeting.input.durationMinutes} minutos` },
+          { label: "Oportunidade vinculada", after: opportunity?.name ?? "Nenhuma" },
+          { label: "Descrição", after: action.description ?? "Não informada" },
+        ], impact: ["Cria a reunião na Agenda, tarefa vinculada, histórico, métricas e atualiza o pipeline do lead.", meeting.googleConnected ? "Enfileira a sincronização com o Google Agenda do closer conectado." : "O closer precisa conectar o Google Agenda para a sincronização externa."], bindings: { leadId: lead.id, ownerMemberId: lead.ownerMemberId, queueId: lead.queueId, opportunityId: action.opportunityId ?? null, closerId: meeting.input.closerId }, links: [{ label: "Abrir agenda", href: "/agenda", entityType: "MODULE" }, { label: "Abrir lead", href: `/leads/${lead.id}`, entityType: "Lead" }] };
+      }
+      if (action.closerId || action.durationMinutes) fail("Closer e duração só são aceitos em tarefas do tipo reunião.");
       return { kind: action.kind, title: "Criar tarefa", summary: `${action.title} · ${lead.fullName}`, details: [
         { label: "Lead", after: lead.fullName }, { label: "Tarefa", after: action.title },
         { label: "Oportunidade vinculada", after: opportunity?.name ?? "Nenhuma" },
@@ -399,9 +430,16 @@ export function createCopilotActionsService(options: Options) {
         const dashboard = await createAnalyticsBuilderService({ database, authorization, now: options.now, revenue: createRevenueMetricsService({ database, authorization, now: options.now }) }).create(context, { name: action.name, widgets: [indicatorWidget(action)], idempotencyKey: confirmation.idempotencyKey });
         result = { answer: "Indicador criado no painel de análises com a métrica e o período confirmados.", result: dashboard.result, targetType: "AnalyticsDashboard", targetId: dashboard.result.id, links: [{ label: "Abrir indicadores", href: "/analises", entityType: "MODULE" }] };
       } else if (action.kind === "CREATE_TASK") {
-        const { kind: _kind, taskKind, ...input } = action; void _kind;
-        const task = await createOperationalHistoryService({ database, authorization, now: options.now }).createTask(context, { ...input, kind: taskKind });
-        result = { answer: "Tarefa criada e incluída no histórico do lead.", result: task, targetType: "Task", targetId: task.id, links: linksFor(action.kind, action.leadId) };
+        if (action.taskKind === "MEETING") {
+          const meeting = await meetingInput(database, context, action);
+          const scheduled = await createMeetingService({ database, authorization, now: options.now }).schedule(context, meeting.input);
+          const googleLink = await database.googleCalendarEventLink.findFirst({ where: { workspaceId: context.workspaceId, meetingId: scheduled.meetingId }, select: { id: true } });
+          result = { answer: googleLink ? "Reunião agendada na Agenda do CRM; sincronização com o Google Agenda do closer enfileirada." : "Reunião agendada na Agenda do CRM. O closer precisa conectar o Google Agenda para a sincronização externa.", result: scheduled, targetType: "Meeting", targetId: scheduled.meetingId, links: [{ label: "Abrir agenda", href: "/agenda", entityType: "MODULE" }, { label: "Abrir lead", href: `/leads/${action.leadId}`, entityType: "Lead" }] };
+        } else {
+          const { kind: _kind, taskKind, closerId: _closerId, durationMinutes: _durationMinutes, ...input } = action; void _kind; void _closerId; void _durationMinutes;
+          const task = await createOperationalHistoryService({ database, authorization, now: options.now }).createTask(context, { ...input, kind: taskKind });
+          result = { answer: "Tarefa criada e incluída no histórico do lead.", result: task, targetType: "Task", targetId: task.id, links: linksFor(action.kind, action.leadId) };
+        }
       } else if (action.kind === "COMPLETE_PROSPECTING_TASKS") {
         const history = createOperationalHistoryService({ database, authorization, now: options.now });
         const completedAt = options.now();
@@ -474,6 +512,18 @@ export function createCopilotActionsService(options: Options) {
     if (result.moveLeads.length) result.capabilities.push("MOVE_LEAD");
     result.truncated = leadMatches.truncated;
     if (result.leads.length) result.capabilities.push("CREATE_TASK");
+    if (query.trim() && result.leads.length) {
+      const meetingService = createMeetingService({ database, authorization, now: options.now });
+      result.meetingLeads = [];
+      for (const lead of result.leads.slice(0, 10)) {
+        try {
+          const screen = await meetingService.getLeadMeetings(context, { leadId: lead.id });
+          result.meetingLeads.push({ leadId: lead.id, canSchedule: screen.canSchedule, closers: [...screen.closerOptions], defaultDurationMinutes: screen.defaultDurationMinutes });
+        } catch (error) {
+          if (!(error instanceof ApplicationError) || error.statusCode !== 403) throw error;
+        }
+      }
+    }
     const accountScope = { workspaceId: context.workspaceId, resourceType: "Account" };
     if (await allowed(PermissionKeys.ACCOUNTS_READ, accountScope) && await allowed(PermissionKeys.ACCOUNTS_WRITE, accountScope)) {
       const accountService = createAccountService({ database, authorization, now: options.now });

@@ -28,6 +28,7 @@ export const copilotActionSchema = z.discriminatedUnion("kind", [
     title: z.string().trim().min(2).max(200), description: z.string().trim().max(2000).optional(),
     taskKind: z.enum(["GENERAL", "CALL", "MESSAGE", "EMAIL", "MEETING", "FOLLOW_UP"]).default("GENERAL"),
     priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).default("MEDIUM"), dueAt: at,
+    closerId: id.optional(), durationMinutes: z.union([z.literal(30), z.literal(40)]).optional(),
   }).strict(),
   z.object({
     kind: z.literal("COMPLETE_PROSPECTING_TASKS"),
@@ -75,6 +76,7 @@ export type CopilotActionPreview = {
 export type CopilotActionOptions = {
   capabilities: CopilotAction["kind"][];
   leads: Array<{ id: string; name: string }>;
+  meetingLeads?: Array<{ leadId: string; canSchedule: boolean; closers: Array<{ id: string; name: string }>; defaultDurationMinutes: 30 | 40 }>;
   customers: Array<{ id: string; name: string; revision: number; legalName: string | null; domain: string | null; segment: string; size: string }>;
   categories: Array<{ id: string; name: string }>;
   financialAccounts: Array<{ id: string; name: string }>;

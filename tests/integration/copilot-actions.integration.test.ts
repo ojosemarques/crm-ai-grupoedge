@@ -9,6 +9,7 @@ import type { CopilotAction } from "@/modules/ai-assistant/domain/copilot-action
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createFinanceService } from "@/modules/finance/application/finance-service";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { createMeetingService } from "@/modules/meetings/application/meeting-service";
 import { createSaleCompletionService } from "@/modules/opportunities/application/sale-completion-service";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -124,6 +125,34 @@ describe("ações operacionais do Copilot", () => {
     expect(await database.task.count({ where: { workspaceId, leadId } })).toBe(before + 1);
     expect(await database.auditLog.count({ where: { workspaceId, action: "ai.copilot.action.executed", entityId: task.id } })).toBe(1);
     await expect(actions.execute(admin, { ...action, title: "Outra tarefa" }, key)).rejects.toMatchObject({ code: "COPILOT_ACTION_REPLAY_CONFLICT" });
+  });
+
+  it("confirma reunião pelo Copilot na Agenda, tarefa vinculada e sincronização Google do closer", async () => {
+    const meetingOptions = await createMeetingService({ database, authorization, now }).getLeadMeetings(admin, { leadId });
+    const closer = meetingOptions.closerOptions[0]!;
+    await database.googleCalendarAccount.create({ data: {
+      workspaceId, memberId: closer.id, googleSubject: `copilot-${randomUUID()}`, googleEmail: "closer@example.test",
+      accessTokenCiphertext: "token-de-teste", refreshTokenCiphertext: "refresh-de-teste",
+      tokenExpiresAt: new Date("2035-01-01T00:00:00Z"), grantedScopes: ["https://www.googleapis.com/auth/calendar.events"],
+      status: "CONNECTED", createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
+    } });
+    const action: CopilotAction = { kind: "CREATE_TASK", leadId, title: "Diagnóstico pelo Copilot", taskKind: "MEETING", priority: "HIGH", dueAt: "2026-10-03T15:00:00Z", closerId: closer.id };
+    await expect(actions.preview(viewer, action)).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    await expect(actions.preview({ ...admin, workspaceId: randomUUID() }, action)).rejects.toThrow();
+    const copilot = createCopilotService({ database, authorization, now, actions, sales: createSaleCompletionService({ database, now }), generate: null, loadContext: async () => ({ sources: [], unavailable: [] }), fallback: async () => ({}) });
+    const proposed = await copilot.command(admin, { action: "PROPOSE", payload: action }) as { proposal: { id: string; revision: number; preview: { title: string } } };
+    expect(proposed.proposal.preview.title).toBe("Agendar reunião");
+    expect(await database.meeting.count({ where: { workspaceId, leadId } })).toBe(0);
+    const confirmed = await copilot.command(admin, { action: "CONFIRM", proposalId: proposed.proposal.id, expectedRevision: proposed.proposal.revision, confirmed: true }) as { links: Array<{ href: string }> };
+    await copilot.command(admin, { action: "CONFIRM", proposalId: proposed.proposal.id, expectedRevision: proposed.proposal.revision, confirmed: true });
+    expect(confirmed.links).toEqual(expect.arrayContaining([{ label: "Abrir agenda", href: "/agenda", entityType: "MODULE" }]));
+    const meeting = await database.meeting.findFirstOrThrow({ where: { workspaceId, leadId } });
+    expect(meeting).toMatchObject({ ownerMemberId: closer.id, status: "SCHEDULED", startsAt: new Date(action.dueAt) });
+    expect(await database.meeting.count({ where: { workspaceId, leadId } })).toBe(1);
+    expect(await database.task.findFirstOrThrow({ where: { workspaceId, meetingId: meeting.id } })).toMatchObject({ leadId, kind: "MEETING", assigneeMemberId: closer.id });
+    expect(await database.googleCalendarEventLink.findFirst({ where: { workspaceId, meetingId: meeting.id } })).toMatchObject({ memberId: closer.id, syncState: "PENDING_PUSH" });
+    expect(await database.job.findFirst({ where: { workspaceId, idempotencyKey: `google-calendar:${meeting.id}:r1` } })).toMatchObject({ type: "GOOGLE_CALENDAR_SYNC", status: "PENDING" });
+    expect(await database.commercialMetricFact.count({ where: { workspaceId, meetingId: meeting.id, eventType: "MEETING_SCHEDULED" } })).toBe(1);
   });
 
   it("atualiza só os campos confirmados, rejeita versão antiga e preserva replay", async () => {
