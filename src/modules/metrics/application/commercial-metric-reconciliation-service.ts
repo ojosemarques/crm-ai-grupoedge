@@ -195,7 +195,7 @@ export function createCommercialMetricReconciliationService(options: Readonly<{ 
       const matchedCheckCount = checks.filter((item) => item.state === "MATCHED").length;
       const divergentCheckCount = checks.length - matchedCheckCount;
       const completed = await options.database.$transaction(async (tx) => {
-        await tx.commercialMetricReconciliationCheck.deleteMany({ where: { workspaceId: context.workspaceId, runId: run.id } });
+        // Falhas revertem a transação inteira; uma retomada não tem verificações anteriores a apagar.
         await tx.commercialMetricReconciliationCheck.createMany({ data: checks.map((item) => ({
           workspaceId: context.workspaceId, runId: run.id, sourceEntityType: item.sourceEntityType, eventType: item.eventType,
           state: item.state, expectedCount: item.expectedCount, actualCount: item.actualCount, gapCount: item.gapCount,
