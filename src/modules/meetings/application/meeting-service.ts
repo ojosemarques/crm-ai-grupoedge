@@ -416,20 +416,24 @@ export function createMeetingService(options: MeetingServiceOptions) {
       context,
       PermissionKeys.LEADS_READ,
     );
+    const phoneDigits = /^[+0-9().\s-]+$/.test(query) ? query.replace(/\D/g, "") : "";
     const rows = await options.database.lead.findMany({
       where: {
         workspaceId: context.workspaceId,
         deletedAt: null,
         AND: [
           leadVisibilityWhere(context, visibility),
-          ...(query ? [{ fullName: { contains: query, mode: "insensitive" as const } }] : []),
+          ...(query ? [{ OR: [
+            { fullName: { contains: query, mode: "insensitive" as const } },
+            ...(phoneDigits.length >= 2 ? [{ normalizedPhone: { contains: phoneDigits } }] : []),
+          ] }] : []),
         ],
       },
       orderBy: [{ fullName: "asc" }, { id: "asc" }],
       take: query ? 20 : 200,
-      select: { id: true, fullName: true, opportunities: { where: { status: "OPEN", deletedAt: null }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], select: { id: true, name: true } } },
+      select: { id: true, fullName: true, normalizedPhone: true, opportunities: { where: { status: "OPEN", deletedAt: null }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], select: { id: true, name: true } } },
     });
-    return rows.map((row) => ({ id: row.id, name: row.fullName, opportunities: row.opportunities }));
+    return rows.map((row) => ({ id: row.id, name: row.fullName, phone: row.normalizedPhone, opportunities: row.opportunities }));
   }
 
   async function searchLeadOptions(context: AuthenticatedContext, payload: unknown) {

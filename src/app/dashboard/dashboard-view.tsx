@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { CommercialEvolutionChart, CommercialFlowChart, KpiSparkline, RevenueSalesChart } from "@/app/dashboard/dashboard-charts";
+import { DashboardPeriodFields } from "@/app/dashboard/dashboard-period-fields";
 import styles from "@/app/dashboard/dashboard.module.css";
 import { ConnectedFunnel, StageDistribution } from "./dashboard-visuals";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -291,8 +292,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
         <details className={styles.filterDetails} open={activeFilterCount > 0 || q.preset === "CUSTOM"}>
           <summary className={styles.filterSummary}><Icon name="filtro" size={15} /> Filtros{activeFilterCount > 0 ? <span className={styles.filterCount}>{activeFilterCount}</span> : null}</summary>
           <div className={styles.filterPanel}><div className={styles.filterPanelHeader}><div><strong>Refinar análise</strong><span>O mesmo recorte será preservado nos indicadores e drilldowns.</span></div></div><form className={styles.filterForm} method="get">
-            <label className={styles.field}>Período<select defaultValue={q.preset} name="preset"><option value="TODAY">Hoje</option><option value="YESTERDAY">Ontem</option><option value="WEEK">Semana atual</option><option value="MONTH">Mês atual</option><option value="CUSTOM">Personalizado</option></select></label>
-            <label className={styles.field}>Data inicial<input defaultValue={q.fromDate} name="fromDate" type="date" /></label><label className={styles.field}>Data final<input defaultValue={q.toDate} name="toDate" type="date" /></label>
+            <DashboardPeriodFields fromDate={q.fromDate} key={`${q.preset}:${q.fromDate}:${q.toDate}`} preset={q.preset} toDate={q.toDate} />
             <SelectFilter label="Prioridade" name="priority" options={screen.filterOptions.priorities} selected={q.filters.priorityCodes} /><SelectFilter label="SDR" name="sdr" options={screen.filterOptions.sdrs} selected={q.filters.sdrMemberIds} /><SelectFilter label="Closer" name="closer" options={screen.filterOptions.closers} selected={q.filters.closerMemberIds} /><SelectFilter label="Equipe" name="team" options={screen.filterOptions.teams} selected={q.filters.teamIds} /><SelectFilter label="Origem" name="source" options={screen.filterOptions.sources} selected={q.filters.sourceIds} /><SelectFilter label="Campanha" name="campaign" options={screen.filterOptions.campaigns} selected={q.filters.campaignIds} /><SelectFilter label="Criativo" name="creative" options={screen.filterOptions.creatives} selected={q.filters.creativeIds} /><SelectFilter label="Produto" name="product" options={screen.filterOptions.products} selected={q.filters.productIds} />
             <div className={styles.filterActions}><Link className={styles.filterClear} href={`${basePath}?preset=MONTH`}>Limpar</Link><button className={styles.filterApply} type="submit">Aplicar filtros</button></div>
           </form></div>

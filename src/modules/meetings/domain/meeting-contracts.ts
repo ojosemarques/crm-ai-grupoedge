@@ -40,7 +40,7 @@ export type MeetingHistoryItem = Readonly<{
 }>;
 
 export type CloserOption = Readonly<{ id: string; name: string }>;
-export type LeadOption = Readonly<{ id: string; name: string; opportunities: readonly Readonly<{ id: string; name: string }>[] }>;
+export type LeadOption = Readonly<{ id: string; name: string; phone: string | null; opportunities: readonly Readonly<{ id: string; name: string }>[] }>;
 
 export type AgendaScreen = Readonly<{
   generatedAt: string;

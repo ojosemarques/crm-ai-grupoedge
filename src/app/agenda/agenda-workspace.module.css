@@ -62,6 +62,12 @@
 .scheduleForm { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .scheduleForm label { font-size: 12px; }
 .scheduleForm p { font-size: 11px; color: var(--text-muted); }
+.leadPicker { position: relative; }
+.leadOptions { position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; right: 0; max-height: 240px; overflow-y: auto; margin: 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 30px rgb(0 0 0 / 14%); }
+.leadOption { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; cursor: pointer; font-size: 12px; }
+.leadOption:hover, .leadOption[aria-selected="true"] { background: var(--primary-soft); }
+.leadOption strong { min-width: 0; overflow-wrap: anywhere; }
+.leadOption span { color: var(--text-muted); white-space: nowrap; }
 .fullWidth { grid-column: 1 / -1; }
 .notice { padding: 12px; font-size: 12px; background: var(--primary-soft); color: var(--primary); border-radius: 7px; margin: 12px 0; }
 @media (max-width: 850px) { .workspace { grid-template-columns: 180px minmax(0, 1fr); } .sidebar { padding: 16px 12px; } .periodControls h2 { font-size: 12px; } }

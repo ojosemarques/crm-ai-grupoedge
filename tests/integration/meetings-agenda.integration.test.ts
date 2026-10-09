@@ -451,6 +451,12 @@ describe("agenda interna e reuniões", () => {
     const results = await meetings().searchLeadOptions(closer, { query: "CRM15 busca" });
     expect(results.map((lead) => lead.id)).toContain(visible.leadId);
     expect(results.map((lead) => lead.id)).not.toContain(hidden.leadId);
+    const visiblePhone = (await database.lead.findUniqueOrThrow({ where: { id: visible.leadId }, select: { normalizedPhone: true } })).normalizedPhone!;
+    const hiddenPhone = (await database.lead.findUniqueOrThrow({ where: { id: hidden.leadId }, select: { normalizedPhone: true } })).normalizedPhone!;
+    const byPhone = await meetings().searchLeadOptions(closer, { query: visiblePhone.slice(-8) });
+    expect(byPhone.find((lead) => lead.id === visible.leadId)?.phone).toBe(visiblePhone);
+    const hiddenByPhone = await meetings().searchLeadOptions(closer, { query: hiddenPhone.slice(-8) });
+    expect(hiddenByPhone.map((lead) => lead.id)).not.toContain(hidden.leadId);
     await expect(meetings().searchLeadOptions(closer, { query: "x" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 

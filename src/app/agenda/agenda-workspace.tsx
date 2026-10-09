@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import styles from "./agenda-workspace.module.css";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
@@ -53,17 +53,20 @@ async function responseMessage(response: Response) {
 export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<{ initialLeadId?: string; initialScreen: AgendaScreen }>) {
   const router = useRouter();
   const scopedInitialLeadId = initialScreen.leadOptions.some((lead) => lead.id === initialLeadId) ? initialLeadId : "";
+  const initialSelectedLead = initialScreen.leadOptions.find((lead) => lead.id === scopedInitialLeadId) ?? null;
   const [updatedScreen, setScreen] = useState<AgendaScreen | null>(null);
   const screen = updatedScreen ?? initialScreen;
   const [display, setDisplay] = useState<"calendar" | "list">("calendar");
   const [showSchedule, setShowSchedule] = useState(Boolean(scopedInitialLeadId));
   const [scheduleLeadId, setScheduleLeadId] = useState(scopedInitialLeadId);
-  const [leadQuery, setLeadQuery] = useState("");
+  const [leadQuery, setLeadQuery] = useState(initialSelectedLead?.name ?? "");
   const [leadSearchOptions, setLeadSearchOptions] = useState<readonly LeadOption[]>([]);
   const [leadSearchState, setLeadSearchState] = useState<"IDLE" | "LOADING" | "ERROR">("IDLE");
-  const [selectedLeadOption, setSelectedLeadOption] = useState<LeadOption | null>(
-    initialScreen.leadOptions.find((lead) => lead.id === scopedInitialLeadId) ?? null,
-  );
+  const [selectedLeadOption, setSelectedLeadOption] = useState<LeadOption | null>(initialSelectedLead);
+  const [leadListOpen, setLeadListOpen] = useState(false);
+  const [activeLeadIndex, setActiveLeadIndex] = useState(-1);
+  const leadSearchInputRef = useRef<HTMLInputElement>(null);
+  const leadPickerRef = useRef<HTMLDivElement>(null);
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
   const [hiddenStatuses, setHiddenStatuses] = useState<string[]>([]);
   const selectedMeeting = screen.meetings.find((meeting) => meeting.id === selectedMeetingId);
@@ -83,10 +86,19 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const normalizedLeadQuery = leadQuery.trim();
-  const selectableLeadOptions = normalizedLeadQuery.length >= 2 ? leadSearchOptions : screen.leadOptions;
-  const selectedLead = selectableLeadOptions.find((lead) => lead.id === scheduleLeadId)
+  const selectedLead = leadSearchOptions.find((lead) => lead.id === scheduleLeadId)
     ?? screen.leadOptions.find((lead) => lead.id === scheduleLeadId)
     ?? selectedLeadOption;
+  const showLeadOptions = leadListOpen && !scheduleLeadId && normalizedLeadQuery.length >= 2 && leadSearchState === "IDLE" && leadSearchOptions.length > 0;
+
+  function chooseLead(lead: LeadOption) {
+    setScheduleLeadId(lead.id);
+    setSelectedLeadOption(lead);
+    setLeadQuery(lead.name);
+    setLeadListOpen(false);
+    setActiveLeadIndex(-1);
+    leadSearchInputRef.current?.focus();
+  }
 
   useEffect(() => {
     if (!showSchedule || normalizedLeadQuery.length < 2) return;
@@ -114,12 +126,26 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
     };
   }, [normalizedLeadQuery, showSchedule]);
 
-  function closeSchedule() {
+  useEffect(() => {
+    if (!leadListOpen) return;
+    function closeOnOutsidePointer(event: PointerEvent) {
+      if (!leadPickerRef.current?.contains(event.target as Node)) setLeadListOpen(false);
+    }
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [leadListOpen]);
+
+  const closeSchedule = useCallback(() => {
     setShowSchedule(false);
+    setScheduleLeadId("");
+    setSelectedLeadOption(null);
     setLeadQuery("");
     setLeadSearchOptions([]);
     setLeadSearchState("IDLE");
-  }
+    setLeadListOpen(false);
+    setActiveLeadIndex(-1);
+    setNotice(null);
+  }, []);
 
   async function refresh() {
     const query = new URLSearchParams({ view: screen.view, date: screen.selectedDate });
@@ -133,6 +159,11 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
 
   async function schedule(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!scheduleLeadId) {
+      setNotice("Pesquise e selecione um lead da lista.");
+      leadSearchInputRef.current?.focus();
+      return;
+    }
     setPending(true);
     setNotice(null);
     const form = event.currentTarget;
@@ -142,7 +173,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          leadId: data.get("leadId"),
+          leadId: scheduleLeadId,
           opportunityId: data.get("opportunityId") || null,
           closerId: data.get("closerId"),
           title: data.get("title"),
@@ -157,6 +188,8 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       setLeadQuery("");
       setLeadSearchOptions([]);
       setSelectedLeadOption(null);
+      setLeadListOpen(false);
+      setActiveLeadIndex(-1);
       setNotice("Reunião agendada, tarefa criada e pipeline atualizado.");
       await refresh();
       setShowSchedule(false);
@@ -182,7 +215,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
   return (
     <div className={styles.workspace}>
       <aside className={styles.sidebar}>
-        <Button onClick={() => setShowSchedule(true)}><Icon name="mais" size={16} /> Agendar reunião</Button>
+        <Button onClick={() => { setNotice(null); setShowSchedule(true); }}><Icon name="mais" size={16} /> Agendar reunião</Button>
         <section className={styles.miniCalendar} aria-label="Selecionar data">
           <div className={styles.miniHeader}><strong>{new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" }).format(selected)}</strong><button aria-label="Mês anterior" onClick={() => navigate(addDays(monthStart, -1))} type="button">‹</button><button aria-label="Próximo mês" onClick={() => navigate(new Date(Date.UTC(selected.getUTCFullYear(), selected.getUTCMonth() + 1, 1)).toISOString().slice(0, 10))} type="button">›</button></div>
           <div className={styles.miniGrid}>{["S", "T", "Q", "Q", "S", "S", "D"].map((day, index) => <span key={index}>{day}</span>)}{Array.from({ length: 42 }, (_, index) => addDays(miniStart, index)).map((day) => <button aria-label={new Intl.DateTimeFormat("pt-BR", { dateStyle: "full", timeZone: "UTC" }).format(new Date(`${day}T12:00:00Z`))} aria-pressed={day === screen.selectedDate} className={day.slice(0, 7) !== screen.selectedDate.slice(0, 7) ? styles.outsideMonth : undefined} data-today={day === today} key={day} onClick={() => navigate(day)} type="button">{Number(day.slice(-2))}</button>)}</div>
@@ -203,9 +236,38 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       </section>
       {selectedMeeting ? <AccessibleDialog className={styles.dialog!} labelledBy="meeting-title" onDismiss={() => setSelectedMeetingId(null)}><div className={styles.dialogHeader}><div><span>Reunião</span><h2 id="meeting-title">{selectedMeeting.title}</h2></div><button aria-label="Fechar detalhes" onClick={() => setSelectedMeetingId(null)} type="button">×</button></div>{meetingDetail(selectedMeeting)}</AccessibleDialog> : null}
       {showSchedule ? <AccessibleDialog busy={pending} className={styles.dialog!} labelledBy="schedule-title" onDismiss={closeSchedule}><div className={styles.dialogHeader}><div><span>Agenda</span><h2 id="schedule-title">Agendar reunião</h2></div><button aria-label="Fechar agendamento" disabled={pending} onClick={closeSchedule} type="button">×</button></div>{screen.canSchedule ? <form className={styles.scheduleForm} onSubmit={schedule}>
-        <label>Pesquisar lead<input aria-describedby="lead-search-status" className={inputClass} onChange={(event) => { const value = event.target.value; setLeadQuery(value); setLeadSearchOptions([]); setLeadSearchState(value.trim().length >= 2 ? "LOADING" : "IDLE"); }} placeholder="Digite pelo menos 2 caracteres" type="search" value={leadQuery} /></label>
-        <label>Lead<select className={inputClass} name="leadId" onChange={(event) => { const nextLead = selectableLeadOptions.find((lead) => lead.id === event.target.value) ?? null; setScheduleLeadId(event.target.value); setSelectedLeadOption(nextLead); }} required value={scheduleLeadId}><option value="">Selecione o lead</option>{selectedLead && !selectableLeadOptions.some((lead) => lead.id === selectedLead.id) ? <option value={selectedLead.id}>{selectedLead.name}</option> : null}{selectableLeadOptions.map((lead) => <option key={lead.id} value={lead.id}>{lead.name}</option>)}</select></label>
-        <p className={styles.fullWidth} id="lead-search-status" role="status">{normalizedLeadQuery.length < 2 ? "Digite um nome para filtrar todos os leads disponíveis." : leadSearchState === "LOADING" ? "Pesquisando leads…" : leadSearchState === "ERROR" ? "Não foi possível pesquisar leads agora." : `${leadSearchOptions.length} lead${leadSearchOptions.length === 1 ? "" : "s"} encontrado${leadSearchOptions.length === 1 ? "" : "s"}.`}</p>
+        <div className={styles.fullWidth}>
+          <label htmlFor="agenda-lead-search">Pesquisar lead</label>
+          <div className={styles.leadPicker} ref={leadPickerRef}>
+            <input
+              aria-activedescendant={showLeadOptions && activeLeadIndex >= 0 ? `agenda-lead-option-${activeLeadIndex}` : undefined}
+              aria-autocomplete="list"
+              aria-controls="agenda-lead-options"
+              aria-describedby="lead-search-status"
+              aria-expanded={showLeadOptions}
+              autoComplete="off"
+              className={inputClass}
+              id="agenda-lead-search"
+              onChange={(event) => { const value = event.target.value; setLeadQuery(value); setScheduleLeadId(""); setSelectedLeadOption(null); setLeadSearchOptions([]); setLeadSearchState(value.trim().length >= 2 ? "LOADING" : "IDLE"); setLeadListOpen(true); setActiveLeadIndex(-1); }}
+              onFocus={() => setLeadListOpen(true)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && showLeadOptions) { event.preventDefault(); event.stopPropagation(); setLeadListOpen(false); return; }
+                if (event.key === "Tab") { setLeadListOpen(false); return; }
+                if (!showLeadOptions) return;
+                if (event.key === "ArrowDown") { event.preventDefault(); setActiveLeadIndex((index) => Math.min(index + 1, leadSearchOptions.length - 1)); }
+                if (event.key === "ArrowUp") { event.preventDefault(); setActiveLeadIndex((index) => Math.max(index - 1, 0)); }
+                if (event.key === "Enter" && activeLeadIndex >= 0) { event.preventDefault(); chooseLead(leadSearchOptions[activeLeadIndex]!); }
+              }}
+              placeholder="Busque por nome ou telefone"
+              ref={leadSearchInputRef}
+              role="combobox"
+              type="search"
+              value={leadQuery}
+            />
+            {showLeadOptions ? <ul className={styles.leadOptions} id="agenda-lead-options" role="listbox">{leadSearchOptions.map((lead, index) => <li aria-selected={index === activeLeadIndex} className={styles.leadOption} id={`agenda-lead-option-${index}`} key={lead.id} onClick={() => chooseLead(lead)} role="option"><strong>{lead.name}</strong>{lead.phone ? <span>{lead.phone}</span> : null}</li>)}</ul> : null}
+          </div>
+          <p id="lead-search-status" role="status">{selectedLead && scheduleLeadId ? `Lead selecionado: ${selectedLead.name}.` : normalizedLeadQuery.length < 2 ? "Digite pelo menos 2 caracteres do nome ou telefone." : leadSearchState === "LOADING" ? "Pesquisando leads…" : leadSearchState === "ERROR" ? "Não foi possível pesquisar leads agora." : `${leadSearchOptions.length} lead${leadSearchOptions.length === 1 ? "" : "s"} encontrado${leadSearchOptions.length === 1 ? "" : "s"}. Selecione uma opção acima.`}</p>
+        </div>
         <label>Closer<select className={inputClass} name="closerId" required><option value="">Selecione o responsável</option>{screen.schedulingCloserOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
         <label>Oportunidade<select className={inputClass} name="opportunityId"><option value="">Sem vínculo explícito</option>{selectedLead?.opportunities.map((opportunity) => <option key={opportunity.id} value={opportunity.id}>{opportunity.name}</option>)}</select></label>
         <label className={styles.fullWidth}>Título<input className={inputClass} name="title" required /></label>
