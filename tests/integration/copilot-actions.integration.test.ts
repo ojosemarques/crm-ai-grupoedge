@@ -63,6 +63,9 @@ describe("ações operacionais do Copilot", () => {
     expect(list.batch).toMatchObject({ memberId: admin.memberId, memberName: admin.displayName });
     const entry = list.entries.find((item) => item.tasks.some((candidate) => candidate.taskId === task.id));
     expect(entry).toMatchObject({ leadId, name: "Lead Copilot", phones: expect.arrayContaining(["+5511998877665"]) });
+    const completeList = await actions.dailyList(admin, "DAILY");
+    expect(completeList).toMatchObject({ totalPoliticians: expect.any(Number), activitySummary: expect.arrayContaining([{ kind: "CALL", label: "Ligação da meta diária pelo Copilot", count: expect.any(Number) }]) });
+    expect(completeList.entries.find((item) => item.leadId === leadId)?.tasks).toContainEqual({ taskId: task.id, kind: "CALL", label: "Ligação da meta diária pelo Copilot" });
     expect((await actions.dailyList(viewer, "CALL")).entries.some((item) => item.leadId === leadId)).toBe(false);
 
     const sourceLead = await database.lead.findUniqueOrThrow({ where: { id: leadId } });

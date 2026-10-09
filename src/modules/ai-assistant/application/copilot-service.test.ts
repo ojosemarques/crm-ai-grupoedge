@@ -41,7 +41,7 @@ function harness() {
   const actionOptions: CopilotActionOptions = { pipelines: [{ id: id(60), name: "Pré-vendas", stages: [{ id: id(61), name: "Contato" }] }], leadSources: [{ key: "manual", name: "Manual" }], moveLeads: [{ id: id(50), name: "Maria", pipelineId: id(60), stageId: id(62), updatedAt: now.toISOString() }], incomeCategories: [{ id: id(63), name: "Receita" }], metrics: [{ id: "cash.received", name: "Recebido", dateBases: ["receivedAt"] }], capabilities: ["CREATE_LEAD", "MOVE_LEAD", "CREATE_CUSTOMER", "CREATE_INCOME", "CREATE_INDICATOR", "CREATE_TASK", "UPDATE_CUSTOMER", "CREATE_EXPENSE", "RECORD_PAYMENT"], leads: [{ id: id(50), name: "Maria" }], customers: [{ id: id(51), name: "Cliente", revision: 1, legalName: null, domain: null, segment: "UNKNOWN", size: "UNKNOWN" }], categories: [{ id: id(52), name: "Operacional" }], financialAccounts: [{ id: id(53), name: "Conta" }], invoices: [{ id: id(54), label: "Fatura 1", revision: 1, outstandingCents: "10000" }], truncated: false };
   const actions = {
     options: vi.fn(async () => actionOptions), authorize: vi.fn(async () => undefined),
-    dailyList: vi.fn(async (): Promise<DailyProspectingList> => ({ batch: { batchId: id(70), ...batchOwner, channel: "CALL" as const, localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [] }, target: 75, truncated: false, entries: [] })),
+    dailyList: vi.fn(async (): Promise<DailyProspectingList> => ({ batch: { batchId: id(70), ...batchOwner, channel: "DAILY" as const, localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [] }, target: 75, totalPoliticians: 0, activitySummary: [], truncated: false, entries: [] })),
     preview: vi.fn(async (_context: AuthenticatedContext, action: CopilotAction): Promise<CopilotActionPreview> => ({ kind: action.kind, title: "Ação", summary: "Revise", details: [{ label: "Nome", before: "Anterior", after: "Novo" }], impact: ["Altera registro"], links: [] })),
     execute: vi.fn(async (_context: AuthenticatedContext, _action: CopilotAction, _confirmation: { confirmed: true; idempotencyKey: string; expectedPreview?: unknown }) => { void _context; void _action; void _confirmation; return { answer: "Registrado.", result: { id: id(55) }, targetType: "Task", targetId: id(55), links: [] }; }),
   };
@@ -54,14 +54,14 @@ describe("Copilot operacional", () => {
   it("lista contatos da meta diária deterministicamente sem enviar dados ao provedor", async () => {
     const h = harness();
     h.actions.dailyList.mockResolvedValueOnce({
-      batch: { batchId: id(70), ...batchOwner, channel: "CALL", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] },
-      target: 75, truncated: false,
-      entries: [{ number: 1, leadId: id(50), name: "Maria", city: "Itu", role: "Vereadora", phones: ["+5511999999999"], instagram: null, tasks: [{ taskId: id(71), kind: "CALL" }] }],
+      batch: { batchId: id(70), ...batchOwner, channel: "DAILY", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z", items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }] }] },
+      target: 75, totalPoliticians: 1, activitySummary: [{ kind: "CALL", label: "Ligação nº 1", count: 1 }], truncated: false,
+      entries: [{ number: 1, leadId: id(50), name: "Maria", city: "Itu", role: "Vereadora", phones: ["+5511999999999"], instagram: null, tasks: [{ taskId: id(71), kind: "CALL", label: "Ligação nº 1" }] }],
     });
     const message = "Liste nomes e telefones dos meus leads da meta diária";
     const result = await h.service.command(context, { action: "CHAT", message });
-    expect(result).toMatchObject({ answer: expect.stringContaining("1. Maria — +5511999999999"), proposal: null, mode: "LOCAL" });
-    expect(h.actions.dailyList).toHaveBeenCalledWith(context, "CALL", message);
+    expect(result).toMatchObject({ answer: expect.stringContaining("Telefone: +5511999999999"), proposal: null, mode: "LOCAL" });
+    expect(h.actions.dailyList).toHaveBeenCalledWith(context, "DAILY", message);
     expect(h.generate).not.toHaveBeenCalled();
     expect(h.database.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "ai.copilot.daily_prospecting_listed", metadata: expect.objectContaining({ dailyProspectingBatch: expect.any(Object) }) }) }));
   });
@@ -73,6 +73,26 @@ describe("Copilot operacional", () => {
     expect(result).toMatchObject({ answer: "Registrado.", proposal: null, mode: "LOCAL" });
     expect(h.actions.preview).toHaveBeenCalledWith(context, { kind: "COMPLETE_PROSPECTING_TASKS", items: [{ leadId: id(50), taskId: id(71), taskKind: "CALL", result: "NO_ANSWER" }] });
     expect(h.actions.execute).toHaveBeenCalledWith(context, { kind: "COMPLETE_PROSPECTING_TASKS", items: [{ leadId: id(50), taskId: id(71), taskKind: "CALL", result: "NO_ANSWER" }] }, { confirmed: true, idempotencyKey: expect.any(String), expectedPreview: expect.any(Object) });
+    expect(h.generate).not.toHaveBeenCalled();
+  });
+
+  it("conclui em uma única resposta as atividades mistas da meta diária", async () => {
+    const h = harness();
+    h.database.auditLog.findMany.mockResolvedValueOnce([{ metadata: { dailyProspectingBatch: {
+      batchId: id(70), ...batchOwner, channel: "DAILY", localDate: "2026-09-30", expiresAt: "2026-10-01T03:00:00.000Z",
+      items: [{ number: 1, leadId: id(50), tasks: [{ taskId: id(71), kind: "CALL" }, { taskId: id(72), kind: "INSTAGRAM_FOLLOW" }, { taskId: id(73), kind: "INSTAGRAM_MESSAGE" }] }],
+    } } }]);
+
+    await h.service.command(context, { action: "CHAT", message: "1 - não atendeu, segui e enviei mensagem" });
+
+    expect(h.actions.execute).toHaveBeenCalledWith(context, {
+      kind: "COMPLETE_PROSPECTING_TASKS",
+      items: [
+        { leadId: id(50), taskId: id(71), taskKind: "CALL", result: "NO_ANSWER" },
+        { leadId: id(50), taskId: id(72), taskKind: "INSTAGRAM_FOLLOW", result: "COMPLETED" },
+        { leadId: id(50), taskId: id(73), taskKind: "INSTAGRAM_MESSAGE", result: "SENT" },
+      ],
+    }, { confirmed: true, idempotencyKey: expect.any(String), expectedPreview: expect.any(Object) });
     expect(h.generate).not.toHaveBeenCalled();
   });
 

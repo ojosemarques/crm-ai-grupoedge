@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { CopilotAction } from "@/modules/ai-assistant/domain/copilot-action-contracts";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
-export const dailyProspectingChannels = ["CALL", "INSTAGRAM"] as const;
+export const dailyProspectingChannels = ["DAILY", "CALL", "INSTAGRAM"] as const;
 export type DailyProspectingChannel = (typeof dailyProspectingChannels)[number];
 export type DailyProspectingTaskKind = "CALL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW";
 
@@ -22,7 +22,7 @@ export const dailyProspectingBatchSchema = z.object({
   items: z.array(z.object({
     number: z.number().int().positive(),
     leadId: z.string().uuid(),
-    tasks: z.array(taskSchema).min(1).max(2),
+    tasks: z.array(taskSchema).min(1).max(3),
   }).strict()).max(75),
 }).strict();
 
@@ -35,11 +35,13 @@ export type DailyProspectingEntry = Readonly<{
   role: string | null;
   phones: readonly string[];
   instagram: string | null;
-  tasks: readonly Readonly<{ taskId: string; kind: DailyProspectingTaskKind }>[];
+  tasks: readonly Readonly<{ taskId: string; kind: DailyProspectingTaskKind; label: string }>[];
 }>;
 export type DailyProspectingList = Readonly<{
   batch: DailyProspectingBatch;
   target: number;
+  totalPoliticians: number;
+  activitySummary: readonly Readonly<{ kind: DailyProspectingTaskKind; label: string; count: number }>[];
   truncated: boolean;
   entries: readonly DailyProspectingEntry[];
 }>;
@@ -54,12 +56,12 @@ function invalid(message: string): never {
 
 export function dailyProspectingListIntent(message: string): DailyProspectingChannel | null {
   const text = normalized(message);
-  const wantsList = /\b(lista|liste|listar|todos|todas|nomes)\b/.test(text);
-  const dailyScope = /\b(meta|diari[ao]|hoje|meu dia|leads?|politicos?)\b/.test(text);
+  const wantsList = /\b(lista|liste|listar|todos|todas|nomes|contatos|pessoas|quem|quantas?|mostre|mostrar)\b/.test(text);
+  const dailyScope = /\b(meta|diari[ao]|hoje|meu dia|fila de tarefas|leads?|politicos?)\b/.test(text);
   if (!wantsList || !dailyScope) return null;
   if (/\b(instagram|insta)\b/.test(text)) return "INSTAGRAM";
-  if (/\b(telefone|telefones|numero|numeros|ligacao|ligacoes|ligar)\b/.test(text)) return "CALL";
-  return null;
+  if (/\b(ligacao|ligacoes|ligar|telefonar)\b/.test(text)) return "CALL";
+  return "DAILY";
 }
 
 export function dailyProspectingSummaryIntent(message: string): boolean {
@@ -70,20 +72,34 @@ export function dailyProspectingSummaryIntent(message: string): boolean {
 
 export function formatDailyProspectingList(list: DailyProspectingList): string {
   const channel = list.batch.channel === "CALL" ? "ligações" : "Instagram";
-  if (list.entries.length === 0) return `Não há tarefas pendentes de ${channel} na meta diária de ${list.batch.memberName}.`;
+  const activitySummary = list.activitySummary.length
+    ? list.activitySummary.map((activity) => `${activity.label}: ${activity.count}`).join(" · ")
+    : "nenhuma atividade pendente";
+  if (list.entries.length === 0) {
+    const otherActivities = list.totalPoliticians > 0
+      ? ` A meta completa ainda possui ${list.totalPoliticians} político(s): ${activitySummary}.`
+      : "";
+    if (list.batch.channel === "DAILY") return `Não há atividades pendentes na meta diária de ${list.batch.memberName}.`;
+    return `Não há tarefas pendentes de ${channel} na meta diária de ${list.batch.memberName}.${otherActivities}`;
+  }
   const lines = list.entries.map((entry) => {
-    if (list.batch.channel === "CALL") return `${entry.number}. ${entry.name} — ${entry.phones.join(", ") || "não tem telefone"}`;
-    return `${entry.number}. ${entry.name} — ${entry.city ?? "cidade não informada"} — ${entry.role ?? "cargo não informado"} — ${entry.instagram ?? "não tem Instagram"}`;
+    const activities = entry.tasks.map((task) => task.label).join(", ");
+    if (list.batch.channel === "CALL") return `${entry.number}. ${entry.name} — ${entry.phones.join(", ") || "não tem telefone"} — ${activities}`;
+    if (list.batch.channel === "INSTAGRAM") return `${entry.number}. ${entry.name} — ${entry.city ?? "cidade não informada"} — ${entry.role ?? "cargo não informado"} — ${entry.instagram ?? "não tem Instagram"} — ${activities}`;
+    return `${entry.number}. ${entry.name} — ${entry.city ?? "cidade não informada"} — ${entry.role ?? "cargo não informado"}\n   Telefone: ${entry.phones.join(", ") || "não tem telefone"}\n   Instagram: ${entry.instagram ?? "não tem Instagram"}\n   Atividades: ${activities}`;
   });
   const limitation = list.truncated ? `\nA fila tem mais políticos, mas esta lista respeita sua meta configurada de ${list.target}.` : "";
-  const examples = list.batch.channel === "CALL"
+  const examples = list.batch.channel === "DAILY"
+    ? "Exemplo: `1 - não atendeu, segui e enviei mensagem` ou `2 - não achei Instagram`. Só serão concluídas as atividades descritas."
+    : list.batch.channel === "CALL"
     ? "Exemplo: `1 - atendeu` ou `2 - não atendeu`."
     : "Exemplo: `1 - segui e enviei mensagem` ou `2 - não achei Instagram`.";
-  return `Lista pendente de ${channel} da meta diária de ${list.batch.memberName} (${list.entries.length} político(s); capacidade diária: ${list.target}):\n\n${lines.join("\n")}\n\nResponda usando os números desta lista. ${examples}${limitation}`;
+  const heading = list.batch.channel === "DAILY" ? `Lista pendente da meta diária de ${list.batch.memberName}` : `Lista pendente de ${channel} da meta diária de ${list.batch.memberName}`;
+  return `${heading} (${list.entries.length} político(s) nesta lista; ${list.totalPoliticians} na meta; capacidade diária: ${list.target}).\nAtividades pendentes: ${activitySummary}.\n\n${lines.join("\n")}\n\nResponda usando os números desta lista. ${examples}${limitation}`;
 }
 
 function numberedResults(message: string): Array<{ number: number; text: string }> {
-  const matches = [...message.matchAll(/(?:^|\n|;)\s*(\d{1,3})\s*(?:[-–—.):=])\s*([^\n;]+?)(?=\s*(?:\n|;|$))/g)];
+  const matches = [...message.matchAll(/(?:^|[\n;]|,(?=\s*\d{1,3}\s*[-–—.):=]))\s*(\d{1,3})\s*(?:[-–—.):=])\s*([\s\S]+?)(?=\s*(?:[\n;]\s*\d{1,3}\s*[-–—.):=]|,\s*\d{1,3}\s*[-–—.):=]|$))/g)];
   if (matches.length === 0) invalid("Envie o resumo em linhas numeradas, por exemplo: 1 - não atendeu.");
   const seen = new Set<number>();
   return matches.map((match) => {
@@ -105,6 +121,7 @@ function callResult(text: string) {
 }
 
 function instagramResults(text: string, tasks: DailyProspectingBatch["items"][number]["tasks"]) {
+  const instagramTasks = tasks.filter((task) => task.kind === "INSTAGRAM_FOLLOW" || task.kind === "INSTAGRAM_MESSAGE");
   const resultForAll = /\b(nao achei|nao encontrou|perfil nao encontrado|sem instagram)\b/.test(text)
     ? "PROFILE_NOT_FOUND" as const
     : /\b(canal indisponivel)\b/.test(text)
@@ -113,13 +130,13 @@ function instagramResults(text: string, tasks: DailyProspectingBatch["items"][nu
         ? "FAILED" as const
         : null;
   type Parsed = { taskId: string; kind: DailyProspectingTaskKind; result: "PROFILE_NOT_FOUND" | "CHANNEL_UNAVAILABLE" | "FAILED" | "ALREADY_FOLLOWING" | "COMPLETED" | "SENT" };
-  if (resultForAll) return tasks.map((task): Parsed => ({ ...task, result: resultForAll }));
+  if (resultForAll) return instagramTasks.map((task): Parsed => ({ ...task, result: resultForAll }));
   const allDone = /^feito$/.test(text) || (/\b(segui|seguido)\b/.test(text) && /\b(enviei|mandei|mensagem)\b/.test(text));
   const followed = allDone || /\b(segui|seguido)\b/.test(text);
   const alreadyFollowing = /\b(ja seguia|ja seguindo)\b/.test(text);
   const messaged = allDone || /\b(enviei|mandei|mensagem enviada)\b/.test(text);
   const results: Parsed[] = [];
-  for (const task of tasks) {
+  for (const task of instagramTasks) {
     if (task.kind === "INSTAGRAM_FOLLOW" && alreadyFollowing) results.push({ ...task, result: "ALREADY_FOLLOWING" });
     else if (task.kind === "INSTAGRAM_FOLLOW" && followed) results.push({ ...task, result: "COMPLETED" });
     else if (task.kind === "INSTAGRAM_MESSAGE" && messaged) results.push({ ...task, result: "SENT" });
@@ -140,6 +157,16 @@ export function buildDailyProspectingAction(batchInput: DailyProspectingBatch, m
       const task = batchItem.tasks.find((item) => item.kind === "CALL");
       if (!task) invalid(`A tarefa de ligação do número ${row.number} não está disponível.`);
       items.push({ leadId: batchItem.leadId, taskId: task.taskId, taskKind: task.kind, result });
+      continue;
+    }
+    if (batch.channel === "DAILY") {
+      const result = callResult(row.text);
+      const callTask = batchItem.tasks.find((item) => item.kind === "CALL");
+      if (result && !callTask) invalid(`A tarefa de ligação do número ${row.number} não está disponível.`);
+      if (result && callTask) items.push({ leadId: batchItem.leadId, taskId: callTask.taskId, taskKind: callTask.kind, result });
+      const instagram = instagramResults(row.text, batchItem.tasks);
+      items.push(...instagram.map((item) => ({ leadId: batchItem.leadId, taskId: item.taskId, taskKind: item.kind, result: item.result })));
+      if (!result && instagram.length === 0) invalid(`Resultado inválido para o número ${row.number}. Informe o resultado da ligação e/ou do Instagram.`);
       continue;
     }
     const results = instagramResults(row.text, batchItem.tasks);

@@ -30,6 +30,7 @@ type Message = Readonly<{ id: string; role: "USER" | "COPILOT"; text: string; re
 const suggestions = [
   "Liste todos os nomes e telefones dos meus leads da meta diária.",
   "Mostre o Instagram de todos os políticos da minha meta diária.",
+  "Quem preciso contatar hoje e quais são as atividades de cada pessoa?",
   "Quero cadastrar um lead. Pergunte os dados necessários.",
   "Quero mover um lead no pipeline. Ajude a localizar o cadastro e a etapa.",
   "Quero registrar uma entrada ou despesa no financeiro.",
@@ -40,7 +41,6 @@ const suggestions = [
   "Explique a queda nas vendas comparando com o período anterior.",
   "Resuma caixa, despesas, recebíveis e MRR.",
   "Prepare os briefings das próximas reuniões.",
-  "Qual atividade devo executar agora?",
 ];
 const labels: Record<CopilotAction["kind"] | "CLOSE_SALE" | "ACTION_PLAN", string> = { CREATE_LEAD: "Cadastrar lead", MOVE_LEAD: "Mover lead", CREATE_CUSTOMER: "Cadastrar cliente", CREATE_INCOME: "Registrar entrada", CREATE_INDICATOR: "Criar indicador", CREATE_TASK: "Criar tarefa", COMPLETE_PROSPECTING_TASKS: "Concluir prospecção", UPDATE_CUSTOMER: "Atualizar cliente", CREATE_EXPENSE: "Registrar despesa", RECORD_PAYMENT: "Registrar recebimento", CLOSE_SALE: "Fechar venda", ACTION_PLAN: "Plano de ações" };
 const statusLabels: Record<string, string> = { DRAFT: "Aguardando confirmação", EXECUTING: "Confirmação em andamento", EXECUTION_FAILED: "Recuperação disponível", PUBLISHED: "Executada", CANCELLED: "Cancelada", EXPIRED: "Expirada" };

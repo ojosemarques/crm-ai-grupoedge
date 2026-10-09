@@ -137,7 +137,7 @@ export function createCopilotActionsService(options: Options) {
     const range = workspaceDayRange(localDate, workspace.timeZone);
     const config = await database.prospectingSellerConfig.findUnique({ where: { workspaceId_memberId: { workspaceId: context.workspaceId, memberId: targetMember.id } }, select: { dailyCapacity: true } });
     const target = Math.min(config?.dailyCapacity ?? 75, 75);
-    const taskKinds = channel === "CALL" ? ["CALL" as const] : ["INSTAGRAM_FOLLOW" as const, "INSTAGRAM_MESSAGE" as const];
+    const taskKinds = ["CALL" as const, "INSTAGRAM_FOLLOW" as const, "INSTAGRAM_MESSAGE" as const];
     const tasks = await database.task.findMany({
       where: {
         workspaceId: context.workspaceId,
@@ -151,7 +151,7 @@ export function createCopilotActionsService(options: Options) {
       },
       orderBy: [{ dueAt: "asc" }, { leadId: "asc" }, { id: "asc" }],
       select: {
-        id: true, leadId: true, kind: true,
+        id: true, leadId: true, kind: true, title: true,
         lead: {
           select: {
             id: true, fullName: true, city: true, jobTitle: true, normalizedPhone: true, ownerMemberId: true, queueId: true,
@@ -180,7 +180,20 @@ export function createCopilotActionsService(options: Options) {
       select: { leadId: true, instagram: true },
     });
     const instagramByLead = new Map(candidateRows.map((candidate) => [candidate.leadId!, candidate.instagram]));
+    const activityCounts = new Map<string, { kind: DailyProspectingEntry["tasks"][number]["kind"]; label: string; count: number }>();
+    for (const task of selectedGroups.flat()) {
+      const kind = task.kind as DailyProspectingEntry["tasks"][number]["kind"];
+      const key = `${kind}:${task.title}`;
+      const current = activityCounts.get(key);
+      activityCounts.set(key, { kind, label: task.title, count: (current?.count ?? 0) + 1 });
+    }
     const entries: DailyProspectingEntry[] = selectedGroups.flatMap((rows, index) => {
+      const channelRows = channel === "DAILY"
+        ? rows
+        : channel === "CALL"
+          ? rows.filter((task) => task.kind === "CALL")
+          : rows.filter((task) => task.kind === "INSTAGRAM_FOLLOW" || task.kind === "INSTAGRAM_MESSAGE");
+      if (channelRows.length === 0) return [];
       const lead = rows[0]!.lead;
       const phones = [...new Set([
         lead.normalizedPhone,
@@ -195,15 +208,22 @@ export function createCopilotActionsService(options: Options) {
         role: lead.jobTitle,
         phones,
         instagram: instagramPoint?.originalValue || instagramPoint?.normalizedValue || instagramByLead.get(lead.id) || null,
-        tasks: rows.map((task) => ({ taskId: task.id, kind: task.kind as "CALL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW" })),
+        tasks: channelRows.map((task) => ({ taskId: task.id, kind: task.kind as "CALL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW", label: task.title })),
       }];
     }).map((entry, index) => ({ ...entry, number: index + 1 }));
     const expiresAt = range.end;
     const batch = dailyProspectingBatchSchema.parse({
       batchId: randomUUID(), memberId: targetMember.id, memberName: targetMember.name, channel, localDate, expiresAt: expiresAt.toISOString(),
-      items: entries.map((entry) => ({ number: entry.number, leadId: entry.leadId, tasks: entry.tasks })),
+      items: entries.map((entry) => ({ number: entry.number, leadId: entry.leadId, tasks: entry.tasks.map(({ taskId, kind }) => ({ taskId, kind })) })),
     });
-    return { batch, target, truncated: grouped.size > selectedGroups.length, entries };
+    return {
+      batch,
+      target,
+      totalPoliticians: selectedGroups.length,
+      activitySummary: [...activityCounts.values()].sort((left, right) => left.label.localeCompare(right.label, "pt-BR")),
+      truncated: grouped.size > selectedGroups.length,
+      entries,
+    };
   }
   async function authorized(database: PrismaClient, context: AuthenticatedContext, action: CopilotAction) {
     const authorization = createAuthorizationService({ database });
@@ -386,7 +406,10 @@ export function createCopilotActionsService(options: Options) {
         const history = createOperationalHistoryService({ database, authorization, now: options.now });
         const completedAt = options.now();
         const completed = [];
-        for (const item of [...action.items].sort((left, right) => left.leadId.localeCompare(right.leadId) || left.taskId.localeCompare(right.taskId))) {
+        // Complete Instagram steps before a connected call. A connection closes
+        // the cold cadence and cancels its remaining open tasks by design.
+        const completionOrder = (taskKind: DailyProspectingEntry["tasks"][number]["kind"]) => taskKind === "CALL" ? 1 : 0;
+        for (const item of [...action.items].sort((left, right) => left.leadId.localeCompare(right.leadId) || completionOrder(left.taskKind) - completionOrder(right.taskKind) || left.taskId.localeCompare(right.taskId))) {
           completed.push(await history.completeTask(context, { leadId: item.leadId, taskId: item.taskId, result: item.result, completedAt }));
         }
         result = {
