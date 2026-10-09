@@ -27,9 +27,13 @@ export function DashboardPeriodFields({ preset, fromDate, toDate }: Readonly<{
     setSelection((current) => selectDashboardDate(current, field, value));
   }
 
+  function syncDate(field: "fromDate" | "toDate", value: string) {
+    if (value && value !== selection[field]) selectDate(field, value);
+  }
+
   return <>
     <label className={styles.field}>Período<select name="preset" onChange={(event) => setSelection((current) => ({ ...current, preset: event.target.value as DashboardPeriodPreset }))} value={selection.preset}><option value="TODAY">Hoje</option><option value="YESTERDAY">Ontem</option><option value="WEEK">Semana atual</option><option value="MONTH">Mês atual</option><option value="CUSTOM">Personalizado</option></select></label>
-    <label className={styles.field}>Data inicial<input name="fromDate" onChange={(event) => selectDate("fromDate", event.target.value)} required type="date" value={selection.fromDate} /></label>
-    <label className={styles.field}>Data final<input name="toDate" onChange={(event) => selectDate("toDate", event.target.value)} required type="date" value={selection.toDate} /></label>
+    <label className={styles.field}>Data inicial<input name="fromDate" onBlur={(event) => syncDate("fromDate", event.currentTarget.value)} onChange={(event) => selectDate("fromDate", event.target.value)} onInput={(event) => syncDate("fromDate", event.currentTarget.value)} required type="date" value={selection.fromDate} /></label>
+    <label className={styles.field}>Data final<input name="toDate" onBlur={(event) => syncDate("toDate", event.currentTarget.value)} onChange={(event) => selectDate("toDate", event.target.value)} onInput={(event) => syncDate("toDate", event.currentTarget.value)} required type="date" value={selection.toDate} /></label>
   </>;
 }
