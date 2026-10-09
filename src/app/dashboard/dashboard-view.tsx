@@ -74,7 +74,7 @@ function integratedHref(query: DashboardQuery, metricId: string, memberId?: stri
     ["priorityCodes", query.filters.priorityCodes], ["productIds", query.filters.productIds],
   ] as const;
   for (const [key, values] of mappings) for (const value of values) params.append(key, value);
-  return `/api/metrics/integrated/drilldown?${params.toString()}`;
+  return `/dashboard/atividades-integradas?${params.toString()}`;
 }
 
 function comparisonHref(query: DashboardQuery, drilldownId: string, period: Readonly<{ from: string; to: string }>) {
