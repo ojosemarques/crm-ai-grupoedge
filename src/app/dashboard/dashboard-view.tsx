@@ -228,9 +228,12 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
   const kpiById = new Map(screen.kpis.map((metric) => [metric.id, metric]));
   const operationalPulse = [
     ["contacts.leads_created", "Leads recebidos"],
+    ["outreach.calls_attempted", "Ligações realizadas"],
     ["outreach.effective_contacts", "Leads conectados"],
     ["qualification.leads", "Qualificados"],
+    ["meetings.stage_marked", "Cards marcados para reunião"],
     ["meetings.scheduled", "Reuniões agendadas"],
+    ["outreach.instagram_follows", "Perfis seguidos"],
     ["sales.opportunities_created", "Oportunidades"],
     ["sales.proposals", "Propostas"],
   ] as const;
@@ -321,6 +324,12 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
         <header className={styles.panelHeader}><div><h2>Operação integrada</h2><p>Atividade, contato, e-mail, reuniões e receita na mesma base auditável.</p></div><span className={styles.qualityBadge} data-state={screen.integrated.quality.reconciliationState}>{screen.integrated.quality.coverageBasisPoints === null ? "Cobertura pendente" : `${(screen.integrated.quality.coverageBasisPoints / 100).toLocaleString("pt-BR")}% atribuída`}</span></header>
         <div className={styles.integratedGrid}>{integratedPulse.map((metric) => <a href={integratedHref(q, metric.metricId)} key={metric.metricId}><span>{integratedLabelById.get(metric.metricId) ?? metric.metricId}</span><strong>{integratedValue(metric)}</strong><small data-state={metric.state}>{metric.state === "NO_DENOMINATOR" ? "Sem denominador elegível" : metric.reason}</small></a>)}</div>
         <p className={styles.qualityNote}>{screen.integrated.quality.reason} · {screen.integrated.quality.totalFacts.toLocaleString("pt-BR")} fatos no recorte.</p>
+      </section>
+
+      <section className={`${styles.panel} ${styles.performancePanel}`} aria-labelledby="dashboard-email-cadence-title">
+        <header className={styles.panelHeader}><div><h2 id="dashboard-email-cadence-title">Cadência de e-mail por etapa</h2><p>Contagens do Email 1 ao Email 6 no período e nos filtros selecionados.</p></div></header>
+        <div className={styles.performanceScroll}><table className={styles.performanceTable}><thead><tr><th>Etapa</th><th>Programados</th><th>Enviados</th><th>Entregues</th><th>Respostas</th><th>Devolvidos</th><th>Falhas</th><th>Expirados</th><th>Cancelados</th><th>Spam</th><th>Descadastros</th></tr></thead><tbody>{screen.emailCadence.map((row) => <tr key={row.stepKey}><td><strong>Email {row.stepNumber} · D{row.dayOffset}</strong></td><td>{row.scheduled.toLocaleString("pt-BR")}</td><td><strong>{row.sent.toLocaleString("pt-BR")}</strong></td><td>{row.delivered.toLocaleString("pt-BR")}</td><td>{row.replied.toLocaleString("pt-BR")}</td><td>{row.bounced.toLocaleString("pt-BR")}</td><td>{row.failed.toLocaleString("pt-BR")}</td><td>{row.expired.toLocaleString("pt-BR")}</td><td>{row.cancelled.toLocaleString("pt-BR")}</td><td>{row.complaints.toLocaleString("pt-BR")}</td><td>{row.unsubscribed.toLocaleString("pt-BR")}</td></tr>)}</tbody></table></div>
+        <p className={styles.qualityNote}>Fonte: eventos persistidos no log comercial. “Enviados” conta confirmações de envio aceitas; eventos compensatórios são descontados.</p>
       </section>
 
       <section className={`${styles.panel} ${styles.flowPanel}`}><header className={styles.panelHeader}><div><h2>Atividade ao longo do período</h2><p>Entradas, ligações, conexões, qualificações, agendamentos e vendas.</p></div></header><CommercialFlowChart series={screen.timeSeries} /></section>

@@ -3,6 +3,7 @@ import type {
   MetricsFilters,
   MetricsOverview,
 } from "@/modules/metrics/domain/metrics-contracts";
+import type { EmailCadenceMetricsRow } from "@/modules/metrics/domain/email-cadence-metrics";
 
 export const dashboardPeriodPresets = [
   "TODAY",
@@ -227,6 +228,7 @@ export type DashboardScreen = Readonly<{
   closerPerformance: readonly DashboardSegment[];
   performance: readonly DashboardPerformanceRow[];
   sellerActivity: readonly DashboardSellerActivity[];
+  emailCadence: readonly EmailCadenceMetricsRow[];
   sources: readonly DashboardSegment[];
   sourceConversion: readonly DashboardSegment[];
   campaigns: readonly DashboardSegment[];

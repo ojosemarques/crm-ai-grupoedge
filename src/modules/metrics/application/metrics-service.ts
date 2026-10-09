@@ -1175,10 +1175,10 @@ export function createMetricsService(options: MetricsServiceOptions) {
     const rows = await options.database.commercialMetricFact.findMany({
       where: {
         ...where,
-        eventType: { in: ["LEAD_CREATED", "TASK_COMPLETED", "STAGE_ENTERED", "CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INBOUND_MESSAGE_RECEIVED", "HUMAN_RESPONSE_CONFIRMED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT", "LEAD_QUALIFIED", "MEETING_SCHEDULED", "MEETING_COMPLETED", "PROPOSAL_REACHED", "SALE_WON"] },
+        eventType: { in: ["LEAD_CREATED", "TASK_COMPLETED", "STAGE_ENTERED", "CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INBOUND_MESSAGE_RECEIVED", "HUMAN_RESPONSE_CONFIRMED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SCHEDULED", "EMAIL_SENT", "EMAIL_DELIVERED", "EMAIL_REPLIED", "EMAIL_BOUNCED", "EMAIL_COMPLAINT", "EMAIL_UNSUBSCRIBED", "EMAIL_CANCELLED", "EMAIL_EXPIRED", "EMAIL_FAILED", "LEAD_QUALIFIED", "MEETING_SCHEDULED", "MEETING_COMPLETED", "PROPOSAL_REACHED", "SALE_WON"] },
       },
       orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
-      select: { id: true, eventType: true, sourceEntityType: true, occurredAt: true, leadId: true, creditedMemberId: true, performedByMemberId: true, bookedByMemberId: true, taskKind: true, result: true, quantity: true, valueCents: true },
+      select: { id: true, eventType: true, sourceEntityType: true, occurredAt: true, leadId: true, creditedMemberId: true, performedByMemberId: true, bookedByMemberId: true, taskKind: true, result: true, cadenceStepKey: true, quantity: true, valueCents: true },
     });
     return Object.freeze(rows.map((row) => Object.freeze({
       ...row,

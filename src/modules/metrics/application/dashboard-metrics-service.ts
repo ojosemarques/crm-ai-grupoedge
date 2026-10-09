@@ -27,6 +27,7 @@ import { buildDashboardTimeSeries, mergeIntegratedActivitySeries } from "@/modul
 import { applyLedgerMilestoneBalance, chronologicalLeadStages, earliestLeadMilestones, effectiveLeadMilestones, leadMilestoneTimeline } from "@/modules/metrics/domain/dashboard-funnel";
 import { summarizeDashboardSellerActivity } from "@/modules/metrics/domain/dashboard-seller-activity";
 import { summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
+import { summarizeEmailCadenceMetrics } from "@/modules/metrics/domain/email-cadence-metrics";
 import {
   createMetricsService,
   parseMetricsQuery,
@@ -1248,6 +1249,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       stageConversion: Object.freeze(stageConversion), stageTime: Object.freeze(stageTime),
       sdrPerformance: Object.freeze(sdrPerformance), closerPerformance: Object.freeze(closerPerformance),
       performance: Object.freeze(performance), sellerActivity,
+      emailCadence: summarizeEmailCadenceMetrics(activityFacts),
       sources: Object.freeze(sourceSegments), sourceConversion: Object.freeze(sourceConversion), campaigns: Object.freeze(campaignSegments), creatives: Object.freeze(creativeSegments), priorities: Object.freeze(prioritySegments),
       disqualificationReasons: Object.freeze(disqualificationReasons), lossReasons: Object.freeze(lossReasons), noShowReasons: Object.freeze(noShowReasons),
       pactoQuality: Object.freeze(pactoQuality), backlogByStage: Object.freeze(backlogByStage), agingByStage: Object.freeze(agingByStage),

@@ -8,6 +8,7 @@ import { PROSPECTING_EMAIL_TEMPLATE_COUNT } from "@/modules/prospecting/domain/p
 import { summarizeProspectingTaskResults } from "@/modules/prospecting/domain/prospecting-daily-metrics";
 import { summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
 import { countUnresolvedCallAttempts } from "@/modules/metrics/domain/unresolved-call-attempts";
+import { EMAIL_CADENCE_METRIC_EVENT_TYPES, summarizeEmailCadenceMetrics } from "@/modules/metrics/domain/email-cadence-metrics";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { addLocalDays, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 import { z } from "zod";
@@ -128,6 +129,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       dailyMeetingsScheduled,
       meetingsCreatedThirtyDays,
       dailyEffectiveContactFacts,
+      emailCadenceFacts,
     ] = await Promise.all([
       options.database.prospectingSettings.findUnique({ where: { workspaceId: context.workspaceId } }),
       manageDecision.allowed ? options.database.prospectingReconciliationState.findUnique({
@@ -269,6 +271,17 @@ export function createProspectingWorkspaceService(options: Readonly<{
         where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, leadId: { not: null }, eventType: { in: ["CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED"] } },
         _sum: { quantity: true },
       }),
+      options.database.commercialMetricFact.groupBy({
+        by: ["eventType", "cadenceStepKey"],
+        where: {
+          workspaceId: context.workspaceId,
+          creditedMemberId: memberScope,
+          occurredAt: { gte: thirtyDaysAgo, lt: now },
+          cadenceStepKey: { not: null },
+          eventType: { in: [...EMAIL_CADENCE_METRIC_EVENT_TYPES] },
+        },
+        _sum: { quantity: true },
+      }),
     ]);
 
     const candidateSourceCounts = await options.database.prospectCandidateSource.groupBy({
@@ -392,6 +405,11 @@ export function createProspectingWorkspaceService(options: Readonly<{
         lastSourceObservedAt: latestSourceObservation._max.observedAt?.toISOString() ?? null,
         politiciansTouchedToday: touchedLeadIds.size, effectiveContactsToday: effectiveContactsToday.total, releasesToday, meetingsThirtyDays: meetingsThirtyDays.length,
         meetingsCreatedThirtyDays: meetingsCreatedThirtyDays._sum.quantity ?? 0,
+        emailCadence: summarizeEmailCadenceMetrics(emailCadenceFacts.map((fact) => ({
+          eventType: fact.eventType,
+          cadenceStepKey: fact.cadenceStepKey,
+          quantity: fact._sum.quantity ?? 0,
+        }))),
         dailyBySeller: dailySellerIds.map((memberId) => {
           const summary = summarizeProspectingTaskResults(dailyTaskResults.filter((row) => row.creditedMemberId === memberId).map((row) => ({ kind: row.taskKind ?? "", result: row.result, count: row._sum.quantity ?? 0 })));
           const metricCount = (eventType: string, results?: readonly string[]) => dailyActivityFacts

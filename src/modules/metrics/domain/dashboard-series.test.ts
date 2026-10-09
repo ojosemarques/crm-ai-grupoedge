@@ -20,7 +20,7 @@ function series(id: string, kind: DashboardTimeSeries["kind"] = "COUNT"): Dashbo
 function fact(input: Partial<IntegratedActivityFact> & Pick<IntegratedActivityFact, "id" | "eventType" | "occurredAt">): IntegratedActivityFact {
   return {
     sourceEntityType: "Task", leadId: "lead-1", creditedMemberId: "seller-1", performedByMemberId: "seller-1",
-    bookedByMemberId: null, taskKind: null, result: null, quantity: 1, valueCents: null, ...input,
+    bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, quantity: 1, valueCents: null, ...input,
   };
 }
 

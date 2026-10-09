@@ -80,6 +80,7 @@ export type IntegratedActivityFact = Readonly<{
   bookedByMemberId: string | null;
   taskKind: string | null;
   result: string | null;
+  cadenceStepKey: string | null;
   quantity: number;
   valueCents: string | null;
 }>;

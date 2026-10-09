@@ -11,7 +11,7 @@ const to = "2026-10-10T00:00:00.000Z";
 function fact(eventType: string, options: Partial<IntegratedActivityFact> = {}): IntegratedActivityFact {
   return { id: crypto.randomUUID(), eventType, sourceEntityType: "Task", occurredAt: from,
     leadId: "lead-1", creditedMemberId: memberId, performedByMemberId: null, bookedByMemberId: null, taskKind: null,
-    result: null, quantity: 1, valueCents: null, ...options };
+    result: null, cadenceStepKey: null, quantity: 1, valueCents: null, ...options };
 }
 function series(id: string): DashboardTimeSeries {
   return { id, label: id, kind: id === "revenue" ? "MONEY" : "COUNT", granularity: "DAY", aggregation: "SUM", formula: "anterior", drilldownId: `kpi.${id}`,
