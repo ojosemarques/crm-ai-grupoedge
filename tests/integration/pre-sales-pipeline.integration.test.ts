@@ -180,6 +180,49 @@ describe("pipeline de pré-vendas e transições", () => {
       .rejects.toBeInstanceOf(AccessDeniedError);
   });
 
+  it("localiza o lead por telefone principal ou telefone adicional com e sem máscara", async () => {
+    const lead = await createLead("CRM14 busca telefone");
+    const stored = await database.lead.findUniqueOrThrow({
+      where: { id: lead.leadId },
+      select: { contactId: true, normalizedPhone: true },
+    });
+    expect(stored.normalizedPhone).toBeTruthy();
+    expect(stored.contactId).toBeTruthy();
+
+    const primaryDigits = stored.normalizedPhone!.replace(/\D/g, "");
+    const primarySearch = `(${primaryDigits.slice(2, 4)}) ${primaryDigits.slice(4, 9)}-${primaryDigits.slice(9)}`;
+    const byPrimaryPhone = await pipelineService().getScreen(managerContext, { q: primarySearch });
+    expect(byPrimaryPhone.stages.flatMap((stage) => stage.leads).map((item) => item.id)).toContain(lead.leadId);
+
+    await database.contactPoint.create({
+      data: {
+        workspaceId,
+        contactId: stored.contactId!,
+        type: "PHONE",
+        originalValue: "(66) 3461-7350",
+        normalizedValue: "+556634617350",
+        countryCode: "55",
+        label: "Gabinete",
+        source: "MANUAL",
+        createdByActorId: systemContext.actorId,
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+
+    const byAdditionalPhone = await pipelineService().getScreen(managerContext, { q: "66 3461-7350" });
+    expect(byAdditionalPhone.stages.flatMap((stage) => stage.leads).map((item) => item.id)).toContain(lead.leadId);
+
+    const stage = byAdditionalPhone.stages.find((item) => item.leads.some((item) => item.id === lead.leadId));
+    expect(stage).toBeDefined();
+    await expect(pipelineService().getStagePage(managerContext, {
+      pipelineId: byAdditionalPhone.pipelineId,
+      q: "+55 (66) 3461-7350",
+      stageId: stage!.id,
+      offset: 0,
+      limit: 20,
+    })).resolves.toMatchObject({ leads: [expect.objectContaining({ id: lead.leadId })] });
+  });
+
   it("transiciona pelo serviço, fecha intervalos e registra timeline e auditoria", async () => {
     const lead = await createLead("CRM14 histórico");
     const initial = await state(lead.leadId);

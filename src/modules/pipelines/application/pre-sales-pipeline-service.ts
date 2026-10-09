@@ -196,6 +196,37 @@ function activeTaskWhere(workspaceId: string, leadId: string): Prisma.TaskWhereI
   };
 }
 
+function pipelineLeadSearchFilter(query: string): Prisma.LeadWhereInput {
+  if (!query) return {};
+  const phoneDigits = query.replace(/\D/g, "");
+  const phoneFilters: Prisma.LeadWhereInput[] = phoneDigits.length >= 4
+    ? [
+        { normalizedPhone: { contains: phoneDigits } },
+        {
+          contact: {
+            is: {
+              points: {
+                some: {
+                  type: { in: ["PHONE", "WHATSAPP"] },
+                  normalizedValue: { contains: phoneDigits },
+                  deletedAt: null,
+                },
+              },
+            },
+          },
+        },
+      ]
+    : [];
+  return {
+    OR: [
+      { fullName: { contains: query, mode: "insensitive" } },
+      { jobTitle: { contains: query, mode: "insensitive" } },
+      { organizationName: { contains: query, mode: "insensitive" } },
+      ...phoneFilters,
+    ],
+  };
+}
+
 const pipelineCardInclude = {
   owner: { select: { user: { select: { displayName: true } } } },
   queue: { select: { name: true } },
@@ -635,15 +666,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       : parsed.data.responsible.startsWith("queue:")
         ? { queueId: parsed.data.responsible.slice(6) }
         : {};
-    const searchFilter: Prisma.LeadWhereInput = parsed.data.q
-      ? {
-          OR: [
-            { fullName: { contains: parsed.data.q, mode: "insensitive" } },
-            { jobTitle: { contains: parsed.data.q, mode: "insensitive" } },
-            { organizationName: { contains: parsed.data.q, mode: "insensitive" } },
-          ],
-        }
-      : {};
+    const searchFilter = pipelineLeadSearchFilter(parsed.data.q);
     const priorityFilter: Prisma.LeadWhereInput = parsed.data.priority === "ALL"
       ? {}
       : { currentScore: { leadScore: { priorityBandCode: parsed.data.priority } } };
@@ -785,11 +808,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       : parsed.data.responsible.startsWith("queue:")
         ? { queueId: parsed.data.responsible.slice(6) }
         : {};
-    const searchFilter: Prisma.LeadWhereInput = parsed.data.q ? { OR: [
-      { fullName: { contains: parsed.data.q, mode: "insensitive" } },
-      { jobTitle: { contains: parsed.data.q, mode: "insensitive" } },
-      { organizationName: { contains: parsed.data.q, mode: "insensitive" } },
-    ] } : {};
+    const searchFilter = pipelineLeadSearchFilter(parsed.data.q);
     const priorityFilter: Prisma.LeadWhereInput = parsed.data.priority === "ALL" ? {} : { currentScore: { leadScore: { priorityBandCode: parsed.data.priority } } };
     const where: Prisma.LeadWhereInput = {
       workspaceId: context.workspaceId,
