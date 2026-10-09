@@ -340,6 +340,7 @@ export function OperationalHistoryWorkspace({
   const [score, setScore] = useState(initialScore);
   const [activeTab, setActiveTab] = useState<TabKey>("timeline");
   const [activityType, setActivityType] = useState("CALL_UNANSWERED");
+  const [taskKind, setTaskKind] = useState("FOLLOW_UP");
   const [quickActivityType, setQuickActivityType] = useState("CALL_UNANSWERED");
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
@@ -478,6 +479,7 @@ export function OperationalHistoryWorkspace({
     action: string,
     data: Record<string, unknown>,
     onSaved?: () => void,
+    successMessage = "Operação registrada com sucesso.",
   ) {
     setPending(true);
     setNotice(null);
@@ -490,7 +492,7 @@ export function OperationalHistoryWorkspace({
       await readResponse(response);
       onSaved?.();
       await refresh();
-      setNotice({ kind: "success", message: "Operação registrada com sucesso." });
+      setNotice({ kind: "success", message: successMessage });
       return true;
     } catch (error) {
       setNotice({
@@ -755,16 +757,30 @@ export function OperationalHistoryWorkspace({
     event.preventDefault();
     const element = event.currentTarget;
     const form = new FormData(element);
-    const saved = await mutate("CREATE_TASK", {
+    const kind = formText(form, "kind");
+    const task = {
       title: formText(form, "title"),
       ...(formText(form, "description")
         ? { description: formText(form, "description") }
         : {}),
-      kind: formText(form, "kind"),
+      kind,
       priority: formText(form, "priority"),
-      dueAt: isoDate(formText(form, "dueAt")),
-    });
-    if (saved) element.reset();
+      ...(kind === "MEETING"
+        ? {
+            closerId: formText(form, "closerId"),
+            startsAtLocal: formText(form, "dueAt"),
+            durationMinutes: Number(form.get("durationMinutes")),
+          }
+        : { dueAt: isoDate(formText(form, "dueAt")) }),
+    };
+    const saved = await mutate("CREATE_TASK", task, undefined, kind === "MEETING"
+      ? "Reunião criada na Agenda. O Google Agenda será sincronizado se o closer tiver uma conta conectada."
+      : "Tarefa criada com sucesso.");
+    if (saved) {
+      element.reset();
+      setTaskKind("FOLLOW_UP");
+      if (kind === "MEETING") router.refresh();
+    }
   }
 
   async function submitCompletion(event: FormEvent<HTMLFormElement>, taskId: string) {
@@ -1276,10 +1292,16 @@ export function OperationalHistoryWorkspace({
                 <form className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={submitTask}>
                   <label className="text-sm sm:col-span-2">Título<input className={inputClass} name="title" required /></label>
                   <label className="text-sm sm:col-span-2">Descrição<textarea className={textareaClass} name="description" /></label>
-                  <label className="text-sm">Tipo<select className={inputClass} defaultValue="FOLLOW_UP" name="kind"><option value="FOLLOW_UP">Retorno</option><option value="CALL">Ligação</option><option value="MESSAGE">Mensagem</option><option value="EMAIL">E-mail</option><option value="MEETING">Reunião</option><option value="GENERAL">Geral</option></select></label>
+                  <label className="text-sm">Tipo<select className={inputClass} name="kind" onChange={(event) => setTaskKind(event.target.value)} value={taskKind}><option value="FOLLOW_UP">Retorno</option><option value="CALL">Ligação</option><option value="MESSAGE">Mensagem</option><option value="EMAIL">E-mail</option><option value="MEETING">Reunião</option><option value="GENERAL">Geral</option></select></label>
                   <label className="text-sm">Prioridade<select className={inputClass} defaultValue="MEDIUM" name="priority"><option value="LOW">Baixa</option><option value="MEDIUM">Média</option><option value="HIGH">Alta</option><option value="URGENT">Urgente</option></select></label>
-                  <label className="text-sm sm:col-span-2">Prazo<input className={inputClass} name="dueAt" required type="datetime-local" /></label>
-                  <Button className="sm:col-span-2" disabled={pending} type="submit">{pending ? "Salvando…" : "Criar tarefa"}</Button>
+                  <label className="text-sm sm:col-span-2">{taskKind === "MEETING" ? "Data e horário da reunião" : "Prazo"}<input className={inputClass} name="dueAt" required type="datetime-local" /></label>
+                  {taskKind === "MEETING" ? <>
+                    <label className="text-sm">Closer<select className={inputClass} defaultValue={initialMeetings.closerOptions.find((closer) => closer.id === operations.lead.ownerMemberId)?.id ?? (initialMeetings.closerOptions.length === 1 ? initialMeetings.closerOptions[0]!.id : "")} name="closerId" required><option value="">Selecione o responsável</option>{initialMeetings.closerOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
+                    <label className="text-sm">Duração<select className={inputClass} defaultValue={initialMeetings.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
+                    <p className="text-sm text-muted-foreground sm:col-span-2">A reunião será criada na Agenda com tarefa vinculada. Cada closer precisa <Link className="underline" href="/integracoes/calendario">conectar a própria conta Google</Link> para sincronizá-la.</p>
+                    {!initialMeetings.canSchedule ? <p className="text-sm text-destructive sm:col-span-2">Este lead já tem reunião ativa, não há closer disponível ou seu perfil não pode agendar reuniões.</p> : null}
+                  </> : null}
+                  <Button className="sm:col-span-2" disabled={pending || (taskKind === "MEETING" && !initialMeetings.canSchedule)} type="submit">{pending ? "Salvando…" : taskKind === "MEETING" ? "Criar tarefa e agendar reunião" : "Criar tarefa"}</Button>
                 </form>
               </details>
             ) : null}

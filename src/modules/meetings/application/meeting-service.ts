@@ -97,6 +97,7 @@ const scheduleSchema = z.object({
   startsAtLocal: localDateTimeSchema,
   durationMinutes: z.union([z.literal(30), z.literal(40)]),
   observation: z.string().trim().max(5_000).nullable().optional(),
+  taskPriority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
 }).strict();
 
 const actionSchema = z.discriminatedUnion("action", [
@@ -709,7 +710,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           description: parsed.data.observation || null,
           kind: "MEETING",
           status: "OPEN",
-          priority: "HIGH",
+          priority: parsed.data.taskPriority ?? "HIGH",
           dueAt: startsAt,
           createdByActorId: context.actorId,
           updatedByActorId: context.actorId,

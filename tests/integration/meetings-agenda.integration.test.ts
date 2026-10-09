@@ -139,6 +139,7 @@ async function schedule(
   context: AuthenticatedContext,
   startsAtLocal: string,
   closerId = closer1Id,
+  taskPriority?: "LOW" | "MEDIUM" | "HIGH" | "URGENT",
 ) {
   return meetings().schedule(context, {
     leadId,
@@ -147,6 +148,7 @@ async function schedule(
     startsAtLocal,
     durationMinutes: 30,
     observation: "Reunião interna de demonstração.",
+    ...(taskPriority ? { taskPriority } : {}),
   });
 }
 
@@ -213,7 +215,7 @@ describe("agenda interna e reuniões", () => {
     expect(agenda.canFilterCloser).toBe(false);
     expect(agenda.closerOptions).toHaveLength(0);
     expect(agenda.schedulingCloserOptions).toHaveLength(2);
-    const result = await schedule(lead.leadId, lead.sdrContext, "2035-02-11T09:30", closer2Id);
+    const result = await schedule(lead.leadId, lead.sdrContext, "2035-02-11T09:30", closer2Id, "MEDIUM");
     const [meeting, task, storedLead, stage, history, activities, audit] = await Promise.all([
       database.meeting.findUniqueOrThrow({ where: { id: result.meetingId } }),
       database.task.findFirstOrThrow({ where: { workspaceId, meetingId: result.meetingId } }),
@@ -229,7 +231,11 @@ describe("agenda interna e reuniões", () => {
       timeZone: "America/Sao_Paulo",
       status: "SCHEDULED",
     });
-    expect(task).toMatchObject({ kind: "MEETING", status: "OPEN", assigneeMemberId: closer2Id });
+    expect(task).toMatchObject({ kind: "MEETING", status: "OPEN", assigneeMemberId: closer2Id, priority: "MEDIUM" });
+    const updatedAgenda = await meetings().getAgenda(managerContext, { view: "day", date: "2035-02-11" });
+    expect(updatedAgenda.meetings).toContainEqual(expect.objectContaining({ id: result.meetingId, leadId: lead.leadId }));
+    const updatedLeadMeetings = await meetings().getLeadMeetings(lead.sdrContext, { leadId: lead.leadId });
+    expect(updatedLeadMeetings.meetings).toContainEqual(expect.objectContaining({ id: result.meetingId }));
     expect(storedLead).toMatchObject({ status: "QUALIFIED" });
     expect(storedLead.nextActionTaskId).not.toBeNull();
     expect(stage.transitionOrigin).toBe("MEETING");
@@ -533,5 +539,31 @@ describe("agenda interna e reuniões", () => {
     await expect(schedule(lead.leadId, adminContext, "2035-02-21T10:00", member.id)).resolves.toMatchObject({
       meetingId: expect.any(String),
     });
+  });
+
+  it("enfileira sincronização Google ao agendar para um closer conectado", async () => {
+    const lead = await qualifyLead("CRM15 Google conectado");
+    await database.googleCalendarAccount.create({
+      data: {
+        workspaceId,
+        memberId: closer1Id,
+        googleSubject: `test-${randomUUID()}`,
+        googleEmail: "closer@example.test",
+        accessTokenCiphertext: "token-de-teste",
+        refreshTokenCiphertext: "refresh-de-teste",
+        tokenExpiresAt: new Date("2035-03-01T00:00:00.000Z"),
+        grantedScopes: ["https://www.googleapis.com/auth/calendar.events"],
+        status: "CONNECTED",
+        createdByActorId: managerContext.actorId,
+        updatedByActorId: managerContext.actorId,
+      },
+    });
+    const result = await schedule(lead.leadId, managerContext, "2035-02-22T10:00");
+    const [link, job] = await Promise.all([
+      database.googleCalendarEventLink.findFirst({ where: { workspaceId, meetingId: result.meetingId } }),
+      database.job.findFirst({ where: { workspaceId, idempotencyKey: `google-calendar:${result.meetingId}:r1` } }),
+    ]);
+    expect(link).toMatchObject({ memberId: closer1Id, syncState: "PENDING_PUSH" });
+    expect(job).toMatchObject({ type: "GOOGLE_CALENDAR_SYNC", status: "PENDING" });
   });
 });
