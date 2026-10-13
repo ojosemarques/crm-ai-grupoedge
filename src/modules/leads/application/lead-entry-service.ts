@@ -12,11 +12,13 @@ import {
   manualLeadEntryRequestSchema,
   simulatorRequestSchema,
 } from "@/modules/leads/domain/lead-entry-contracts";
+import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 
 type AuthorizationPort = Readonly<{
+  authorize: ReturnType<typeof getAuthorizationService>["authorize"];
   assertAuthorized: ReturnType<typeof getAuthorizationService>["assertAuthorized"];
 }>;
 
@@ -64,10 +66,6 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
       },
       select: { id: true, teamId: true },
     });
-    if (!queue) {
-      return null;
-    }
-
     await options.authorization.assertAuthorized(
       context,
       PermissionKeys.LEADS_WRITE,
@@ -84,7 +82,40 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
 
   async function getOptions(context: AuthenticatedContext) {
     await authorize(context);
-    const [workspace, sources, campaigns, priorityBands] = await Promise.all([
+    const assignmentDecision = await options.authorization.authorize(
+      context,
+      PermissionKeys.LEADS_ASSIGN,
+      {
+        workspaceId: context.workspaceId,
+        resourceType: "WorkspaceMember",
+        resourceId: context.memberId,
+        memberId: context.memberId,
+      },
+    );
+    const teamIds = assignmentDecision.allowed && assignmentDecision.scope === "TEAM"
+      ? (await options.database.teamMember.findMany({
+          where: {
+            workspaceId: context.workspaceId,
+            workspaceMemberId: context.memberId,
+            deletedAt: null,
+            team: { deletedAt: null },
+          },
+          select: { teamId: true },
+        })).map(({ teamId }) => teamId)
+      : undefined;
+    const sellerWhere = assignmentDecision.allowed
+      ? commercialMemberWhere({
+          workspaceId: context.workspaceId,
+          functions: ["SDR", "CLOSER"],
+          requireLeadAvailability: true,
+          ...(assignmentDecision.scope === "OWN"
+            ? { memberId: context.memberId }
+            : assignmentDecision.scope === "TEAM"
+              ? { teamIds: teamIds ?? [] }
+              : {}),
+        })
+      : null;
+    const [workspace, sources, campaigns, priorityBands, pipelines, sellers] = await Promise.all([
       options.database.workspace.findFirstOrThrow({
         where: { id: context.workspaceId, deletedAt: null },
         select: { timeZone: true },
@@ -130,6 +161,23 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
           },
         },
       }),
+      options.database.pipeline.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          entityType: "LEAD",
+          deletedAt: null,
+          stages: { some: { type: "OPEN", deletedAt: null } },
+        },
+        orderBy: [{ isDefault: "desc" }, { name: "asc" }, { id: "asc" }],
+        select: { id: true, name: true, isDefault: true },
+      }),
+      sellerWhere
+        ? options.database.workspaceMember.findMany({
+            where: sellerWhere,
+            orderBy: [{ user: { displayName: "asc" } }, { id: "asc" }],
+            select: { id: true, user: { select: { displayName: true } } },
+          })
+        : Promise.resolve([]),
     ]);
 
     return {
@@ -148,6 +196,8 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
             })),
         })),
       priorityBands,
+      pipelines,
+      sellers: sellers.map(({ id, user }) => ({ id, name: user.displayName })),
     };
   }
 
@@ -162,12 +212,27 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
     }
 
     try {
+      if (parsed.data.ownerMemberId) {
+        await options.authorization.assertAuthorized(
+          context,
+          PermissionKeys.LEADS_ASSIGN,
+          {
+            workspaceId: context.workspaceId,
+            resourceType: "WorkspaceMember",
+            resourceId: parsed.data.ownerMemberId,
+            memberId: parsed.data.ownerMemberId,
+          },
+        );
+      }
       return await options.intake.intake(
         toLeadIntakeInput(parsed.data.lead, {
           channel: "MANUAL",
           idempotencyKey: `manual:${parsed.data.idempotencyKey}`,
           rawPayload: payload as Record<string, unknown>,
           ...(parsed.data.pipelineId ? { pipelineId: parsed.data.pipelineId } : {}),
+          ...(parsed.data.ownerMemberId
+            ? { ownerMemberId: parsed.data.ownerMemberId }
+            : {}),
         }),
         context,
       );

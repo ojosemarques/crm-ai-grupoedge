@@ -12,6 +12,7 @@ export function toLeadIntakeInput(
     rawPayload: Record<string, unknown>;
     formIdentifier?: string;
     pipelineId?: string;
+    ownerMemberId?: string;
   }>,
 ): LeadIntakeInput {
   const { budgetBrl, ...leadFields } = fields;
@@ -22,6 +23,7 @@ export function toLeadIntakeInput(
     idempotencyKey: options.idempotencyKey,
     formIdentifier: options.formIdentifier,
     pipelineId: options.pipelineId,
+    requestedOwnerMemberId: options.ownerMemberId,
     budgetCents: parseBrlToCents(budgetBrl),
     rawPayload: options.rawPayload,
   } as LeadIntakeInput;

@@ -144,7 +144,7 @@ describe("canais locais de entrada da CRM-07", () => {
     expect(invalid).toMatchObject({ outcome: "REJECTED", code: "INVALID_PAYLOAD" });
   });
 
-  it("cadastra o lead no pipeline selecionado pelo funil", async () => {
+  it("cadastra o lead no pipeline e com o vendedor selecionados", async () => {
     const pipeline = await database.pipeline.create({
       data: {
         workspaceId: managerContext.workspaceId,
@@ -169,7 +169,12 @@ describe("canais locais de entrada da CRM-07", () => {
     });
     const intake = createLeadIntakeService({ database, authorization, now: () => fixedNow });
     const service = createLeadEntryService({ database, authorization, intake });
-    const payload = { ...manualPayload(uniquePhone("pipeline-selected")), pipelineId: pipeline.id };
+    const sellerContext = await contextFor(DEMO_USERS[2].email);
+    const payload = {
+      ...manualPayload(uniquePhone("pipeline-selected")),
+      pipelineId: pipeline.id,
+      ownerMemberId: sellerContext.memberId,
+    };
 
     const created = await service.createManual(payload, managerContext);
     if (created.outcome === "REJECTED") throw new Error("Entrada deveria ser aceita.");
@@ -177,6 +182,12 @@ describe("canais locais de entrada da CRM-07", () => {
 
     expect(lead.pipelineId).toBe(pipeline.id);
     expect(lead.currentStageId).toBe(stage.id);
+    expect(lead.ownerMemberId).toBe(sellerContext.memberId);
+    expect(await database.leadAssignment.findFirstOrThrow({
+      where: { workspaceId: managerContext.workspaceId, leadId: lead.id },
+      orderBy: { assignedAt: "desc" },
+      select: { type: true, toMemberId: true },
+    })).toEqual({ type: "MANUAL", toMemberId: sellerContext.memberId });
 
     const invalidPipeline = await service.createManual(
       { ...manualPayload(uniquePhone("pipeline-invalid")), pipelineId: randomUUID() },
@@ -186,6 +197,16 @@ describe("canais locais de entrada da CRM-07", () => {
       outcome: "REJECTED",
       code: "CONFIGURATION_UNAVAILABLE",
     });
+
+    await expect(
+      service.createManual(
+        {
+          ...manualPayload(uniquePhone("seller-outside-scope")),
+          ownerMemberId: viewerContext.memberId,
+        },
+        managerContext,
+      ),
+    ).rejects.toBeInstanceOf(AccessDeniedError);
   });
 
   it("cadastra manualmente quando a fila geral ainda não está configurada", async () => {
@@ -512,6 +533,12 @@ describe("canais locais de entrada da CRM-07", () => {
 
     expect(options.timeZone).toBe("America/Sao_Paulo");
     expect(options.sources.length).toBeGreaterThan(0);
+    expect(options.pipelines.length).toBeGreaterThan(0);
+    expect(options.pipelines[0]?.isDefault).toBe(true);
+    expect(options.sellers).toContainEqual({
+      id: (await contextFor(DEMO_USERS[2].email)).memberId,
+      name: DEMO_USERS[2].displayName,
+    });
     expect(options.priorityBands.map((band) => band.code)).toEqual(["P1", "P2", "P3"]);
     expect(options.priorityBands.every((band) => band.slaPolicy.firstResponseMinutes === 0)).toBe(true);
   });

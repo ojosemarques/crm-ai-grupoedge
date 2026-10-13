@@ -1,5 +1,6 @@
 import type {
   ContactPreference,
+  LeadAssignmentType,
   LeadDivergenceField,
   LeadIntakeOutcome,
   PriorityBandCode,
@@ -27,6 +28,7 @@ import {
 } from "@/modules/qualification/application/lead-scoring-service";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
+import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { recordLegacySignalInTransaction } from "@/modules/privacy/application/privacy-foundation";
 import { marketingEvidenceInputSchema } from "@/modules/marketing/domain/marketing-contracts";
 import { recordLeadIntakeAttributionInTransaction } from "@/modules/marketing/application/marketing-attribution-service";
@@ -77,6 +79,7 @@ const leadIntakeSchema = z
     budgetCents: z.number().int().nonnegative().safe().optional(),
     sourceKey: z.string().trim().min(1).max(120),
     pipelineId: z.string().uuid().optional(),
+    requestedOwnerMemberId: z.string().uuid().optional(),
     campaignExternalRef: optionalText(200),
     creativeExternalRef: optionalText(200),
     consent: z.boolean().optional(),
@@ -110,6 +113,9 @@ const leadIntakeSchema = z
     }
     if (!value.phone && value.channel === "OPEN_DOT" && (typeof value.rawPayload.instagram !== "string" || value.rawPayload.instagram.trim().length < 2)) {
       context.addIssue({ code: "custom", path: ["rawPayload", "instagram"], message: "Lead do Open-Dot sem telefone exige Instagram validado." });
+    }
+    if (value.requestedOwnerMemberId && value.channel !== "MANUAL") {
+      context.addIssue({ code: "custom", path: ["requestedOwnerMemberId"], message: "A escolha explícita de vendedor só é permitida no cadastro manual." });
     }
   });
 
@@ -185,6 +191,7 @@ type IntakeReferences = Readonly<{
   queue: Readonly<{ id: string; teamId: string | null }>;
   pipeline: Readonly<{ id: string }>;
   stage: Readonly<{ id: string }>;
+  requestedOwner: Readonly<{ id: string }> | null;
   priorityBand: Readonly<{
     id: string;
     code: PriorityBandCode;
@@ -508,6 +515,25 @@ async function findReferences(
     );
   }
 
+  const requestedOwner = input.requestedOwnerMemberId
+    ? await transaction.workspaceMember.findFirst({
+        where: commercialMemberWhere({
+          workspaceId,
+          memberId: input.requestedOwnerMemberId,
+          functions: ["SDR", "CLOSER"],
+          requireLeadAvailability: true,
+        }),
+        select: { id: true },
+      })
+    : null;
+  if (input.requestedOwnerMemberId && !requestedOwner) {
+    return rejected(
+      "REFERENCE_NOT_FOUND",
+      "requestedOwnerMemberId",
+      "O vendedor selecionado está inativo, pausado ou fora da operação comercial.",
+    );
+  }
+
   const campaign = input.campaignExternalRef
     ? await transaction.acquisitionCampaign.findFirst({
         where: {
@@ -572,7 +598,16 @@ async function findReferences(
     }
   }
 
-  return { source, campaign, creative, queue, pipeline, stage, priorityBand };
+  return {
+    source,
+    campaign,
+    creative,
+    queue,
+    pipeline,
+    stage,
+    requestedOwner,
+    priorityBand,
+  };
 }
 
 function addDivergence(
@@ -1000,13 +1035,24 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       await options.afterSubmissionPersisted?.();
 
       const submittedAt = parsed.submittedAt ?? parsed.receivedAt;
-      const operationalOwner = await chooseRoundRobinOwner(transaction, {
-        workspaceId: context.workspaceId,
-        queueId: references.queue.id,
-        teamId: references.queue.teamId,
-        actorId: context.actorId,
-        routedAt: parsed.receivedAt,
-      });
+      const operationalOwner: OperationalOwner = references.requestedOwner
+        ? {
+            type: "MEMBER",
+            memberId: references.requestedOwner.id,
+            queueId: null,
+          }
+        : await chooseRoundRobinOwner(transaction, {
+            workspaceId: context.workspaceId,
+            queueId: references.queue.id,
+            teamId: references.queue.teamId,
+            actorId: context.actorId,
+            routedAt: parsed.receivedAt,
+          });
+      const assignmentType: LeadAssignmentType = references.requestedOwner
+        ? "MANUAL"
+        : operationalOwner.type === "MEMBER"
+          ? "AUTOMATIC_ROUND_ROBIN"
+          : "GENERAL_QUEUE_FALLBACK";
 
       if (!existingLead) {
         const slaDueAt = parsed.receivedAt;
@@ -1138,6 +1184,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
           priorityBandId: references.priorityBand.id,
           priority: references.priorityBand.leadPriority,
           owner: operationalOwner,
+          assignmentType,
           actorId: context.actorId,
           receivedAt: parsed.receivedAt,
           doNotContact: contactPreference === "DO_NOT_CONTACT",
@@ -1491,6 +1538,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         priorityBandId: references.priorityBand.id,
         priority: references.priorityBand.leadPriority,
         owner: operationalOwner,
+        assignmentType,
         previousOwner,
         actorId: context.actorId,
         receivedAt: parsed.receivedAt,

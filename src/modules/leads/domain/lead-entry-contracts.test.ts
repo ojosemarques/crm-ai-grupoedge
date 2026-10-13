@@ -64,11 +64,13 @@ describe("contratos dos canais de entrada", () => {
     expect(parsed.lead.sourceKey).toBe("manual");
   });
 
-  it("aceita o pipeline selecionado no cadastro manual", () => {
+  it("aceita pipeline e vendedor selecionados no cadastro manual", () => {
     const pipelineId = "11111111-1111-4111-8111-111111111111";
+    const ownerMemberId = "22222222-2222-4222-8222-222222222222";
     const parsed = manualLeadEntryRequestSchema.parse({
       idempotencyKey: "manual-com-pipeline",
       pipelineId,
+      ownerMemberId,
       lead: {
         fullName: "Pessoa Fictícia",
         phone: "11987654321",
@@ -77,6 +79,7 @@ describe("contratos dos canais de entrada", () => {
     });
 
     expect(parsed.pipelineId).toBe(pipelineId);
+    expect(parsed.ownerMemberId).toBe(ownerMemberId);
   });
 
   it("reporta orçamento inválido como erro de campo do canal", () => {

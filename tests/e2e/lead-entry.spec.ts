@@ -7,6 +7,7 @@ import {
   DEMO_SEED_PASSWORD,
   DEMO_USERS,
 } from "@/modules/settings/application/demo-seed-service";
+import { getDatabaseClient } from "@/shared/core/database/client";
 
 async function login(page: import("@playwright/test").Page, email: string) {
   await page.goto("/login");
@@ -26,10 +27,28 @@ function uniquePhone(label: string): string {
 
 test("cadastro manual usa normalização, distribuição e SLA persistidos", async ({ page }) => {
   await login(page, DEMO_USERS[1].email);
-  await page.getByRole("link", { name: "Entrada de leads", exact: true }).click();
+  await page.goto("/leads/entrada");
   await expect(page.getByRole("heading", { name: "Entrada de leads" })).toBeVisible();
 
   const phone = uniquePhone("e2e-manual");
+  const pipelineSelect = page.getByRole("combobox", { name: "Pipeline", exact: true });
+  const sellerSelect = page.getByRole("combobox", { name: "Vendedor responsável", exact: true });
+  await expect(pipelineSelect).toBeVisible();
+  await expect(sellerSelect).toBeVisible();
+  const pipelineOptions = await pipelineSelect.evaluate((select) =>
+    Array.from((select as HTMLSelectElement).options, ({ value }) => value),
+  );
+  const sellerOptions = await sellerSelect.evaluate((select) =>
+    Array.from((select as HTMLSelectElement).options, ({ value }) => value),
+  );
+  expect(pipelineOptions.length).toBeGreaterThan(1);
+  expect(sellerOptions.length).toBeGreaterThan(1);
+  const pipelineId = pipelineOptions.at(-1);
+  const ownerMemberId = sellerOptions.at(-1);
+  expect(pipelineId).toBeTruthy();
+  expect(ownerMemberId).toBeTruthy();
+  await pipelineSelect.selectOption(pipelineId!);
+  await sellerSelect.selectOption(ownerMemberId!);
   await page.getByLabel("Nome", { exact: true }).fill("Lead E2E fictício");
   await page.getByLabel("Telefone", { exact: true }).fill(phone);
   await page.getByLabel("Dor ou interesse").fill("Validar o fluxo completo de entrada.");
@@ -41,6 +60,12 @@ test("cadastro manual usa normalização, distribuição e SLA persistidos", asy
   await expect(result).toContainText(`"normalizedPhone": "${phone}"`);
   await expect(result).toContainText('"slaCycleId"');
   await expect(result).toContainText('"taskId"');
+
+  const lead = await getDatabaseClient().lead.findFirstOrThrow({
+    where: { normalizedPhone: phone, deletedAt: null },
+    select: { pipelineId: true, ownerMemberId: true },
+  });
+  expect(lead).toMatchObject({ pipelineId, ownerMemberId });
 });
 
 test("erro de validação manual mantém os valores preenchidos", async ({ page }) => {

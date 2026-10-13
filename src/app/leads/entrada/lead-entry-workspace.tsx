@@ -29,6 +29,12 @@ type EntryOptions = Readonly<{
       attentionMaxSeconds: number;
     }>;
   }>[];
+  pipelines: readonly Readonly<{
+    id: string;
+    name: string;
+    isDefault: boolean;
+  }>[];
+  sellers: readonly Readonly<{ id: string; name: string }>[];
 }>;
 
 type ApiError = { error?: { message?: string }; result?: { issues?: Array<{ message: string }> } };
@@ -220,7 +226,12 @@ function ManualEntry({ options }: { options: EntryOptions }) {
       const response = await fetch("/api/leads/manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idempotencyKey, lead: leadFromForm(form) }),
+        body: JSON.stringify({
+          idempotencyKey,
+          pipelineId: formValue(form, "pipelineId"),
+          ownerMemberId: formValue(form, "ownerMemberId"),
+          lead: leadFromForm(form),
+        }),
       });
       const body = await readResponse(response);
       setResult({ kind: "success", title: "Entrada processada", body: body.result });
@@ -237,6 +248,28 @@ function ManualEntry({ options }: { options: EntryOptions }) {
     <Surface className="p-5">
       <SectionHeader description="Erros não limpam o formulário. Um novo envio bem-sucedido recebe uma nova chave idempotente." eyebrow="Entrada direta" title="Cadastro manual" />
       <form className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3" onSubmit={submit}>
+        <label className="text-sm font-medium">
+          Pipeline
+          <select
+            className={inputClass}
+            defaultValue={options.pipelines.find((pipeline) => pipeline.isDefault)?.id ?? options.pipelines[0]?.id ?? ""}
+            name="pipelineId"
+            required
+          >
+            {options.pipelines.map((pipeline) => (
+              <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-sm font-medium">
+          Vendedor responsável
+          <select className={inputClass} defaultValue="" name="ownerMemberId">
+            <option value="">Distribuição automática</option>
+            {options.sellers.map((seller) => (
+              <option key={seller.id} value={seller.id}>{seller.name}</option>
+            ))}
+          </select>
+        </label>
         <label className="text-sm font-medium">Nome<input className={inputClass} name="fullName" required /></label>
         <label className="text-sm font-medium">Telefone<input className={inputClass} name="phone" placeholder="(11) 98765-4321" required /></label>
         <label className="text-sm font-medium">E-mail<input className={inputClass} name="email" type="email" /></label>
@@ -259,7 +292,7 @@ function ManualEntry({ options }: { options: EntryOptions }) {
           </select>
         </label>
         <label className="flex items-center gap-2 text-sm"><input name="doNotContact" type="checkbox" /> Não contatar</label>
-        <div className="md:col-span-2 xl:col-span-3"><Button disabled={pending} type="submit">{pending ? "Processando…" : "Cadastrar lead"}</Button></div>
+        <div className="md:col-span-2 xl:col-span-3"><Button disabled={pending || options.pipelines.length === 0} type="submit">{pending ? "Processando…" : "Cadastrar lead"}</Button></div>
       </form>
       <ResultPanel state={result} />
     </Surface>

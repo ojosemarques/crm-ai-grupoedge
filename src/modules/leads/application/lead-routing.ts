@@ -1,4 +1,8 @@
-import type { LeadPriority, Prisma } from "@/generated/prisma/client";
+import type {
+  LeadAssignmentType,
+  LeadPriority,
+  Prisma,
+} from "@/generated/prisma/client";
 import { projectLeadOwnership } from "@/modules/lifecycle/application/lifecycle-projection-writer";
 
 export type OperationalOwner = Readonly<
@@ -21,6 +25,7 @@ type InitialArtifactsInput = Readonly<{
   priorityBandId: string;
   priority: LeadPriority;
   owner: OperationalOwner;
+  assignmentType: LeadAssignmentType;
   previousOwner?: OperationalOwner | null;
   actorId: string;
   receivedAt: Date;
@@ -148,10 +153,7 @@ export async function createInitialLeadOperations(
   transaction: Prisma.TransactionClient,
   input: InitialArtifactsInput,
 ): Promise<Readonly<{ slaCycleId: string; taskId: string }>> {
-  const assignmentType =
-    input.owner.type === "MEMBER"
-      ? "AUTOMATIC_ROUND_ROBIN"
-      : "GENERAL_QUEUE_FALLBACK";
+  const isManualAssignment = input.assignmentType === "MANUAL";
 
   const assignment = await transaction.leadAssignment.create({
     data: {
@@ -161,9 +163,11 @@ export async function createInitialLeadOperations(
       fromQueueId: input.previousOwner?.queueId ?? null,
       toMemberId: input.owner.memberId,
       toQueueId: input.owner.queueId,
-      type: assignmentType,
+      type: input.assignmentType,
       reason:
-        input.owner.type === "MEMBER"
+        isManualAssignment
+          ? "Vendedor escolhido no cadastro manual do lead."
+          : input.owner.type === "MEMBER"
           ? "Distribuição automática por round-robin."
           : "Nenhum SDR ativo e disponível no momento da entrada.",
       assignedAt: input.receivedAt,
@@ -276,11 +280,15 @@ export async function createInitialLeadOperations(
       direction: "INTERNAL",
       result: "INFORMATION",
       subject:
-        input.owner.type === "MEMBER"
+        isManualAssignment
+          ? "Lead atribuído no cadastro manual"
+          : input.owner.type === "MEMBER"
           ? "Lead atribuído por round-robin"
           : "Lead enviado à Fila Geral",
       description:
-        input.owner.type === "MEMBER"
+        isManualAssignment
+          ? "Responsável escolhido explicitamente na entrada."
+          : input.owner.type === "MEMBER"
           ? "Responsável definido automaticamente na entrada."
           : "Nenhum SDR ativo e disponível no momento da entrada.",
       occurredAt: input.receivedAt,
@@ -356,7 +364,9 @@ export async function createInitialLeadOperations(
       workspaceId: input.workspaceId,
       actorId: input.actorId,
       action:
-        input.owner.type === "MEMBER"
+        isManualAssignment
+          ? "lead.assignment.manual"
+          : input.owner.type === "MEMBER"
           ? "lead.assignment.round_robin"
           : "lead.assignment.general_queue",
       entityType: "Lead",
@@ -370,7 +380,7 @@ export async function createInitialLeadOperations(
         taskId: task.id,
         nextActionTaskId: nextTask.id,
       },
-      metadata: { assignmentType },
+      metadata: { assignmentType: input.assignmentType },
     },
   });
 
