@@ -325,7 +325,6 @@ export function PreSalesPipelineWorkspace({
       setSelectedLeadState(null);
       setSelectedLeadOperations(null);
       setRequestedStageId("");
-      startRefresh(() => router.refresh());
     } catch (error) {
       setStages(previousStages);
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." });

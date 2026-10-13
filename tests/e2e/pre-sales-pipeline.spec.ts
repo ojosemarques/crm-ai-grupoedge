@@ -268,6 +268,48 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
   await expect(page.getByRole("link", { name: "Abrir Indicadores", exact: true })).toHaveAttribute("href", "/dashboard?preset=MONTH");
 });
 
+test("preserva os cards carregados ao mover um lead na Prospecção Ativa", async ({ page }) => {
+  await login(page, DEMO_USERS[1].email);
+  await page.goto("/email-agente?view=pipeline");
+
+  const pipelineId = await page.locator('input[name="pipelineId"]').inputValue();
+  const prefix = `Paginação pipeline ${randomUUID().slice(0, 8)}`;
+  const leads = Array.from({ length: 14 }, (_, index) => ({
+    name: `${prefix} ${String(index + 1).padStart(2, "0")}`,
+    phone: uniquePhone(`${prefix}:${index}`),
+  }));
+  await Promise.all(leads.map(async (lead) => {
+    const response = await page.request.post("/api/leads/manual", {
+      data: {
+        idempotencyKey: randomUUID(),
+        pipelineId,
+        lead: {
+          fullName: lead.name,
+          phone: lead.phone,
+          priorityBandCode: "P3",
+        },
+      },
+      headers: { Origin: new URL(page.url()).origin },
+    });
+    expect(response.ok()).toBe(true);
+  }));
+
+  await page.goto(`/email-agente?view=pipeline&q=${encodeURIComponent(prefix)}`);
+  const source = page.getByRole("region", { name: "Etapa Novo lead" });
+  await expect(source.locator("article")).toHaveCount(12);
+  await source.getByRole("button", { name: "Carregar mais (12 de 14)" }).click();
+  await expect(source.locator("article")).toHaveCount(14);
+
+  await source.getByRole("button", { name: `Alterar etapa de ${leads[0]!.name}` }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Etapa de destino").selectOption({ label: "Abordagem inicial" });
+  await dialog.getByRole("button", { name: "Confirmar transição" }).click();
+  await expect(page.getByRole("status")).toContainText(`${leads[0]!.name} foi movido para Abordagem inicial.`);
+  await page.waitForLoadState("networkidle");
+
+  await expect(source.locator("article")).toHaveCount(13);
+});
+
 test("mantém o pipeline somente leitura para o visualizador", async ({ page }) => {
   await login(page, DEMO_USERS.at(-1)!.email);
   await page.goto("/pipeline");
