@@ -106,6 +106,23 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await expect(page.getByLabel("Etapa").getByRole("option", { name: "Novo (1)" })).toHaveCount(1);
 
   const dragHandle = page.getByRole("button", { name: `Arrastar ${leadName}` });
+  const board = page.getByRole("region", { name: "Quadro do pipeline" });
+  await expect.poll(() => board.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  const boardBox = await board.boundingBox();
+  if (!boardBox) throw new Error("O quadro do pipeline não possui dimensões visíveis.");
+  const edgeDataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  await dragHandle.dispatchEvent("dragstart", { dataTransfer: edgeDataTransfer });
+  for (let index = 0; index < 4; index += 1) {
+    await board.dispatchEvent("dragover", {
+      clientX: boardBox.x + boardBox.width - 2,
+      clientY: boardBox.y + boardBox.height / 2,
+      dataTransfer: edgeDataTransfer,
+    });
+  }
+  await expect.poll(() => board.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  await dragHandle.dispatchEvent("dragend", { dataTransfer: edgeDataTransfer });
+  await board.evaluate((element) => { element.scrollLeft = 0; });
+
   const destination = page.getByRole("region", { name: "Etapa Tentando contato" });
   const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
   await dragHandle.dispatchEvent("dragstart", { dataTransfer });

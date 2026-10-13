@@ -60,6 +60,8 @@ async function fetchLeadEntryOptions(): Promise<LeadEntryOptions> {
 }
 
 const quickInputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring";
+const boardEdgeScrollZone = 80;
+const boardEdgeScrollStep = 32;
 
 function optionalFormValue(form: FormData, name: string): string | undefined {
   const value = String(form.get(name) ?? "").trim();
@@ -357,6 +359,17 @@ export function PreSalesPipelineWorkspace({
     prefetchLeadState(lead);
   }
 
+  function autoScrollBoard(event: React.DragEvent<HTMLElement>) {
+    const board = event.currentTarget;
+    const bounds = board.getBoundingClientRect();
+
+    if (event.clientX <= bounds.left + boardEdgeScrollZone) {
+      board.scrollLeft -= boardEdgeScrollStep;
+    } else if (event.clientX >= bounds.right - boardEdgeScrollZone) {
+      board.scrollLeft += boardEdgeScrollStep;
+    }
+  }
+
   async function loadLeadState(lead: LeadPipelineCard): Promise<LeadPipelineState | null> {
     setPending(true);
     setNotice(null);
@@ -468,7 +481,7 @@ export function PreSalesPipelineWorkspace({
       {notice ? <p className="feedback-banner rounded-md border p-3 text-sm" data-tone={notice.kind === "error" ? "danger" : "success"} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
 
       {view === "board" ? (
-        <section aria-label="Quadro do pipeline" className={styles.board}>
+        <section aria-label="Quadro do pipeline" className={styles.board} data-dragging={draggedLeadId ? true : undefined} onDragOver={autoScrollBoard}>
           {visibleStages.map((stage) => (
             <section
               aria-label={`Etapa ${stage.name}`}
