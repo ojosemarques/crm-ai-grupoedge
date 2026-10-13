@@ -68,6 +68,92 @@ test("cadastro manual usa normalização, distribuição e SLA persistidos", asy
   expect(lead).toMatchObject({ pipelineId, ownerMemberId });
 });
 
+test("vendedor da Prospecção Ativa cadastra lead e escolhe qualquer vendedor", async ({ page }) => {
+  const database = getDatabaseClient();
+  const seller = await database.workspaceMember.findFirstOrThrow({
+    where: { user: { normalizedEmail: DEMO_USERS[2].email } },
+    select: { id: true, workspaceId: true, userId: true },
+  });
+  const targetOwner = await database.workspaceMember.findFirstOrThrow({
+    where: {
+      workspaceId: seller.workspaceId,
+      user: { normalizedEmail: DEMO_USERS[5].email },
+    },
+    select: { id: true },
+  });
+  const actor = await database.actor.findFirstOrThrow({
+    where: {
+      workspaceId: seller.workspaceId,
+      userId: seller.userId,
+      type: "HUMAN",
+    },
+    select: { id: true },
+  });
+  const nextRotation = (await database.prospectingSellerConfig.aggregate({
+    where: { workspaceId: seller.workspaceId },
+    _max: { rotationPosition: true },
+  }))._max.rotationPosition ?? -1;
+  await database.prospectingSellerConfig.upsert({
+    where: {
+      workspaceId_memberId: {
+        workspaceId: seller.workspaceId,
+        memberId: seller.id,
+      },
+    },
+    create: {
+      workspaceId: seller.workspaceId,
+      memberId: seller.id,
+      active: true,
+      dailyCapacity: 75,
+      reservePercent: 10,
+      rotationPosition: nextRotation + 1,
+      createdByActorId: actor.id,
+      updatedByActorId: actor.id,
+    },
+    update: {
+      active: true,
+      pausedReason: null,
+      updatedByActorId: actor.id,
+    },
+  });
+  const pipeline = await database.pipeline.findFirstOrThrow({
+    where: {
+      workspaceId: seller.workspaceId,
+      entityType: "LEAD",
+      name: "Prospecção Ativa",
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+
+  await login(page, DEMO_USERS[2].email);
+  await page.goto("/leads/entrada");
+  await expect(page.getByRole("heading", { name: "Entrada de leads" })).toBeVisible();
+
+  const pipelineSelect = page.getByRole("combobox", { name: "Pipeline", exact: true });
+  const sellerSelect = page.getByRole("combobox", { name: "Vendedor responsável", exact: true });
+  await expect(pipelineSelect.locator("option")).toHaveCount(1);
+  await expect(pipelineSelect).toHaveValue(pipeline.id);
+  await expect(sellerSelect.locator(`option[value="${targetOwner.id}"]`)).toHaveText(
+    DEMO_USERS[5].displayName,
+  );
+
+  const phone = uniquePhone("e2e-active-prospecting-seller");
+  await sellerSelect.selectOption(targetOwner.id);
+  await page.getByLabel("Nome", { exact: true }).fill("Lead E2E da prospecção ativa");
+  await page.getByLabel("Telefone", { exact: true }).fill(phone);
+  await page.getByRole("button", { name: "Cadastrar lead" }).click();
+  await expect(page.getByText("Entrada processada", { exact: true })).toBeVisible();
+
+  await expect(database.lead.findFirstOrThrow({
+    where: { workspaceId: seller.workspaceId, normalizedPhone: phone },
+    select: { pipelineId: true, ownerMemberId: true },
+  })).resolves.toEqual({
+    pipelineId: pipeline.id,
+    ownerMemberId: targetOwner.id,
+  });
+});
+
 test("erro de validação manual mantém os valores preenchidos", async ({ page }) => {
   await login(page, DEMO_USERS[1].email);
   await page.goto("/leads/entrada");

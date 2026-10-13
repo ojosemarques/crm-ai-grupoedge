@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { getActiveProspectingLeadEntryPipeline } from "@/modules/leads/application/active-prospecting-lead-entry-access";
 import { toLeadIntakeInput } from "@/modules/leads/application/lead-entry-mapper";
 import {
   getLeadIntakeService,
@@ -57,7 +58,7 @@ function simulatedPhone(seed: string, index: number): string {
 }
 
 export function createLeadEntryService(options: LeadEntryServiceOptions) {
-  async function authorize(context: AuthenticatedContext) {
+  async function leadEntryResource(context: AuthenticatedContext) {
     const queue = await options.database.queue.findFirst({
       where: {
         workspaceId: context.workspaceId,
@@ -66,22 +67,55 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
       },
       select: { id: true, teamId: true },
     });
+    return {
+      workspaceId: context.workspaceId,
+      resourceType: "LeadEntry",
+      ...(queue
+        ? { queueId: queue.id, teamId: queue.teamId }
+        : { memberId: context.memberId }),
+    } as const;
+  }
+
+  async function assertStandardAccess(context: AuthenticatedContext) {
+    const resource = await leadEntryResource(context);
     await options.authorization.assertAuthorized(
       context,
       PermissionKeys.LEADS_WRITE,
-      {
-        workspaceId: context.workspaceId,
-        resourceType: "LeadEntry",
-        ...(queue
-          ? { queueId: queue.id, teamId: queue.teamId }
-          : { memberId: context.memberId }),
-      },
+      resource,
     );
-    return queue;
+  }
+
+  async function resolveManualAccess(
+    context: AuthenticatedContext,
+    pipelineId?: string,
+  ) {
+    const resource = await leadEntryResource(context);
+    const decision = await options.authorization.authorize(
+      context,
+      PermissionKeys.LEADS_WRITE,
+      resource,
+    );
+    if (decision.allowed) return { mode: "STANDARD" as const, pipeline: null };
+
+    const pipeline = decision.contextIsValid
+      ? await getActiveProspectingLeadEntryPipeline(
+          options.database,
+          context,
+          pipelineId,
+        )
+      : null;
+    if (pipeline) return { mode: "ACTIVE_PROSPECTING" as const, pipeline };
+
+    await options.authorization.assertAuthorized(
+      context,
+      PermissionKeys.LEADS_WRITE,
+      resource,
+    );
+    throw new Error("Autorização de entrada de lead inconsistente.");
   }
 
   async function getOptions(context: AuthenticatedContext) {
-    await authorize(context);
+    const access = await resolveManualAccess(context);
     const assignmentDecision = await options.authorization.authorize(
       context,
       PermissionKeys.LEADS_ASSIGN,
@@ -103,7 +137,13 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
           select: { teamId: true },
         })).map(({ teamId }) => teamId)
       : undefined;
-    const sellerWhere = assignmentDecision.allowed
+    const sellerWhere = access.mode === "ACTIVE_PROSPECTING"
+      ? commercialMemberWhere({
+          workspaceId: context.workspaceId,
+          functions: ["SDR", "CLOSER"],
+          requireLeadAvailability: true,
+        })
+      : assignmentDecision.allowed
       ? commercialMemberWhere({
           workspaceId: context.workspaceId,
           functions: ["SDR", "CLOSER"],
@@ -165,6 +205,9 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
         where: {
           workspaceId: context.workspaceId,
           entityType: "LEAD",
+          ...(access.mode === "ACTIVE_PROSPECTING"
+            ? { id: access.pipeline.id }
+            : {}),
           deletedAt: null,
           stages: { some: { type: "OPEN", deletedAt: null } },
         },
@@ -212,7 +255,8 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
     }
 
     try {
-      if (parsed.data.ownerMemberId) {
+      const access = await resolveManualAccess(context, parsed.data.pipelineId);
+      if (parsed.data.ownerMemberId && access.mode === "STANDARD") {
         await options.authorization.assertAuthorized(
           context,
           PermissionKeys.LEADS_ASSIGN,
@@ -258,7 +302,7 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
       };
     }
 
-    await authorize(context);
+    await assertStandardAccess(context);
     const results: Array<{
       simulated: true;
       scenario: typeof parsed.data.scenario;

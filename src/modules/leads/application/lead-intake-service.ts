@@ -9,6 +9,7 @@ import type {
 } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import type { ServiceActorContext } from "@/modules/auth/application/service-actor-context";
+import { getActiveProspectingLeadEntryPipeline } from "@/modules/leads/application/active-prospecting-lead-entry-access";
 import { ensureContactForLeadInTransaction } from "@/modules/contacts/application/contact-identity-service";
 import { mayAutomaticallyAttachBySharedPhone } from "@/modules/portability/domain/commercial-identity-policy";
 import type {
@@ -158,6 +159,7 @@ export type LeadIntakeResult =
   | LeadIntakeAcceptedResult;
 
 type AuthorizationPort = Readonly<{
+  authorize: ReturnType<typeof getAuthorizationService>["authorize"];
   assertAuthorized: ReturnType<typeof getAuthorizationService>["assertAuthorized"];
 }>;
 
@@ -905,17 +907,34 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       select: { id: true, teamId: true },
     });
     if (isHumanContext(context)) {
-      await options.authorization.assertAuthorized(
+      const resource = {
+        workspaceId: context.workspaceId,
+        resourceType: "LeadIntake",
+        ...(generalQueue
+          ? { queueId: generalQueue.id, teamId: generalQueue.teamId }
+          : { memberId: context.memberId }),
+      } as const;
+      const decision = await options.authorization.authorize(
         context,
         PermissionKeys.LEADS_WRITE,
-        {
-          workspaceId: context.workspaceId,
-          resourceType: "LeadIntake",
-          ...(generalQueue
-            ? { queueId: generalQueue.id, teamId: generalQueue.teamId }
-            : { memberId: context.memberId }),
-        },
+        resource,
       );
+      const hasProspectingAccess = !decision.allowed
+        && decision.contextIsValid
+        && parsed.channel === "MANUAL"
+        && Boolean(parsed.pipelineId)
+        && Boolean(await getActiveProspectingLeadEntryPipeline(
+          options.database,
+          context,
+          parsed.pipelineId,
+        ));
+      if (!decision.allowed && !hasProspectingAccess) {
+        await options.authorization.assertAuthorized(
+          context,
+          PermissionKeys.LEADS_WRITE,
+          resource,
+        );
+      }
     } else {
       await validateAutomaticActor(options.database, context);
     }

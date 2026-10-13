@@ -209,6 +209,97 @@ describe("canais locais de entrada da CRM-07", () => {
     ).rejects.toBeInstanceOf(AccessDeniedError);
   });
 
+  it("permite vendedor ativo da Prospecção Ativa criar lead e escolher qualquer vendedor", async () => {
+    const sellerContext = await contextFor(DEMO_USERS[2].email);
+    const otherSellerContext = await contextFor(DEMO_USERS[5].email);
+    const nextRotation = (await database.prospectingSellerConfig.aggregate({
+      where: { workspaceId: managerContext.workspaceId },
+      _max: { rotationPosition: true },
+    }))._max.rotationPosition ?? -1;
+    await database.prospectingSellerConfig.upsert({
+      where: {
+        workspaceId_memberId: {
+          workspaceId: managerContext.workspaceId,
+          memberId: sellerContext.memberId,
+        },
+      },
+      create: {
+        workspaceId: managerContext.workspaceId,
+        memberId: sellerContext.memberId,
+        active: true,
+        dailyCapacity: 75,
+        reservePercent: 10,
+        rotationPosition: nextRotation + 1,
+        createdByActorId: managerContext.actorId,
+        updatedByActorId: managerContext.actorId,
+      },
+      update: {
+        active: true,
+        pausedReason: null,
+        updatedByActorId: managerContext.actorId,
+      },
+    });
+    const pipeline = await database.pipeline.findFirstOrThrow({
+      where: {
+        workspaceId: managerContext.workspaceId,
+        entityType: "LEAD",
+        name: "Prospecção Ativa",
+        deletedAt: null,
+      },
+      select: { id: true, name: true },
+    });
+    const intake = createLeadIntakeService({ database, authorization, now: () => fixedNow });
+    const service = createLeadEntryService({ database, authorization, intake });
+
+    const options = await service.getOptions(sellerContext);
+    expect(options.pipelines).toEqual([
+      expect.objectContaining({ id: pipeline.id, name: pipeline.name }),
+    ]);
+    expect(options.sellers).toContainEqual({
+      id: otherSellerContext.memberId,
+      name: DEMO_USERS[5].displayName,
+    });
+
+    const created = await service.createManual(
+      {
+        ...manualPayload(uniquePhone("active-prospecting-seller-entry")),
+        pipelineId: pipeline.id,
+        ownerMemberId: otherSellerContext.memberId,
+      },
+      sellerContext,
+    );
+    if (created.outcome === "REJECTED") throw new Error("Entrada deveria ser aceita.");
+    await expect(database.lead.findUniqueOrThrow({
+      where: { id: created.leadId },
+      select: { pipelineId: true, ownerMemberId: true },
+    })).resolves.toEqual({
+      pipelineId: pipeline.id,
+      ownerMemberId: otherSellerContext.memberId,
+    });
+
+    const otherPipeline = await database.pipeline.findFirstOrThrow({
+      where: {
+        workspaceId: managerContext.workspaceId,
+        entityType: "LEAD",
+        id: { not: pipeline.id },
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    await expect(service.createManual(
+      {
+        ...manualPayload(uniquePhone("active-prospecting-other-pipeline")),
+        pipelineId: otherPipeline.id,
+        ownerMemberId: otherSellerContext.memberId,
+      },
+      sellerContext,
+    )).rejects.toBeInstanceOf(AccessDeniedError);
+
+    await expect(
+      service.getOptions(await contextFor(DEMO_USERS[3].email)),
+    ).rejects.toBeInstanceOf(AccessDeniedError);
+  });
+
   it("cadastra manualmente quando a fila geral ainda não está configurada", async () => {
     const generalQueues = await database.queue.findMany({
       where: { workspaceId: managerContext.workspaceId, isGeneral: true },
