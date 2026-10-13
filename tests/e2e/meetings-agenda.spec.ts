@@ -103,11 +103,15 @@ test("agenda, ciclo da reunião e briefing funcionam sobre dados persistidos", a
 
   await page.goto("/agenda?view=day&date=2035-02-11");
   await expect(page.getByRole("heading", { name: "Agenda interna" })).toBeVisible();
-  const meetingCard = page.locator("li").filter({ hasText: "Diagnóstico comercial E2E" });
+  const meetingCard = page.locator('button[data-status="SCHEDULED"]').filter({ hasText: "Diagnóstico comercial E2E" });
   await expect(meetingCard).toContainText(leadName);
-  await meetingCard.getByRole("button", { name: "Confirmar" }).click();
-  await expect(meetingCard.getByText("Confirmada", { exact: true })).toBeVisible();
-  await meetingCard.getByRole("link", { name: "Abrir briefing do closer" }).click();
+  await meetingCard.click();
+  const meetingDialog = page.getByRole("dialog", { name: "Diagnóstico comercial E2E" });
+  await meetingDialog.getByRole("button", { name: "Confirmar", exact: true }).click();
+  await expect(meetingDialog.getByText("Confirmada", { exact: true })).toBeVisible();
+  const confirmedCard = page.locator('button[data-status="CONFIRMED"]').filter({ hasText: "Diagnóstico comercial E2E" });
+  await expect(confirmedCard).toHaveCSS("background-color", "rgb(228, 247, 237)");
+  await meetingDialog.getByRole("link", { name: "Abrir briefing do closer" }).click();
   await expect(page.getByRole("heading", { name: "Briefing do closer" })).toBeVisible();
   await expect(page.getByText("Resumo em três linhas")).toBeVisible();
   await expect(page.getByText("Dor nas palavras do lead")).toBeVisible();
