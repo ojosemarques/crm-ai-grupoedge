@@ -26,7 +26,10 @@ import type {
   MeetingListItem,
 } from "@/modules/meetings/domain/meeting-contracts";
 import { recordOpportunityMeetingHeldInTransaction } from "@/modules/opportunities/application/opportunity-service";
-import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
+import {
+  recordCommercialMetricCorrectionInTransaction,
+  recordCommercialMetricFactInTransaction,
+} from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { stopColdCadenceInTransaction } from "@/modules/prospecting/application/prospecting-cadence-service";
 import { enqueueGoogleCalendarSyncInTransaction } from "@/modules/integrations/application/google-calendar-service";
 import {
@@ -135,7 +138,31 @@ const actionSchema = z.discriminatedUnion("action", [
     reason: z.string().trim().min(3).max(2_000),
     nextAction: nextActionSchema,
   }).strict(),
-]);
+  z.object({
+    action: z.literal("EDIT"),
+    meetingId: z.string().uuid(),
+    expectedRevision: z.number().int().positive(),
+    title: z.string().trim().min(2).max(200),
+    startsAtLocal: localDateTimeSchema,
+    durationMinutes: z.union([z.literal(30), z.literal(40)]),
+    status: z.enum(["SCHEDULED", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]),
+    observation: z.string().trim().max(5_000).nullable(),
+    outcome: z.string().trim().max(5_000).nullable(),
+    reason: z.string().trim().min(3).max(2_000),
+  }).strict(),
+]).superRefine((value, context) => {
+  if (
+    value.action === "EDIT" &&
+    (value.status === "COMPLETED" || value.status === "NO_SHOW") &&
+    (!value.outcome || value.outcome.length < 3)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["outcome"],
+      message: "Informe o resultado da reunião para este status.",
+    });
+  }
+});
 
 const transcriptSchema = z.object({
   meetingId: z.string().uuid(),
@@ -311,12 +338,40 @@ function statusLabel(status: MeetingStatus): string {
 }
 
 function historyAction(input: z.output<typeof actionSchema>): MeetingHistoryAction {
+  if (input.action === "EDIT") {
+    return ({
+      SCHEDULED: "RESCHEDULED",
+      CONFIRMED: "CONFIRMED",
+      COMPLETED: "ATTENDED",
+      CANCELLED: "CANCELLED",
+      NO_SHOW: "NO_SHOW",
+    } satisfies Record<MeetingStatus, MeetingHistoryAction>)[input.status];
+  }
   return ({
     CONFIRM: "CONFIRMED",
     RESCHEDULE: "RESCHEDULED",
     CANCEL: "CANCELLED",
     ATTENDED: "ATTENDED",
     NO_SHOW: "NO_SHOW",
+  } as const)[input.action];
+}
+
+function meetingEventType(input: z.output<typeof actionSchema>) {
+  if (input.action === "EDIT") {
+    return ({
+      SCHEDULED: "MEETING_RESCHEDULED",
+      CONFIRMED: "MEETING_CONFIRMED",
+      COMPLETED: "MEETING_COMPLETED",
+      CANCELLED: "MEETING_CANCELLED",
+      NO_SHOW: "MEETING_NO_SHOW",
+    } as const)[input.status];
+  }
+  return ({
+    CONFIRM: "MEETING_CONFIRMED",
+    RESCHEDULE: "MEETING_RESCHEDULED",
+    CANCEL: "MEETING_CANCELLED",
+    ATTENDED: "MEETING_COMPLETED",
+    NO_SHOW: "MEETING_NO_SHOW",
   } as const)[input.action];
 }
 
@@ -898,16 +953,54 @@ export function createMeetingService(options: MeetingServiceOptions) {
       if (meeting.revision !== parsed.data.expectedRevision) {
         conflict("MEETING_VERSION_CONFLICT", "A reunião mudou. Recarregue antes de continuar.");
       }
-      if (meeting.status !== "SCHEDULED" && meeting.status !== "CONFIRMED") {
+      if (parsed.data.action !== "EDIT" && meeting.status !== "SCHEDULED" && meeting.status !== "CONFIRMED") {
         conflict("MEETING_ALREADY_CLOSED", "A reunião já possui um resultado final.");
       }
+      if (
+        parsed.data.action === "EDIT" &&
+        (meeting.status === "SCHEDULED" || meeting.status === "CONFIRMED") &&
+        parsed.data.status !== meeting.status
+      ) {
+        conflict("MEETING_STATUS_ACTION_REQUIRED", "Use as ações da reunião para alterar o status enquanto ela estiver aberta.");
+      }
+      const correctedHistory = parsed.data.action === "EDIT"
+        ? await transaction.meetingHistory.findFirst({
+          where: { workspaceId: context.workspaceId, meetingId: meeting.id, meetingRevision: meeting.revision },
+        })
+        : null;
 
       let newStatus: MeetingStatus = meeting.status;
       let startsAt = meeting.startsAt;
       let endsAt = meeting.endsAt;
+      let title = meeting.title;
+      let observation = meeting.observation;
       let reason: string | null = null;
       let outcome: string | null = null;
-      if (parsed.data.action === "CONFIRM") {
+      if (parsed.data.action === "EDIT") {
+        title = parsed.data.title;
+        observation = parsed.data.observation;
+        startsAt = parseWorkspaceLocalDateTime(parsed.data.startsAtLocal, meeting.timeZone);
+        endsAt = new Date(startsAt.getTime() + parsed.data.durationMinutes * 60_000);
+        newStatus = parsed.data.status;
+        reason = parsed.data.reason;
+        outcome = parsed.data.status === "COMPLETED" || parsed.data.status === "NO_SHOW"
+          ? parsed.data.outcome
+          : null;
+        const reopening = meeting.status !== "SCHEDULED" && meeting.status !== "CONFIRMED";
+        const moving = startsAt.getTime() !== meeting.startsAt.getTime() || endsAt.getTime() !== meeting.endsAt.getTime();
+        if ((newStatus === "SCHEDULED" || newStatus === "CONFIRMED") && (reopening || moving) && startsAt <= now) {
+          conflict("MEETING_IN_PAST", "Uma reunião reaberta ou remarcada deve ficar no futuro.");
+        }
+        if (newStatus === "SCHEDULED" || newStatus === "CONFIRMED") {
+          await assertNoConflict(transaction, {
+            workspaceId: context.workspaceId,
+            ownerMemberId: meeting.ownerMemberId,
+            startsAt,
+            endsAt,
+            excludeMeetingId: meeting.id,
+          });
+        }
+      } else if (parsed.data.action === "CONFIRM") {
         if (meeting.status === "CONFIRMED") conflict("MEETING_ALREADY_CONFIRMED", "A reunião já está confirmada.");
         newStatus = "CONFIRMED";
       } else if (parsed.data.action === "RESCHEDULE") {
@@ -940,15 +1033,17 @@ export function createMeetingService(options: MeetingServiceOptions) {
       const updated = await transaction.meeting.update({
         where: { id: meeting.id },
         data: {
+          title,
           status: newStatus,
           startsAt,
           endsAt,
           durationMinutes: Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000),
+          observation,
           outcome,
-          confirmedAt: parsed.data.action === "CONFIRM" ? now : parsed.data.action === "RESCHEDULE" ? null : meeting.confirmedAt,
-          cancelledAt: parsed.data.action === "CANCEL" ? now : null,
-          completedAt: parsed.data.action === "ATTENDED" ? now : null,
-          noShowAt: parsed.data.action === "NO_SHOW" ? now : null,
+          confirmedAt: newStatus === "CONFIRMED" ? meeting.confirmedAt ?? now : newStatus === "SCHEDULED" ? null : meeting.confirmedAt,
+          cancelledAt: newStatus === "CANCELLED" ? meeting.cancelledAt ?? now : null,
+          completedAt: newStatus === "COMPLETED" ? meeting.completedAt ?? now : null,
+          noShowAt: newStatus === "NO_SHOW" ? meeting.noShowAt ?? now : null,
           revision: { increment: 1 },
           updatedByActorId: context.actorId,
           updatedAt: now,
@@ -982,23 +1077,47 @@ export function createMeetingService(options: MeetingServiceOptions) {
           where: { workspaceId: context.workspaceId, meetingId: meeting.id, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null },
           data: { dueAt: startsAt, updatedByActorId: context.actorId, updatedAt: now },
         });
+      } else if (parsed.data.action === "EDIT" && (newStatus === "SCHEDULED" || newStatus === "CONFIRMED")) {
+        await transaction.task.updateMany({
+          where: { workspaceId: context.workspaceId, meetingId: meeting.id, deletedAt: null },
+          data: {
+            status: "OPEN",
+            dueAt: startsAt,
+            completedAt: null,
+            result: null,
+            updatedByActorId: context.actorId,
+            updatedAt: now,
+          },
+        });
       }
       let recoveryTaskId: string | null = null;
       if (
         parsed.data.action === "CANCEL" ||
         parsed.data.action === "ATTENDED" ||
-        parsed.data.action === "NO_SHOW"
+        parsed.data.action === "NO_SHOW" ||
+        (parsed.data.action === "EDIT" && newStatus !== "SCHEDULED" && newStatus !== "CONFIRMED")
       ) {
         await transaction.task.updateMany({
-          where: { workspaceId: context.workspaceId, meetingId: meeting.id, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null },
+          where: {
+            workspaceId: context.workspaceId,
+            meetingId: meeting.id,
+            ...(parsed.data.action === "EDIT" ? {} : { status: { in: ["OPEN", "IN_PROGRESS"] as const } }),
+            deletedAt: null,
+          },
           data: {
-            status: parsed.data.action === "ATTENDED" ? "COMPLETED" : "CANCELLED",
-            completedAt: parsed.data.action === "ATTENDED" ? now : null,
+            status: newStatus === "COMPLETED" ? "COMPLETED" : "CANCELLED",
+            completedAt: newStatus === "COMPLETED" ? now : null,
             result: outcome ?? reason,
             updatedByActorId: context.actorId,
             updatedAt: now,
           },
         });
+      }
+      if (
+        parsed.data.action === "CANCEL" ||
+        parsed.data.action === "ATTENDED" ||
+        parsed.data.action === "NO_SHOW"
+      ) {
         const nextAction = parsed.data.nextAction;
         const dueAt = parseWorkspaceLocalDateTime(nextAction.dueAtLocal, meeting.timeZone);
         if (dueAt <= now) invalidInput("A próxima ação deve estar no futuro.");
@@ -1043,13 +1162,22 @@ export function createMeetingService(options: MeetingServiceOptions) {
       if (meeting.opportunityId) {
         await transaction.opportunity.update({ where: { id: meeting.opportunityId }, data: { nextActionTaskId: opportunityTask?.id ?? null, nextActionAt: opportunityTask?.dueAt ?? null, nextActionDescription: opportunityTask?.title ?? null, updatedByActorId: context.actorId, updatedAt: now } });
       }
-      const activityResult = ({
-        CONFIRM: "INFORMATION",
-        RESCHEDULE: "SCHEDULED",
-        CANCEL: "CANCELLED",
-        ATTENDED: "COMPLETED",
-        NO_SHOW: "NO_SHOW",
-      } as const)[parsed.data.action];
+      const correctedActivity = parsed.data.action === "EDIT"
+        ? await transaction.activity.findFirst({
+          where: { workspaceId: context.workspaceId, meetingId: meeting.id, deletedAt: null },
+          orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+          select: { id: true },
+        })
+        : null;
+      const activityResult = parsed.data.action === "EDIT"
+        ? "CORRECTED"
+        : ({
+          CONFIRM: "INFORMATION",
+          RESCHEDULE: "SCHEDULED",
+          CANCEL: "CANCELLED",
+          ATTENDED: "COMPLETED",
+          NO_SHOW: "NO_SHOW",
+        } as const)[parsed.data.action];
       const activity = await transaction.activity.create({
         data: {
           workspaceId: context.workspaceId,
@@ -1059,40 +1187,81 @@ export function createMeetingService(options: MeetingServiceOptions) {
           type: "MEETING",
           direction: "INTERNAL",
           result: activityResult,
-          subject: `Reunião ${statusLabel(newStatus)}: ${meeting.title}`,
-          description: outcome ?? reason,
+          subject: parsed.data.action === "EDIT"
+            ? `Correção da reunião: ${title}`
+            : `Reunião ${statusLabel(newStatus)}: ${title}`,
+          description: parsed.data.action === "EDIT" ? reason : outcome ?? reason,
           occurredAt: now,
           nextActionAt: nextTask?.dueAt ?? null,
           nextActionDescription: nextTask?.title ?? null,
           previousValues: {
             status: meeting.status,
+            title: meeting.title,
             startsAt: meeting.startsAt.toISOString(),
             endsAt: meeting.endsAt.toISOString(),
+            observation: meeting.observation,
+            outcome: meeting.outcome,
             revision: meeting.revision,
           },
           newValues: {
             status: newStatus,
+            title,
             startsAt: startsAt.toISOString(),
             endsAt: endsAt.toISOString(),
+            observation,
+            outcome,
             revision: updated.revision,
           },
+          correctsActivityId: correctedActivity?.id ?? null,
           createdByActorId: context.actorId,
           updatedByActorId: context.actorId,
           createdAt: now,
           updatedAt: now,
         },
       });
-      const meetingEventType = ({
-        CONFIRM: "MEETING_CONFIRMED",
-        RESCHEDULE: "MEETING_RESCHEDULED",
-        CANCEL: "MEETING_CANCELLED",
-        ATTENDED: "MEETING_COMPLETED",
-        NO_SHOW: "MEETING_NO_SHOW",
-      } as const)[parsed.data.action];
+      const eventType = meetingEventType(parsed.data);
+      if (parsed.data.action === "EDIT" && correctedHistory) {
+        const originalFact = await transaction.commercialMetricFact.findFirst({
+          where: {
+            workspaceId: context.workspaceId,
+            sourceEntityType: "MeetingHistory",
+            sourceEntityId: correctedHistory.id,
+            correctionOfFactId: null,
+            quantity: { gt: 0 },
+          },
+        });
+        if (originalFact) {
+          await recordCommercialMetricCorrectionInTransaction(transaction, {
+            workspaceId: context.workspaceId,
+            eventKey: `${originalFact.eventKey}:meeting-edit:${meetingHistory.id}:reversal:v1`,
+            eventType: originalFact.eventType,
+            occurredAt: originalFact.occurredAt,
+            sourceEntityType: originalFact.sourceEntityType,
+            sourceEntityId: originalFact.sourceEntityId,
+            sourceRevision: originalFact.sourceRevision,
+            leadId: originalFact.leadId,
+            taskId: originalFact.taskId,
+            activityId: activity.id,
+            meetingId: originalFact.meetingId,
+            opportunityId: originalFact.opportunityId,
+            creditedMemberId: originalFact.creditedMemberId,
+            performedByMemberId: context.memberId,
+            leadOwnerMemberIdAtEvent: originalFact.leadOwnerMemberIdAtEvent,
+            meetingOwnerMemberIdAtEvent: originalFact.meetingOwnerMemberIdAtEvent,
+            result: originalFact.result,
+            executionMode: "MANUAL",
+            quantity: -originalFact.quantity,
+            correctionOfFactId: originalFact.id,
+            reversedAt: now,
+            reversalReason: parsed.data.reason,
+            safeMetadata: { correctionActivityId: activity.id, correctedMeetingRevision: meeting.revision },
+          });
+        }
+      }
       await recordCommercialMetricFactInTransaction(transaction, {
         workspaceId: context.workspaceId,
-        eventKey: `meeting-history:${meetingHistory.id}:${meetingEventType.toLowerCase()}:v1`,
-        eventType: meetingEventType,
+        eventKey: `meeting-history:${meetingHistory.id}:${eventType.toLowerCase()}:v1`,
+        eventType,
         occurredAt: now,
         sourceEntityType: "MeetingHistory",
         sourceEntityId: meetingHistory.id,
@@ -1107,17 +1276,58 @@ export function createMeetingService(options: MeetingServiceOptions) {
         result: activityResult,
         executionMode: "MANUAL",
       });
-      if (parsed.data.action === "ATTENDED" || parsed.data.action === "CANCEL" || parsed.data.action === "NO_SHOW") {
+      if (parsed.data.action === "ATTENDED" || parsed.data.action === "CANCEL" || parsed.data.action === "NO_SHOW" || parsed.data.action === "EDIT") {
         const meetingTask = await transaction.task.findFirst({
           where: { workspaceId: context.workspaceId, meetingId: meeting.id },
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
           select: { id: true, assigneeMemberId: true, kind: true },
         });
-        if (meetingTask) {
+        if (meetingTask && parsed.data.action === "EDIT" && correctedHistory) {
+          const originalTaskFacts = await transaction.commercialMetricFact.findMany({
+            where: {
+              workspaceId: context.workspaceId,
+              taskId: meetingTask.id,
+              eventType: { in: ["TASK_COMPLETED", "TASK_CANCELLED"] },
+              eventKey: { contains: `meeting:${correctedHistory.id}:v1` },
+              correctionOfFactId: null,
+              quantity: { gt: 0 },
+            },
+          });
+          for (const originalFact of originalTaskFacts) {
+            await recordCommercialMetricCorrectionInTransaction(transaction, {
+              workspaceId: context.workspaceId,
+              eventKey: `${originalFact.eventKey}:meeting-edit:${meetingHistory.id}:reversal:v1`,
+              eventType: originalFact.eventType,
+              occurredAt: originalFact.occurredAt,
+              sourceEntityType: originalFact.sourceEntityType,
+              sourceEntityId: originalFact.sourceEntityId,
+              sourceRevision: originalFact.sourceRevision,
+              leadId: originalFact.leadId,
+              taskId: originalFact.taskId,
+              activityId: activity.id,
+              meetingId: originalFact.meetingId,
+              opportunityId: originalFact.opportunityId,
+              creditedMemberId: originalFact.creditedMemberId,
+              performedByMemberId: context.memberId,
+              leadOwnerMemberIdAtEvent: originalFact.leadOwnerMemberIdAtEvent,
+              meetingOwnerMemberIdAtEvent: originalFact.meetingOwnerMemberIdAtEvent,
+              taskKind: originalFact.taskKind,
+              result: originalFact.result,
+              executionMode: "MANUAL",
+              quantity: -originalFact.quantity,
+              correctionOfFactId: originalFact.id,
+              reversedAt: now,
+              reversalReason: parsed.data.reason,
+              safeMetadata: { correctionActivityId: activity.id, correctedMeetingRevision: meeting.revision },
+            });
+          }
+        }
+        if (meetingTask && newStatus !== "SCHEDULED" && newStatus !== "CONFIRMED") {
+          const taskEventType = newStatus === "COMPLETED" ? "TASK_COMPLETED" : "TASK_CANCELLED";
           await recordCommercialMetricFactInTransaction(transaction, {
             workspaceId: context.workspaceId,
-            eventKey: `task:${meetingTask.id}:${parsed.data.action === "ATTENDED" ? "completed" : "cancelled"}:meeting:${meetingHistory.id}:v1`,
-            eventType: parsed.data.action === "ATTENDED" ? "TASK_COMPLETED" : "TASK_CANCELLED",
+            eventKey: `task:${meetingTask.id}:${taskEventType === "TASK_COMPLETED" ? "completed" : "cancelled"}:meeting:${meetingHistory.id}:v1`,
+            eventType: taskEventType,
             occurredAt: now,
             sourceEntityType: "Task",
             sourceEntityId: meetingTask.id,
@@ -1130,7 +1340,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
             leadOwnerMemberIdAtEvent: meeting.lead.ownerMemberId,
             meetingOwnerMemberIdAtEvent: meeting.ownerMemberId,
             taskKind: meetingTask.kind,
-            result: activityResult,
+            result: newStatus === "COMPLETED" ? "COMPLETED" : newStatus === "NO_SHOW" ? "NO_SHOW" : "CANCELLED",
             executionMode: "MANUAL",
           });
         }
@@ -1157,7 +1367,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         data: {
           workspaceId: context.workspaceId,
           actorId: context.actorId,
-          action: `meeting.${historyAction(parsed.data).toLowerCase()}`,
+          action: parsed.data.action === "EDIT" ? "meeting.corrected" : `meeting.${historyAction(parsed.data).toLowerCase()}`,
           entityType: "Meeting",
           entityId: meeting.id,
           occurredAt: now,
@@ -1166,6 +1376,10 @@ export function createMeetingService(options: MeetingServiceOptions) {
             toStatus: newStatus,
             previousStartsAt: meeting.startsAt.toISOString(),
             newStartsAt: startsAt.toISOString(),
+            previousTitle: meeting.title,
+            newTitle: title,
+            previousObservation: meeting.observation,
+            newObservation: observation,
             reason,
             outcome,
             activityId: activity.id,
@@ -1173,7 +1387,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           metadata: { timeZone: meeting.timeZone, revision: updated.revision },
         },
       });
-      if (parsed.data.action === "ATTENDED" && meeting.opportunityId) {
+      if ((parsed.data.action === "ATTENDED" || (parsed.data.action === "EDIT" && newStatus === "COMPLETED" && meeting.status !== "COMPLETED")) && meeting.opportunityId) {
         await recordOpportunityMeetingHeldInTransaction(
           transaction,
           context,
@@ -1181,7 +1395,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           now,
         );
       }
-      if (options.automationPublisher && parsed.data.action === "RESCHEDULE") {
+      if (options.automationPublisher && (parsed.data.action === "RESCHEDULE" || (parsed.data.action === "EDIT" && (newStatus === "SCHEDULED" || newStatus === "CONFIRMED")))) {
         await scheduleMeetingRemindersInTransaction(
           transaction,
           options.automationPublisher,
@@ -1195,7 +1409,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
             actorId: context.actorId,
           },
         );
-      } else if (options.automationPublisher && parsed.data.action === "NO_SHOW") {
+      } else if (options.automationPublisher && (parsed.data.action === "NO_SHOW" || (parsed.data.action === "EDIT" && newStatus === "NO_SHOW"))) {
         await publishMeetingNoShowInTransaction(
           transaction,
           options.automationPublisher,
@@ -1211,7 +1425,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         );
       } else if (
         options.automationPublisher &&
-        (parsed.data.action === "CANCEL" || parsed.data.action === "ATTENDED")
+        (parsed.data.action === "CANCEL" || parsed.data.action === "ATTENDED" || (parsed.data.action === "EDIT" && newStatus !== "SCHEDULED" && newStatus !== "CONFIRMED"))
       ) {
         await cancelMeetingRemindersInTransaction(transaction, {
           workspaceId: context.workspaceId,
@@ -1221,6 +1435,12 @@ export function createMeetingService(options: MeetingServiceOptions) {
           actorId: context.actorId,
           reasonCode: "MEETING_CLOSED",
           reason: "Lembretes cancelados porque a reunião foi encerrada.",
+        });
+      }
+      if (parsed.data.action === "EDIT" && meeting.status === "CANCELLED" && newStatus !== "CANCELLED") {
+        await transaction.googleCalendarEventLink.updateMany({
+          where: { workspaceId: context.workspaceId, meetingId: meeting.id },
+          data: { syncedRevision: null, conferenceUrl: null },
         });
       }
       await enqueueGoogleCalendarSyncInTransaction(transaction, {

@@ -371,6 +371,74 @@ describe("agenda interna e reuniões", () => {
     expect(noShowRow).toMatchObject({ status: "NO_SHOW", completedAt: null, cancelledAt: null, noShowAt: clock });
   });
 
+  it("corrige uma reunião encerrada e mantém tarefa, histórico e métricas coerentes", async () => {
+    clock = new Date("2035-02-15T12:00:00.000Z");
+    const lead = await qualifyLead("CRM15 correção de reunião");
+    const scheduled = await schedule(lead.leadId, managerContext, "2035-02-15T11:00", closer2Id);
+    clock = new Date("2035-02-15T15:00:00.000Z");
+    await meetings().act(managerContext, {
+      action: "ATTENDED",
+      meetingId: scheduled.meetingId,
+      expectedRevision: 1,
+      outcome: "Reunião registrada inicialmente como realizada.",
+      nextAction: { title: "Enviar material após reunião", dueAtLocal: "2035-02-15T14:00" },
+    });
+
+    clock = new Date("2035-02-15T15:30:00.000Z");
+    const corrected = await meetings().act(managerContext, {
+      action: "EDIT",
+      meetingId: scheduled.meetingId,
+      expectedRevision: 2,
+      title: "Diagnóstico comercial corrigido",
+      startsAtLocal: "2035-02-15T11:00",
+      durationMinutes: 40,
+      status: "NO_SHOW",
+      observation: "Lead avisou depois que não conseguiu entrar.",
+      outcome: "Ausência confirmada após revisão do registro.",
+      reason: "Correção solicitada pelo responsável da reunião.",
+    });
+
+    expect(corrected).toMatchObject({ status: "NO_SHOW", revision: 3 });
+    const [meeting, meetingTask, history, activities, completedFacts, noShowFacts, audit] = await Promise.all([
+      database.meeting.findUniqueOrThrow({ where: { id: scheduled.meetingId } }),
+      database.task.findFirstOrThrow({ where: { workspaceId, meetingId: scheduled.meetingId } }),
+      database.meetingHistory.findMany({ where: { workspaceId, meetingId: scheduled.meetingId }, orderBy: { meetingRevision: "asc" } }),
+      database.activity.findMany({ where: { workspaceId, meetingId: scheduled.meetingId }, orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }),
+      database.commercialMetricFact.aggregate({ where: { workspaceId, meetingId: scheduled.meetingId, eventType: "MEETING_COMPLETED" }, _sum: { quantity: true } }),
+      database.commercialMetricFact.aggregate({ where: { workspaceId, meetingId: scheduled.meetingId, eventType: "MEETING_NO_SHOW" }, _sum: { quantity: true } }),
+      database.auditLog.findFirst({ where: { workspaceId, entityId: scheduled.meetingId, action: "meeting.corrected" } }),
+    ]);
+    expect(meeting).toMatchObject({
+      title: "Diagnóstico comercial corrigido",
+      status: "NO_SHOW",
+      durationMinutes: 40,
+      observation: "Lead avisou depois que não conseguiu entrar.",
+      outcome: "Ausência confirmada após revisão do registro.",
+      completedAt: null,
+      cancelledAt: null,
+      noShowAt: clock,
+    });
+    expect(meetingTask).toMatchObject({ status: "CANCELLED", completedAt: null });
+    expect(history.map((item) => item.action)).toEqual(["SCHEDULED", "ATTENDED", "NO_SHOW"]);
+    expect(history[2]).toMatchObject({ previousStatus: "COMPLETED", newStatus: "NO_SHOW", reason: "Correção solicitada pelo responsável da reunião." });
+    expect(activities.at(-1)).toMatchObject({ result: "CORRECTED", correctsActivityId: activities.at(-2)?.id });
+    expect(completedFacts._sum.quantity).toBe(0);
+    expect(noShowFacts._sum.quantity).toBe(1);
+    expect(audit).not.toBeNull();
+    await expect(meetings().act(managerContext, {
+      action: "EDIT",
+      meetingId: scheduled.meetingId,
+      expectedRevision: 2,
+      title: meeting.title,
+      startsAtLocal: "2035-02-15T11:00",
+      durationMinutes: 40,
+      status: "COMPLETED",
+      observation: meeting.observation,
+      outcome: meeting.outcome,
+      reason: "Tentativa com uma revisão já superada.",
+    })).rejects.toMatchObject({ code: "MEETING_VERSION_CONFLICT" });
+  });
+
   it("aplica escopo de closer e gestor e bloqueia mutação do visualizador", async () => {
     clock = new Date("2035-02-16T12:00:00.000Z");
     const lead = await qualifyLead("CRM15 permissões");
@@ -394,6 +462,18 @@ describe("agenda interna e reuniões", () => {
       action: "CONFIRM",
       meetingId: scheduled.meetingId,
       expectedRevision: 1,
+    })).rejects.toBeInstanceOf(AccessDeniedError);
+    await expect(meetings().act(viewerContext, {
+      action: "EDIT",
+      meetingId: scheduled.meetingId,
+      expectedRevision: 1,
+      title: "Alteração não autorizada",
+      startsAtLocal: "2035-02-17T09:00",
+      durationMinutes: 30,
+      status: "SCHEDULED",
+      observation: null,
+      outcome: null,
+      reason: "Tentativa sem permissão de escrita.",
     })).rejects.toBeInstanceOf(AccessDeniedError);
   });
 
