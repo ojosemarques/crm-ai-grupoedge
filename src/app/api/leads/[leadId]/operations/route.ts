@@ -81,6 +81,9 @@ export async function POST(
       case "COMPLETE_TASK":
         result = await service.completeTask(context, { ...data, leadId });
         break;
+      case "UPDATE_COMPLETED_TASK":
+        result = await service.updateCompletedTask(context, { ...data, leadId });
+        break;
       case "RECORD_ACTIVITY":
         result = await service.recordActivity(context, { ...data, leadId });
         break;

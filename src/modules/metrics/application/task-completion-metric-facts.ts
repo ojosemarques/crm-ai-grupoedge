@@ -39,9 +39,22 @@ export async function recordTaskCompletionMetricFactsInTransaction(
     executionMode: input.executionMode,
   } as const;
 
+  const completionBaseKey = `task:${input.taskId}:completed:v1`;
+  const existingCompletion = await transaction.commercialMetricFact.findUnique({
+    where: {
+      workspaceId_eventKey: {
+        workspaceId: input.workspaceId,
+        eventKey: completionBaseKey,
+      },
+    },
+    select: { id: true },
+  });
+
   await recordCommercialMetricFactInTransaction(transaction, {
     ...common,
-    eventKey: `task:${input.taskId}:completed:v1`,
+    eventKey: existingCompletion
+      ? `task:${input.taskId}:completed:activity:${input.activityId}:v1`
+      : completionBaseKey,
     eventType: "TASK_COMPLETED",
     activityType: "TASK",
     safeMetadata: {

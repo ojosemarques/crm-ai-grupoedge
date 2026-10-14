@@ -86,8 +86,26 @@ test("registra atividade e tarefa no histórico operacional persistido", async (
   await task.getByLabel("Título").fill("Retornar no E2E");
   await task.getByLabel("Prazo").fill("2035-01-15T10:30");
   await task.getByRole("button", { name: "Criar tarefa" }).click();
-  await expect(page.getByRole("status")).toContainText("Operação registrada com sucesso.");
+  await expect(page.getByRole("status")).toContainText("Tarefa criada com sucesso.");
   await expect(page.getByText("Retornar no E2E", { exact: true }).first()).toBeVisible();
+
+  let taskCard = page.locator("li").filter({ hasText: "Retornar no E2E" });
+  await taskCard.locator("summary").click();
+  await taskCard.getByLabel("Resultado da conclusão").fill("Contato realizado no teste E2E.");
+  await taskCard.getByRole("button", { name: "Concluir tarefa" }).click();
+  await expect(page.getByRole("status")).toContainText("Operação registrada com sucesso.");
+  taskCard = page.locator("li").filter({ hasText: "Retornar no E2E" });
+  const editButton = taskCard.getByRole("button", { name: "Editar tarefa concluída" });
+  if (!(await editButton.isVisible())) await taskCard.locator("summary").click();
+  await editButton.click();
+  const editForm = taskCard.locator("form").filter({ hasText: "Editar tarefa concluída" });
+  await editForm.getByLabel("Título").fill("Retornar no E2E reaberto");
+  await editForm.getByLabel("Status").selectOption("OPEN");
+  await editForm.getByLabel("Motivo da alteração").fill("A tarefa foi concluída antes da validação final.");
+  await editForm.getByRole("button", { name: "Salvar alterações" }).click();
+  await expect(page.getByRole("status")).toContainText("Tarefa atualizada e correção registrada no histórico.");
+  await expect(page.getByText("Retornar no E2E reaberto", { exact: true }).first()).toBeVisible();
+  await expect(page.locator("li").filter({ hasText: "Retornar no E2E reaberto" }).getByText("Aberta", { exact: true })).toBeVisible();
 });
 
 test("exibe estados seguro de inexistência e negação de mutação", async ({ page }) => {

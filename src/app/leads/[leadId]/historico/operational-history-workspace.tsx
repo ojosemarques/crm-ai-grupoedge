@@ -178,6 +178,12 @@ function isoDate(value: string | undefined): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
+function dateTimeLocalValue(value: string): string {
+  const date = new Date(value);
+  const part = (number: number) => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}T${part(date.getHours())}:${part(date.getMinutes())}`;
+}
+
 function nextTaskFromForm(form: FormData) {
   const title = formText(form, "nextTitle");
   const dueAt = isoDate(formText(form, "nextDueAt"));
@@ -345,6 +351,7 @@ export function OperationalHistoryWorkspace({
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [correctionId, setCorrectionId] = useState<string | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [clock, setClock] = useState(() => new Date(initialOperations.generatedAt).getTime());
   const [contactIdentity, setContactIdentity] = useState(initialContactIdentity);
   const [nextQueueLead, setNextQueueLead] = useState<NextQueueLead | null>(null);
@@ -807,6 +814,36 @@ export function OperationalHistoryWorkspace({
         message: error instanceof Error ? error.message : "Revise a próxima ação.",
       });
     }
+  }
+
+  async function submitTaskEdit(
+    event: FormEvent<HTMLFormElement>,
+    task: LeadCardOperations["tasks"][number],
+  ) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const dueAt = isoDate(formText(form, "dueAt"));
+    if (!dueAt) {
+      setNotice({ kind: "error", message: "Informe um prazo válido para a tarefa." });
+      return;
+    }
+    const saved = await mutate(
+      "UPDATE_COMPLETED_TASK",
+      {
+        taskId: task.id,
+        expectedUpdatedAt: task.updatedAt,
+        reason: formText(form, "reason"),
+        title: formText(form, "title"),
+        description: nullableFormText(form, "description"),
+        priority: formText(form, "priority"),
+        dueAt,
+        status: formText(form, "status"),
+        result: nullableFormText(form, "result"),
+      },
+      () => setEditingTaskId(null),
+      "Tarefa atualizada e correção registrada no histórico.",
+    );
+    if (!saved) return;
   }
 
   async function submitCorrection(event: FormEvent<HTMLFormElement>) {
@@ -1343,6 +1380,22 @@ export function OperationalHistoryWorkspace({
                             </dl>
                             {task.description ? <p className="mt-3 text-sm text-muted-foreground">{task.description}</p> : null}
                             {task.result ? <p className="mt-3 rounded-md border bg-background/70 p-3 text-sm"><strong>Resultado:</strong> {task.result}</p> : null}
+                            {operations.permissions.canManageTasks && task.status === "COMPLETED" && task.editable ? editingTaskId === task.id ? (
+                              <form className="mt-4 grid gap-3 rounded-md border bg-background/80 p-4 sm:grid-cols-2" onSubmit={(event) => submitTaskEdit(event, task)}>
+                                <p className="text-sm font-semibold sm:col-span-2">Editar tarefa concluída</p>
+                                <label className="text-sm sm:col-span-2">Título<input className={inputClass} defaultValue={task.title} name="title" required /></label>
+                                <label className="text-sm sm:col-span-2">Descrição<textarea className={textareaClass} defaultValue={task.description ?? ""} name="description" /></label>
+                                <label className="text-sm">Prioridade<select className={inputClass} defaultValue={task.priority} name="priority"><option value="LOW">Baixa</option><option value="MEDIUM">Média</option><option value="HIGH">Alta</option><option value="URGENT">Urgente</option></select></label>
+                                <label className="text-sm">Status<select className={inputClass} defaultValue={task.status} name="status"><option value="OPEN">Aberta</option><option value="IN_PROGRESS">Em andamento</option><option value="COMPLETED">Concluída</option><option value="CANCELLED">Cancelada</option></select></label>
+                                <label className="text-sm">Prazo<input className={inputClass} defaultValue={dateTimeLocalValue(task.dueAt)} name="dueAt" required type="datetime-local" /></label>
+                                <label className="text-sm">Resultado<input className={inputClass} defaultValue={task.result ?? ""} name="result" /></label>
+                                <label className="text-sm sm:col-span-2">Motivo da alteração<textarea className={textareaClass} name="reason" required /></label>
+                                <div className="flex flex-wrap gap-2 sm:col-span-2">
+                                  <Button disabled={pending} size="sm" type="submit">{pending ? "Salvando…" : "Salvar alterações"}</Button>
+                                  <Button disabled={pending} onClick={() => setEditingTaskId(null)} size="sm" type="button" variant="secondary">Cancelar</Button>
+                                </div>
+                              </form>
+                            ) : <Button className="mt-3" onClick={() => setEditingTaskId(task.id)} size="sm" type="button" variant="secondary">Editar tarefa concluída</Button> : null}
                             {operations.permissions.canManageTasks && (task.status === "OPEN" || task.status === "IN_PROGRESS") && task.kind !== "IMMEDIATE_CALL" ? <form className="mt-3 grid gap-3" onSubmit={(event) => submitCompletion(event, task.id)}>{task.sourceKey?.startsWith("active-prospecting:") ? <><label className="text-sm">Resultado da conclusão<select className={inputClass} name="result" required>{task.kind === "CALL" ? <><option value="">Selecione</option><option value="CONNECTED">Conectou</option><option value="CALLBACK_REQUESTED">Pediu retorno</option><option value="WHATSAPP_SHARED">Passou contato/WhatsApp</option><option value="NO_ANSWER">Não atendeu</option><option value="BUSY">Ocupado</option><option value="VOICEMAIL">Caixa postal</option><option value="WRONG_NUMBER">Número incorreto</option><option value="CHANNEL_UNAVAILABLE">Canal indisponível</option></> : task.kind === "INSTAGRAM_MESSAGE" ? <><option value="">Selecione</option><option value="SENT">Feito</option><option value="FAILED">Falhou</option><option value="PROFILE_NOT_FOUND">Não achou Instagram</option><option value="CHANNEL_UNAVAILABLE">Canal indisponível</option></> : <><option value="">Selecione</option><option value="COMPLETED">Feito</option><option value="ALREADY_FOLLOWING">Já seguia</option><option value="FAILED">Falhou</option><option value="PROFILE_NOT_FOUND">Não achou Instagram</option><option value="CHANNEL_UNAVAILABLE">Canal indisponível</option></>}</select></label><label className="text-sm">Motivo/observação<input className={inputClass} name="resultReason" placeholder="Opcional; o CRM registra o resultado automaticamente" /></label><label className="text-sm">Interromper cadência<select className={inputClass} defaultValue="" name="stopReason"><option value="">Não interromper</option><option value="REFUSAL">Recusa</option><option value="DO_NOT_CONTACT">Pedido de não contato</option></select></label></> : <label className="text-sm">Resultado da conclusão<input className={inputClass} name="result" required /></label>}<NextActionFields /><Button disabled={pending} size="sm" type="submit">Concluir tarefa</Button></form> : null}
                             {task.kind === "IMMEDIATE_CALL" && (task.status === "OPEN" || task.status === "IN_PROGRESS") ? <p className="mt-3 text-xs text-muted-foreground">Conclua registrando a ligação, com a próxima ação quando necessária.</p> : null}
                           </div>

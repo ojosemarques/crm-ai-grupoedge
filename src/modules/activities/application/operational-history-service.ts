@@ -6,6 +6,7 @@ import type {
   Prisma,
   PrismaClient,
   TaskKind,
+  TaskStatus,
 } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import type { ServiceActorContext } from "@/modules/auth/application/service-actor-context";
@@ -29,7 +30,10 @@ import {
   stopColdCadenceInTransaction,
 } from "@/modules/prospecting/application/prospecting-cadence-service";
 import { recordTaskCompletionMetricFactsInTransaction } from "@/modules/metrics/application/task-completion-metric-facts";
-import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
+import {
+  recordCommercialMetricCorrectionInTransaction,
+  recordCommercialMetricFactInTransaction,
+} from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { manualActivityCorrectionFacts } from "@/modules/metrics/application/manual-activity-correction-facts";
 import { manualActivityMetricCorrection, manualActivityMetricEvents } from "@/modules/metrics/domain/manual-activity-metric-events";
 import { summarizeCorrectedContactHistory } from "@/modules/metrics/domain/corrected-contact-history";
@@ -151,6 +155,35 @@ const completeTaskSchema = z
     path: ["nextTask"],
     message: "Não crie próxima ação ao encerrar a cadência por recusa ou não contato.",
   });
+
+const editableTaskStatuses = [
+  "OPEN",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "CANCELLED",
+] as const satisfies readonly TaskStatus[];
+
+const updateCompletedTaskSchema = z
+  .object({
+    leadId: z.string().uuid(),
+    taskId: z.string().uuid(),
+    expectedUpdatedAt: z.coerce.date(),
+    reason: z.string().trim().min(3).max(2_000),
+    title: z.string().trim().min(2).max(200),
+    description: z.string().trim().max(2_000).nullable(),
+    priority: z.enum(priorities),
+    dueAt: z.coerce.date(),
+    status: z.enum(editableTaskStatuses),
+    result: z.string().trim().max(2_000).nullable(),
+  })
+  .strict()
+  .refine(
+    (value) => value.status !== "COMPLETED" || Boolean(value.result?.trim()),
+    {
+      path: ["result"],
+      message: "Informe o resultado para manter a tarefa concluída.",
+    },
+  );
 
 const recordActivitySchema = z
   .object({
@@ -420,6 +453,97 @@ async function assertReferences(
       select: { id: true },
     });
     if (!meeting) notFound("Reunião não encontrada para este lead.");
+  }
+}
+
+function isManuallyEditableTask(task: Readonly<{
+  kind: string;
+  context: string;
+  sourceKey: string | null;
+  slaCycleId: string | null;
+  opportunityId: string | null;
+  meetingId: string | null;
+  automationRunId: string | null;
+}>): boolean {
+  return task.kind !== "IMMEDIATE_CALL" &&
+    task.context === "COMMERCIAL" &&
+    task.sourceKey === null &&
+    task.slaCycleId === null &&
+    task.opportunityId === null &&
+    task.meetingId === null &&
+    task.automationRunId === null;
+}
+
+async function reverseActiveTaskCompletionFacts(
+  transaction: Prisma.TransactionClient,
+  input: Readonly<{
+    workspaceId: string;
+    taskId: string;
+    activityId: string;
+    correctedAt: Date;
+    reason: string;
+  }>,
+): Promise<void> {
+  const originals = await transaction.commercialMetricFact.findMany({
+    where: {
+      workspaceId: input.workspaceId,
+      taskId: input.taskId,
+      sourceEntityType: "Task",
+      eventType: "TASK_COMPLETED",
+      quantity: { gt: 0 },
+      correctionOfFactId: null,
+    },
+  });
+  if (originals.length === 0) return;
+
+  const corrections = await transaction.commercialMetricFact.findMany({
+    where: {
+      workspaceId: input.workspaceId,
+      correctionOfFactId: { in: originals.map((fact) => fact.id) },
+    },
+    select: { correctionOfFactId: true, quantity: true },
+  });
+  const correctedQuantity = new Map<string, number>();
+  for (const correction of corrections) {
+    if (!correction.correctionOfFactId) continue;
+    correctedQuantity.set(
+      correction.correctionOfFactId,
+      (correctedQuantity.get(correction.correctionOfFactId) ?? 0) + correction.quantity,
+    );
+  }
+
+  for (const original of originals) {
+    const activeQuantity = original.quantity + (correctedQuantity.get(original.id) ?? 0);
+    if (activeQuantity <= 0) continue;
+    await recordCommercialMetricCorrectionInTransaction(transaction, {
+      workspaceId: input.workspaceId,
+      eventKey: `${original.eventKey}:task-edit:${input.activityId}:reversal:v1`,
+      eventType: original.eventType,
+      occurredAt: original.occurredAt,
+      sourceEntityType: original.sourceEntityType,
+      sourceEntityId: original.sourceEntityId,
+      sourceRevision: original.sourceRevision,
+      leadId: original.leadId,
+      taskId: original.taskId,
+      activityId: input.activityId,
+      opportunityId: original.opportunityId,
+      creditedMemberId: original.creditedMemberId,
+      performedByMemberId: original.performedByMemberId,
+      leadOwnerMemberIdAtEvent: original.leadOwnerMemberIdAtEvent,
+      taskKind: original.taskKind,
+      activityType: original.activityType,
+      result: original.result,
+      executionMode: original.executionMode,
+      quantity: -activeQuantity,
+      correctionOfFactId: original.id,
+      reversedAt: input.correctedAt,
+      reversalReason: input.reason,
+      safeMetadata: {
+        correctionActivityId: input.activityId,
+        correctedEntity: "Task",
+        correctedAt: input.correctedAt.toISOString(),
+      },
+    });
   }
 }
 
@@ -969,6 +1093,265 @@ export function createOperationalHistoryService(
         status: "COMPLETED" as const,
         completedAt: completedAt.toISOString(),
         nextTaskId: createdNextTask?.id ?? null,
+      });
+    });
+  }
+
+  async function updateCompletedTask(
+    context: OperationalActorContext,
+    payload: unknown,
+  ) {
+    const parsed = updateCompletedTaskSchema.safeParse(payload);
+    if (!parsed.success) invalidInput(parsed.error);
+    const lead = await getLead(context.workspaceId, parsed.data.leadId);
+    await authorize(context, lead, PermissionKeys.TASKS_WRITE);
+    const changedAt = options.now();
+
+    return options.database.$transaction(async (transaction) => {
+      await lockLead(transaction, context.workspaceId, lead.id);
+      const currentLead = await getTransactionalLead(
+        transaction,
+        context.workspaceId,
+        lead.id,
+      );
+      const task = await transaction.task.findFirst({
+        where: {
+          id: parsed.data.taskId,
+          workspaceId: context.workspaceId,
+          leadId: lead.id,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          kind: true,
+          context: true,
+          sourceKey: true,
+          status: true,
+          priority: true,
+          dueAt: true,
+          completedAt: true,
+          result: true,
+          updatedAt: true,
+          slaCycleId: true,
+          opportunityId: true,
+          meetingId: true,
+          automationRunId: true,
+          assigneeMemberId: true,
+        },
+      });
+      if (!task) notFound("Tarefa não encontrada.");
+      if (task.status !== "COMPLETED") {
+        conflict(
+          "TASK_NOT_COMPLETED",
+          "Somente tarefas concluídas podem ser corrigidas por este fluxo.",
+        );
+      }
+      if (!isManuallyEditableTask(task)) {
+        conflict(
+          "TASK_MANAGED_BY_WORKFLOW",
+          "Esta tarefa é controlada por outro fluxo e deve ser alterada na origem.",
+        );
+      }
+      if (task.updatedAt.getTime() !== parsed.data.expectedUpdatedAt.getTime()) {
+        conflict(
+          "TASK_VERSION_CONFLICT",
+          "A tarefa foi alterada por outra pessoa. Atualize a página e tente novamente.",
+        );
+      }
+
+      const result = parsed.data.status === "COMPLETED"
+        ? parsed.data.result?.trim() ?? null
+        : null;
+      const completedAt = parsed.data.status === "COMPLETED"
+        ? task.completedAt ?? changedAt
+        : null;
+      const updated = await transaction.task.updateMany({
+        where: {
+          id: task.id,
+          workspaceId: context.workspaceId,
+          leadId: lead.id,
+          updatedAt: task.updatedAt,
+          deletedAt: null,
+        },
+        data: {
+          title: parsed.data.title,
+          description: parsed.data.description,
+          priority: parsed.data.priority,
+          dueAt: parsed.data.dueAt,
+          status: parsed.data.status,
+          completedAt,
+          result,
+          updatedByActorId: context.actorId,
+        },
+      });
+      if (updated.count !== 1) {
+        conflict(
+          "TASK_VERSION_CONFLICT",
+          "A tarefa foi alterada por outra pessoa. Atualize a página e tente novamente.",
+        );
+      }
+
+      const correctedActivity = await transaction.activity.findFirst({
+        where: {
+          workspaceId: context.workspaceId,
+          leadId: lead.id,
+          type: "TASK",
+          result: "COMPLETED",
+          deletedAt: null,
+          newValues: { path: ["taskId"], equals: task.id },
+        },
+        orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+        select: { id: true },
+      });
+      const nextTask = await findNextTask(transaction, context.workspaceId, lead.id);
+      const activity = await transaction.activity.create({
+        data: {
+          workspaceId: context.workspaceId,
+          leadId: lead.id,
+          type: "TASK",
+          direction: "INTERNAL",
+          result: "CORRECTED",
+          subject: `Tarefa corrigida: ${parsed.data.title}`,
+          description: parsed.data.reason,
+          occurredAt: changedAt,
+          nextActionAt: nextTask?.dueAt ?? null,
+          nextActionDescription: nextTask?.title ?? null,
+          previousValues: {
+            taskId: task.id,
+            title: task.title,
+            description: task.description,
+            priority: task.priority,
+            dueAt: task.dueAt.toISOString(),
+            status: task.status,
+            completedAt: task.completedAt?.toISOString() ?? null,
+            result: task.result,
+          },
+          newValues: {
+            taskId: task.id,
+            title: parsed.data.title,
+            description: parsed.data.description,
+            priority: parsed.data.priority,
+            dueAt: parsed.data.dueAt.toISOString(),
+            status: parsed.data.status,
+            completedAt: completedAt?.toISOString() ?? null,
+            result,
+          },
+          ...(correctedActivity ? { correctsActivityId: correctedActivity.id } : {}),
+          createdByActorId: context.actorId,
+          updatedByActorId: context.actorId,
+          createdAt: changedAt,
+          updatedAt: changedAt,
+        },
+      });
+
+      const completionChanged = parsed.data.status !== "COMPLETED" ||
+        result !== task.result ||
+        parsed.data.dueAt.getTime() !== task.dueAt.getTime();
+      if (completionChanged) {
+        await reverseActiveTaskCompletionFacts(transaction, {
+          workspaceId: context.workspaceId,
+          taskId: task.id,
+          activityId: activity.id,
+          correctedAt: changedAt,
+          reason: parsed.data.reason,
+        });
+      }
+      if (parsed.data.status === "COMPLETED" && completionChanged) {
+        await recordTaskCompletionMetricFactsInTransaction(transaction, {
+          workspaceId: context.workspaceId,
+          taskId: task.id,
+          leadId: lead.id,
+          opportunityId: null,
+          activityId: activity.id,
+          assigneeMemberId: task.assigneeMemberId,
+          performedByMemberId: "memberId" in context ? context.memberId : null,
+          leadOwnerMemberId: currentLead.ownerMemberId,
+          kind: task.kind,
+          result,
+          dueAt: parsed.data.dueAt,
+          completedAt: completedAt!,
+          executionMode: "memberId" in context ? "MANUAL" : "SYSTEM",
+        });
+      } else if (parsed.data.status === "CANCELLED") {
+        await recordCommercialMetricFactInTransaction(transaction, {
+          workspaceId: context.workspaceId,
+          eventKey: `task:${task.id}:cancelled:activity:${activity.id}:v1`,
+          eventType: "TASK_CANCELLED",
+          occurredAt: changedAt,
+          sourceEntityType: "Task",
+          sourceEntityId: task.id,
+          leadId: lead.id,
+          taskId: task.id,
+          activityId: activity.id,
+          creditedMemberId: task.assigneeMemberId,
+          performedByMemberId: "memberId" in context ? context.memberId : null,
+          leadOwnerMemberIdAtEvent: currentLead.ownerMemberId,
+          taskKind: task.kind,
+          result: parsed.data.reason,
+          executionMode: "memberId" in context ? "MANUAL" : "SYSTEM",
+        });
+      }
+
+      await transaction.lead.update({
+        where: { id: lead.id },
+        data: {
+          ...taskProjection(nextTask),
+          ...(changedAt > currentLead.lastActivityAt
+            ? { lastActivityAt: changedAt }
+            : {}),
+          updatedByActorId: context.actorId,
+        },
+      });
+      await transaction.auditLog.create({
+        data: {
+          workspaceId: context.workspaceId,
+          actorId: context.actorId,
+          action: "task.corrected",
+          entityType: "Task",
+          entityId: task.id,
+          occurredAt: changedAt,
+          changes: {
+            reason: parsed.data.reason,
+            correctionActivityId: activity.id,
+            from: {
+              title: task.title,
+              description: task.description,
+              priority: task.priority,
+              dueAt: task.dueAt.toISOString(),
+              status: task.status,
+              result: task.result,
+            },
+            to: {
+              title: parsed.data.title,
+              description: parsed.data.description,
+              priority: parsed.data.priority,
+              dueAt: parsed.data.dueAt.toISOString(),
+              status: parsed.data.status,
+              result,
+            },
+          },
+        },
+      });
+      const stored = await transaction.task.findUniqueOrThrow({
+        where: { id: task.id },
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          dueAt: true,
+          completedAt: true,
+          result: true,
+          updatedAt: true,
+        },
+      });
+      await options.beforeCommit?.();
+      return Object.freeze({
+        ...stored,
+        dueAt: stored.dueAt.toISOString(),
+        completedAt: stored.completedAt?.toISOString() ?? null,
+        updatedAt: stored.updatedAt.toISOString(),
       });
     });
   }
@@ -1696,6 +2079,12 @@ export function createOperationalHistoryService(
           completedAt: true,
           result: true,
           sourceKey: true,
+          context: true,
+          slaCycleId: true,
+          opportunityId: true,
+          meetingId: true,
+          automationRunId: true,
+          updatedAt: true,
         },
       }),
       options.database.activity.findMany({
@@ -1957,9 +2346,18 @@ export function createOperationalHistoryService(
         missingFields,
       },
       tasks: tasks.map((task) => ({
-        ...task,
+        id: task.id,
+        title: task.title,
+        description: task.description,
+        kind: task.kind,
+        status: task.status,
+        priority: task.priority,
         dueAt: task.dueAt.toISOString(),
         completedAt: task.completedAt?.toISOString() ?? null,
+        result: task.result,
+        sourceKey: task.sourceKey,
+        updatedAt: task.updatedAt.toISOString(),
+        editable: isManuallyEditableTask(task),
         overdue:
           (task.status === "OPEN" || task.status === "IN_PROGRESS") &&
           task.dueAt.getTime() < now.getTime(),
@@ -1981,6 +2379,7 @@ export function createOperationalHistoryService(
   return Object.freeze({
     createTask,
     completeTask,
+    updateCompletedTask,
     recordActivity,
     updateLeadSummary,
     correctActivity,

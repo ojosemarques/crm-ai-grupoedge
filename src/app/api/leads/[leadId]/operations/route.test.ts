@@ -3,11 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireApiAuthentication = vi.fn();
 const createTask = vi.fn();
+const updateCompletedTask = vi.fn();
 const schedule = vi.fn();
 
 vi.mock("@/modules/auth/http/authentication-guards", () => ({ requireApiAuthentication }));
 vi.mock("@/modules/activities/application/operational-history-service", () => ({
-  getOperationalHistoryService: () => ({ createTask }),
+  getOperationalHistoryService: () => ({ createTask, updateCompletedTask }),
 }));
 vi.mock("@/modules/meetings/application/meeting-service", () => ({
   getMeetingService: () => ({ schedule }),
@@ -17,11 +18,11 @@ const leadId = "11111111-1111-4111-8111-111111111111";
 const closerId = "22222222-2222-4222-8222-222222222222";
 const context = { actorId: "actor-a", workspaceId: "workspace-a" };
 
-function request(data: Record<string, unknown>) {
+function request(data: Record<string, unknown>, action = "CREATE_TASK") {
   return new NextRequest(`https://crm.example/api/leads/${leadId}/operations`, {
     method: "POST",
     headers: { origin: "https://crm.example", "content-type": "application/json" },
-    body: JSON.stringify({ action: "CREATE_TASK", data }),
+    body: JSON.stringify({ action, data }),
   });
 }
 
@@ -30,6 +31,7 @@ describe("criação de tarefa no card do lead", () => {
     vi.clearAllMocks();
     requireApiAuthentication.mockResolvedValue(context);
     createTask.mockResolvedValue({ id: "task-a" });
+    updateCompletedTask.mockResolvedValue({ id: "task-a", status: "OPEN" });
     schedule.mockResolvedValue({ meetingId: "meeting-a", taskId: "task-a" });
   });
 
@@ -64,6 +66,26 @@ describe("criação de tarefa no card do lead", () => {
     expect(response.status).toBe(200);
     expect(createTask).toHaveBeenCalledWith(context, expect.objectContaining({ leadId, kind: "CALL" }));
     expect(schedule).not.toHaveBeenCalled();
+  });
+
+  it("encaminha a edição de tarefa concluída pelo serviço operacional", async () => {
+    const { POST } = await import("./route");
+    const data = {
+      taskId: "33333333-3333-4333-8333-333333333333",
+      expectedUpdatedAt: "2035-02-11T15:00:00.000Z",
+      reason: "Conclusão registrada antes da hora.",
+      title: "Revisar tarefa",
+      description: null,
+      priority: "HIGH",
+      dueAt: "2035-02-12T15:00:00.000Z",
+      status: "OPEN",
+      result: null,
+    };
+    const response = await POST(request(data, "UPDATE_COMPLETED_TASK"), {
+      params: Promise.resolve({ leadId }),
+    });
+    expect(response.status).toBe(200);
+    expect(updateCompletedTask).toHaveBeenCalledWith(context, { ...data, leadId });
   });
 
   it("rejeita origem externa antes de criar reunião", async () => {

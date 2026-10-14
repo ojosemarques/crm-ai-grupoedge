@@ -241,6 +241,148 @@ describe("histórico operacional baseado em eventos", () => {
     ).rejects.toMatchObject({ code: "CONTACT_ACTIVITY_REQUIRED" });
   });
 
+  it("edita tarefa concluída, permite reabrir e mantém histórico, projeção e métricas consistentes", async () => {
+    const base = new Date("2032-07-15T16:00:00.000Z");
+    const lead = await createLead(base);
+    const service = historyService();
+    const task = await service.createTask(managerContext, {
+      leadId: lead.leadId,
+      title: "Revisar briefing",
+      description: "Descrição original",
+      kind: "FOLLOW_UP",
+      priority: "MEDIUM",
+      dueAt: new Date(base.getTime() + 3_600_000),
+    });
+    clock = new Date(base.getTime() + 60_000);
+    await service.completeTask(managerContext, {
+      leadId: lead.leadId,
+      taskId: task.id,
+      result: "Briefing revisado",
+      nextTask: {
+        title: "Enviar retorno",
+        kind: "EMAIL",
+        priority: "MEDIUM",
+        dueAt: new Date(base.getTime() + 7_200_000),
+      },
+    });
+    const before = await service.getLeadOperations(managerContext, {
+      leadId: lead.leadId,
+    });
+    const completedTask = before.tasks.find((item) => item.id === task.id)!;
+    expect(completedTask).toMatchObject({ status: "COMPLETED", editable: true });
+    expect(before.tasks.find((item) => item.id === lead.taskId)?.editable).toBe(false);
+
+    clock = new Date(base.getTime() + 120_000);
+    const reopened = await service.updateCompletedTask(managerContext, {
+      leadId: lead.leadId,
+      taskId: task.id,
+      expectedUpdatedAt: completedTask.updatedAt,
+      reason: "A conclusão foi registrada antes da validação final.",
+      title: "Revisar briefing atualizado",
+      description: "Validar também os anexos.",
+      priority: "HIGH",
+      dueAt: new Date(base.getTime() + 5_400_000),
+      status: "OPEN",
+      result: null,
+    });
+    expect(reopened).toMatchObject({
+      title: "Revisar briefing atualizado",
+      status: "OPEN",
+      completedAt: null,
+      result: null,
+    });
+    const [storedReopened, leadAfterReopen, operationsAfterReopen, correction, correctionAudit, completionNet, reversalFact] = await Promise.all([
+      database.task.findUniqueOrThrow({ where: { id: task.id } }),
+      database.lead.findUniqueOrThrow({ where: { id: lead.leadId } }),
+      service.getLeadOperations(managerContext, { leadId: lead.leadId }),
+      database.activity.findFirstOrThrow({
+        where: { workspaceId, leadId: lead.leadId, result: "CORRECTED" },
+        orderBy: { occurredAt: "desc" },
+      }),
+      database.auditLog.findFirstOrThrow({
+        where: { workspaceId, entityType: "Task", entityId: task.id, action: "task.corrected" },
+        orderBy: { occurredAt: "desc" },
+      }),
+      database.commercialMetricFact.aggregate({
+        where: { workspaceId, taskId: task.id, eventType: "TASK_COMPLETED" },
+        _sum: { quantity: true },
+      }),
+      database.commercialMetricFact.findFirstOrThrow({
+        where: { workspaceId, taskId: task.id, eventType: "TASK_COMPLETED", quantity: { lt: 0 } },
+      }),
+    ]);
+    expect(storedReopened).toMatchObject({
+      status: "OPEN",
+      priority: "HIGH",
+      completedAt: null,
+      result: null,
+    });
+    const earliestActiveTask = operationsAfterReopen.tasks.find(
+      (item) => item.status === "OPEN" || item.status === "IN_PROGRESS",
+    );
+    expect(earliestActiveTask).toBeDefined();
+    expect(leadAfterReopen.nextActionTaskId).toBe(earliestActiveTask!.id);
+    expect(correction.correctsActivityId).not.toBeNull();
+    expect(correctionAudit.changes).toMatchObject({
+      reason: "A conclusão foi registrada antes da validação final.",
+    });
+    expect(completionNet._sum.quantity).toBe(0);
+    expect(reversalFact.occurredAt).toEqual(new Date(base.getTime() + 60_000));
+    expect(reversalFact.reversedAt).toEqual(new Date(base.getTime() + 120_000));
+
+    clock = new Date(base.getTime() + 180_000);
+    await service.completeTask(managerContext, {
+      leadId: lead.leadId,
+      taskId: task.id,
+      result: "Briefing validado após revisão",
+    });
+    const recompletedNet = await database.commercialMetricFact.aggregate({
+      where: { workspaceId, taskId: task.id, eventType: "TASK_COMPLETED" },
+      _sum: { quantity: true },
+    });
+    expect(recompletedNet._sum.quantity).toBe(1);
+
+    await expect(service.updateCompletedTask(managerContext, {
+      leadId: lead.leadId,
+      taskId: task.id,
+      expectedUpdatedAt: completedTask.updatedAt,
+      reason: "Tentativa com versão antiga.",
+      title: "Não deve salvar",
+      description: null,
+      priority: "LOW",
+      dueAt: new Date(base.getTime() + 6_000_000),
+      status: "OPEN",
+      result: null,
+    })).rejects.toMatchObject({ code: "TASK_VERSION_CONFLICT" });
+    await expect(service.updateCompletedTask(viewerContext, {
+      leadId: lead.leadId,
+      taskId: task.id,
+      expectedUpdatedAt: reopened.updatedAt,
+      reason: "Tentativa sem permissão.",
+      title: "Não deve salvar",
+      description: null,
+      priority: "LOW",
+      dueAt: new Date(base.getTime() + 6_000_000),
+      status: "OPEN",
+      result: null,
+    })).rejects.toBeInstanceOf(AccessDeniedError);
+    await expect(service.updateCompletedTask({
+      ...managerContext,
+      workspaceId: randomUUID(),
+    }, {
+      leadId: lead.leadId,
+      taskId: task.id,
+      expectedUpdatedAt: reopened.updatedAt,
+      reason: "Tentativa fora do workspace.",
+      title: "Não deve salvar",
+      description: null,
+      priority: "LOW",
+      dueAt: new Date(base.getTime() + 6_000_000),
+      status: "OPEN",
+      result: null,
+    })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
   it("registra primeira tentativa e resposta apenas uma vez e atualiza o sinal operacional", async () => {
     const base = new Date("2032-07-16T13:00:00.000Z");
     const lead = await createLead(base);
