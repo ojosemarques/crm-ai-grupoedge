@@ -66,7 +66,7 @@ test("filtra os pipelines de leads automaticamente sem recarregar o documento", 
   await page.goto("/pipeline?q=resultado-inexistente");
 
   const preSalesNavigations = countDocumentNavigations(page);
-  await page.getByPlaceholder("Buscar negócio...").fill(preSalesLeadName);
+  await page.getByRole("searchbox", { name: "Pesquisar negócios por nome ou telefone" }).fill(preSalesLeadName);
   await expect(page).toHaveURL(new RegExp(`q=${encodeURIComponent(preSalesLeadName).replaceAll("%20", "(?:%20|\\+)")}`));
   await expect(page.locator("article").filter({ hasText: preSalesLeadName })).toBeVisible();
   expect(preSalesNavigations.current()).toBe(0);
@@ -82,10 +82,13 @@ test("filtra os pipelines de leads automaticamente sem recarregar o documento", 
   await expect(page.locator("article").filter({ hasText: prospectingLeadName })).toBeVisible();
 
   const prospectingNavigations = countDocumentNavigations(page);
-  await page.getByPlaceholder("Buscar negócio...").fill("resultado-inexistente");
+  const prospectingSearch = page.getByRole("searchbox", { name: "Pesquisar negócios por nome ou telefone" });
+  await prospectingSearch.fill("resultado-inexistente");
   await expect(page.locator("article").filter({ hasText: prospectingLeadName })).toHaveCount(0);
-  await page.getByPlaceholder("Buscar negócio...").fill(prospectingLeadName);
+  await expect(prospectingSearch).toBeFocused();
+  await prospectingSearch.fill(prospectingLeadName);
   await expect(page.locator("article").filter({ hasText: prospectingLeadName })).toBeVisible();
+  await expect(prospectingSearch).toBeFocused();
   expect(prospectingNavigations.current()).toBe(0);
   prospectingNavigations.stop();
 });

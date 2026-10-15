@@ -29,11 +29,21 @@ export function InstantPipelineFilterForm({
 }>) {
   const router = useRouter();
   const debounceTimer = useRef<number | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const [pending, startTransition] = useTransition();
 
   useEffect(() => () => {
     if (debounceTimer.current !== null) window.clearTimeout(debounceTimer.current);
   }, []);
+
+  useEffect(() => {
+    const form = formRef.current;
+    const activeElement = document.activeElement;
+    const userIsTyping = activeElement instanceof HTMLInputElement
+      && form?.contains(activeElement)
+      && ["search", "text"].includes(activeElement.type);
+    if (!userIsTyping) form?.reset();
+  }, [syncKey]);
 
   function navigate(form: HTMLFormElement) {
     if (debounceTimer.current !== null) window.clearTimeout(debounceTimer.current);
@@ -59,7 +69,7 @@ export function InstantPipelineFilterForm({
   }
 
   return (
-    <form action={action} aria-busy={pending} className={className} key={syncKey} method="get" onChange={change} onSubmit={submit}>
+    <form action={action} aria-busy={pending} className={className} method="get" onChange={change} onSubmit={submit} ref={formRef}>
       {children}
     </form>
   );
