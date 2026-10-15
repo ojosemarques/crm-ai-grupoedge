@@ -663,7 +663,6 @@ export function createMeetingService(options: MeetingServiceOptions) {
     const workspaceRow = await workspace(context);
     const startsAt = parseWorkspaceLocalDateTime(parsed.data.startsAtLocal, workspaceRow.timeZone);
     const endsAt = new Date(startsAt.getTime() + parsed.data.durationMinutes * 60_000);
-    if (startsAt <= options.now()) conflict("MEETING_IN_PAST", "A reunião deve ser agendada no futuro.");
     const lead = await options.database.lead.findFirst({
       where: { id: parsed.data.leadId, workspaceId: context.workspaceId, deletedAt: null },
       select: {

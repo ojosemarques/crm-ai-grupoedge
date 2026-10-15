@@ -206,6 +206,28 @@ describe("agenda interna e reuniões", () => {
     })).toBe(1);
   });
 
+  it("permite registrar uma reunião em período anterior", async () => {
+    clock = new Date("2035-02-10T15:00:00.000Z");
+    const lead = await qualifyLead("CRM15 período anterior");
+
+    const scheduled = await schedule(lead.leadId, managerContext, "2035-02-09T09:00", closer2Id);
+    const [meeting, task, agenda] = await Promise.all([
+      database.meeting.findUniqueOrThrow({ where: { id: scheduled.meetingId } }),
+      database.task.findFirstOrThrow({ where: { workspaceId, meetingId: scheduled.meetingId } }),
+      meetings().getAgenda(managerContext, { view: "day", date: "2035-02-09" }),
+    ]);
+
+    expect(meeting).toMatchObject({
+      startsAt: new Date("2035-02-09T12:00:00.000Z"),
+      status: "SCHEDULED",
+    });
+    expect(task).toMatchObject({ status: "OPEN", dueAt: meeting.startsAt });
+    expect(agenda.meetings).toContainEqual(expect.objectContaining({
+      id: meeting.id,
+      operationalStatus: "PENDING_STATUS",
+    }));
+  });
+
   it("agenda de forma atômica, cria tarefa, atualiza pipeline, timeline e auditoria", async () => {
     const lead = await qualifyLead("CRM15 agendamento");
     const before = await meetings().getLeadMeetings(lead.sdrContext, { leadId: lead.leadId });
