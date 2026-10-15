@@ -949,18 +949,12 @@ export function createMeetingService(options: MeetingServiceOptions) {
         outcome = parsed.data.status === "COMPLETED" || parsed.data.status === "NO_SHOW"
           ? parsed.data.outcome
           : null;
-        const reopening = meeting.status !== "SCHEDULED" && meeting.status !== "CONFIRMED";
-        const moving = startsAt.getTime() !== meeting.startsAt.getTime() || endsAt.getTime() !== meeting.endsAt.getTime();
-        if ((newStatus === "SCHEDULED" || newStatus === "CONFIRMED") && (reopening || moving) && startsAt <= now) {
-          conflict("MEETING_IN_PAST", "Uma reunião reaberta ou remarcada deve ficar no futuro.");
-        }
       } else if (parsed.data.action === "CONFIRM") {
         if (meeting.status === "CONFIRMED") conflict("MEETING_ALREADY_CONFIRMED", "A reunião já está confirmada.");
         newStatus = "CONFIRMED";
       } else if (parsed.data.action === "RESCHEDULE") {
         startsAt = parseWorkspaceLocalDateTime(parsed.data.startsAtLocal, meeting.timeZone);
         endsAt = new Date(startsAt.getTime() + parsed.data.durationMinutes * 60_000);
-        if (startsAt <= now) conflict("MEETING_IN_PAST", "A nova data deve estar no futuro.");
         newStatus = "SCHEDULED";
         reason = parsed.data.reason;
       } else if (parsed.data.action === "CANCEL") {

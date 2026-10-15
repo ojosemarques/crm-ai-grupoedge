@@ -8,4 +8,5 @@ Todas as mutações passam por `MeetingService`, usam o fuso do workspace e
 gravam tarefa, timeline e auditoria na mesma transação. Agendar um lead
 qualificado usa a política da CRM-14 para mover o pré-vendas a `Reunião
 agendada`; a interface nunca grava o banco diretamente. Sobreposições de horário
-são permitidas na criação, edição e remarcação de reuniões.
+são permitidas na criação, edição e remarcação de reuniões, inclusive em períodos
+anteriores e ao reabrir um registro encerrado.

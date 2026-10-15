@@ -304,6 +304,50 @@ describe("agenda interna e reuniões", () => {
     })).toBe(3);
   });
 
+  it("permite reabrir e remarcar reuniões em período anterior com sobreposição", async () => {
+    clock = new Date("2035-02-20T15:00:00.000Z");
+    const occupiedLead = await qualifyLead("CRM15 passado ocupado");
+    const reopenedLead = await qualifyLead("CRM15 reabertura passada");
+    const rescheduledLead = await qualifyLead("CRM15 remarcação passada");
+    await schedule(occupiedLead.leadId, managerContext, "2035-02-20T09:00");
+    const closed = await schedule(reopenedLead.leadId, managerContext, "2035-02-20T10:00");
+    await meetings().act(managerContext, {
+      action: "NO_SHOW",
+      meetingId: closed.meetingId,
+      expectedRevision: 1,
+      reason: "Registro encerrado antes da correção.",
+      nextAction: { title: "Revisar reunião encerrada", dueAtLocal: "2035-02-20T13:00" },
+    });
+
+    const reopened = await meetings().act(managerContext, {
+      action: "EDIT",
+      meetingId: closed.meetingId,
+      expectedRevision: 2,
+      title: "Reunião reaberta no período anterior",
+      startsAtLocal: "2035-02-20T09:00",
+      durationMinutes: 30,
+      status: "SCHEDULED",
+      observation: "Horário histórico corrigido.",
+      outcome: null,
+      reason: "Reabertura para corrigir o histórico da agenda.",
+    });
+    const scheduled = await schedule(rescheduledLead.leadId, managerContext, "2035-02-20T10:30");
+    const rescheduled = await meetings().act(managerContext, {
+      action: "RESCHEDULE",
+      meetingId: scheduled.meetingId,
+      expectedRevision: 1,
+      startsAtLocal: "2035-02-20T09:00",
+      durationMinutes: 30,
+      reason: "Correção para horário anterior já ocupado.",
+    });
+
+    expect(reopened).toMatchObject({ status: "SCHEDULED", revision: 3, startsAt: "2035-02-20T12:00:00.000Z" });
+    expect(rescheduled).toMatchObject({ status: "SCHEDULED", revision: 2, startsAt: "2035-02-20T12:00:00.000Z" });
+    expect(await database.meeting.count({
+      where: { workspaceId, ownerMemberId: closer1Id, startsAt: new Date("2035-02-20T12:00:00.000Z") },
+    })).toBe(3);
+  });
+
   it("confirma, remarca e preserva cada horário no histórico append-only", async () => {
     const lead = await qualifyLead("CRM15 remarcação");
     const scheduled = await schedule(lead.leadId, managerContext, "2035-02-12T09:00", closer2Id);
