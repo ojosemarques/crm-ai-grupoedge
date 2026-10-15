@@ -22,6 +22,7 @@ export async function GET(request: NextRequest, routeContext: RouteContext) {
       priority: query.get("priority") ?? "ALL",
       stageCode: query.get("stageCode") ?? "ALL",
       phoneType: query.get("phoneType") ?? "ALL",
+      gender: query.get("gender") ?? "ALL",
       offset: query.get("offset") ?? "0",
       limit: query.get("limit") ?? "20",
     });

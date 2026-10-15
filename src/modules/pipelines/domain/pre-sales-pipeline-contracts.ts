@@ -25,6 +25,9 @@ export const leadStageLabels: Readonly<Record<LeadStageCode, string>> = {
 export const pipelinePhoneTypes = ["ALL", "FIXED", "WHATSAPP"] as const;
 export type PipelinePhoneType = (typeof pipelinePhoneTypes)[number];
 
+export const pipelineGenders = ["ALL", "MALE", "FEMALE"] as const;
+export type PipelineGender = (typeof pipelineGenders)[number];
+
 export type StageTransitionOption = Readonly<{
   stageId: string;
   code: LeadStageCode;
@@ -108,6 +111,7 @@ export type PreSalesPipelineScreen = Readonly<{
     priority: "ALL" | "P1" | "P2" | "P3";
     stageCode: "ALL" | LeadStageCode;
     phoneType: PipelinePhoneType;
+    gender: PipelineGender;
   }>;
   responsibleOptions: readonly Readonly<{ value: string; label: string }>[];
   stages: readonly LeadPipelineStageColumn[];

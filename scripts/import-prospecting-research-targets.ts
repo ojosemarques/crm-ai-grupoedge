@@ -9,10 +9,11 @@ import { PROSPECTING_SOURCE_SNAPSHOTS } from "@/modules/prospecting/domain/polit
 
 const EXPECTED_PROJECT_REF = "zbzztpzviyjxpprqcegs";
 const WORKSPACE_SLUG = "politizai";
+const GENDER_BACKFILL_TSE_HASH = "a6736493cc7187cbc4104f444b6ab0868c238f9c93be5cac9db24b293b955e25";
 const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"] as const;
 
 type Municipality = Readonly<{ ibgeCode: string; name: string; stateCode: string; population: number }>;
-type Target = Readonly<{ externalIdentityKey: string; tseCandidateId: string; role: "MAYOR" | "COUNCILOR"; politicianName: string; ballotName: string | null; municipalityName: string; municipalityIbgeCode: string; stateCode: string; population: number }>;
+type Target = Readonly<{ externalIdentityKey: string; tseCandidateId: string; role: "MAYOR" | "COUNCILOR"; gender: "MALE" | "FEMALE"; politicianName: string; ballotName: string | null; municipalityName: string; municipalityIbgeCode: string; stateCode: string; population: number }>;
 
 function argument(name: string): string | undefined {
   const prefix = `--${name}=`;
@@ -99,6 +100,13 @@ function parseCsvLine(line: string): string[] {
   return values;
 }
 
+function officialGender(value: string): Target["gender"] {
+  const normalized = normalizeName(value);
+  if (normalized === "MASCULINO") return "MALE";
+  if (normalized === "FEMININO") return "FEMALE";
+  throw new Error(`Gênero oficial do TSE não reconhecido: ${value || "vazio"}.`);
+}
+
 function loadTargets(path: string, municipalities: Map<string, Municipality>) {
   const targets = new Map<string, Target>();
   const unmatched = new Set<string>();
@@ -122,6 +130,7 @@ function loadTargets(path: string, municipalities: Map<string, Municipality>) {
         externalIdentityKey: `tse-2024:${tseCandidateId}`,
         tseCandidateId,
         role: cargo === "PREFEITO" ? "MAYOR" : "COUNCILOR",
+        gender: officialGender(at(row, "DS_GENERO")),
         politicianName: at(row, "NM_CANDIDATO"),
         ballotName: at(row, "NM_URNA_CANDIDATO") || null,
         municipalityName: municipality.name,
@@ -167,32 +176,95 @@ function emitSqlImport(directory: string, targets: readonly Target[]): number {
     ].join(", ")})`).join(",\n    ");
     const sequence = String(fileCount).padStart(3, "0");
     writeFileSync(`${directory}/${sequence}_targets.sql`, `SET search_path TO crm, public;\nBEGIN;\n${lockSql}\nWITH batch AS (\n  SELECT b.id AS \"batchId\", b.\"workspaceId\"\n  FROM prospecting_research_batches b\n  JOIN workspaces w ON w.id = b.\"workspaceId\"\n  WHERE w.slug = '${WORKSPACE_SLUG}' AND b.\"idempotencyKey\" = ${sqlText(idempotencyKey)}\n), source (\n  \"externalIdentityKey\", \"tseCandidateId\", role, \"politicianName\", \"ballotName\",\n  \"municipalityName\", \"municipalityIbgeCode\", \"stateCode\", population\n) AS (\n  VALUES\n    ${values}\n)\nINSERT INTO prospecting_research_targets (\n  id, \"workspaceId\", \"batchId\", \"externalIdentityKey\", \"tseCandidateId\", role,\n  \"politicianName\", \"ballotName\", \"municipalityName\", \"municipalityIbgeCode\",\n  \"stateCode\", population, status, \"createdAt\", \"updatedAt\"\n)\nSELECT\n  gen_random_uuid(), batch.\"workspaceId\", batch.\"batchId\", source.\"externalIdentityKey\",\n  source.\"tseCandidateId\", source.role::\"ProspectingRole\", source.\"politicianName\",\n  source.\"ballotName\", source.\"municipalityName\", source.\"municipalityIbgeCode\",\n  source.\"stateCode\", source.population, 'PENDING'::\"ProspectingResearchTargetStatus\", now(), now()\nFROM batch CROSS JOIN source\nON CONFLICT (\"workspaceId\", \"externalIdentityKey\") DO NOTHING;\nCOMMIT;\n`);
+    const genderValues = targets.slice(index, index + chunkSize)
+      .map((target) => `(${sqlText(target.tseCandidateId)}, ${sqlText(target.gender)})`)
+      .join(",\n    ");
+    writeFileSync(`${directory}/${sequence}_zz_gender.sql`, `SET search_path TO crm, public;
+BEGIN;
+${lockSql}
+WITH source ("tseCandidateId", gender) AS (
+  VALUES
+    ${genderValues}
+)
+UPDATE prospecting_research_targets target
+SET gender = source.gender::"ProspectingGender",
+    "updatedAt" = now()
+FROM source, workspaces workspace
+WHERE target."workspaceId" = workspace.id
+  AND workspace.slug = '${WORKSPACE_SLUG}'
+  AND target."tseCandidateId" = source."tseCandidateId";
+COMMIT;
+`);
     fileCount += 1;
   }
 
   writeFileSync(`${directory}/999_verify.sql`, `SET search_path TO crm, public;\nSELECT b.id AS \"batchId\", b.status, count(t.id)::integer AS targets\nFROM prospecting_research_batches b\nJOIN workspaces w ON w.id = b.\"workspaceId\"\nLEFT JOIN prospecting_research_targets t ON t.\"workspaceId\" = b.\"workspaceId\" AND t.\"batchId\" = b.id\nWHERE w.slug = '${WORKSPACE_SLUG}' AND b.\"idempotencyKey\" = ${sqlText(idempotencyKey)}\nGROUP BY b.id, b.status;\n`);
+  return (fileCount - 1) * 2 + 2;
+}
+
+function emitGenderBackfillSql(directory: string, targets: readonly Target[]): number {
+  mkdirSync(directory, { recursive: true });
+  if (readdirSync(directory).length > 0) throw new Error("O diretório de saída SQL precisa estar vazio.");
+  const chunkSize = 500;
+  let fileCount = 0;
+  for (let index = 0; index < targets.length; index += chunkSize) {
+    const values = targets.slice(index, index + chunkSize)
+      .map((target) => `(${sqlText(target.tseCandidateId)}, ${sqlText(target.gender)})`)
+      .join(",\n    ");
+    const sequence = String(fileCount + 1).padStart(3, "0");
+    writeFileSync(`${directory}/${sequence}_gender.sql`, `SET search_path TO crm, public;
+WITH source ("tseCandidateId", gender) AS (
+  VALUES
+    ${values}
+)
+UPDATE prospecting_research_targets target
+SET gender = source.gender::"ProspectingGender",
+    "updatedAt" = now()
+FROM source, workspaces workspace
+WHERE target."workspaceId" = workspace.id
+  AND workspace.slug = '${WORKSPACE_SLUG}'
+  AND target."tseCandidateId" = source."tseCandidateId";
+`);
+    fileCount += 1;
+  }
+  writeFileSync(`${directory}/999_verify.sql`, `SET search_path TO crm, public;
+SELECT gender::text AS gender, count(*)::integer AS targets
+FROM prospecting_research_targets target
+JOIN workspaces workspace ON workspace.id = target."workspaceId"
+WHERE workspace.slug = '${WORKSPACE_SLUG}'
+GROUP BY gender
+ORDER BY gender NULLS LAST;
+`);
   return fileCount + 1;
 }
 
 const sqlDirectory = argument("sql-dir");
-const mode = process.argv.includes("--apply") ? "apply" : process.argv.includes("--dry-run") ? "dry-run" : sqlDirectory ? "sql" : null;
+const genderSqlDirectory = argument("gender-sql-dir");
+const mode = process.argv.includes("--dry-run-gender") ? "dry-run-gender" : process.argv.includes("--backfill-gender") ? "backfill-gender" : process.argv.includes("--apply") ? "apply" : process.argv.includes("--dry-run") ? "dry-run" : genderSqlDirectory ? "gender-sql" : sqlDirectory ? "sql" : null;
 const ibgePath = argument("ibge");
 const tsePath = argument("tse");
-if (!mode || !ibgePath || !tsePath) throw new Error("Uso: tsx scripts/import-prospecting-research-targets.ts --dry-run|--apply|--sql-dir=<diretório> --ibge=<xlsx> --tse=<zip>");
-if (sha256(ibgePath) !== PROSPECTING_SOURCE_SNAPSHOTS.population.hash || sha256(tsePath) !== PROSPECTING_SOURCE_SNAPSHOTS.election.hash) throw new Error("Os arquivos oficiais não correspondem aos hashes fixados para IBGE/TSE.");
+if (!mode || !ibgePath || !tsePath) throw new Error("Uso: tsx scripts/import-prospecting-research-targets.ts --dry-run|--dry-run-gender|--apply|--backfill-gender|--sql-dir=<diretório>|--gender-sql-dir=<diretório> --ibge=<xlsx> --tse=<zip>");
+const expectedTseHash = ["backfill-gender", "dry-run-gender", "gender-sql"].includes(mode) ? GENDER_BACKFILL_TSE_HASH : PROSPECTING_SOURCE_SNAPSHOTS.election.hash;
+if (sha256(ibgePath) !== PROSPECTING_SOURCE_SNAPSHOTS.population.hash || sha256(tsePath) !== expectedTseHash) throw new Error("Os arquivos oficiais não correspondem aos hashes fixados para IBGE/TSE.");
 
 const municipalities = loadMunicipalities(ibgePath);
 const loaded = loadTargets(tsePath, municipalities);
 if (loaded.unmatched.length > 5) throw new Error(`Falha de vínculo IBGE/TSE: ${loaded.unmatched.length} município(s) sem correspondência: ${loaded.unmatched.join(", ")}.`);
 if (loaded.targets.length < 1_000) throw new Error(`Quantidade de alvos inesperadamente baixa: ${loaded.targets.length}.`);
 
-if (mode === "dry-run") {
-  process.stdout.write(`${JSON.stringify({ dryRun: true, municipalities: municipalities.size, eligibleTargets: loaded.targets.length, unmatched: loaded.unmatched })}\n`);
+if (mode === "dry-run" || mode === "dry-run-gender") {
+  const genderCounts = Object.fromEntries(["MALE", "FEMALE"].map((gender) => [gender, loaded.targets.filter((target) => target.gender === gender).length]));
+  process.stdout.write(`${JSON.stringify({ dryRun: true, municipalities: municipalities.size, eligibleTargets: loaded.targets.length, genderCounts, unmatched: loaded.unmatched, tseHash: expectedTseHash })}\n`);
   process.exit(0);
 }
 if (mode === "sql" && sqlDirectory) {
   const files = emitSqlImport(sqlDirectory, loaded.targets);
   process.stdout.write(`${JSON.stringify({ sql: true, directory: sqlDirectory, files, eligibleTargets: loaded.targets.length, unmatched: loaded.unmatched })}\n`);
+  process.exit(0);
+}
+if (mode === "gender-sql" && genderSqlDirectory) {
+  const files = emitGenderBackfillSql(genderSqlDirectory, loaded.targets);
+  process.stdout.write(`${JSON.stringify({ genderSql: true, directory: genderSqlDirectory, files, eligibleTargets: loaded.targets.length, unmatched: loaded.unmatched, tseHash: expectedTseHash })}\n`);
   process.exit(0);
 }
 
@@ -201,6 +273,36 @@ const databaseIdentity = contract.databaseUrl.username.endsWith(`.${EXPECTED_PRO
 if (contract.APP_ENV !== "production" || contract.PROCESS_ROLE !== "bootstrap" || !databaseIdentity) throw new Error("Importação permitida apenas no banco de produção Politizai identificado.");
 
 const database = getDatabaseClient();
+if (mode === "backfill-gender") {
+  try {
+    const outcome = await database.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('politizai:official-gender-backfill:2024', 0))`;
+      const workspace = await transaction.workspace.findFirstOrThrow({ where: { slug: WORKSPACE_SLUG, status: "ACTIVE", deletedAt: null }, select: { id: true } });
+      let updated = 0;
+      for (let index = 0; index < loaded.targets.length; index += 1_000) {
+        const rows = loaded.targets.slice(index, index + 1_000);
+        for (const gender of ["MALE", "FEMALE"] as const) {
+          const tseCandidateIds = rows.filter((target) => target.gender === gender).map((target) => target.tseCandidateId);
+          if (tseCandidateIds.length === 0) continue;
+          updated += (await transaction.prospectingResearchTarget.updateMany({
+            where: { workspaceId: workspace.id, tseCandidateId: { in: tseCandidateIds } },
+            data: { gender },
+          })).count;
+        }
+      }
+      const [male, female, unknown] = await Promise.all([
+        transaction.prospectingResearchTarget.count({ where: { workspaceId: workspace.id, gender: "MALE" } }),
+        transaction.prospectingResearchTarget.count({ where: { workspaceId: workspace.id, gender: "FEMALE" } }),
+        transaction.prospectingResearchTarget.count({ where: { workspaceId: workspace.id, gender: null } }),
+      ]);
+      return { workspaceId: workspace.id, eligibleTargets: loaded.targets.length, updated, male, female, unknown, tseHash: expectedTseHash };
+    }, { isolationLevel: "Serializable", maxWait: 15_000, timeout: 120_000 });
+    process.stdout.write(`${JSON.stringify({ genderBackfill: true, ...outcome })}\n`);
+  } finally {
+    await database.$disconnect();
+  }
+  process.exit(0);
+}
 const staging = createProspectingStagingService({ database, now: () => new Date() });
 try {
   const outcome = await database.$transaction(async (transaction) => {
@@ -225,11 +327,20 @@ try {
       promptVersion: "political-prospect-production/v1",
     });
     let inserted = 0;
+    let genderUpdated = 0;
     for (let index = 0; index < loaded.targets.length; index += 1_000) {
       const rows = loaded.targets.slice(index, index + 1_000).map((target) => ({ ...target, workspaceId: workspace.id, batchId: opened.batch.id }));
       inserted += (await transaction.prospectingResearchTarget.createMany({ data: rows, skipDuplicates: true })).count;
+      for (const gender of ["MALE", "FEMALE"] as const) {
+        const tseCandidateIds = rows.filter((target) => target.gender === gender).map((target) => target.tseCandidateId);
+        if (tseCandidateIds.length === 0) continue;
+        genderUpdated += (await transaction.prospectingResearchTarget.updateMany({
+          where: { workspaceId: workspace.id, tseCandidateId: { in: tseCandidateIds } },
+          data: { gender },
+        })).count;
+      }
     }
-    return { workspaceId: workspace.id, batchId: opened.batch.id, eligibleTargets: loaded.targets.length, inserted, existing: loaded.targets.length - inserted };
+    return { workspaceId: workspace.id, batchId: opened.batch.id, eligibleTargets: loaded.targets.length, inserted, existing: loaded.targets.length - inserted, genderUpdated };
   }, { isolationLevel: "Serializable", maxWait: 15_000, timeout: 120_000 });
   process.stdout.write(`${JSON.stringify({ dryRun: false, ...outcome })}\n`);
 } finally {

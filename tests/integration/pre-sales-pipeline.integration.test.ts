@@ -93,6 +93,66 @@ async function createLead(label: string, phoneType: "FIXED" | "WHATSAPP" = "WHAT
   return result;
 }
 
+async function linkLeadToOfficialGender(leadId: string, gender: "MALE" | "FEMALE") {
+  const identity = randomUUID();
+  const sourceHash = identity.replaceAll("-", "").repeat(2);
+  const batch = await database.prospectingResearchBatch.create({
+    data: {
+      workspaceId,
+      status: "COMPLETED",
+      horizonStart: new Date("2035-01-01T00:00:00.000Z"),
+      horizonEnd: new Date("2035-12-31T00:00:00.000Z"),
+      sourcePopulationEdition: "integration",
+      sourcePopulationHash: sourceHash,
+      sourceElectionEdition: "integration",
+      sourceElectionHash: sourceHash,
+      agentVersion: "integration",
+      promptVersion: "integration",
+      idempotencyKey: `gender-batch:${identity}`,
+      createdByActorId: systemContext.actorId,
+    },
+    select: { id: true },
+  });
+  const candidate = await database.prospectCandidate.create({
+    data: {
+      workspaceId,
+      batchId: batch.id,
+      externalIdentityKey: `gender-candidate:${identity}`,
+      idempotencyKey: `gender-candidate:${identity}`,
+      status: "RELEASED",
+      politicianName: `Candidato ${identity}`,
+      role: "COUNCILOR",
+      mandate: "2025-2028",
+      municipalityName: "Cidade Integração",
+      municipalityIbgeCode: "3550308",
+      stateCode: "SP",
+      population: 1_000_000,
+      populationEdition: "integration",
+      mandateVerifiedAt: clock,
+      fingerprint: identity,
+      leadId,
+    },
+    select: { id: true },
+  });
+  await database.prospectingResearchTarget.create({
+    data: {
+      workspaceId,
+      batchId: batch.id,
+      externalIdentityKey: `tse-2024:${identity}`,
+      tseCandidateId: identity,
+      role: "COUNCILOR",
+      gender,
+      politicianName: `Candidato ${identity}`,
+      municipalityName: "Cidade Integração",
+      municipalityIbgeCode: "3550308",
+      stateCode: "SP",
+      population: 1_000_000,
+      status: "INGESTED",
+      candidateId: candidate.id,
+    },
+  });
+}
+
 async function stages() {
   const rows = await database.pipelineStage.findMany({
     where: {
@@ -292,6 +352,41 @@ describe("pipeline de pré-vendas e transições", () => {
     expect(fixedScreen.filters.phoneType).toBe("FIXED");
     expect(fixedIds).toContain(fixedLead.leadId);
     expect(fixedIds).not.toContain(whatsappLead.leadId);
+  });
+
+  it("filtra leads pelo gênero oficial do alvo de prospecção", async () => {
+    const label = `CRM14 gênero ${randomUUID().slice(0, 8)}`;
+    const maleLead = await createLead(label);
+    const femaleLead = await createLead(label);
+    const unknownLead = await createLead(label);
+    await Promise.all([
+      linkLeadToOfficialGender(maleLead.leadId, "MALE"),
+      linkLeadToOfficialGender(femaleLead.leadId, "FEMALE"),
+    ]);
+
+    const maleScreen = await pipelineService().getScreen(managerContext, { q: label, gender: "MALE" });
+    const maleIds = maleScreen.stages.flatMap((stage) => stage.leads).map((lead) => lead.id);
+    expect(maleScreen.filters.gender).toBe("MALE");
+    expect(maleIds).toContain(maleLead.leadId);
+    expect(maleIds).not.toContain(femaleLead.leadId);
+    expect(maleIds).not.toContain(unknownLead.leadId);
+
+    const femaleScreen = await pipelineService().getScreen(managerContext, { q: label, gender: "FEMALE" });
+    const femaleIds = femaleScreen.stages.flatMap((stage) => stage.leads).map((lead) => lead.id);
+    expect(femaleScreen.filters.gender).toBe("FEMALE");
+    expect(femaleIds).toContain(femaleLead.leadId);
+    expect(femaleIds).not.toContain(maleLead.leadId);
+    expect(femaleIds).not.toContain(unknownLead.leadId);
+
+    const stage = femaleScreen.stages.find((item) => item.leads.some((lead) => lead.id === femaleLead.leadId));
+    expect(stage).toBeDefined();
+    await expect(pipelineService().getStagePage(managerContext, {
+      pipelineId: femaleScreen.pipelineId,
+      q: label,
+      stageId: stage!.id,
+      gender: "FEMALE",
+    })).resolves.toMatchObject({ leads: expect.arrayContaining([expect.objectContaining({ id: femaleLead.leadId })]) });
+    await expect(pipelineService().getScreen(managerContext, { gender: "UNSUPPORTED" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
   it("transiciona pelo serviço, fecha intervalos e registra timeline e auditoria", async () => {

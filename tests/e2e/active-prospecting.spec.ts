@@ -31,6 +31,10 @@ test("administrador consulta a Prospecção Ativa com os gates externos fechados
     await expect(phoneTypeFilter).toBeVisible();
     await expect(phoneTypeFilter.getByRole("option", { name: "Número fixo" })).toHaveCount(1);
     await expect(phoneTypeFilter.getByRole("option", { name: "Número WhatsApp" })).toHaveCount(1);
+    const genderFilter = page.getByLabel("Gênero");
+    await expect(genderFilter).toBeVisible();
+    await expect(genderFilter.getByRole("option", { name: "Homens" })).toHaveCount(1);
+    await expect(genderFilter.getByRole("option", { name: "Mulheres" })).toHaveCount(1);
     for (const removedLabel of ["Visão geral", "E-mails", "Configurações"]) {
       await expect(navigation.getByRole("link", { name: removedLabel, exact: true })).toHaveCount(0);
     }

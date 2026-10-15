@@ -21,6 +21,7 @@ import {
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import {
   leadStageCodes,
+  pipelineGenders,
   pipelinePhoneTypes,
   type LeadPipelineCard,
   type LeadPipelineStagePage,
@@ -57,6 +58,7 @@ const screenQuerySchema = z.object({
   priority: z.enum(["ALL", "P1", "P2", "P3"]).optional().default("ALL"),
   stageCode: z.enum(["ALL", ...leadStageCodes]).optional().default("ALL"),
   phoneType: z.enum(pipelinePhoneTypes).optional().default("ALL"),
+  gender: z.enum(pipelineGenders).optional().default("ALL"),
 }).strict();
 
 const leadStateSchema = z.object({ leadId: z.string().uuid() }).strict();
@@ -263,6 +265,26 @@ async function leadIdsByPhoneType(
             AND LENGTH(REGEXP_REPLACE(phone_point."normalizedValue", '[^0-9]', '', 'g')) ${lengthPredicate}
         )
       )
+  `);
+  return rows.map((row) => row.id);
+}
+
+async function leadIdsByGender(
+  database: PrismaClient,
+  input: Readonly<{
+    workspaceId: string;
+    gender: "MALE" | "FEMALE";
+  }>,
+): Promise<string[]> {
+  const rows = await database.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT DISTINCT candidate."leadId" AS id
+    FROM "prospecting_research_targets" target
+    JOIN "prospect_candidates" candidate
+      ON candidate."workspaceId" = target."workspaceId"
+      AND candidate.id = target."candidateId"
+    WHERE target."workspaceId" = ${input.workspaceId}
+      AND target.gender = ${input.gender}::"ProspectingGender"
+      AND candidate."leadId" IS NOT NULL
   `);
   return rows.map((row) => row.id);
 }
@@ -778,6 +800,12 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
           pipelineId: pipeline.id,
           phoneType: parsed.data.phoneType,
         });
+    const genderLeadIds = parsed.data.gender === "ALL"
+      ? null
+      : await leadIdsByGender(options.database, {
+          workspaceId: context.workspaceId,
+          gender: parsed.data.gender,
+        });
     const responsibleFilter: Prisma.LeadWhereInput = parsed.data.responsible.startsWith("member:")
       ? { ownerMemberId: parsed.data.responsible.slice(7) }
       : parsed.data.responsible.startsWith("queue:")
@@ -788,11 +816,12 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       ? {}
       : { currentScore: { leadScore: { priorityBandCode: parsed.data.priority } } };
     const phoneTypeFilter: Prisma.LeadWhereInput = phoneTypeLeadIds === null ? {} : { id: { in: phoneTypeLeadIds } };
+    const genderFilter: Prisma.LeadWhereInput = genderLeadIds === null ? {} : { id: { in: genderLeadIds } };
     const baseWhere: Prisma.LeadWhereInput = {
       workspaceId: context.workspaceId,
       pipelineId: pipeline.id,
       deletedAt: null,
-      AND: [visibility, responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter],
+      AND: [visibility, responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter],
     };
     const cardLimitPerStage = 12;
     const pipelineResource: ResourceScope = {
@@ -937,12 +966,19 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
           phoneType: parsed.data.phoneType,
         });
     const phoneTypeFilter: Prisma.LeadWhereInput = phoneTypeLeadIds === null ? {} : { id: { in: phoneTypeLeadIds } };
+    const genderLeadIds = parsed.data.gender === "ALL"
+      ? null
+      : await leadIdsByGender(options.database, {
+          workspaceId: context.workspaceId,
+          gender: parsed.data.gender,
+        });
+    const genderFilter: Prisma.LeadWhereInput = genderLeadIds === null ? {} : { id: { in: genderLeadIds } };
     const where: Prisma.LeadWhereInput = {
       workspaceId: context.workspaceId,
       pipelineId: pipeline.id,
       currentStageId: stage.id,
       deletedAt: null,
-      AND: [leadVisibilityWhere(context, scope), responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter],
+      AND: [leadVisibilityWhere(context, scope), responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter],
     };
     const [total, rows] = await Promise.all([
       options.database.lead.count({ where }),

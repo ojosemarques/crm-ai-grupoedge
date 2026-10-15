@@ -1284,6 +1284,11 @@ enum ProspectingRole {
   COUNCILOR
 }
 
+enum ProspectingGender {
+  MALE
+  FEMALE
+}
+
 enum ProspectContactScope {
   POLITICIAN
   ADVISOR
@@ -14495,6 +14500,7 @@ model ProspectingResearchTarget {
   externalIdentityKey  String
   tseCandidateId       String
   role                 ProspectingRole
+  gender               ProspectingGender?
   politicianName       String
   ballotName           String?
   municipalityName     String
@@ -14517,6 +14523,7 @@ model ProspectingResearchTarget {
   @@index([workspaceId, batchId, status, leaseExpiresAt])
   @@index([workspaceId, municipalityIbgeCode, role])
   @@index([workspaceId, candidateId])
+  @@index([workspaceId, gender, candidateId], map: "prospecting_targets_workspace_gender_candidate_idx")
   @@map("prospecting_research_targets")
 }
 
