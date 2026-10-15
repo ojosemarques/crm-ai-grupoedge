@@ -266,21 +266,42 @@ describe("agenda interna e reuniões", () => {
     expect(audit).toHaveLength(1);
   });
 
-  it("rejeita conflito e serializa duas entradas simultâneas", async () => {
-    const first = await qualifyLead("CRM15 conflito A");
-    const second = await qualifyLead("CRM15 conflito B");
-    const results = await Promise.allSettled([
+  it("permite criar, editar e remarcar reuniões no mesmo horário para o mesmo vendedor", async () => {
+    const first = await qualifyLead("CRM15 sobreposição A");
+    const second = await qualifyLead("CRM15 sobreposição B");
+    const third = await qualifyLead("CRM15 sobreposição C");
+    const [firstMeeting, secondMeeting] = await Promise.all([
       schedule(first.leadId, managerContext, "2035-02-11T11:00"),
       schedule(second.leadId, managerContext, "2035-02-11T11:00"),
     ]);
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
-    expect(results.find((result) => result.status === "rejected")).toMatchObject({
-      reason: { code: "MEETING_TIME_CONFLICT" },
+    const edited = await meetings().act(managerContext, {
+      action: "EDIT",
+      meetingId: secondMeeting.meetingId,
+      expectedRevision: 1,
+      title: "Diagnóstico simultâneo editado",
+      startsAtLocal: "2035-02-11T11:00",
+      durationMinutes: 30,
+      status: "SCHEDULED",
+      observation: "Reunião simultânea autorizada.",
+      outcome: null,
+      reason: "Ajuste dos dados da reunião simultânea.",
     });
+    const thirdMeeting = await schedule(third.leadId, managerContext, "2035-02-11T12:00");
+    const rescheduled = await meetings().act(managerContext, {
+      action: "RESCHEDULE",
+      meetingId: thirdMeeting.meetingId,
+      expectedRevision: 1,
+      startsAtLocal: "2035-02-11T11:00",
+      durationMinutes: 30,
+      reason: "Remarcação para horário simultâneo autorizada.",
+    });
+
+    expect(firstMeeting.meetingId).toBeTruthy();
+    expect(edited).toMatchObject({ revision: 2, startsAt: "2035-02-11T14:00:00.000Z" });
+    expect(rescheduled).toMatchObject({ revision: 2, startsAt: "2035-02-11T14:00:00.000Z" });
     expect(await database.meeting.count({
       where: { workspaceId, ownerMemberId: closer1Id, startsAt: new Date("2035-02-11T14:00:00.000Z") },
-    })).toBe(1);
+    })).toBe(3);
   });
 
   it("confirma, remarca e preserva cada horário no histórico append-only", async () => {

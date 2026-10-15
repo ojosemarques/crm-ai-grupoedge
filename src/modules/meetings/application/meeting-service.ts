@@ -255,36 +255,6 @@ async function lockCloser(
   `;
 }
 
-async function assertNoConflict(
-  transaction: Prisma.TransactionClient,
-  input: Readonly<{
-    workspaceId: string;
-    ownerMemberId: string;
-    startsAt: Date;
-    endsAt: Date;
-    excludeMeetingId?: string;
-  }>,
-) {
-  const overlapping = await transaction.meeting.findFirst({
-    where: {
-      workspaceId: input.workspaceId,
-      ownerMemberId: input.ownerMemberId,
-      status: { in: ["SCHEDULED", "CONFIRMED"] },
-      deletedAt: null,
-      startsAt: { lt: input.endsAt },
-      endsAt: { gt: input.startsAt },
-      ...(input.excludeMeetingId ? { id: { not: input.excludeMeetingId } } : {}),
-    },
-    select: { id: true, startsAt: true, endsAt: true },
-  });
-  if (overlapping) {
-    conflict(
-      "MEETING_TIME_CONFLICT",
-      `O closer já possui uma reunião entre ${overlapping.startsAt.toISOString()} e ${overlapping.endsAt.toISOString()}.`,
-    );
-  }
-}
-
 async function findNextTask(transaction: Prisma.TransactionClient, workspaceId: string, leadId: string) {
   return transaction.task.findFirst({
     where: { workspaceId, leadId, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null },
@@ -696,12 +666,6 @@ export function createMeetingService(options: MeetingServiceOptions) {
         select: { id: true },
       });
       if (!closer) notFound("Closer não encontrado ou indisponível.");
-      await assertNoConflict(transaction, {
-        workspaceId: context.workspaceId,
-        ownerMemberId: closer.id,
-        startsAt,
-        endsAt,
-      });
       const currentLead = await transaction.lead.findFirst({
         where: { id: lead.id, workspaceId: context.workspaceId, deletedAt: null },
         select: {
@@ -990,15 +954,6 @@ export function createMeetingService(options: MeetingServiceOptions) {
         if ((newStatus === "SCHEDULED" || newStatus === "CONFIRMED") && (reopening || moving) && startsAt <= now) {
           conflict("MEETING_IN_PAST", "Uma reunião reaberta ou remarcada deve ficar no futuro.");
         }
-        if (newStatus === "SCHEDULED" || newStatus === "CONFIRMED") {
-          await assertNoConflict(transaction, {
-            workspaceId: context.workspaceId,
-            ownerMemberId: meeting.ownerMemberId,
-            startsAt,
-            endsAt,
-            excludeMeetingId: meeting.id,
-          });
-        }
       } else if (parsed.data.action === "CONFIRM") {
         if (meeting.status === "CONFIRMED") conflict("MEETING_ALREADY_CONFIRMED", "A reunião já está confirmada.");
         newStatus = "CONFIRMED";
@@ -1006,13 +961,6 @@ export function createMeetingService(options: MeetingServiceOptions) {
         startsAt = parseWorkspaceLocalDateTime(parsed.data.startsAtLocal, meeting.timeZone);
         endsAt = new Date(startsAt.getTime() + parsed.data.durationMinutes * 60_000);
         if (startsAt <= now) conflict("MEETING_IN_PAST", "A nova data deve estar no futuro.");
-        await assertNoConflict(transaction, {
-          workspaceId: context.workspaceId,
-          ownerMemberId: meeting.ownerMemberId,
-          startsAt,
-          endsAt,
-          excludeMeetingId: meeting.id,
-        });
         newStatus = "SCHEDULED";
         reason = parsed.data.reason;
       } else if (parsed.data.action === "CANCEL") {
