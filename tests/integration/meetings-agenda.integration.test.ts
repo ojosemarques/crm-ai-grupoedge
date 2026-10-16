@@ -6,6 +6,7 @@ import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import type { ServiceActorContext } from "@/modules/auth/application/service-actor-context";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { createMeetingPipelineReconciliationService } from "@/modules/meetings/application/meeting-pipeline-reconciliation-service";
 import { createMeetingService } from "@/modules/meetings/application/meeting-service";
 import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createPactoQualificationService } from "@/modules/qualification/application/pacto-qualification-service";
@@ -492,6 +493,97 @@ describe("agenda interna e reuniões", () => {
       where: { id: attendedLead.leadId },
       select: { currentStage: { select: { stableKey: true } } },
     })).resolves.toEqual({ currentStage: { stableKey: "active-prospecting.meeting-scheduled" } });
+  });
+
+  it("reconcilia resultados históricos de reunião sem sobrescrever uma etapa posterior", async () => {
+    clock = new Date("2035-03-02T15:00:00.000Z");
+    const service = createMeetingPipelineReconciliationService({ database, now: () => clock });
+    await expect(service.run(viewerContext, { mode: "DRY_RUN" })).rejects.toMatchObject({ statusCode: 403 });
+    const before = await service.run(adminContext, { mode: "DRY_RUN" });
+    const attendedLead = await createActiveProspectingLead("CRM agenda histórica realizada");
+    const noShowLead = await createActiveProspectingLead("CRM agenda histórica no-show");
+    const cancelledLead = await createActiveProspectingLead("CRM agenda histórica cancelada");
+    const protectedLead = await createActiveProspectingLead("CRM agenda histórica protegida");
+    const scheduled = await Promise.all([
+      schedule(attendedLead.leadId, managerContext, "2035-03-02T09:00"),
+      schedule(noShowLead.leadId, managerContext, "2035-03-02T09:30"),
+      schedule(cancelledLead.leadId, managerContext, "2035-03-02T10:00"),
+      schedule(protectedLead.leadId, managerContext, "2035-03-02T10:30"),
+    ]);
+    const outcomes = ["COMPLETED", "NO_SHOW", "CANCELLED", "COMPLETED"] as const;
+    const outcomeAt = new Date(clock.getTime() + 60_000);
+    for (const [index, item] of scheduled.entries()) {
+      const meeting = await database.meeting.findUniqueOrThrow({ where: { id: item.meetingId } });
+      const status = outcomes[index]!;
+      await database.meeting.update({
+        where: { id: meeting.id },
+        data: {
+          status,
+          revision: 2,
+          completedAt: status === "COMPLETED" ? outcomeAt : null,
+          cancelledAt: status === "CANCELLED" ? outcomeAt : null,
+          noShowAt: status === "NO_SHOW" ? outcomeAt : null,
+          updatedAt: outcomeAt,
+        },
+      });
+      await database.meetingHistory.create({
+        data: {
+          workspaceId,
+          meetingId: meeting.id,
+          leadId: meeting.leadId,
+          ownerMemberId: meeting.ownerMemberId,
+          meetingRevision: 2,
+          action: status === "COMPLETED" ? "ATTENDED" : status === "CANCELLED" ? "CANCELLED" : "NO_SHOW",
+          previousStatus: "SCHEDULED",
+          newStatus: status,
+          previousStartsAt: meeting.startsAt,
+          previousEndsAt: meeting.endsAt,
+          newStartsAt: meeting.startsAt,
+          newEndsAt: meeting.endsAt,
+          reason: status === "COMPLETED" ? null : "Resultado histórico de teste.",
+          outcome: "Resultado histórico de teste.",
+          occurredAt: outcomeAt,
+          recordedByActorId: managerContext.actorId,
+          createdAt: outcomeAt,
+        },
+      });
+    }
+    clock = new Date(outcomeAt.getTime() + 60_000);
+    const protectedState = await createPreSalesPipelineService({ database, authorization, now: () => clock }).getLeadState(managerContext, { leadId: protectedLead.leadId });
+    const noShowStage = await database.pipelineStage.findFirstOrThrow({
+      where: { workspaceId, pipelineId: protectedLead.pipelineId, stableKey: "active-prospecting.meeting-no-show", deletedAt: null },
+      select: { id: true },
+    });
+    await createPreSalesPipelineService({ database, authorization, now: () => clock }).transition(managerContext, {
+      leadId: protectedLead.leadId,
+      targetStageId: noShowStage.id,
+      expectedUpdatedAt: protectedState.updatedAt,
+      reason: "Decisão manual posterior ao resultado histórico.",
+      origin: "PIPELINE_BOARD",
+      managerCorrection: true,
+      confirmed: true,
+    });
+
+    const preview = await service.run(adminContext, { mode: "DRY_RUN" });
+    expect(preview).toMatchObject({
+      eligibleCount: before.eligibleCount + 3,
+      protectedByNewerStageCount: before.protectedByNewerStageCount + 1,
+    });
+    const applied = await service.run(adminContext, { mode: "APPLY" });
+    expect(applied.movedCount).toBe(preview.eligibleCount);
+    const reconciled = await Promise.all([
+      database.lead.findUniqueOrThrow({ where: { id: attendedLead.leadId }, select: { currentStage: { select: { stableKey: true } } } }),
+      database.lead.findUniqueOrThrow({ where: { id: noShowLead.leadId }, select: { currentStage: { select: { stableKey: true } } } }),
+      database.lead.findUniqueOrThrow({ where: { id: cancelledLead.leadId }, select: { currentStage: { select: { stableKey: true } } } }),
+      database.lead.findUniqueOrThrow({ where: { id: protectedLead.leadId }, select: { currentStage: { select: { stableKey: true } } } }),
+    ]);
+    expect(reconciled.map((item) => item.currentStage.stableKey)).toEqual([
+      "active-prospecting.meeting-completed",
+      "active-prospecting.meeting-no-show",
+      "active-prospecting.meeting-no-show",
+      "active-prospecting.meeting-no-show",
+    ]);
+    await expect(service.run(adminContext, { mode: "APPLY" })).resolves.toMatchObject({ movedCount: 0 });
   });
 
   it("confirma, remarca e preserva cada horário no histórico append-only", async () => {
