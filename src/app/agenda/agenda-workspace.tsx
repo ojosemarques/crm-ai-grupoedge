@@ -25,7 +25,7 @@ const statusLabels = {
 } as const;
 
 function statusTone(value: keyof typeof statusLabels): StatusTone {
-  if (value === "CONFIRMED" || value === "COMPLETED") return "success";
+  if (value === "COMPLETED") return "success";
   if (value === "CANCELLED" || value === "NO_SHOW") return "danger";
   if (value === "PENDING_STATUS") return "warning";
   return "info";

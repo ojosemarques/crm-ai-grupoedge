@@ -41,9 +41,12 @@
 .event strong { font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
 .event > span:not(.eventTime), .event small { font-size: 10px; overflow-wrap: anywhere; }
 .eventTime { font-size: 9px; opacity: .8; }
-.event[data-status="CONFIRMED"], .event[data-status="COMPLETED"] { background: #e4f7ed; color: #278962; border-color: #5ec99b; }
-.event[data-status="CANCELLED"], .event[data-status="NO_SHOW"] { background: #ffe9ee; color: #af4960; border-color: #e4768e; }
-.event[data-status="PENDING_STATUS"] { background: #fff1df; color: #a36b29; border-color: #e7ae65; }
+.event[data-status="SCHEDULED"] { background: #171717; color: #fff; border-color: #000; }
+.event[data-status="CONFIRMED"] { background: #1d4ed8; color: #fff; border-color: #1e3a8a; }
+.event[data-status="COMPLETED"] { background: #16855b; color: #fff; border-color: #065f46; }
+.event[data-status="NO_SHOW"] { background: #c2185b; color: #fff; border-color: #831843; }
+.event[data-status="CANCELLED"] { background: #b91c1c; color: #fff; border-color: #7f1d1d; }
+.event[data-status="PENDING_STATUS"] { background: #c2410c; color: #fff; border-color: #7c2d12; }
 .freeDay { font-size: 10px; color: var(--text-muted); text-align: center; padding-top: 22px; opacity: .7; }
 .meetingList { display: grid; gap: 14px; padding: 20px; }
 .listCard { border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
