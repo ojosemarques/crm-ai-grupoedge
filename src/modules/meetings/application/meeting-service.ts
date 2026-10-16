@@ -179,6 +179,7 @@ type MeetingRow = Prisma.MeetingGetPayload<{
   include: {
     lead: { select: { fullName: true } };
     owner: { select: { user: { select: { displayName: true } } } };
+    createdBy: { select: { displayName: true } };
     calendarLinks: { select: { syncState: true }; take: 1 };
     googleCalendarLink: { select: { syncState: true; conferenceUrl: true } };
   };
@@ -277,6 +278,7 @@ function serializeMeeting(row: MeetingRow, now: Date, canWrite: boolean): Meetin
     leadName: row.lead.fullName,
     ownerMemberId: row.ownerMemberId,
     closerName: row.owner.user.displayName,
+    scheduledByName: row.createdBy.displayName,
     title: row.title,
     status: row.status,
     operationalStatus:
@@ -584,6 +586,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       include: {
         lead: { select: { fullName: true } },
         owner: { select: { user: { select: { displayName: true } } } },
+        createdBy: { select: { displayName: true } },
         calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
         googleCalendarLink: { select: { syncState: true, conferenceUrl: true } },
       },
@@ -639,6 +642,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         include: {
           lead: { select: { fullName: true } },
           owner: { select: { user: { select: { displayName: true } } } },
+          createdBy: { select: { displayName: true } },
           calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
           googleCalendarLink: { select: { syncState: true, conferenceUrl: true } },
           history: {
@@ -1476,6 +1480,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       where: { id: authorized.id, workspaceId: context.workspaceId, deletedAt: null },
       include: {
         owner: { select: { user: { select: { displayName: true } } } },
+        createdBy: { select: { displayName: true } },
         opportunity: { select: { id: true, name: true, nextActionTaskId: true, nextActionAt: true, nextActionDescription: true } },
         calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
         googleCalendarLink: { select: { syncState: true, conferenceUrl: true } },

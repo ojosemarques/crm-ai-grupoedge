@@ -305,9 +305,16 @@ describe("agenda interna e reuniões", () => {
     });
     expect(task).toMatchObject({ kind: "MEETING", status: "OPEN", assigneeMemberId: closer2Id, priority: "MEDIUM" });
     const updatedAgenda = await meetings().getAgenda(managerContext, { view: "day", date: "2035-02-11" });
-    expect(updatedAgenda.meetings).toContainEqual(expect.objectContaining({ id: result.meetingId, leadId: lead.leadId }));
+    expect(updatedAgenda.meetings).toContainEqual(expect.objectContaining({
+      id: result.meetingId,
+      leadId: lead.leadId,
+      scheduledByName: lead.sdrContext.displayName,
+    }));
     const updatedLeadMeetings = await meetings().getLeadMeetings(lead.sdrContext, { leadId: lead.leadId });
-    expect(updatedLeadMeetings.meetings).toContainEqual(expect.objectContaining({ id: result.meetingId }));
+    expect(updatedLeadMeetings.meetings).toContainEqual(expect.objectContaining({
+      id: result.meetingId,
+      scheduledByName: lead.sdrContext.displayName,
+    }));
     expect(storedLead).toMatchObject({ status: "QUALIFIED" });
     expect(storedLead.nextActionTaskId).not.toBeNull();
     expect(stage.transitionOrigin).toBe("MEETING");

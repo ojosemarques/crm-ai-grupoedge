@@ -8,6 +8,7 @@ export type MeetingListItem = Readonly<{
   leadName: string;
   ownerMemberId: string;
   closerName: string;
+  scheduledByName: string;
   title: string;
   status: MeetingStatusValue;
   operationalStatus: MeetingStatusValue | "PENDING_STATUS";
