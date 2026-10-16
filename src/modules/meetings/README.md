@@ -10,3 +10,8 @@ qualificado usa a política da CRM-14 para mover o pré-vendas a `Reunião
 agendada`; a interface nunca grava o banco diretamente. Sobreposições de horário
 são permitidas na criação, edição e remarcação de reuniões, inclusive em períodos
 anteriores e ao reabrir um registro encerrado.
+
+No pipeline `Prospecção Ativa`, o resultado persistido na agenda também atualiza
+o card na mesma transação: reuniões realizadas seguem para `Reunião feita`;
+no-show e cancelamento seguem para `Noshow`; reabertura ou remarcação retorna o
+lead para `Reunião marcada`.

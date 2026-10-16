@@ -20,6 +20,7 @@ import {
 } from "@/modules/pipelines/domain/lead-stage-transition-policy";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import {
+  defaultLeadStageCodes,
   leadStageCodes,
   pipelineGenders,
   pipelinePhoneTypes,
@@ -123,13 +124,15 @@ const activeProspectingStageCodes = [
   "CONNECTED",
   "IN_QUALIFICATION",
   "MEETING_SCHEDULED",
+  "MEETING_NO_SHOW",
+  "MEETING_COMPLETED",
   "NURTURING",
   "DISQUALIFIED",
 ] as const satisfies readonly LeadStageCode[];
 
 function assertCompleteLeadStages(pipelineName: string, stages: readonly PipelineStageRecord[]) {
   const configured = new Set(stages.flatMap((stage) => isLeadStageCode(stage.leadStageCode) ? [stage.leadStageCode] : []));
-  const required = pipelineName === activeProspectingPipelineName ? activeProspectingStageCodes : leadStageCodes;
+  const required = pipelineName === activeProspectingPipelineName ? activeProspectingStageCodes : defaultLeadStageCodes;
   const missing = required.filter((code) => !configured.has(code));
   if (missing.length > 0) {
     conflict(

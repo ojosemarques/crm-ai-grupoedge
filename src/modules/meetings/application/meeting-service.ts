@@ -307,6 +307,61 @@ function statusLabel(status: MeetingStatus): string {
   } satisfies Record<MeetingStatus, string>)[status];
 }
 
+const activeProspectingPipelineName = "Prospecção Ativa";
+
+function activeProspectingMeetingStage(status: MeetingStatus) {
+  if (status === "COMPLETED") return "active-prospecting.meeting-completed";
+  if (status === "CANCELLED" || status === "NO_SHOW") return "active-prospecting.meeting-no-show";
+  return "active-prospecting.meeting-scheduled";
+}
+
+async function syncActiveProspectingMeetingStageInTransaction(
+  transaction: Prisma.TransactionClient,
+  context: Pick<AuthenticatedContext, "workspaceId" | "actorId">,
+  input: Readonly<{
+    leadId: string;
+    pipelineId: string;
+    currentStageId: string;
+    meetingId: string;
+    status: MeetingStatus;
+    occurredAt: Date;
+  }>,
+) {
+  const pipeline = await transaction.pipeline.findFirst({
+    where: {
+      id: input.pipelineId,
+      workspaceId: context.workspaceId,
+      entityType: "LEAD",
+      name: activeProspectingPipelineName,
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  if (!pipeline) return;
+  const stableKey = activeProspectingMeetingStage(input.status);
+  const target = await transaction.pipelineStage.findFirst({
+    where: {
+      workspaceId: context.workspaceId,
+      pipelineId: pipeline.id,
+      stableKey,
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  if (!target) {
+    conflict("PIPELINE_CONFIGURATION_INVALID", `A etapa ${stableKey} não está configurada.`);
+  }
+  if (target.id === input.currentStageId) return;
+  await transitionLeadStageInTransaction(transaction, context, {
+    leadId: input.leadId,
+    targetStageId: target.id,
+    reason: `Reunião ${input.meetingId} atualizada para ${statusLabel(input.status)}.`,
+    origin: "MEETING",
+    managerCorrection: false,
+    confirmed: true,
+  }, input.occurredAt);
+}
+
 function historyAction(input: z.output<typeof actionSchema>): MeetingHistoryAction {
   if (input.action === "EDIT") {
     return ({
@@ -910,7 +965,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       await lockCloser(transaction, context.workspaceId, authorizedMeeting.ownerMemberId);
       const meeting = await transaction.meeting.findFirst({
         where: { id: parsed.data.meetingId, workspaceId: context.workspaceId, deletedAt: null },
-        include: { lead: { select: { ownerMemberId: true, queueId: true } } },
+        include: { lead: { select: { ownerMemberId: true, queueId: true, pipelineId: true, currentStageId: true } } },
       });
       if (!meeting) notFound("Reunião não encontrada.");
       if (meeting.revision !== parsed.data.expectedRevision) {
@@ -1087,6 +1142,14 @@ export function createMeetingService(options: MeetingServiceOptions) {
         });
         recoveryTaskId = recoveryTask.id;
       }
+      await syncActiveProspectingMeetingStageInTransaction(transaction, context, {
+        leadId: meeting.leadId,
+        pipelineId: meeting.lead.pipelineId,
+        currentStageId: meeting.lead.currentStageId,
+        meetingId: meeting.id,
+        status: newStatus,
+        occurredAt: now,
+      });
       const nextTask = await findNextTask(transaction, context.workspaceId, meeting.leadId);
       const opportunityTask = meeting.opportunityId
         ? await transaction.task.findFirst({ where: { workspaceId: context.workspaceId, opportunityId: meeting.opportunityId, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null }, orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }], select: { id: true, title: true, dueAt: true } })

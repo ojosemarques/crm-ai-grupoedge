@@ -8,7 +8,7 @@ import type { ServiceActorContext } from "@/modules/auth/application/service-act
 import { createLeadDistributionService } from "@/modules/leads/application/lead-distribution-service";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
-import { leadStageCodes, type LeadStageCode } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
+import { defaultLeadStageCodes, type LeadStageCode } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -224,7 +224,7 @@ describe("pipeline de pré-vendas e transições", () => {
   it("mantém as oito etapas semânticas e contagens rastreáveis no board e na lista", async () => {
     const lead = await createLead("CRM14 board");
     const screen = await pipelineService().getScreen(managerContext, { q: "CRM14 board" });
-    expect(screen.stages.map((stage) => stage.code)).toEqual(leadStageCodes);
+    expect(screen.stages.map((stage) => stage.code)).toEqual(defaultLeadStageCodes);
     expect(screen.stages.reduce((total, stage) => total + stage.count, 0)).toBe(1);
     expect(screen.stages.find((stage) => stage.code === "NEW")?.leads[0]).toMatchObject({
       id: lead.leadId,

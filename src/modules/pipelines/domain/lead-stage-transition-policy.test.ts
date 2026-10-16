@@ -19,6 +19,8 @@ describe("política de transição do pipeline de pré-vendas", () => {
       IN_QUALIFICATION: ["CONNECTED", "QUALIFIED", "NURTURING", "DISQUALIFIED"],
       QUALIFIED: ["MEETING_SCHEDULED", "NURTURING", "DISQUALIFIED"],
       MEETING_SCHEDULED: ["QUALIFIED", "NURTURING", "DISQUALIFIED"],
+      MEETING_NO_SHOW: ["MEETING_SCHEDULED", "MEETING_COMPLETED"],
+      MEETING_COMPLETED: ["MEETING_SCHEDULED", "MEETING_NO_SHOW"],
       NURTURING: ["TRYING_CONTACT", "CONNECTED", "IN_QUALIFICATION", "DISQUALIFIED"],
       DISQUALIFIED: [],
     });
@@ -45,6 +47,8 @@ describe("política de transição do pipeline de pré-vendas", () => {
     expect(statusForLeadStage("NURTURING")).toBe("OPEN");
     expect(statusForLeadStage("QUALIFIED")).toBe("QUALIFIED");
     expect(statusForLeadStage("MEETING_SCHEDULED")).toBe("QUALIFIED");
+    expect(statusForLeadStage("MEETING_NO_SHOW")).toBe("QUALIFIED");
+    expect(statusForLeadStage("MEETING_COMPLETED")).toBe("QUALIFIED");
     expect(statusForLeadStage("DISQUALIFIED")).toBe("DISQUALIFIED");
   });
 });

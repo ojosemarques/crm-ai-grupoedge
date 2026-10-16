@@ -23,20 +23,6 @@ function uniquePhone(label: string) {
   return `+55119${suffix}`;
 }
 
-async function removeActiveProspectingPipeline() {
-  const database = getDatabaseClient();
-  const pipeline = await database.pipeline.findFirst({
-    where: { workspace: { slug: "politizai" }, entityType: "LEAD", name: "Prospecção Ativa", deletedAt: null },
-    select: { id: true, workspaceId: true },
-  });
-  if (!pipeline) return;
-  await database.$transaction([
-    database.pipelineStageTransition.deleteMany({ where: { workspaceId: pipeline.workspaceId, pipelineId: pipeline.id } }),
-    database.pipelineStage.deleteMany({ where: { workspaceId: pipeline.workspaceId, pipelineId: pipeline.id } }),
-    database.pipeline.delete({ where: { id: pipeline.id } }),
-  ]);
-}
-
 async function createManualLead(page: import("@playwright/test").Page, name: string) {
   await page.goto("/leads/entrada");
   await page.getByLabel("Nome", { exact: true }).fill(name);
@@ -181,7 +167,6 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
 });
 
 test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operação no menu lateral", async ({ page }) => {
-  await removeActiveProspectingPipeline();
   await login(page, DEMO_USERS[1].email);
   const leadName = `Prospecção ativa E2E ${randomUUID().slice(0, 8)}`;
   const areaNavigation = page.getByRole("navigation", { name: "Navegação da área" });
@@ -207,7 +192,7 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
   await expect(prospectingAreas.getByRole("link", { name: "Pipeline", exact: true })).toHaveAttribute("data-active", "true");
   await expect(page.getByRole("navigation", { name: "Selecionar pipeline" })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Quadro do pipeline" })).toBeVisible();
-  for (const stage of ["Novo lead", "Abordagem inicial", "Cadência ativa", "Conversa iniciada", "Reunião marcada", "Encerrado — sem retorno", "Descartado"]) {
+  for (const stage of ["Novo lead", "Abordagem inicial", "Cadência ativa", "Conversa iniciada", "Reunião marcada", "Noshow", "Reunião feita", "Encerrado — sem retorno", "Descartado"]) {
     await expect(page.getByRole("region", { name: `Etapa ${stage}` })).toBeVisible();
   }
 

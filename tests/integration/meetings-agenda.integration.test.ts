@@ -134,6 +134,56 @@ async function qualifyLead(label: string) {
   return { leadId: result.leadId, sdrContext: await contextByMember(lead.ownerMemberId) };
 }
 
+async function createActiveProspectingLead(label: string) {
+  sequence += 1;
+  const [source, pipeline] = await Promise.all([
+    database.leadSource.findFirstOrThrow({
+      where: { workspaceId, key: "manual", deletedAt: null },
+      select: { id: true },
+    }),
+    database.pipeline.findFirstOrThrow({
+      where: { workspaceId, entityType: "LEAD", name: "Prospecção Ativa", deletedAt: null },
+      include: {
+        stages: {
+          where: { stableKey: "active-prospecting.new-lead", deletedAt: null },
+          take: 1,
+        },
+      },
+    }),
+  ]);
+  const stage = pipeline.stages[0];
+  if (!stage) throw new Error("Etapa inicial da Prospecção Ativa não encontrada.");
+  const lead = await database.lead.create({
+    data: {
+      workspaceId,
+      sourceId: source.id,
+      pipelineId: pipeline.id,
+      currentStageId: stage.id,
+      ownerMemberId: managerContext.memberId,
+      fullName: `${label} ${randomUUID().slice(0, 8)}`,
+      normalizedPhone: `+55119${sequence.toString().slice(-8)}`,
+      slaStartedAt: clock,
+      slaDueAt: new Date(clock.getTime() + 60 * 60_000),
+      lastActivityAt: clock,
+      createdByActorId: managerContext.actorId,
+      updatedByActorId: managerContext.actorId,
+    },
+  });
+  await database.stageHistory.create({
+    data: {
+      workspaceId,
+      pipelineId: pipeline.id,
+      stageId: stage.id,
+      leadId: lead.id,
+      enteredAt: clock,
+      enteredByActorId: managerContext.actorId,
+      transitionOrigin: "INTAKE",
+      transitionReason: "Lead de teste criado na Prospecção Ativa.",
+    },
+  });
+  return { leadId: lead.id, pipelineId: pipeline.id };
+}
+
 async function schedule(
   leadId: string,
   context: AuthenticatedContext,
@@ -346,6 +396,95 @@ describe("agenda interna e reuniões", () => {
     expect(await database.meeting.count({
       where: { workspaceId, ownerMemberId: closer1Id, startsAt: new Date("2035-02-20T12:00:00.000Z") },
     })).toBe(3);
+  });
+
+  it("move automaticamente leads da Prospecção Ativa conforme o resultado da reunião", async () => {
+    clock = new Date("2035-03-01T15:00:00.000Z");
+    const attendedLead = await createActiveProspectingLead("CRM agenda reunião feita");
+    const noShowLead = await createActiveProspectingLead("CRM agenda no-show");
+    const cancelledLead = await createActiveProspectingLead("CRM agenda cancelada");
+    const pipeline = createPreSalesPipelineService({ database, authorization, now: () => clock });
+    const screen = await pipeline.getScreen(managerContext, { pipelineId: attendedLead.pipelineId });
+
+    expect(screen.stages.map((stage) => stage.name)).toEqual([
+      "Novo lead",
+      "Abordagem inicial",
+      "Cadência ativa",
+      "Conversa iniciada",
+      "Reunião marcada",
+      "Noshow",
+      "Reunião feita",
+      "Encerrado — sem retorno",
+      "Descartado",
+    ]);
+
+    const attended = await schedule(attendedLead.leadId, managerContext, "2035-03-01T09:00");
+    const noShow = await schedule(noShowLead.leadId, managerContext, "2035-03-01T09:30");
+    const cancelled = await schedule(cancelledLead.leadId, managerContext, "2035-03-01T10:00");
+    await meetings().act(managerContext, {
+      action: "ATTENDED",
+      meetingId: attended.meetingId,
+      expectedRevision: 1,
+      outcome: "Reunião realizada com sucesso.",
+      nextAction: { title: "Dar sequência à reunião", dueAtLocal: "2035-03-01T14:00" },
+    });
+    await meetings().act(managerContext, {
+      action: "NO_SHOW",
+      meetingId: noShow.meetingId,
+      expectedRevision: 1,
+      reason: "Lead não compareceu à reunião.",
+      nextAction: { title: "Recuperar o no-show", dueAtLocal: "2035-03-01T14:30" },
+    });
+    await meetings().act(managerContext, {
+      action: "CANCEL",
+      meetingId: cancelled.meetingId,
+      expectedRevision: 1,
+      reason: "Reunião cancelada pelo lead.",
+      nextAction: { title: "Retomar reunião cancelada", dueAtLocal: "2035-03-01T15:00" },
+    });
+
+    const [attendedStage, noShowStage, cancelledStage] = await Promise.all([
+      database.lead.findUniqueOrThrow({ where: { id: attendedLead.leadId }, select: { currentStage: { select: { stableKey: true } } } }),
+      database.lead.findUniqueOrThrow({ where: { id: noShowLead.leadId }, select: { currentStage: { select: { stableKey: true } } } }),
+      database.lead.findUniqueOrThrow({ where: { id: cancelledLead.leadId }, select: { currentStage: { select: { stableKey: true } } } }),
+    ]);
+    expect(attendedStage.currentStage.stableKey).toBe("active-prospecting.meeting-completed");
+    expect(noShowStage.currentStage.stableKey).toBe("active-prospecting.meeting-no-show");
+    expect(cancelledStage.currentStage.stableKey).toBe("active-prospecting.meeting-no-show");
+
+    await meetings().act(managerContext, {
+      action: "EDIT",
+      meetingId: attended.meetingId,
+      expectedRevision: 2,
+      title: `Diagnóstico ${attendedLead.leadId.slice(0, 8)}`,
+      startsAtLocal: "2035-03-01T09:00",
+      durationMinutes: 30,
+      status: "NO_SHOW",
+      observation: "Resultado corrigido na agenda.",
+      outcome: "Lead não compareceu à reunião.",
+      reason: "Correção do resultado registrado anteriormente.",
+    });
+    await expect(database.lead.findUniqueOrThrow({
+      where: { id: attendedLead.leadId },
+      select: { currentStage: { select: { stableKey: true } } },
+    })).resolves.toEqual({ currentStage: { stableKey: "active-prospecting.meeting-no-show" } });
+
+    await meetings().act(managerContext, {
+      action: "EDIT",
+      meetingId: attended.meetingId,
+      expectedRevision: 3,
+      title: `Diagnóstico ${attendedLead.leadId.slice(0, 8)}`,
+      startsAtLocal: "2035-03-01T09:00",
+      durationMinutes: 30,
+      status: "SCHEDULED",
+      observation: "Reunião reaberta na agenda.",
+      outcome: null,
+      reason: "Reabertura para um novo registro de resultado.",
+    });
+    await expect(database.lead.findUniqueOrThrow({
+      where: { id: attendedLead.leadId },
+      select: { currentStage: { select: { stableKey: true } } },
+    })).resolves.toEqual({ currentStage: { stableKey: "active-prospecting.meeting-scheduled" } });
   });
 
   it("confirma, remarca e preserva cada horário no histórico append-only", async () => {

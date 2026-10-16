@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
-import { leadStageCodes, leadStageLabels } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
+import { defaultLeadStageCodes, leadStageLabels } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import { regularDestinationCodes } from "@/modules/pipelines/domain/lead-stage-transition-policy";
 
 const defaultCadence = [
@@ -31,14 +31,19 @@ const activeProspectingStages = [
   ["active-prospecting.active-cadence", "Cadência ativa", "OPEN", "CONNECTED"],
   ["active-prospecting.conversation-started", "Conversa iniciada", "OPEN", "IN_QUALIFICATION"],
   ["active-prospecting.meeting-scheduled", "Reunião marcada", "OPEN", "MEETING_SCHEDULED"],
+  ["active-prospecting.meeting-no-show", "Noshow", "OPEN", "MEETING_NO_SHOW"],
+  ["active-prospecting.meeting-completed", "Reunião feita", "OPEN", "MEETING_COMPLETED"],
   ["active-prospecting.closed-no-response", "Encerrado — sem retorno", "LOST", "NURTURING"],
   ["active-prospecting.discarded", "Descartado", "LOST", "DISQUALIFIED"],
 ] as const;
 const activeProspectingTransitions = [
-  [0, 1], [0, 6],
-  [1, 2], [1, 3], [1, 4], [1, 6],
-  [2, 3], [2, 4], [2, 5], [2, 6],
-  [3, 4], [3, 6],
+  [0, 1], [0, 8],
+  [1, 2], [1, 3], [1, 4], [1, 8],
+  [2, 3], [2, 4], [2, 7], [2, 8],
+  [3, 4], [3, 8],
+  [4, 5], [4, 6],
+  [5, 4], [5, 6],
+  [6, 4], [6, 5],
 ] as const;
 const priorityBands = [
   { code: "P1", name: "P1 — atendimento imediato", scoreMin: 70, scoreMax: 100, leadPriority: "URGENT", policyKey: "p1-immediate" },
@@ -82,7 +87,7 @@ async function ensureLeadPipeline(
     result.pipelines += 1;
   }
   const ids = new Map<string, string>();
-  for (const [position, code] of leadStageCodes.entries()) {
+  for (const [position, code] of defaultLeadStageCodes.entries()) {
     let stage = await tx.pipelineStage.findFirst({ where: { workspaceId, pipelineId: pipeline.id, leadStageCode: code, deletedAt: null } });
     if (!stage) {
       stage = await tx.pipelineStage.create({ data: { workspaceId, pipelineId: pipeline.id, name: leadStageLabels[code], position, type: code === "QUALIFIED" ? "WON" : code === "DISQUALIFIED" ? "LOST" : "OPEN", leadStageCode: code, createdByActorId: actorId, updatedByActorId: actorId } });
@@ -90,7 +95,7 @@ async function ensureLeadPipeline(
     }
     ids.set(code, stage.id);
   }
-  for (const from of leadStageCodes) {
+  for (const from of defaultLeadStageCodes) {
     for (const to of regularDestinationCodes(from)) {
       const fromStageId = ids.get(from)!;
       const toStageId = ids.get(to)!;

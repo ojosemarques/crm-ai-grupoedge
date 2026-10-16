@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { PrismaClient } from "@/generated/prisma/client";
 import { ensureStagingLeadPipeline } from "@/modules/settings/application/staging-homologation-service";
-import { leadStageCodes } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
+import { defaultLeadStageCodes } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
 
 const connectionString = process.env.DATABASE_URL;
@@ -71,11 +71,11 @@ describe("configuração sintética do pipeline de staging", () => {
       }),
     ]);
 
-    expect(stages.map((stage) => stage.leadStageCode)).toEqual(leadStageCodes);
+    expect(stages.map((stage) => stage.leadStageCode)).toEqual(defaultLeadStageCodes);
     expect(transitions).toBe(23);
     expect(reasons).toBe(1);
     expect(audits).toBe(1);
-    expect(first).toMatchObject({ stageCount: 8, createdStageCodes: leadStageCodes.slice(1), changed: true });
+    expect(first).toMatchObject({ stageCount: 8, createdStageCodes: defaultLeadStageCodes.slice(1), changed: true });
     expect(second).toMatchObject({
       stageCount: 8,
       createdStageCodes: [],

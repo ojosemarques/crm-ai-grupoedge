@@ -917,6 +917,8 @@ export function OperationalHistoryWorkspace({
     (task) => task.id === operations.lead.nextAction?.taskId,
   ) ?? null;
   const quickCadenceTask = isColdProspectingTask(quickCurrentTask);
+  const visibleStageCodes = leadStageCodes.filter((code) =>
+    code === pipeline.currentStageCode || pipeline.transitions.some((stage) => stage.code === code));
 
   function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     const keyToIndex: Readonly<Record<string, number>> = {
@@ -1088,7 +1090,7 @@ export function OperationalHistoryWorkspace({
       </div>
 
       <ol className={styles.stages} aria-label="Etapas de pré-vendas">
-        {leadStageCodes.map((code, index) => <li key={code} aria-current={pipeline.currentStageCode === code ? "step" : undefined}><span>{index + 1}</span><strong>{code === pipeline.currentStageCode ? pipeline.currentStageName : pipeline.transitions.find((stage) => stage.code === code)?.name ?? leadStageLabels[code]}</strong></li>)}
+        {visibleStageCodes.map((code, index) => <li key={code} aria-current={pipeline.currentStageCode === code ? "step" : undefined}><span>{index + 1}</span><strong>{code === pipeline.currentStageCode ? pipeline.currentStageName : pipeline.transitions.find((stage) => stage.code === code)?.name ?? leadStageLabels[code]}</strong></li>)}
       </ol>
       <div className={styles.layout}>
         <aside className={styles.profile}>

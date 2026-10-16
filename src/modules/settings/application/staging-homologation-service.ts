@@ -6,7 +6,7 @@ import type { ServiceActorContext } from "@/modules/auth/application/service-act
 import { hashPassword } from "@/modules/auth/domain/password";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import {
-  leadStageCodes,
+  defaultLeadStageCodes,
   leadStageLabels,
 } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import { regularDestinationCodes } from "@/modules/pipelines/domain/lead-stage-transition-policy";
@@ -145,7 +145,7 @@ type SyntheticIdentity = Readonly<{
   displayName: string;
 }>;
 
-const stagingLeadStageDefinitions = leadStageCodes.map((code, position) => ({
+const stagingLeadStageDefinitions = defaultLeadStageCodes.map((code, position) => ({
   code,
   name: leadStageLabels[code],
   position,
@@ -199,7 +199,7 @@ export async function ensureStagingLeadPipeline(
 
   let createdTransitions = 0;
   let reactivatedTransitions = 0;
-  for (const fromCode of leadStageCodes) {
+  for (const fromCode of defaultLeadStageCodes) {
     for (const toCode of regularDestinationCodes(fromCode)) {
       const fromStageId = stageByCode.get(fromCode);
       const toStageId = stageByCode.get(toCode);

@@ -1,4 +1,4 @@
-export const leadStageCodes = [
+export const defaultLeadStageCodes = [
   "NEW",
   "TRYING_CONTACT",
   "CONNECTED",
@@ -7,6 +7,12 @@ export const leadStageCodes = [
   "MEETING_SCHEDULED",
   "NURTURING",
   "DISQUALIFIED",
+] as const;
+
+export const leadStageCodes = [
+  ...defaultLeadStageCodes,
+  "MEETING_NO_SHOW",
+  "MEETING_COMPLETED",
 ] as const;
 
 export type LeadStageCode = (typeof leadStageCodes)[number];
@@ -18,6 +24,8 @@ export const leadStageLabels: Readonly<Record<LeadStageCode, string>> = {
   IN_QUALIFICATION: "Em qualificação",
   QUALIFIED: "Qualificado",
   MEETING_SCHEDULED: "Reunião agendada",
+  MEETING_NO_SHOW: "Noshow",
+  MEETING_COMPLETED: "Reunião feita",
   NURTURING: "Nutrição",
   DISQUALIFIED: "Desqualificado",
 };
