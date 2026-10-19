@@ -120,8 +120,10 @@ export type PreSalesPipelineScreen = Readonly<{
     stageCode: "ALL" | LeadStageCode;
     phoneType: PipelinePhoneType;
     gender: PipelineGender;
+    stateCode: string;
   }>;
   responsibleOptions: readonly Readonly<{ value: string; label: string }>[];
+  stateOptions: readonly string[];
   stages: readonly LeadPipelineStageColumn[];
   canWrite: boolean;
   canCorrect: boolean;

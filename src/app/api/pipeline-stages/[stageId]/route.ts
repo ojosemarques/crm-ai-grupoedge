@@ -23,6 +23,7 @@ export async function GET(request: NextRequest, routeContext: RouteContext) {
       stageCode: query.get("stageCode") ?? "ALL",
       phoneType: query.get("phoneType") ?? "ALL",
       gender: query.get("gender") ?? "ALL",
+      stateCode: query.get("stateCode") ?? "",
       offset: query.get("offset") ?? "0",
       limit: query.get("limit") ?? "20",
     });

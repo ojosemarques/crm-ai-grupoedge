@@ -389,6 +389,33 @@ describe("pipeline de pré-vendas e transições", () => {
     await expect(pipelineService().getScreen(managerContext, { gender: "UNSUPPORTED" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
+  it("filtra leads por UF e preserva o filtro na paginação da etapa", async () => {
+    const label = `CRM14 UF ${randomUUID().slice(0, 8)}`;
+    const spLead = await createLead(label);
+    const rjLead = await createLead(label);
+    await Promise.all([
+      database.lead.update({ where: { id: spLead.leadId }, data: { stateCode: "SP" } }),
+      database.lead.update({ where: { id: rjLead.leadId }, data: { stateCode: "RJ" } }),
+    ]);
+
+    const screen = await pipelineService().getScreen(managerContext, { q: label, stateCode: "sp" });
+    const ids = screen.stages.flatMap((stage) => stage.leads).map((lead) => lead.id);
+    expect(screen.filters.stateCode).toBe("SP");
+    expect(screen.stateOptions).toEqual(expect.arrayContaining(["RJ", "SP"]));
+    expect(ids).toContain(spLead.leadId);
+    expect(ids).not.toContain(rjLead.leadId);
+
+    const stage = screen.stages.find((item) => item.leads.some((lead) => lead.id === spLead.leadId));
+    expect(stage).toBeDefined();
+    await expect(pipelineService().getStagePage(managerContext, {
+      pipelineId: screen.pipelineId,
+      q: label,
+      stageId: stage!.id,
+      stateCode: "SP",
+    })).resolves.toMatchObject({ leads: expect.arrayContaining([expect.objectContaining({ id: spLead.leadId })]) });
+    await expect(pipelineService().getScreen(managerContext, { stateCode: "SÃO PAULO" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
   it("transiciona pelo serviço, fecha intervalos e registra timeline e auditoria", async () => {
     const lead = await createLead("CRM14 histórico");
     const initial = await state(lead.leadId);

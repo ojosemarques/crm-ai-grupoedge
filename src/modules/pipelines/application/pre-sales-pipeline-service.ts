@@ -60,6 +60,7 @@ const screenQuerySchema = z.object({
   stageCode: z.enum(["ALL", ...leadStageCodes]).optional().default("ALL"),
   phoneType: z.enum(pipelinePhoneTypes).optional().default("ALL"),
   gender: z.enum(pipelineGenders).optional().default("ALL"),
+  stateCode: z.string().trim().regex(/^(?:|[A-Za-z]{2})$/).optional().default("").transform((value) => value.toUpperCase()),
 }).strict();
 
 const leadStateSchema = z.object({ leadId: z.string().uuid() }).strict();
@@ -820,11 +821,12 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       : { currentScore: { leadScore: { priorityBandCode: parsed.data.priority } } };
     const phoneTypeFilter: Prisma.LeadWhereInput = phoneTypeLeadIds === null ? {} : { id: { in: phoneTypeLeadIds } };
     const genderFilter: Prisma.LeadWhereInput = genderLeadIds === null ? {} : { id: { in: genderLeadIds } };
+    const stateFilter: Prisma.LeadWhereInput = parsed.data.stateCode ? { stateCode: parsed.data.stateCode } : {};
     const baseWhere: Prisma.LeadWhereInput = {
       workspaceId: context.workspaceId,
       pipelineId: pipeline.id,
       deletedAt: null,
-      AND: [visibility, responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter],
+      AND: [visibility, responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter, stateFilter],
     };
     const cardLimitPerStage = 12;
     const pipelineResource: ResourceScope = {
@@ -834,13 +836,25 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
     };
     const now = options.now();
     const historySince = new Date(now.getTime() - conversionPeriodDays * 86_400_000);
-    const [workspace, groupedCounts, write, correct, ownerRefs, queueRefs, stageRows, healthRows, transitionRows] = await Promise.all([
+    const [workspace, groupedCounts, write, correct, ownerRefs, queueRefs, stateRows, stageRows, healthRows, transitionRows] = await Promise.all([
       options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } }),
       options.database.lead.groupBy({ by: ["currentStageId"], where: baseWhere, _count: { _all: true } }),
       options.authorization.authorize(context, PermissionKeys.LEADS_WRITE, pipelineResource),
       options.authorization.authorize(context, PermissionKeys.LEADS_ASSIGN, pipelineResource),
       options.database.lead.findMany({ where: { ...baseWhere, ownerMemberId: { not: null } }, distinct: ["ownerMemberId"], select: { ownerMemberId: true } }),
       options.database.lead.findMany({ where: { ...baseWhere, queueId: { not: null } }, distinct: ["queueId"], select: { queueId: true } }),
+      options.database.lead.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          pipelineId: pipeline.id,
+          deletedAt: null,
+          stateCode: { not: null },
+          AND: [visibility],
+        },
+        distinct: ["stateCode"],
+        orderBy: { stateCode: "asc" },
+        select: { stateCode: true },
+      }),
       Promise.all(pipeline.stages.map(async (stage) => {
         if (!isLeadStageCode(stage.leadStageCode)) return [];
         if (parsed.data.stageCode !== "ALL" && parsed.data.stageCode !== stage.leadStageCode) return [];
@@ -932,6 +946,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         ...members.map((member) => ({ value: `member:${member.id}`, label: member.user.displayName })),
         ...queues.map((queue) => ({ value: `queue:${queue.id}`, label: queue.name })),
       ],
+      stateOptions: [...new Set(stateRows.flatMap((item) => item.stateCode ? [item.stateCode.toUpperCase()] : []))].sort(),
       stages: columns,
       canWrite: write.allowed,
       canCorrect: correct.allowed,
@@ -976,12 +991,13 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
           gender: parsed.data.gender,
         });
     const genderFilter: Prisma.LeadWhereInput = genderLeadIds === null ? {} : { id: { in: genderLeadIds } };
+    const stateFilter: Prisma.LeadWhereInput = parsed.data.stateCode ? { stateCode: parsed.data.stateCode } : {};
     const where: Prisma.LeadWhereInput = {
       workspaceId: context.workspaceId,
       pipelineId: pipeline.id,
       currentStageId: stage.id,
       deletedAt: null,
-      AND: [leadVisibilityWhere(context, scope), responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter],
+      AND: [leadVisibilityWhere(context, scope), responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter, stateFilter],
     };
     const [total, rows] = await Promise.all([
       options.database.lead.count({ where }),
