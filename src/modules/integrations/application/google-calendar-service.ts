@@ -112,7 +112,7 @@ export function createGoogleCalendarService(options: Options) {
     });
     const account = await options.database.googleCalendarAccount.findUnique({
       where: { workspaceId_memberId: { workspaceId: context.workspaceId, memberId: context.memberId } },
-      select: { googleEmail: true, status: true, lastSyncAt: true, lastPullAt: true, lastErrorAt: true, lastErrorCode: true, updatedAt: true },
+      select: { googleEmail: true, status: true, pullEnabled: true, lastSyncAt: true, lastPullAt: true, lastErrorAt: true, lastErrorCode: true, updatedAt: true },
     });
     let configurationReady = true;
     try { loadGoogleCalendarConfiguration(); } catch { configurationReady = false; }
@@ -121,6 +121,7 @@ export function createGoogleCalendarService(options: Options) {
       account: account ? {
         email: account.googleEmail,
         status: account.status,
+        pullEnabled: account.pullEnabled,
         lastSyncAt: account.lastSyncAt?.toISOString() ?? null,
         lastPullAt: account.lastPullAt?.toISOString() ?? null,
         lastErrorAt: account.lastErrorAt?.toISOString() ?? null,

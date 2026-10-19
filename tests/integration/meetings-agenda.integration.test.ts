@@ -1008,6 +1008,7 @@ describe("agenda interna e reuniões", () => {
           tokenExpiresAt: new Date("2036-01-01T00:00:00.000Z"),
           grantedScopes: ["https://www.googleapis.com/auth/calendar.events"],
           status: "CONNECTED",
+          pullEnabled: false,
           nextPullAt: clock,
           createdByActorId: managerContext.actorId,
           updatedByActorId: managerContext.actorId,
@@ -1052,6 +1053,9 @@ describe("agenda interna e reuniões", () => {
       };
       const worker = createGoogleCalendarWorkerService({ database, now: () => clock, fetcher, pullIntervalSeconds: 60 });
 
+      await expect(worker.processNext("google-pull-disabled-test")).resolves.toMatchObject({ status: "IDLE" });
+      expect(request).toBe(0);
+      await database.googleCalendarAccount.update({ where: { id: account.id }, data: { pullEnabled: true } });
       await expect(worker.processNext("google-pull-test")).resolves.toMatchObject({ status: "PULLED" });
       const agenda = await meetings().getAgenda(adminContext, { view: "day", date: "2035-02-23" });
       expect(agenda.externalEvents).toEqual(expect.arrayContaining([

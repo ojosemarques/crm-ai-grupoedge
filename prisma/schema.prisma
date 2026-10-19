@@ -7971,6 +7971,7 @@ model GoogleCalendarAccount {
   tokenExpiresAt          DateTime                       @db.Timestamptz(3)
   grantedScopes           String[]
   status                  GoogleCalendarConnectionStatus @default(CONNECTED)
+  pullEnabled             Boolean                        @default(true)
   lastSyncAt              DateTime?                      @db.Timestamptz(3)
   lastPullAt              DateTime?                      @db.Timestamptz(3)
   nextPullAt              DateTime                       @default(now()) @db.Timestamptz(3)

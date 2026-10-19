@@ -175,6 +175,7 @@ export function createGoogleCalendarWorkerService(options: Options) {
       const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         SELECT account."id" FROM "google_calendar_accounts" account
         WHERE account."status" = 'CONNECTED'
+          AND account."pullEnabled" = TRUE
           AND account."nextPullAt" <= ${now}
           AND (account."pullLockExpiresAt" IS NULL OR account."pullLockExpiresAt" < ${now})
           AND NOT EXISTS (
