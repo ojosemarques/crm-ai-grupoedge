@@ -2764,6 +2764,7 @@ model Workspace {
   googleCalendarAccounts       GoogleCalendarAccount[]
   googleCalendarOAuthStates    GoogleCalendarOAuthState[]
   googleCalendarEventLinks     GoogleCalendarEventLink[]
+  googleCalendarImportedEvents GoogleCalendarImportedEvent[]
   dataSubjectRequestEvents     DataSubjectRequestEvent[]
 
   @@map("workspaces")
@@ -3161,6 +3162,7 @@ model WorkspaceMember {
   googleCalendarAccount        GoogleCalendarAccount?
   googleCalendarOAuthStates    GoogleCalendarOAuthState[]
   googleCalendarEventLinks     GoogleCalendarEventLink[]
+  googleCalendarImportedEvents GoogleCalendarImportedEvent[]
   meetingHistoryOwned          MeetingHistory[]
   tasksAssigned                Task[]
   conversationsAssigned        Conversation[]
@@ -7958,36 +7960,46 @@ model CalendarConnectionProfile {
 }
 
 model GoogleCalendarAccount {
-  id                     String                         @id @default(uuid()) @db.Uuid
-  workspaceId            String                         @db.Uuid
-  memberId               String                         @db.Uuid
-  googleSubject          String
-  googleEmail            String
-  calendarId             String                         @default("primary")
-  accessTokenCiphertext  String                         @db.Text
-  refreshTokenCiphertext String                         @db.Text
-  tokenExpiresAt         DateTime                       @db.Timestamptz(3)
-  grantedScopes          String[]
-  status                 GoogleCalendarConnectionStatus @default(CONNECTED)
-  lastSyncAt             DateTime?                      @db.Timestamptz(3)
-  lastErrorAt            DateTime?                      @db.Timestamptz(3)
-  lastErrorCode          String?
-  createdByActorId       String                         @db.Uuid
-  updatedByActorId       String                         @db.Uuid
-  createdAt              DateTime                       @default(now()) @db.Timestamptz(3)
-  updatedAt              DateTime                       @updatedAt @db.Timestamptz(3)
-  disconnectedAt         DateTime?                      @db.Timestamptz(3)
+  id                      String                         @id @default(uuid()) @db.Uuid
+  workspaceId             String                         @db.Uuid
+  memberId                String                         @db.Uuid
+  googleSubject           String
+  googleEmail             String
+  calendarId              String                         @default("primary")
+  accessTokenCiphertext   String                         @db.Text
+  refreshTokenCiphertext  String                         @db.Text
+  tokenExpiresAt          DateTime                       @db.Timestamptz(3)
+  grantedScopes           String[]
+  status                  GoogleCalendarConnectionStatus @default(CONNECTED)
+  lastSyncAt              DateTime?                      @db.Timestamptz(3)
+  lastPullAt              DateTime?                      @db.Timestamptz(3)
+  nextPullAt              DateTime                       @default(now()) @db.Timestamptz(3)
+  pullSyncTokenCiphertext String?                        @db.Text
+  pullPageTokenCiphertext String?                        @db.Text
+  pullStartedAt           DateTime?                      @db.Timestamptz(3)
+  pullLockedAt            DateTime?                      @db.Timestamptz(3)
+  pullLockedBy            String?
+  pullLockExpiresAt       DateTime?                      @db.Timestamptz(3)
+  lastErrorAt             DateTime?                      @db.Timestamptz(3)
+  lastErrorCode           String?
+  createdByActorId        String                         @db.Uuid
+  updatedByActorId        String                         @db.Uuid
+  createdAt               DateTime                       @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime                       @updatedAt @db.Timestamptz(3)
+  disconnectedAt          DateTime?                      @db.Timestamptz(3)
 
-  workspace  Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  member     WorkspaceMember           @relation(fields: [workspaceId, memberId], references: [workspaceId, id], onDelete: Restrict)
-  createdBy  Actor                     @relation("GoogleCalendarAccountCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
-  updatedBy  Actor                     @relation("GoogleCalendarAccountUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
-  eventLinks GoogleCalendarEventLink[]
+  workspace      Workspace                     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  member         WorkspaceMember               @relation(fields: [workspaceId, memberId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy      Actor                         @relation("GoogleCalendarAccountCreatedBy", fields: [workspaceId, createdByActorId], references: [workspaceId, id], onDelete: Restrict)
+  updatedBy      Actor                         @relation("GoogleCalendarAccountUpdatedBy", fields: [workspaceId, updatedByActorId], references: [workspaceId, id], onDelete: Restrict)
+  eventLinks     GoogleCalendarEventLink[]
+  importedEvents GoogleCalendarImportedEvent[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, memberId])
   @@unique([workspaceId, googleSubject])
   @@index([workspaceId, status, updatedAt])
+  @@index([status, nextPullAt, pullLockExpiresAt])
   @@map("google_calendar_accounts")
 }
 
@@ -8023,6 +8035,7 @@ model GoogleCalendarEventLink {
   syncedRevision   Int?
   externalEtag     String?
   lastPushedAt     DateTime?         @db.Timestamptz(3)
+  lastPulledAt     DateTime?         @db.Timestamptz(3)
   lastErrorAt      DateTime?         @db.Timestamptz(3)
   lastErrorCode    String?
   lastErrorMessage String?
@@ -8039,6 +8052,43 @@ model GoogleCalendarEventLink {
   @@unique([workspaceId, accountId, externalEventId])
   @@index([workspaceId, memberId, syncState, updatedAt])
   @@map("google_calendar_event_links")
+}
+
+model GoogleCalendarImportedEvent {
+  id               String    @id @default(uuid()) @db.Uuid
+  workspaceId      String    @db.Uuid
+  accountId        String    @db.Uuid
+  memberId         String    @db.Uuid
+  externalEventId  String
+  externalEtag     String?
+  title            String
+  location         String?
+  startsAt         DateTime  @db.Timestamptz(3)
+  endsAt           DateTime  @db.Timestamptz(3)
+  allDay           Boolean   @default(false)
+  timeZone         String
+  externalStatus   String
+  visibility       String
+  eventType        String
+  externalHtmlLink String?
+  conferenceUrl    String?
+  creatorName      String?
+  creatorEmail     String?
+  sourceUpdatedAt  DateTime? @db.Timestamptz(3)
+  lastSeenAt       DateTime  @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt        DateTime? @db.Timestamptz(3)
+
+  workspace Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  account   GoogleCalendarAccount @relation(fields: [workspaceId, accountId], references: [workspaceId, id], onDelete: Restrict)
+  member    WorkspaceMember       @relation(fields: [workspaceId, memberId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, accountId, externalEventId])
+  @@index([workspaceId, memberId, startsAt, endsAt])
+  @@index([workspaceId, accountId, deletedAt, updatedAt])
+  @@map("google_calendar_imported_events")
 }
 
 model CalendarEventLink {

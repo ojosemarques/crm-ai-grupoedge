@@ -112,7 +112,7 @@ export function createGoogleCalendarService(options: Options) {
     });
     const account = await options.database.googleCalendarAccount.findUnique({
       where: { workspaceId_memberId: { workspaceId: context.workspaceId, memberId: context.memberId } },
-      select: { googleEmail: true, status: true, lastSyncAt: true, lastErrorAt: true, lastErrorCode: true, updatedAt: true },
+      select: { googleEmail: true, status: true, lastSyncAt: true, lastPullAt: true, lastErrorAt: true, lastErrorCode: true, updatedAt: true },
     });
     let configurationReady = true;
     try { loadGoogleCalendarConfiguration(); } catch { configurationReady = false; }
@@ -122,6 +122,7 @@ export function createGoogleCalendarService(options: Options) {
         email: account.googleEmail,
         status: account.status,
         lastSyncAt: account.lastSyncAt?.toISOString() ?? null,
+        lastPullAt: account.lastPullAt?.toISOString() ?? null,
         lastErrorAt: account.lastErrorAt?.toISOString() ?? null,
         lastErrorCode: account.lastErrorCode,
         updatedAt: account.updatedAt.toISOString(),
@@ -224,6 +225,7 @@ export function createGoogleCalendarService(options: Options) {
         tokenExpiresAt: new Date(options.now().getTime() + expiresIn * 1_000),
         grantedScopes,
         status: "CONNECTED",
+        nextPullAt: options.now(),
         createdByActorId: context.actorId,
         updatedByActorId: context.actorId,
       },
@@ -235,6 +237,13 @@ export function createGoogleCalendarService(options: Options) {
         tokenExpiresAt: new Date(options.now().getTime() + expiresIn * 1_000),
         grantedScopes,
         status: "CONNECTED",
+        nextPullAt: options.now(),
+        pullSyncTokenCiphertext: null,
+        pullPageTokenCiphertext: null,
+        pullStartedAt: null,
+        pullLockedAt: null,
+        pullLockedBy: null,
+        pullLockExpiresAt: null,
         disconnectedAt: null,
         lastErrorAt: null,
         lastErrorCode: null,
@@ -280,7 +289,14 @@ export function createGoogleCalendarService(options: Options) {
     } catch { /* A revogação remota é best effort; o bloqueio local é imediato. */ }
     await options.database.googleCalendarAccount.update({
       where: { id: account.id },
-      data: { status: "DISCONNECTED", disconnectedAt: options.now(), updatedByActorId: context.actorId },
+      data: {
+        status: "DISCONNECTED",
+        disconnectedAt: options.now(),
+        pullLockedAt: null,
+        pullLockedBy: null,
+        pullLockExpiresAt: null,
+        updatedByActorId: context.actorId,
+      },
     });
     return { disconnected: true as const };
   }

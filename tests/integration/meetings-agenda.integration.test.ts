@@ -6,6 +6,8 @@ import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import type { ServiceActorContext } from "@/modules/auth/application/service-actor-context";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { encryptGoogleCalendarSecret } from "@/modules/integrations/application/google-calendar-crypto";
+import { createGoogleCalendarWorkerService } from "@/modules/integrations/application/google-calendar-worker-service";
 import { createMeetingPipelineReconciliationService } from "@/modules/meetings/application/meeting-pipeline-reconciliation-service";
 import { createMeetingService } from "@/modules/meetings/application/meeting-service";
 import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
@@ -970,5 +972,177 @@ describe("agenda interna e reuniões", () => {
     ]);
     expect(link).toMatchObject({ memberId: closer1Id, syncState: "PENDING_PUSH" });
     expect(job).toMatchObject({ type: "GOOGLE_CALENDAR_SYNC", status: "PENDING" });
+  });
+
+  it("importa eventos do Google para a Agenda e aplica exclusões incrementais", async () => {
+    clock = new Date("2035-02-23T12:00:00.000Z");
+    const encryptionKey = "integration-google-calendar-encryption-key-2035";
+    const previous = {
+      clientId: process.env.GOOGLE_CALENDAR_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+      encryptionKey: process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY,
+      canonicalUrl: process.env.APP_CANONICAL_URL,
+    };
+    process.env.GOOGLE_CALENDAR_CLIENT_ID = "integration-client-id-for-google-calendar";
+    process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "integration-client-secret-for-google-calendar";
+    process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY = encryptionKey;
+    process.env.APP_CANONICAL_URL = "https://crm.example.test";
+
+    try {
+      await database.job.updateMany({
+        where: { type: "GOOGLE_CALENDAR_SYNC", status: { in: ["PENDING", "RUNNING"] } },
+        data: { status: "SUCCEEDED", finishedAt: clock, lockedAt: null, lockedBy: null, lockExpiresAt: null },
+      });
+      await database.googleCalendarAccount.updateMany({
+        where: { status: "CONNECTED" },
+        data: { nextPullAt: new Date("2040-01-01T00:00:00.000Z") },
+      });
+      const account = await database.googleCalendarAccount.create({
+        data: {
+          workspaceId,
+          memberId: closer2Id,
+          googleSubject: `pull-test-${randomUUID()}`,
+          googleEmail: "closer2@example.test",
+          accessTokenCiphertext: encryptGoogleCalendarSecret("access-token", encryptionKey),
+          refreshTokenCiphertext: encryptGoogleCalendarSecret("refresh-token", encryptionKey),
+          tokenExpiresAt: new Date("2036-01-01T00:00:00.000Z"),
+          grantedScopes: ["https://www.googleapis.com/auth/calendar.events"],
+          status: "CONNECTED",
+          nextPullAt: clock,
+          createdByActorId: managerContext.actorId,
+          updatedByActorId: managerContext.actorId,
+        },
+      });
+      let request = 0;
+      const fetcher = async (input: string | URL | Request) => {
+        request += 1;
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        if (request === 1) {
+          expect(url.searchParams.get("syncToken")).toBeNull();
+          return new Response(JSON.stringify({
+            nextSyncToken: "sync-token-1",
+            items: [
+              {
+                id: "external-public-event",
+                etag: '"public-v1"',
+                status: "confirmed",
+                summary: "Evento criado no Google",
+                start: { dateTime: "2035-02-23T10:00:00-03:00", timeZone: "America/Sao_Paulo" },
+                end: { dateTime: "2035-02-23T11:00:00-03:00", timeZone: "America/Sao_Paulo" },
+                creator: { displayName: "Pessoa externa", email: "externa@example.test" },
+                htmlLink: "https://calendar.google.com/calendar/event?eid=public",
+              },
+              {
+                id: "external-private-event",
+                etag: '"private-v1"',
+                status: "confirmed",
+                visibility: "private",
+                summary: "Assunto particular",
+                start: { dateTime: "2035-02-23T12:00:00-03:00", timeZone: "America/Sao_Paulo" },
+                end: { dateTime: "2035-02-23T12:30:00-03:00", timeZone: "America/Sao_Paulo" },
+              },
+            ],
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        expect(url.searchParams.get("syncToken")).toBe("sync-token-1");
+        return new Response(JSON.stringify({
+          nextSyncToken: "sync-token-2",
+          items: [{ id: "external-public-event", etag: '"public-v2"', status: "cancelled" }],
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      };
+      const worker = createGoogleCalendarWorkerService({ database, now: () => clock, fetcher, pullIntervalSeconds: 60 });
+
+      await expect(worker.processNext("google-pull-test")).resolves.toMatchObject({ status: "PULLED" });
+      const agenda = await meetings().getAgenda(adminContext, { view: "day", date: "2035-02-23" });
+      expect(agenda.externalEvents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ title: "Evento criado no Google", scheduledByName: "Pessoa externa" }),
+        expect.objectContaining({ title: "Compromisso privado", private: true, externalHtmlLink: null }),
+      ]));
+      expect(await database.googleCalendarImportedEvent.count({ where: { workspaceId, accountId: account.id, deletedAt: null } })).toBe(2);
+
+      clock = new Date(clock.getTime() + 61_000);
+      await expect(worker.processNext("google-pull-test")).resolves.toMatchObject({ status: "PULLED" });
+      expect(await database.googleCalendarImportedEvent.findFirstOrThrow({
+        where: { workspaceId, accountId: account.id, externalEventId: "external-public-event" },
+        select: { deletedAt: true },
+      })).toMatchObject({ deletedAt: expect.any(Date) });
+    } finally {
+      if (previous.clientId === undefined) delete process.env.GOOGLE_CALENDAR_CLIENT_ID; else process.env.GOOGLE_CALENDAR_CLIENT_ID = previous.clientId;
+      if (previous.clientSecret === undefined) delete process.env.GOOGLE_CALENDAR_CLIENT_SECRET; else process.env.GOOGLE_CALENDAR_CLIENT_SECRET = previous.clientSecret;
+      if (previous.encryptionKey === undefined) delete process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY; else process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY = previous.encryptionKey;
+      if (previous.canonicalUrl === undefined) delete process.env.APP_CANONICAL_URL; else process.env.APP_CANONICAL_URL = previous.canonicalUrl;
+    }
+  });
+
+  it("aplica no CRM uma alteração feita no Google em reunião vinculada", async () => {
+    clock = new Date("2035-02-23T15:00:00.000Z");
+    const encryptionKey = "integration-google-calendar-linked-key-2035";
+    const previous = {
+      clientId: process.env.GOOGLE_CALENDAR_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+      encryptionKey: process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY,
+      canonicalUrl: process.env.APP_CANONICAL_URL,
+    };
+    process.env.GOOGLE_CALENDAR_CLIENT_ID = "integration-client-id-for-google-calendar";
+    process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "integration-client-secret-for-google-calendar";
+    process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY = encryptionKey;
+    process.env.APP_CANONICAL_URL = "https://crm.example.test";
+
+    try {
+      const link = await database.googleCalendarEventLink.findFirstOrThrow({
+        where: { workspaceId, account: { googleEmail: "closer@example.test" } },
+        include: { account: true, meeting: true },
+      });
+      await database.job.updateMany({
+        where: { type: "GOOGLE_CALENDAR_SYNC", status: { in: ["PENDING", "RUNNING"] } },
+        data: { status: "SUCCEEDED", finishedAt: clock, lockedAt: null, lockedBy: null, lockExpiresAt: null },
+      });
+      await database.googleCalendarAccount.updateMany({
+        where: { status: "CONNECTED" },
+        data: { nextPullAt: new Date("2040-01-01T00:00:00.000Z") },
+      });
+      await database.googleCalendarAccount.update({
+        where: { id: link.accountId },
+        data: {
+          accessTokenCiphertext: encryptGoogleCalendarSecret("linked-access-token", encryptionKey),
+          refreshTokenCiphertext: encryptGoogleCalendarSecret("linked-refresh-token", encryptionKey),
+          tokenExpiresAt: new Date("2036-01-01T00:00:00.000Z"),
+          pullSyncTokenCiphertext: encryptGoogleCalendarSecret("linked-sync-token", encryptionKey),
+          pullPageTokenCiphertext: null,
+          nextPullAt: clock,
+        },
+      });
+      const fetcher = async (input: string | URL | Request) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        expect(url.searchParams.get("syncToken")).toBe("linked-sync-token");
+        return new Response(JSON.stringify({
+          nextSyncToken: "linked-sync-token-2",
+          items: [{
+            id: link.externalEventId,
+            etag: '"linked-v2"',
+            status: "confirmed",
+            summary: "Título alterado no Google",
+            start: { dateTime: "2035-02-24T14:00:00-03:00", timeZone: "America/Sao_Paulo" },
+            end: { dateTime: "2035-02-24T14:30:00-03:00", timeZone: "America/Sao_Paulo" },
+          }],
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      };
+
+      const worker = createGoogleCalendarWorkerService({ database, now: () => clock, fetcher, pullIntervalSeconds: 60 });
+      await expect(worker.processNext("google-linked-pull-test")).resolves.toMatchObject({ status: "PULLED" });
+      const updated = await database.meeting.findUniqueOrThrow({ where: { id: link.meetingId } });
+      expect(updated).toMatchObject({ title: "Título alterado no Google", revision: link.meeting.revision + 1 });
+      expect(updated.startsAt.toISOString()).toBe("2035-02-24T17:00:00.000Z");
+      expect(await database.googleCalendarEventLink.findUniqueOrThrow({ where: { id: link.id } })).toMatchObject({
+        externalEtag: '"linked-v2"',
+        lastPulledAt: expect.any(Date),
+        syncState: "PENDING_PUSH",
+      });
+    } finally {
+      if (previous.clientId === undefined) delete process.env.GOOGLE_CALENDAR_CLIENT_ID; else process.env.GOOGLE_CALENDAR_CLIENT_ID = previous.clientId;
+      if (previous.clientSecret === undefined) delete process.env.GOOGLE_CALENDAR_CLIENT_SECRET; else process.env.GOOGLE_CALENDAR_CLIENT_SECRET = previous.clientSecret;
+      if (previous.encryptionKey === undefined) delete process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY; else process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY = previous.encryptionKey;
+      if (previous.canonicalUrl === undefined) delete process.env.APP_CANONICAL_URL; else process.env.APP_CANONICAL_URL = previous.canonicalUrl;
+    }
   });
 });

@@ -15,7 +15,7 @@ export default async function CalendarIntegrationPage({ searchParams }: Readonly
   try { initial = await getGoogleCalendarService().screen(context); }
   catch (error) { if (error instanceof AccessDeniedError) redirect("/acesso-negado"); throw error; }
   return <main className="page-canvas page-canvas-wide">
-    <PageHeader eyebrow="Configurações · Integrações" title="Google Calendar" description="Conecte a agenda de cada vendedor e sincronize reuniões criadas no CRM." />
+    <PageHeader eyebrow="Configurações · Integrações" title="Google Calendar" description="Conecte a agenda de cada vendedor e mantenha os compromissos sincronizados nos dois sentidos." />
     <CalendarWorkspace callbackCode={query.code} callbackStatus={query.google} initial={initial} />
   </main>;
 }

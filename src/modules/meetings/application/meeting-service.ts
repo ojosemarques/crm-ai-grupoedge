@@ -20,6 +20,7 @@ import {
 import type {
   AgendaScreen,
   CloserOption,
+  GoogleCalendarAgendaItem,
   LeadMeetingsScreen,
   MeetingBriefing,
   MeetingHistoryItem,
@@ -296,6 +297,38 @@ function serializeMeeting(row: MeetingRow, now: Date, canWrite: boolean): Meetin
     calendarSync: row.googleCalendarLink
       ? { state: row.googleCalendarLink.syncState, externalEgress: true, conferenceUrl: row.googleCalendarLink.conferenceUrl }
       : { state: (row.calendarLinks[0]?.syncState ?? "NOT_LINKED") as MeetingListItem["calendarSync"]["state"], externalEgress: false, conferenceUrl: null },
+  });
+}
+
+function serializeGoogleCalendarEvent(
+  row: Prisma.GoogleCalendarImportedEventGetPayload<{
+    include: {
+      account: { select: { googleEmail: true } };
+      member: { select: { user: { select: { displayName: true } } } };
+    };
+  }>,
+  viewerMemberId: string,
+): GoogleCalendarAgendaItem {
+  const privateForViewer = row.visibility === "private" && row.memberId !== viewerMemberId;
+  return Object.freeze({
+    id: row.id,
+    ownerMemberId: row.memberId,
+    ownerName: row.member.user.displayName,
+    calendarEmail: row.account.googleEmail,
+    title: privateForViewer ? "Compromisso privado" : row.title,
+    startsAt: row.startsAt.toISOString(),
+    endsAt: row.endsAt.toISOString(),
+    allDay: row.allDay,
+    timeZone: row.timeZone,
+    location: privateForViewer ? null : row.location,
+    externalStatus: row.externalStatus,
+    eventType: row.eventType,
+    scheduledByName: privateForViewer
+      ? row.member.user.displayName
+      : row.creatorName ?? row.creatorEmail ?? row.account.googleEmail,
+    externalHtmlLink: privateForViewer ? null : row.externalHtmlLink,
+    conferenceUrl: privateForViewer ? null : row.conferenceUrl,
+    private: privateForViewer,
   });
 }
 
@@ -576,22 +609,45 @@ export function createMeetingService(options: MeetingServiceOptions) {
         : readDecision.scope === "TEAM"
           ? { ownerMemberId: { in: [...allowedCloserIds] } }
           : {};
-    const rows = await options.database.meeting.findMany({
-      where: {
-        workspaceId: context.workspaceId,
-        deletedAt: null,
-        startsAt: { gte: range.start, lt: range.end },
-        ...ownerFilter,
-      },
-      include: {
-        lead: { select: { fullName: true } },
-        owner: { select: { user: { select: { displayName: true } } } },
-        createdBy: { select: { displayName: true } },
-        calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
-        googleCalendarLink: { select: { syncState: true, conferenceUrl: true } },
-      },
-      orderBy: [{ startsAt: "asc" }, { id: "asc" }],
-    });
+    const externalOwnerFilter = parsed.data.closerId
+      ? { memberId: parsed.data.closerId }
+      : readDecision.scope === "OWN"
+        ? { memberId: context.memberId }
+        : readDecision.scope === "TEAM"
+          ? { memberId: { in: [...allowedCloserIds] } }
+          : {};
+    const [rows, externalRows] = await Promise.all([
+      options.database.meeting.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          deletedAt: null,
+          startsAt: { gte: range.start, lt: range.end },
+          ...ownerFilter,
+        },
+        include: {
+          lead: { select: { fullName: true } },
+          owner: { select: { user: { select: { displayName: true } } } },
+          createdBy: { select: { displayName: true } },
+          calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
+          googleCalendarLink: { select: { syncState: true, conferenceUrl: true } },
+        },
+        orderBy: [{ startsAt: "asc" }, { id: "asc" }],
+      }),
+      options.database.googleCalendarImportedEvent.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          deletedAt: null,
+          startsAt: { lt: range.end },
+          endsAt: { gt: range.start },
+          ...externalOwnerFilter,
+        },
+        include: {
+          account: { select: { googleEmail: true } },
+          member: { select: { user: { select: { displayName: true } } } },
+        },
+        orderBy: [{ startsAt: "asc" }, { id: "asc" }],
+      }),
+    ]);
     const permissions = await Promise.all(rows.map((row) =>
       options.authorization.authorize(context, PermissionKeys.MEETINGS_WRITE, meetingResource(context.workspaceId, row)),
     ));
@@ -615,6 +671,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       schedulingCloserOptions: schedulingClosers,
       leadOptions: leads,
       meetings: rows.map((row, index) => serializeMeeting(row, options.now(), permissions[index]?.allowed ?? false)),
+      externalEvents: externalRows.map((row) => serializeGoogleCalendarEvent(row, context.memberId)),
     });
   }
 

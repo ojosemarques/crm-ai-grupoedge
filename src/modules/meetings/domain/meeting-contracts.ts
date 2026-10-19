@@ -43,6 +43,25 @@ export type MeetingHistoryItem = Readonly<{
 export type CloserOption = Readonly<{ id: string; name: string }>;
 export type LeadOption = Readonly<{ id: string; name: string; phone: string | null; opportunities: readonly Readonly<{ id: string; name: string }>[] }>;
 
+export type GoogleCalendarAgendaItem = Readonly<{
+  id: string;
+  ownerMemberId: string;
+  ownerName: string;
+  calendarEmail: string;
+  title: string;
+  startsAt: string;
+  endsAt: string;
+  allDay: boolean;
+  timeZone: string;
+  location: string | null;
+  externalStatus: string;
+  eventType: string;
+  scheduledByName: string;
+  externalHtmlLink: string | null;
+  conferenceUrl: string | null;
+  private: boolean;
+}>;
+
 export type AgendaScreen = Readonly<{
   generatedAt: string;
   timeZone: string;
@@ -57,6 +76,7 @@ export type AgendaScreen = Readonly<{
   schedulingCloserOptions: readonly CloserOption[];
   leadOptions: readonly LeadOption[];
   meetings: readonly MeetingListItem[];
+  externalEvents: readonly GoogleCalendarAgendaItem[];
 }>;
 
 export type LeadMeetingsScreen = Readonly<{
