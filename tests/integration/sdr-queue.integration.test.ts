@@ -662,6 +662,22 @@ describe("fila priorizada do SDR", () => {
     expect(effectiveContacts(after) - effectiveContacts(before)).toBe(1n);
   });
 
+  it("não conta marcador de resposta sem evidência de entrada", async () => {
+    const lead = await createLead(`CRM10 resposta sem evidência ${randomUUID().slice(0, 8)}`, "P2");
+    await assignTo(lead.leadId, isolatedSdrContext.memberId);
+    await database.lead.update({
+      where: { id: lead.leadId },
+      data: {
+        awaitingHumanResponse: true,
+        lastInboundResponseAt: now,
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+
+    const screen = await queueService().getScreen(isolatedSdrContext, {});
+    expect(screen.sections.find((section) => section.key === "RESPONDED")?.items.map((item) => item.id)).not.toContain(lead.leadId);
+  });
+
   it("detecta reunião de hoje pelo timezone do workspace", async () => {
     const lead = await createLead(`CRM10 reunião ${randomUUID().slice(0, 8)}`);
     await assignTo(lead.leadId, sdr2Context.memberId);

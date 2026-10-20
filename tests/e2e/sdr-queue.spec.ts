@@ -52,17 +52,31 @@ test("Meu Dia explica a prioridade, abre o drilldown e reflete a ação concluí
   expect(leadId).toBeTruthy();
   const assigned = await database.lead.findUniqueOrThrow({
     where: { id: leadId! },
-    select: { ownerMemberId: true, nextActionTaskId: true },
+    select: { ownerMemberId: true, nextActionTaskId: true, updatedByActorId: true, workspaceId: true },
   });
   expect(assigned.ownerMemberId).not.toBeNull();
   expect(assigned.nextActionTaskId).not.toBeNull();
 
-  await Promise.all([
+  const inboundAt = new Date(Date.now() + 60_000);
+  await database.$transaction([
+    database.activity.create({
+      data: {
+        workspaceId: assigned.workspaceId,
+        leadId: leadId!,
+        type: "MESSAGE_RECEIVED",
+        direction: "INBOUND",
+        result: "RECEIVED",
+        subject: "Resposta recebida para validar a fila",
+        occurredAt: inboundAt,
+        createdByActorId: assigned.updatedByActorId,
+        updatedByActorId: assigned.updatedByActorId,
+      },
+    }),
     database.lead.update({
       where: { id: leadId! },
       data: {
         awaitingHumanResponse: true,
-        lastInboundResponseAt: new Date(Date.now() + 60_000),
+        lastInboundResponseAt: inboundAt,
       },
     }),
     database.task.update({

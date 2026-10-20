@@ -401,6 +401,34 @@ export function leadVisibilitySql(
   )`;
 }
 
+export function leadHasVerifiedInboundResponseSql(): Prisma.Sql {
+  return Prisma.sql`l."awaitingHumanResponse" = TRUE
+    AND l."lastInboundResponseAt" IS NOT NULL
+    AND (
+      EXISTS (
+        SELECT 1
+        FROM "activities" inbound_activity
+        WHERE inbound_activity."workspaceId" = l."workspaceId"
+          AND inbound_activity."leadId" = l."id"
+          AND inbound_activity."deletedAt" IS NULL
+          AND inbound_activity."direction"::text = 'INBOUND'
+          AND inbound_activity."type"::text IN ('MESSAGE_RECEIVED', 'EMAIL')
+          AND inbound_activity."occurredAt" BETWEEN l."lastInboundResponseAt" - INTERVAL '1 second'
+            AND l."lastInboundResponseAt" + INTERVAL '1 second'
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM "commercial_metric_facts" inbound_fact
+        WHERE inbound_fact."workspaceId" = l."workspaceId"
+          AND inbound_fact."leadId" = l."id"
+          AND inbound_fact."reversedAt" IS NULL
+          AND inbound_fact."eventType"::text IN ('INBOUND_MESSAGE_RECEIVED', 'EMAIL_REPLIED', 'HUMAN_RESPONSE_CONFIRMED')
+          AND inbound_fact."occurredAt" BETWEEN l."lastInboundResponseAt" - INTERVAL '1 second'
+            AND l."lastInboundResponseAt" + INTERVAL '1 second'
+      )
+    )`;
+}
+
 export function leadVisibilityWhere(
   context: AuthenticatedContext,
   scope: LeadVisibilityScope,
@@ -697,7 +725,7 @@ function filtersSql(
         AND bucket_task."deletedAt" IS NULL
     )`);
   } else if (query.operationalBucket === "RESPONDED") {
-    clauses.push(Prisma.sql`${openLead} AND l."awaitingHumanResponse" = TRUE`);
+    clauses.push(Prisma.sql`${openLead} AND ${leadHasVerifiedInboundResponseSql()}`);
   } else if (query.operationalBucket === "RETURN_TODAY") {
     clauses.push(Prisma.sql`${openLead} AND l."nextActionAt" IS NOT NULL AND
       (l."nextActionAt" AT TIME ZONE (

@@ -2,6 +2,7 @@ import type { PermissionScope, PrismaClient } from "@/generated/prisma/client";
 import { Prisma } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import {
+  leadHasVerifiedInboundResponseSql,
   leadVisibilitySql,
   resolveLeadVisibilityScope,
   type LeadVisibilityAuthorizationPort,
@@ -142,7 +143,7 @@ function bucketSql(bucket: SdrQueueBucket, now: Date, selectedLocalDate: string)
           AND waiting_task."deletedAt" IS NULL
       )`;
     case "RESPONDED":
-      return Prisma.sql`l."awaitingHumanResponse" = TRUE`;
+      return leadHasVerifiedInboundResponseSql();
     case "RETURN_TODAY":
       return Prisma.sql`l."nextActionAt" IS NOT NULL
         AND (l."nextActionAt" AT TIME ZONE workspace."timeZone")::date
