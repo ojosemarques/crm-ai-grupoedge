@@ -152,7 +152,9 @@ function comparableMetrics(overview: MetricsOverview): readonly ComparableMetric
   const meetingKeys = (rows: readonly Readonly<{ meetingId: string }>[]) => rows.map((row) => meetingKey(row.meetingId));
   const opportunityKeys = (rows: readonly Readonly<{ opportunityId: string }>[]) => rows.map((row) => opportunityKey(row.opportunityId));
   const slaKeys = evidence.slaCycles.map((row) => slaKey(row.cycleId));
-  const rateValue = (rate: Readonly<{ percentage: number | null }>) => rate.percentage;
+  const ratioValue = (numerator: number, denominator: number) => denominator === 0
+    ? null
+    : Math.round((numerator / denominator) * 10_000) / 100;
   return Object.freeze([
     { id: "leads", label: "Leads recebidos", kind: "COUNT", value: evidence.leadReceipts.length, numerator: evidence.leadReceipts.length, denominator: null, keys: leadKeys(evidence.leadsReceivedLeadIds), formula: "novas identidades recebidas no período", desiredDirection: "CONTEXT" },
     { id: "attempts", label: "Primeiras tentativas", kind: "COUNT", value: evidence.firstAttempts.length, numerator: evidence.firstAttempts.length, denominator: evidence.leadReceipts.length, keys: leadKeys(evidence.attemptedLeadIds), formula: "leads tentados / leads recebidos", desiredDirection: "UP" },
@@ -172,7 +174,9 @@ function comparableMetrics(overview: MetricsOverview): readonly ComparableMetric
     { id: "sla-average", label: "SLA humano médio", kind: "DURATION", value: overview.humanSla.averageSeconds, numerator: overview.humanSla.sampleCount, denominator: overview.humanSla.sampleCount + overview.humanSla.missingCount, keys: slaKeys, formula: "média dos segundos até a primeira tentativa", desiredDirection: "DOWN" },
     { id: "sla-median", label: "Mediana do SLA humano", kind: "DURATION", value: overview.humanSla.medianSeconds, numerator: overview.humanSla.sampleCount, denominator: overview.humanSla.sampleCount + overview.humanSla.missingCount, keys: slaKeys, formula: "mediana dos segundos até a primeira tentativa", desiredDirection: "DOWN" },
     { id: "sla-p90", label: "P90 do SLA humano", kind: "DURATION", value: overview.humanSla.p90Seconds, numerator: overview.humanSla.sampleCount, denominator: overview.humanSla.sampleCount + overview.humanSla.missingCount, keys: slaKeys, formula: "P90 dos segundos até a primeira tentativa", desiredDirection: "DOWN" },
-    { id: "lead-to-sale", label: "Conversão lead → venda", kind: "RATE", value: rateValue(overview.leadToSaleRate), numerator: overview.leadToSaleRate.numerator, denominator: overview.leadToSaleRate.denominator, keys: leadKeys(evidence.leadsReceivedLeadIds), formula: "leads recebidos com ganho vigente / leads recebidos", desiredDirection: "UP" },
+    { id: "lead-to-meeting", label: "Lead → reunião agendada", kind: "RATE", value: ratioValue(evidence.scheduledMeetings.length, evidence.leadReceipts.length), numerator: evidence.scheduledMeetings.length, denominator: evidence.leadReceipts.length, keys: meetingKeys(evidence.scheduledMeetings), formula: "reuniões agendadas / leads recebidos", desiredDirection: "UP" },
+    { id: "lead-to-sale", label: "Lead → venda", kind: "RATE", value: ratioValue(evidence.periodWins.length, evidence.leadReceipts.length), numerator: evidence.periodWins.length, denominator: evidence.leadReceipts.length, keys: opportunityKeys(evidence.periodWins), formula: "vendas / leads recebidos", desiredDirection: "UP" },
+    { id: "meeting-to-sale", label: "Reunião agendada → venda", kind: "RATE", value: ratioValue(evidence.periodWins.length, evidence.scheduledMeetings.length), numerator: evidence.periodWins.length, denominator: evidence.scheduledMeetings.length, keys: opportunityKeys(evidence.periodWins), formula: "vendas / reuniões agendadas", desiredDirection: "UP" },
     { id: "backlog", label: "Leads abertos", kind: "COUNT", value: overview.backlog.value, numerator: overview.backlog.value, denominator: null, keys: leadKeys(evidence.openLeadIds), formula: "leads em etapa aberta no corte", desiredDirection: "CONTEXT" },
     { id: "stalled", label: "Leads parados", kind: "COUNT", value: overview.stalledLeads.value, numerator: overview.stalledLeads.value, denominator: overview.backlog.value, keys: leadKeys(evidence.stalledLeadIds), formula: "backlog acima do limite de estagnação", desiredDirection: "DOWN" },
     { id: "no-next-action", label: "Sem próxima ação", kind: "COUNT", value: overview.leadsWithoutNextAction.value, numerator: overview.leadsWithoutNextAction.value, denominator: overview.backlog.value, keys: leadKeys(evidence.leadsWithoutNextActionIds), formula: "backlog sem tarefa ativa", desiredDirection: "DOWN" },
@@ -623,9 +627,31 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       proposals: "sales.proposals",
       sales: "sales.won",
       revenue: "sales.won_value",
+      "lead-to-meeting": "meetings.scheduled",
+      "lead-to-sale": "sales.won",
+      "meeting-to-sale": "sales.won",
     } as const;
     const alignActivityComparison = (metric: ComparableMetric, facts: readonly IntegratedActivityFact[], series: readonly { id: string; points: readonly { value: number | string | null }[] }[]): ComparableMetric => {
       if (facts.length === 0 || !(metric.id in integratedComparisonIds)) return metric;
+      const totalFor = (id: string) => (series.find((item) => item.id === id)?.points ?? [])
+        .reduce<number>((total, point) => total + Number(point.value ?? 0), 0);
+      const rateDefinitions = {
+        "lead-to-meeting": { numeratorId: "scheduled", denominatorId: "leads", formula: "reuniões agendadas / leads recebidos" },
+        "lead-to-sale": { numeratorId: "sales", denominatorId: "leads", formula: "vendas / leads recebidos" },
+        "meeting-to-sale": { numeratorId: "sales", denominatorId: "scheduled", formula: "vendas / reuniões agendadas" },
+      } as const;
+      const rateDefinition = rateDefinitions[metric.id as keyof typeof rateDefinitions];
+      if (rateDefinition) {
+        const numerator = totalFor(rateDefinition.numeratorId);
+        const denominator = totalFor(rateDefinition.denominatorId);
+        return Object.freeze({
+          ...metric,
+          value: denominator === 0 ? null : Math.round((numerator / denominator) * 10_000) / 100,
+          numerator,
+          denominator,
+          formula: rateDefinition.formula,
+        });
+      }
       const points = series.find((item) => item.id === metric.id)?.points ?? [];
       const value = metric.id === "revenue"
         ? points.reduce<bigint>((total, point) => total + BigInt(point.value ?? 0), 0n).toString()

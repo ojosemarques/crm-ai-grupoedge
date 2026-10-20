@@ -126,7 +126,7 @@ function slaPoints(
 
 function conversionPoints(
   buckets: readonly Bucket[],
-  receipts: MetricsOverview["evidence"]["leadReceipts"],
+  receipts: readonly Readonly<{ leadId: string; occurredAt: string }>[],
   wonLeadIds: ReadonlySet<string>,
 ): readonly DashboardTimeSeriesPoint[] {
   return Object.freeze(buckets.map((bucket) => {
@@ -140,6 +140,35 @@ function conversionPoints(
       value: denominator === 0 ? null : Math.round((numerator / denominator) * 10_000) / 100,
       numerator,
       denominator,
+    });
+  }));
+}
+
+function deriveConversionSeries(series: readonly DashboardTimeSeries[]): readonly DashboardTimeSeries[] {
+  const definitions = {
+    "lead-to-meeting": { numeratorId: "scheduled", denominatorId: "leads" },
+    "lead-to-sale": { numeratorId: "sales", denominatorId: "leads" },
+    "meeting-to-sale": { numeratorId: "sales", denominatorId: "scheduled" },
+  } as const;
+  const byId = new Map(series.map((item) => [item.id, item]));
+  return Object.freeze(series.map((item) => {
+    const definition = definitions[item.id as keyof typeof definitions];
+    if (!definition) return item;
+    const numerator = byId.get(definition.numeratorId);
+    const denominator = byId.get(definition.denominatorId);
+    if (!numerator || !denominator) return item;
+    return Object.freeze({
+      ...item,
+      points: Object.freeze(item.points.map((point, index) => {
+        const numeratorValue = Number(numerator.points[index]?.value ?? 0);
+        const denominatorValue = Number(denominator.points[index]?.value ?? 0);
+        return Object.freeze({
+          ...point,
+          value: denominatorValue === 0 ? null : Math.round((numeratorValue / denominatorValue) * 10_000) / 100,
+          numerator: numeratorValue,
+          denominator: denominatorValue,
+        });
+      })),
     });
   }));
 }
@@ -195,10 +224,22 @@ export function buildDashboardTimeSeries(
       points: slaPoints(buckets, evidence.slaCycles, "p90Seconds"),
     }),
     Object.freeze({
-      id: "lead-to-sale", label: "Conversão lead → venda", kind: "RATE" as const, granularity, aggregation: "RATE" as const,
+      id: "lead-to-meeting", label: "Lead → reunião agendada", kind: "RATE" as const, granularity, aggregation: "RATE" as const,
+      formula: "reuniões agendadas no bucket / leads recebidos no bucket",
+      drilldownId: "comparison.current.lead-to-meeting",
+      points: conversionPoints(buckets, evidence.leadReceipts, new Set(evidence.scheduledLeadIds)),
+    }),
+    Object.freeze({
+      id: "lead-to-sale", label: "Lead → venda", kind: "RATE" as const, granularity, aggregation: "RATE" as const,
       formula: "leads recebidos no bucket com ganho vigente no corte / leads recebidos no bucket",
       drilldownId: "comparison.current.lead-to-sale",
       points: conversionPoints(buckets, evidence.leadReceipts, new Set(evidence.wonLeadIdsAtCut)),
+    }),
+    Object.freeze({
+      id: "meeting-to-sale", label: "Reunião agendada → venda", kind: "RATE" as const, granularity, aggregation: "RATE" as const,
+      formula: "vendas no bucket / reuniões agendadas no bucket",
+      drilldownId: "comparison.current.meeting-to-sale",
+      points: conversionPoints(buckets, evidence.scheduledMeetings, new Set(evidence.periodWins.map((row) => row.leadId))),
     }),
   ];
   return Object.freeze(result);
@@ -218,7 +259,7 @@ export function mergeIntegratedActivitySeries(
     sales: { eventTypes: ["SALE_WON"], label: "Vendas", formula: "ganhos registrados no período" },
     revenue: { eventTypes: ["SALE_WON"], label: "Receita", formula: "valor vendido nos ganhos registrados no período", money: true },
   } as const;
-  return Object.freeze(series.map((item) => {
+  const merged = series.map((item) => {
     const definition = definitions[item.id as keyof typeof definitions];
     if (!definition) return item;
     const related = facts.filter((fact) => definition.eventTypes.some((eventType) => eventType === fact.eventType));
@@ -253,7 +294,8 @@ export function mergeIntegratedActivitySeries(
       return Object.freeze({ ...point, value, numerator: value });
     });
     return Object.freeze({ ...item, label: definition.label, formula: definition.formula, points: Object.freeze(points) });
-  }));
+  });
+  return deriveConversionSeries(merged);
 }
 
 export const dashboardTimeSeriesRules = Object.freeze({

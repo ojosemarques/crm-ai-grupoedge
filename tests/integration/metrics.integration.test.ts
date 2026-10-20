@@ -781,6 +781,8 @@ describe("camada confiável de métricas", () => {
     const conversion = series["lead-to-sale"]!;
     expect(conversion.points.reduce((sum, point) => sum + Number(point.numerator), 0)).toBe(1);
     expect(conversion.points.reduce((sum, point) => sum + (point.denominator ?? 0), 0)).toBe(3);
+    expect(series["lead-to-meeting"]!.points.reduce((sum, point) => sum + Number(point.numerator), 0)).toBe(2);
+    expect(series["meeting-to-sale"]!.points.reduce((sum, point) => sum + Number(point.denominator ?? 0), 0)).toBe(2);
 
     const comparison = Object.fromEntries(result.comparisons.map((item) => [item.id, item]));
     expect(comparison.revenue).toMatchObject({
@@ -794,6 +796,8 @@ describe("camada confiável de métricas", () => {
       previous: { numerator: 0, denominator: 0, value: null },
       direction: "NOT_COMPARABLE", interpretation: "NOT_ENOUGH_DATA",
     });
+    expect(comparison["lead-to-meeting"]).toMatchObject({ current: { value: 66.67, numerator: 2, denominator: 3 } });
+    expect(comparison["meeting-to-sale"]).toMatchObject({ current: { value: 50, numerator: 1, denominator: 2 } });
   });
 
   it("aplica filtros compartilhados, períodos civis e estado sem dados", async () => {
@@ -809,6 +813,8 @@ describe("camada confiável de métricas", () => {
     expect(empty.cohortByStage).toEqual([]);
     expect(empty.timeSeries.find((item) => item.id === "leads")?.points.every((point) => point.value === 0)).toBe(true);
     expect(empty.timeSeries.find((item) => item.id === "lead-to-sale")?.points.every((point) => point.value === null)).toBe(true);
+    expect(empty.timeSeries.find((item) => item.id === "lead-to-meeting")?.points.every((point) => point.value === null)).toBe(true);
+    expect(empty.timeSeries.find((item) => item.id === "meeting-to-sale")?.points.every((point) => point.value === null)).toBe(true);
     expect(empty.comparisons.find((item) => item.id === "leads")).toMatchObject({
       current: { value: 0 }, previous: { value: 0 }, direction: "STABLE", interpretation: "NEUTRAL",
     });

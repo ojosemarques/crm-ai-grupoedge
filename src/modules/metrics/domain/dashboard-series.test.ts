@@ -85,6 +85,27 @@ describe("séries comerciais do log integrado", () => {
     ]);
   });
 
+  it("deriva as três conversões da mesma base integrada de leads, reuniões e vendas", () => {
+    const facts = [
+      fact({ id: "lead-1", eventType: "LEAD_CREATED", occurredAt: first, leadId: "lead-1" }),
+      fact({ id: "lead-2", eventType: "LEAD_CREATED", occurredAt: first, leadId: "lead-2" }),
+      fact({ id: "meeting-1", eventType: "MEETING_SCHEDULED", occurredAt: first, leadId: "lead-1" }),
+      fact({ id: "lead-3", eventType: "LEAD_CREATED", occurredAt: second, leadId: "lead-3" }),
+      fact({ id: "meeting-2", eventType: "MEETING_SCHEDULED", occurredAt: second, leadId: "lead-2" }),
+      fact({ id: "meeting-3", eventType: "MEETING_SCHEDULED", occurredAt: second, leadId: "lead-3" }),
+      fact({ id: "sale-1", eventType: "SALE_WON", occurredAt: second, leadId: "lead-3" }),
+    ];
+    const result = mergeIntegratedActivitySeries([
+      series("leads"), series("scheduled"), series("sales"),
+      series("lead-to-meeting", "RATE"), series("lead-to-sale", "RATE"), series("meeting-to-sale", "RATE"),
+    ], facts);
+    expect(result.slice(3).map((item) => [item.id, item.points.map((point) => [point.value, point.numerator, point.denominator])])).toEqual([
+      ["lead-to-meeting", [[50, 1, 2], [200, 2, 1]]],
+      ["lead-to-sale", [[0, 0, 2], [100, 1, 1]]],
+      ["meeting-to-sale", [[0, 0, 1], [50, 1, 2]]],
+    ]);
+  });
+
   it("conta card marcado como reunião e mantém legado sem fatos relacionados", () => {
     const legacy = series("scheduled");
     expect(mergeIntegratedActivitySeries([legacy], [fact({ id: "stage", eventType: "MEETING_SCHEDULED", sourceEntityType: "StageHistory", occurredAt: first })])[0]?.points.map((point) => point.value)).toEqual([1, 0]);
