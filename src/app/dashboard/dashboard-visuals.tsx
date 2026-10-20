@@ -42,6 +42,9 @@ export function ConnectedFunnel({ stages }: Readonly<{ stages: readonly (Dashboa
           const top = 224 - height;
           const nextTop = 224 - nextHeight;
           const difference = index > 0 ? stage.value - (stages[index - 1]?.value ?? 0) : null;
+          const footer = stage.secondaryValue === null
+            ? difference === null ? "Leads recebidos" : `${difference > 0 ? "+" : ""}${difference.toLocaleString("pt-BR")} vs. etapa anterior`
+            : `${Number(stage.secondaryValue).toLocaleString("pt-BR")} ${stage.secondaryLabel}`;
           return <a aria-label={`${stage.label}: ${stage.value.toLocaleString("pt-BR")}. Abrir registros`} href={stage.href} key={stage.id}>
             <rect fill="transparent" height="265" width="155" x={x} y="0" />
             <text className={styles.funnelLabel} x={x + 12} y="22">{stage.id === "received" ? "Entrada" : stage.label}</text>
@@ -49,7 +52,7 @@ export function ConnectedFunnel({ stages }: Readonly<{ stages: readonly (Dashboa
             <text className={styles.funnelDetail} x={x + 12} y="77">{stage.percentage === null ? "Base da jornada" : `${stage.percentage.toLocaleString("pt-BR")}% da anterior`}</text>
             <path d={`M ${x} ${top} C ${x + 78} ${top}, ${x + 78} ${nextTop}, ${x + 155} ${nextTop} L ${x + 155} 224 L ${x} 224 Z`} fill={warmPalette[index % warmPalette.length]} fillOpacity=".86"><title>{`${stage.label}: ${stage.value}. Denominador: ${stage.denominator ?? "não aplicável"}.`}</title></path>
             <line stroke="var(--surface)" strokeOpacity=".85" strokeWidth="2" x1={x} x2={x} y1="88" y2="224" />
-            <text className={styles.funnelDetail} x={x + 12} y="248">{difference === null ? "Leads recebidos" : `${difference > 0 ? "+" : ""}${difference.toLocaleString("pt-BR")} vs. etapa anterior`}</text>
+            <text className={styles.funnelDetail} x={x + 12} y="248">{footer}</text>
           </a>;
         })}
       </svg>

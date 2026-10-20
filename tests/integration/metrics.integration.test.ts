@@ -965,6 +965,10 @@ describe("camada confiável de métricas", () => {
         ["received", 1], ["attempted", 1], ["connected", 1], ["qualified", 1],
         ["meeting", 1], ["opportunity", 0], ["proposal", 0],
       ]);
+      expect(result.fullFunnel.stages.find((item) => item.id === "meeting")).toMatchObject({
+        secondaryValue: 1,
+        secondaryLabel: "agendamentos válidos",
+      });
     } finally {
       await database.meeting.updateMany({
         where: { workspaceId, lead: { sourceId: meetingSource.id } },

@@ -706,6 +706,8 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     const scheduledStage = new Set(scheduledStageTimes.keys());
     const opportunityStage = new Set(opportunityStageTimes.keys());
     const proposalStage = new Set(proposalStageTimes.keys());
+    const scheduledEventCount = [...activityBalances].reduce((total, [key, balance]) =>
+      key.startsWith("MEETING_SCHEDULED:") ? total + Math.max(0, balance) : total, 0);
     const funnelSets = [
       ["recebidos", "Recebidos", cohort],
       ["tentados", "Tentados", attemptedStage],
@@ -718,7 +720,8 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       return Object.freeze({
         id, label, value: set.size, denominator,
         percentage: denominator === null ? null : percent(set.size, denominator),
-        secondaryValue: null, secondaryLabel: null,
+        secondaryValue: id === "agendados" ? scheduledEventCount : null,
+        secondaryLabel: id === "agendados" ? "agendamentos válidos" : null,
         drilldownId: addDrilldown(`funnel.${id}`, `${label} no funil`, "Registros desta etapa do funil de entrada.", index === 0 ? "novos leads" : `${label.toLowerCase()} / etapa anterior`, keysFor(set)),
       });
     });
@@ -748,8 +751,8 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
         value: values.size,
         denominator,
         percentage: denominator === null ? null : percent(values.size, denominator),
-        secondaryValue: null,
-        secondaryLabel: null,
+        secondaryValue: id === "meeting" ? scheduledEventCount : null,
+        secondaryLabel: id === "meeting" ? "agendamentos válidos" : null,
         branchFrom,
         nodeType: "STAGE" as const,
         drilldownId: addDrilldown(
