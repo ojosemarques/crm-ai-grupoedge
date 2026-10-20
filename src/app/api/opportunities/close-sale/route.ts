@@ -10,6 +10,15 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 const commandSchema = z.object({ action: z.enum(["PREVIEW", "EXECUTE"]), payload: z.unknown() }).strict();
 
+export async function GET(request: NextRequest) {
+  try {
+    const context = await requireApiAuthentication(request);
+    const opportunityId = z.string().uuid().parse(request.nextUrl.searchParams.get("opportunityId"));
+    const result = await getSaleCompletionService().getOptions(context, opportunityId);
+    return NextResponse.json({ result }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) { return handleRouteError(error, request); }
+}
+
 export async function POST(request: NextRequest) {
   try {
     assertSameOrigin(request);

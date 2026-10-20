@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { executeSaleCompletionSchema, saleCompletionSchema, saleMonth, saleSchedule } from "./sale-completion-contracts";
 
-const input = { opportunityId: "00000000-0000-4000-8000-000000000001", sellerMemberId: "00000000-0000-4000-8000-000000000002", templateVersionId: "00000000-0000-4000-8000-000000000003", expectedRevision: 1, totalCents: "2500000", monthlyCents: "300000", upfrontCents: "700000", durationMonths: 6, startsAt: "2026-01-31T12:00:00.000Z" };
+const input = { opportunityId: "00000000-0000-4000-8000-000000000001", sellerMemberId: "00000000-0000-4000-8000-000000000002", templateVersionId: "00000000-0000-4000-8000-000000000003", expectedRevision: 1, totalCents: "2500000", monthlyCents: "300000", upfrontCents: "700000", receivedCents: "0", paymentMethod: "PIX", paymentCondition: "Entrada e seis parcelas mensais", durationMonths: 6, startsAt: "2026-01-31T12:00:00.000Z", acceptance: { acceptedByName: "Cliente", acceptedByRole: "Diretor", evidenceText: "Aceite documentado." } } as const;
 
 describe("fechamento integrado", () => {
   it("exige explicação explícita da diferença entre total e parcelas", () => {
@@ -20,7 +20,9 @@ describe("fechamento integrado", () => {
     expect(executeSaleCompletionSchema.safeParse({ ...input, idempotencyKey: input.opportunityId }).success).toBe(false);
     const single = saleCompletionSchema.parse({ ...input, monthlyCents: "0", upfrontCents: input.totalCents, durationMonths: 1 });
     expect(saleSchedule(single)).toHaveLength(1);
-    expect(saleCompletionSchema.safeParse({ ...input, onboardingOwnerMemberId: input.sellerMemberId }).success).toBe(false);
+    expect(saleCompletionSchema.safeParse({ ...input, acceptance: undefined }).success).toBe(false);
+    expect(saleCompletionSchema.safeParse({ ...input, receivedCents: "1" }).success).toBe(false);
+    expect(saleCompletionSchema.safeParse({ ...input, receivedCents: "2500001", financialAccountId: input.opportunityId, receivedAt: input.startsAt, paymentReference: "PIX teste" }).success).toBe(false);
   });
   it("exige nome real ou ID explícito para cadastro e vínculo de cliente", () => {
     expect(saleCompletionSchema.safeParse({ ...input, customer: { mode: "CREATE", name: " " } }).success).toBe(false);

@@ -40,6 +40,7 @@ import type { PermissionKey } from "@/modules/users/permissions/permission-keys"
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
+import { syncActiveProspectingCommercialStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import {
@@ -1716,6 +1717,12 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
           metadata: { origin: "OPPORTUNITY_CARD" },
         },
       });
+      await syncActiveProspectingCommercialStageInTransaction(transaction, context, {
+        leadId: opportunity.leadId,
+        targetCode: "PROPOSAL",
+        reason: `Proposta ${offer.name} registrada no negócio vinculado.`,
+        commercialEvent: "PROPOSAL_REGISTERED",
+      }, effectiveAt);
       const leadTask = await activeLeadTask(transaction, context.workspaceId, opportunity.leadId);
       await transaction.lead.update({
         where: { id: opportunity.leadId },

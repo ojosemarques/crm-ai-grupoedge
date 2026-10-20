@@ -57,7 +57,7 @@ async function saleFixture() {
   await database.offer.create({ data: { workspaceId, opportunityId: opportunity.id, productId: product.id, name: "Três meses", quantity: 1, unitPriceCents: 150000n, totalCents: 150000n, createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
   const clause = await database.contractTemplateClause.findFirstOrThrow({ where: { workspaceId } });
   const template = await database.contractTemplateVersion.findUniqueOrThrow({ where: { id: clause.templateVersionId } });
-  return { opportunityId: opportunity.id, expectedRevision: 1, sellerMemberId: admin.memberId, totalCents: "150000", monthlyCents: "50000", upfrontCents: "0", durationMonths: 3, startsAt: now().toISOString(), templateVersionId: template.id, acceptance: { acceptedByName: "Cliente plano", acceptedByRole: "Diretor", evidenceText: "Aceite real registrado na fixture de integração." } };
+  return { opportunityId: opportunity.id, expectedRevision: 1, sellerMemberId: admin.memberId, totalCents: "150000", monthlyCents: "50000", upfrontCents: "0", receivedCents: "0", paymentMethod: "PIX" as const, paymentCondition: "Três parcelas mensais", durationMonths: 3, startsAt: now().toISOString(), templateVersionId: template.id, acceptance: { acceptedByName: "Cliente plano", acceptedByRole: "Diretor", evidenceText: "Aceite real registrado na fixture de integração." } };
 }
 
 describe("planos atômicos persistidos do Copilot", () => {

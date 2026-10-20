@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const salePaymentMethods = ["PIX", "BANK_TRANSFER", "CARD", "CASH", "OTHER"] as const;
+
 const cents = z.string().regex(/^\d{1,15}$/).refine((value) => BigInt(value) <= BigInt(Number.MAX_SAFE_INTEGER), "Valor fora do limite seguro.");
 const terms = z.object({
   opportunityId: z.string().uuid(),
@@ -8,6 +10,12 @@ const terms = z.object({
   totalCents: cents.refine((value) => BigInt(value) > 0n),
   monthlyCents: cents,
   upfrontCents: cents.default("0"),
+  receivedCents: cents.default("0"),
+  paymentMethod: z.enum(salePaymentMethods),
+  paymentCondition: z.string().trim().min(2).max(500),
+  financialAccountId: z.string().uuid().optional(),
+  receivedAt: z.string().datetime({ offset: true }).optional(),
+  paymentReference: z.string().trim().min(3).max(180).optional(),
   durationMonths: z.number().int().min(1).max(60),
   startsAt: z.string().datetime({ offset: true }),
   templateVersionId: z.string().uuid(),
@@ -19,7 +27,7 @@ const terms = z.object({
     acceptedByName: z.string().trim().min(2).max(200),
     acceptedByRole: z.string().trim().min(2).max(200),
     evidenceText: z.string().trim().min(5).max(2000),
-  }).strict().optional(),
+  }).strict(),
   onboardingOwnerMemberId: z.string().uuid().optional(),
 }).strict();
 
@@ -30,8 +38,13 @@ function consistent(input: z.infer<typeof terms>, ctx: z.RefinementCtx) {
   if (BigInt(input.monthlyCents) === 0n && input.durationMonths !== 1) {
     ctx.addIssue({ code: "custom", path: ["durationMonths"], message: "Venda avulsa deve ter uma única parcela." });
   }
-  if (input.onboardingOwnerMemberId && !input.acceptance) {
-    ctx.addIssue({ code: "custom", path: ["acceptance"], message: "O onboarding exige evidência do aceite contratual." });
+  if (BigInt(input.receivedCents) > BigInt(input.totalCents)) {
+    ctx.addIssue({ code: "custom", path: ["receivedCents"], message: "O valor recebido não pode superar o total da venda." });
+  }
+  if (BigInt(input.receivedCents) > 0n) {
+    if (!input.financialAccountId) ctx.addIssue({ code: "custom", path: ["financialAccountId"], message: "Selecione a conta que recebeu o valor." });
+    if (!input.receivedAt) ctx.addIssue({ code: "custom", path: ["receivedAt"], message: "Informe a data do recebimento." });
+    if (!input.paymentReference) ctx.addIssue({ code: "custom", path: ["paymentReference"], message: "Informe uma referência do recebimento." });
   }
 }
 

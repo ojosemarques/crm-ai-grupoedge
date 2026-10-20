@@ -65,7 +65,7 @@ describe("contrato fornecido ao modelo do Copilot", () => {
     expect(copilotActionInputGuide.CLOSE_SALE.references.templateVersionId).toContain("contratos");
     expect(copilotActionInputGuide.CREATE_EXPENSE.rules.join(" ")).toContain("omita settledAt e paymentConfirmed");
     expect(copilotActionInputGuide.RECORD_PAYMENT.rules.join(" ")).toContain("outstandingCents");
-    expect(copilotActionInputGuide.CLOSE_SALE.rules.join(" ")).toContain("onboardingOwnerMemberId exige acceptance");
+    expect(copilotActionInputGuide.CLOSE_SALE.rules.join(" ")).toContain("receivedCents>0");
   });
 
   it("continua rejeitando enum traduzido, duas ações e pagamento sem declaração real", () => {

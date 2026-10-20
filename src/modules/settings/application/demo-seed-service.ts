@@ -160,6 +160,8 @@ const pipelineDefinitions = [
       ["active-prospecting.meeting-scheduled", "Reunião marcada", "OPEN", "MEETING_SCHEDULED", null],
       ["active-prospecting.meeting-no-show", "Noshow", "OPEN", "MEETING_NO_SHOW", null],
       ["active-prospecting.meeting-completed", "Reunião feita", "OPEN", "MEETING_COMPLETED", null],
+      ["active-prospecting.proposal", "Proposta", "OPEN", "PROPOSAL", null],
+      ["active-prospecting.client", "Cliente", "WON", "CLIENT", null],
       ["active-prospecting.closed-no-response", "Encerrado — sem retorno", "LOST", "NURTURING", null],
       ["active-prospecting.discarded", "Descartado", "LOST", "DISQUALIFIED", null],
     ],
@@ -170,7 +172,8 @@ const pipelineDefinitions = [
       ["IN_QUALIFICATION", "MEETING_SCHEDULED"], ["IN_QUALIFICATION", "DISQUALIFIED"],
       ["MEETING_SCHEDULED", "MEETING_NO_SHOW"], ["MEETING_SCHEDULED", "MEETING_COMPLETED"],
       ["MEETING_NO_SHOW", "MEETING_SCHEDULED"], ["MEETING_NO_SHOW", "MEETING_COMPLETED"],
-      ["MEETING_COMPLETED", "MEETING_SCHEDULED"], ["MEETING_COMPLETED", "MEETING_NO_SHOW"],
+      ["MEETING_COMPLETED", "MEETING_SCHEDULED"], ["MEETING_COMPLETED", "MEETING_NO_SHOW"], ["MEETING_COMPLETED", "PROPOSAL"],
+      ["PROPOSAL", "CLIENT"], ["PROPOSAL", "MEETING_SCHEDULED"], ["PROPOSAL", "NURTURING"], ["PROPOSAL", "DISQUALIFIED"],
     ],
   },
   {

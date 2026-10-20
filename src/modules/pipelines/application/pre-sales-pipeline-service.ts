@@ -127,6 +127,8 @@ const activeProspectingStageCodes = [
   "MEETING_SCHEDULED",
   "MEETING_NO_SHOW",
   "MEETING_COMPLETED",
+  "PROPOSAL",
+  "CLIENT",
   "NURTURING",
   "DISQUALIFIED",
 ] as const satisfies readonly LeadStageCode[];
@@ -170,13 +172,18 @@ function transitionOptions(
   return stages.flatMap((stage) => {
     if (!isLeadStageCode(stage.leadStageCode) || stage.leadStageCode === currentCode) return [];
     const target = stage.leadStageCode;
+    const integratedOnly = target === "PROPOSAL" || target === "CLIENT";
     return [{
       stageId: stage.id,
       code: target,
       name: stage.name,
-      allowed: true,
-      correctionAllowed: true,
-      blockReason: null,
+      allowed: !integratedOnly,
+      correctionAllowed: !integratedOnly,
+      blockReason: target === "PROPOSAL"
+        ? "Registre uma proposta no negócio vinculado."
+        : target === "CLIENT"
+          ? "Use Marcar vendido no card do negócio."
+          : null,
       correctionBlockReason: null,
       requiresConfirmation: false,
       requiresDisqualificationReason: false,
@@ -366,6 +373,7 @@ export type TransactionalLeadStageTransitionInput = Readonly<{
   managerCorrection: boolean;
   confirmed: boolean;
   disqualificationReasonId?: string | null;
+  commercialEvent?: "PROPOSAL_REGISTERED" | "SALE_WON";
 }>;
 
 export async function transitionLeadStageInTransaction(
@@ -419,6 +427,12 @@ export async function transitionLeadStageInTransaction(
   });
   if (!target || !isLeadStageCode(target.leadStageCode)) notFound("Etapa de destino não encontrada.");
   if (target.id === lead.currentStageId) conflict("STAGE_UNCHANGED", "O lead já está nesta etapa.");
+  if (target.leadStageCode === "PROPOSAL" && input.commercialEvent !== "PROPOSAL_REGISTERED") {
+    conflict("PROPOSAL_FORM_REQUIRED", "Registre uma proposta no negócio vinculado para avançar o lead.");
+  }
+  if (target.leadStageCode === "CLIENT" && input.commercialEvent !== "SALE_WON") {
+    conflict("INTEGRATED_SALE_REQUIRED", "Use Marcar vendido no card do negócio para converter o lead em cliente.");
+  }
   let disqualificationReason: { id: string; name: string } | null = null;
   if (target.leadStageCode === "DISQUALIFIED" && input.disqualificationReasonId) {
     disqualificationReason = await transaction.disqualificationReason.findFirst({
@@ -435,7 +449,8 @@ export async function transitionLeadStageInTransaction(
   const occurredAt = requestedAt > currentHistory.enteredAt
     ? requestedAt
     : new Date(currentHistory.enteredAt.getTime() + 1);
-  const cancelledTaskIds = target.leadStageCode === "DISQUALIFIED"
+  const closingLead = target.leadStageCode === "DISQUALIFIED" || target.leadStageCode === "CLIENT";
+  const cancelledTaskIds = closingLead
     ? lead.tasks.map((task) => task.id)
     : [];
   await transaction.stageHistory.update({
@@ -460,13 +475,13 @@ export async function transitionLeadStageInTransaction(
       where: { id: { in: cancelledTaskIds }, workspaceId: context.workspaceId, leadId: lead.id },
       data: {
         status: "CANCELLED",
-        result: "Cancelada pela desqualificação do lead.",
+        result: target.leadStageCode === "CLIENT" ? "Cancelada após a venda do lead." : "Cancelada pela desqualificação do lead.",
         updatedByActorId: context.actorId,
         updatedAt: occurredAt,
       },
     });
   }
-  const nextTask = target.leadStageCode === "DISQUALIFIED" ? null : lead.tasks[0] ?? null;
+  const nextTask = closingLead ? null : lead.tasks[0] ?? null;
   const status = statusForLeadStage(target.leadStageCode);
   const updated = await transaction.lead.update({
     where: { id: lead.id },
@@ -626,7 +641,7 @@ export async function transitionLeadStageInTransaction(
       taskId,
       creditedMemberId: lead.ownerMemberId,
       leadOwnerMemberIdAtEvent: lead.ownerMemberId,
-      result: "LEAD_DISQUALIFIED",
+      result: target.leadStageCode === "CLIENT" ? "LEAD_CONVERTED" : "LEAD_DISQUALIFIED",
       executionMode: "SYSTEM",
     });
   }
@@ -666,6 +681,49 @@ export async function transitionLeadStageInTransaction(
     occurredAt: occurredAt.toISOString(),
     cancelledTaskIds,
   });
+}
+
+export async function syncActiveProspectingCommercialStageInTransaction(
+  transaction: Prisma.TransactionClient,
+  context: Pick<AuthenticatedContext, "workspaceId" | "actorId">,
+  input: Readonly<{
+    leadId: string;
+    targetCode: "PROPOSAL" | "CLIENT";
+    reason: string;
+    commercialEvent: "PROPOSAL_REGISTERED" | "SALE_WON";
+  }>,
+  occurredAt: Date,
+) {
+  const lead = await transaction.lead.findFirst({
+    where: { id: input.leadId, workspaceId: context.workspaceId, deletedAt: null },
+    select: { id: true, currentStageId: true, pipeline: { select: { id: true, name: true } } },
+  });
+  if (!lead || lead.pipeline.name !== activeProspectingPipelineName) {
+    return Object.freeze({ synced: false as const });
+  }
+  const target = await transaction.pipelineStage.findFirst({
+    where: {
+      workspaceId: context.workspaceId,
+      pipelineId: lead.pipeline.id,
+      leadStageCode: input.targetCode,
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  if (!target) {
+    conflict("PIPELINE_CONFIGURATION_INVALID", `A etapa ${input.targetCode} não está configurada na Prospecção Ativa.`);
+  }
+  if (target.id === lead.currentStageId) return Object.freeze({ synced: false as const });
+  const result = await transitionLeadStageInTransaction(transaction, context, {
+    leadId: lead.id,
+    targetStageId: target.id,
+    reason: input.reason,
+    origin: "OPPORTUNITY_CARD",
+    managerCorrection: false,
+    confirmed: true,
+    commercialEvent: input.commercialEvent,
+  }, occurredAt);
+  return Object.freeze({ synced: true as const, result });
 }
 
 export function createPreSalesPipelineService(options: PreSalesPipelineServiceOptions) {

@@ -21,7 +21,7 @@ const stageSchema = z.object({
   name: z.string().trim().min(2).max(100),
   position: z.number().int().min(0),
   type: z.enum(["OPEN", "WON", "LOST"]),
-  leadStageCode: z.enum(["NEW", "TRYING_CONTACT", "CONNECTED", "IN_QUALIFICATION", "QUALIFIED", "MEETING_SCHEDULED", "MEETING_NO_SHOW", "MEETING_COMPLETED", "NURTURING", "DISQUALIFIED"]).nullable().optional(),
+  leadStageCode: z.enum(["NEW", "TRYING_CONTACT", "CONNECTED", "IN_QUALIFICATION", "QUALIFIED", "MEETING_SCHEDULED", "MEETING_NO_SHOW", "MEETING_COMPLETED", "PROPOSAL", "CLIENT", "NURTURING", "DISQUALIFIED"]).nullable().optional(),
   opportunityStageCode: z.enum(["MEETING_SCHEDULED", "MEETING_HELD", "OPPORTUNITY_CONFIRMED", "PROPOSAL", "NEGOTIATION", "WON", "LOST"]).nullable().optional(),
   activities: z.array(activitySchema).max(50).default([]),
   requiredFields: z.array(requiredFieldSchema).max(50).default([]),

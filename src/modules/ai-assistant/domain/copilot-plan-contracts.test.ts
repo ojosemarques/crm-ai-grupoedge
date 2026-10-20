@@ -33,7 +33,7 @@ describe("contrato de planos operacionais", () => {
   });
 
   it("impede criar tarefa que seria cancelada por uma etapa posterior de fechamento", () => {
-    const sale = { kind: "CLOSE_SALE", payload: { opportunityId: leadId, expectedRevision: 1, sellerMemberId: leadId, templateVersionId: leadId, startsAt: task.dueAt, totalCents: "300", upfrontCents: "0", monthlyCents: "100", durationMonths: 3 } };
+    const sale = { kind: "CLOSE_SALE", payload: { opportunityId: leadId, expectedRevision: 1, sellerMemberId: leadId, templateVersionId: leadId, startsAt: task.dueAt, totalCents: "300", upfrontCents: "0", monthlyCents: "100", receivedCents: "0", paymentMethod: "PIX", paymentCondition: "Três parcelas", durationMonths: 3, acceptance: { acceptedByName: "Cliente", acceptedByRole: "Diretor", evidenceText: "Aceite documentado." } } };
     expect(copilotPlanSchema.safeParse({ steps: [{ ...task, opportunityId: leadId }, sale] }).success).toBe(false);
     expect(copilotPlanSchema.safeParse({ steps: [sale, { ...task, opportunityId: leadId }] }).success).toBe(true);
   });

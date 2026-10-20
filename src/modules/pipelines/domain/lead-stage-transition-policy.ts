@@ -9,7 +9,9 @@ const regularTransitions: Readonly<Record<LeadStageCode, readonly LeadStageCode[
   QUALIFIED: ["MEETING_SCHEDULED", "NURTURING", "DISQUALIFIED"],
   MEETING_SCHEDULED: ["QUALIFIED", "NURTURING", "DISQUALIFIED"],
   MEETING_NO_SHOW: ["MEETING_SCHEDULED", "MEETING_COMPLETED"],
-  MEETING_COMPLETED: ["MEETING_SCHEDULED", "MEETING_NO_SHOW"],
+  MEETING_COMPLETED: ["MEETING_SCHEDULED", "MEETING_NO_SHOW", "PROPOSAL"],
+  PROPOSAL: ["CLIENT", "MEETING_SCHEDULED", "NURTURING", "DISQUALIFIED"],
+  CLIENT: [],
   NURTURING: ["TRYING_CONTACT", "CONNECTED", "IN_QUALIFICATION", "DISQUALIFIED"],
   DISQUALIFIED: [],
 };
@@ -30,7 +32,7 @@ export function stageRequiresPacto(target: LeadStageCode): boolean {
 }
 
 export function stageRequiresNextAction(target: LeadStageCode): boolean {
-  return target !== "DISQUALIFIED";
+  return target !== "DISQUALIFIED" && target !== "CLIENT";
 }
 
 export function stageRequiresConfirmation(target: LeadStageCode): boolean {
@@ -39,6 +41,7 @@ export function stageRequiresConfirmation(target: LeadStageCode): boolean {
 
 export function statusForLeadStage(target: LeadStageCode): LeadStatus {
   if (target === "DISQUALIFIED") return "DISQUALIFIED";
-  if (["QUALIFIED", "MEETING_SCHEDULED", "MEETING_NO_SHOW", "MEETING_COMPLETED"].includes(target)) return "QUALIFIED";
+  if (target === "CLIENT") return "CONVERTED";
+  if (["QUALIFIED", "MEETING_SCHEDULED", "MEETING_NO_SHOW", "MEETING_COMPLETED", "PROPOSAL"].includes(target)) return "QUALIFIED";
   return "OPEN";
 }

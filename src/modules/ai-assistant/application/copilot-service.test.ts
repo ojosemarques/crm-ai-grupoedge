@@ -13,7 +13,7 @@ const id = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, "0")
 const now = new Date("2026-09-30T12:00:00.000Z");
 const context: AuthenticatedContext = { workspaceId: id(1), workspaceSlug: "test", sessionId: id(2), userId: id(3), memberId: id(4), actorId: id(5), roleId: id(6), roleKey: "administrator", roleName: "Admin", displayName: "Admin" };
 const batchOwner = { memberId: context.memberId, memberName: context.displayName };
-const sale = { opportunityId: id(10), expectedRevision: 3, sellerMemberId: id(4), totalCents: "1800000", upfrontCents: "0", monthlyCents: "300000", durationMonths: 6, startsAt: now.toISOString(), templateVersionId: id(11) };
+const sale = { opportunityId: id(10), expectedRevision: 3, sellerMemberId: id(4), totalCents: "1800000", upfrontCents: "0", monthlyCents: "300000", receivedCents: "0", paymentMethod: "PIX" as const, paymentCondition: "Seis parcelas mensais", durationMonths: 6, startsAt: now.toISOString(), templateVersionId: id(11), acceptance: { acceptedByName: "Cliente", acceptedByRole: "Diretor", evidenceText: "Aceite documentado." } };
 type Row = Record<string, unknown>;
 
 function harness() {

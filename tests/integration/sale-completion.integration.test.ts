@@ -5,8 +5,10 @@ import type { AuthenticatedContext } from "@/modules/auth/application/authentica
 import { createSaleCompletionService } from "@/modules/opportunities/application/sale-completion-service";
 import { createOpportunityService } from "@/modules/opportunities/application/opportunity-service";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { syncActiveProspectingCommercialStageInTransaction, transitionLeadStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
+import { ensureActiveProspectingPipeline } from "@/modules/settings/application/production-foundation-service";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
 
 if (!/^politizai_test_/.test(process.env.PRISMA_TEST_SCHEMA ?? "")) throw new Error("Ephemeral schema required.");
@@ -30,9 +32,9 @@ beforeAll(async () => {
 });
 afterAll(async () => { await database.$disconnect(); });
 
-async function fixture() {
+async function fixture(pipelineId?: string) {
   const actor = await database.actor.findFirstOrThrow({ where: { workspaceId, type: "SYSTEM" } });
-  const intake = await createLeadIntakeService({ database, authorization: createAuthorizationService({ database }), now: () => now }).intake({ channel: "MANUAL", idempotencyKey: `sale-test:${randomUUID()}`, fullName: "Cliente integrado", phone: `+55119${Math.floor(Math.random() * 90000000 + 10000000)}`, sourceKey: "manual", priorityBandCode: "P1", interestSummary: "Venda integrada de teste", rawPayload: { test: true } }, { workspaceId, actorId: actor.id, actorKey: actor.key, actorType: "SYSTEM" });
+  const intake = await createLeadIntakeService({ database, authorization: createAuthorizationService({ database }), now: () => now }).intake({ channel: "MANUAL", idempotencyKey: `sale-test:${randomUUID()}`, fullName: "Cliente integrado", phone: `+55119${Math.floor(Math.random() * 90000000 + 10000000)}`, sourceKey: "manual", priorityBandCode: "P1", interestSummary: "Venda integrada de teste", ...(pipelineId ? { pipelineId } : {}), rawPayload: { test: true } }, { workspaceId, actorId: actor.id, actorKey: actor.key, actorType: "SYSTEM" });
   if (intake.outcome === "REJECTED") throw new Error(intake.code);
   const lead = { id: intake.leadId };
   const account = await database.account.create({ data: { workspaceId, name: "Cliente integrado", normalizedName: `cliente ${randomUUID()}`, origin: "SEED", quality: "CONFIRMED", createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
@@ -44,10 +46,54 @@ async function fixture() {
   await database.stageHistory.create({ data: { workspaceId, pipelineId: stage.pipelineId, stageId: stage.id, opportunityId: opportunity.id, enteredAt: new Date("2026-09-01T12:00:00Z"), enteredByActorId: admin.actorId } });
   await database.offer.create({ data: { workspaceId, opportunityId: opportunity.id, productId: product.id, name: "Plano seis meses", quantity: 1, unitPriceCents: 2500000n, totalCents: 2500000n, createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
   const template = await database.contractTemplateVersion.findFirstOrThrow({ where: { workspaceId } });
-  return { opportunityId: opportunity.id, expectedRevision: 1, sellerMemberId: admin.memberId, totalCents: "2500000", monthlyCents: "300000", upfrontCents: "700000", durationMonths: 6, startsAt: now.toISOString(), templateVersionId: template.id };
+  return { opportunityId: opportunity.id, expectedRevision: 1, sellerMemberId: admin.memberId, totalCents: "2500000", monthlyCents: "300000", upfrontCents: "700000", receivedCents: "0", paymentMethod: "PIX" as const, paymentCondition: "Entrada e seis parcelas mensais", durationMonths: 6, startsAt: now.toISOString(), templateVersionId: template.id, acceptance: { acceptedByName: "Cliente integrado", acceptedByRole: "Diretor", evidenceText: "Aceite comercial documentado no teste." } };
 }
 
 describe("venda integrada atômica", () => {
+  it("move o lead da Prospecção Ativa para Cliente e baixa o valor recebido sem perder o saldo", async () => {
+    await ensureActiveProspectingPipeline(database, workspaceId, admin.actorId);
+    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId, name: "Prospecção Ativa", entityType: "LEAD", deletedAt: null } });
+    const input = await fixture(pipeline.id);
+    const opportunity = await database.opportunity.findUniqueOrThrow({ where: { id: input.opportunityId } });
+    await database.$transaction((tx) => syncActiveProspectingCommercialStageInTransaction(tx, admin, {
+      leadId: opportunity.leadId,
+      targetCode: "PROPOSAL",
+      reason: "Proposta confirmada no teste integrado.",
+      commercialEvent: "PROPOSAL_REGISTERED",
+    }, new Date("2026-09-30T14:00:00Z")));
+    expect((await database.lead.findUniqueOrThrow({ where: { id: opportunity.leadId }, include: { currentStage: true } })).currentStage.leadStageCode).toBe("PROPOSAL");
+    const clientStage = await database.pipelineStage.findFirstOrThrow({ where: { workspaceId, pipelineId: pipeline.id, leadStageCode: "CLIENT", deletedAt: null } });
+    await expect(database.$transaction((tx) => transitionLeadStageInTransaction(tx, admin, {
+      leadId: opportunity.leadId,
+      targetStageId: clientStage.id,
+      reason: "Tentativa manual sem venda.",
+      origin: "PIPELINE_BOARD",
+      managerCorrection: false,
+      confirmed: true,
+    }, new Date("2026-09-30T14:30:00Z")))).rejects.toMatchObject({ code: "INTEGRATED_SALE_REQUIRED" });
+    const financialAccount = await database.financialAccount.create({ data: { workspaceId, name: `Conta venda ${randomUUID()}`, type: "BANK", createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
+    const result = await service.execute(admin, {
+      ...input,
+      receivedCents: "1200000",
+      financialAccountId: financialAccount.id,
+      receivedAt: now.toISOString(),
+      paymentReference: `PIX venda ${randomUUID()}`,
+      confirmed: true,
+      idempotencyKey: randomUUID(),
+    });
+    if (!("paymentIds" in result) || !("invoiceIds" in result)) throw new Error("Resultado de fechamento incompleto.");
+    expect(result).toMatchObject({ paymentReceived: true, receivedCents: "1200000", outstandingCents: "1300000" });
+    const lead = await database.lead.findUniqueOrThrow({ where: { id: opportunity.leadId }, include: { currentStage: true } });
+    expect(lead).toMatchObject({ status: "CONVERTED", currentStage: { leadStageCode: "CLIENT", name: "Cliente" } });
+    const payments = await database.payment.aggregate({ where: { workspaceId, id: { in: result.paymentIds } }, _sum: { amountCents: true } });
+    expect(payments._sum.amountCents).toBe(1200000n);
+    const invoices = await database.invoice.findMany({ where: { workspaceId, id: { in: result.invoiceIds } } });
+    expect(invoices.reduce((sum, invoice) => sum + invoice.totalCents - invoice.paidCents, 0n)).toBe(1300000n);
+    const saleFact = await database.commercialMetricFact.findMany({ where: { workspaceId, opportunityId: opportunity.id, eventType: "SALE_WON" } });
+    expect(saleFact).toHaveLength(1);
+    expect(saleFact[0]?.valueCents).toBe(2500000n);
+  });
+
   it("cria o cliente revisado e vincula lead, venda, contrato e recebíveis sem duplicar no replay", async () => {
     const input = await fixture();
     const original = await database.opportunity.findUniqueOrThrow({ where: { id: input.opportunityId } });
@@ -80,7 +126,7 @@ describe("venda integrada atômica", () => {
     const preview = await service.preview(admin, input);
     expect(preview).toMatchObject({ customer: { mode: "LINK", accountId: original.accountId }, payload: { customer: { mode: "LINK", accountId: original.accountId } } });
     const result = await service.execute(admin, { ...preview.payload, confirmed: true, idempotencyKey: randomUUID() });
-    expect(result).toMatchObject({ accountId: original.accountId, customerCreated: false, invoiceIds: [], subscriptionId: null });
+    expect(result).toMatchObject({ accountId: original.accountId, customerCreated: false, invoiceIds: expect.arrayContaining([expect.any(String)]), subscriptionId: expect.any(String) });
 
     const next = await fixture();
     const nextOpportunity = await database.opportunity.findUniqueOrThrow({ where: { id: next.opportunityId } });

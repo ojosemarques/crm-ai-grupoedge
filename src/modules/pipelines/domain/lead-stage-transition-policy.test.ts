@@ -20,7 +20,9 @@ describe("política de transição do pipeline de pré-vendas", () => {
       QUALIFIED: ["MEETING_SCHEDULED", "NURTURING", "DISQUALIFIED"],
       MEETING_SCHEDULED: ["QUALIFIED", "NURTURING", "DISQUALIFIED"],
       MEETING_NO_SHOW: ["MEETING_SCHEDULED", "MEETING_COMPLETED"],
-      MEETING_COMPLETED: ["MEETING_SCHEDULED", "MEETING_NO_SHOW"],
+      MEETING_COMPLETED: ["MEETING_SCHEDULED", "MEETING_NO_SHOW", "PROPOSAL"],
+      PROPOSAL: ["CLIENT", "MEETING_SCHEDULED", "NURTURING", "DISQUALIFIED"],
+      CLIENT: [],
       NURTURING: ["TRYING_CONTACT", "CONNECTED", "IN_QUALIFICATION", "DISQUALIFIED"],
       DISQUALIFIED: [],
     });
@@ -38,6 +40,7 @@ describe("política de transição do pipeline de pré-vendas", () => {
     expect(stageRequiresPacto("CONNECTED")).toBe(false);
     expect(stageRequiresNextAction("NURTURING")).toBe(true);
     expect(stageRequiresNextAction("DISQUALIFIED")).toBe(false);
+    expect(stageRequiresNextAction("CLIENT")).toBe(false);
     expect(stageRequiresConfirmation("QUALIFIED")).toBe(true);
     expect(stageRequiresConfirmation("DISQUALIFIED")).toBe(true);
   });
@@ -49,6 +52,8 @@ describe("política de transição do pipeline de pré-vendas", () => {
     expect(statusForLeadStage("MEETING_SCHEDULED")).toBe("QUALIFIED");
     expect(statusForLeadStage("MEETING_NO_SHOW")).toBe("QUALIFIED");
     expect(statusForLeadStage("MEETING_COMPLETED")).toBe("QUALIFIED");
+    expect(statusForLeadStage("PROPOSAL")).toBe("QUALIFIED");
+    expect(statusForLeadStage("CLIENT")).toBe("CONVERTED");
     expect(statusForLeadStage("DISQUALIFIED")).toBe("DISQUALIFIED");
   });
 });

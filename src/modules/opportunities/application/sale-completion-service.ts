@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createAccountService, normalizeAccountName } from "@/modules/accounts/application/account-service";
@@ -9,8 +9,9 @@ import { createOnboardingService } from "@/modules/onboarding/application/onboar
 import { assertOriginCapability, createOpportunityService } from "@/modules/opportunities/application/opportunity-service";
 import { assertConsultativeSalesGates, assertRequiredStageActivitiesComplete } from "@/modules/opportunities/application/sales-gate-service";
 import { assertPipelineRequiredFields } from "@/modules/pipeline-templates/application/opportunity-required-fields";
-import { executeSaleCompletionSchema, saleCompletionSchema, saleMonth, saleSchedule, type SaleCompletionInput } from "@/modules/opportunities/domain/sale-completion-contracts";
+import { executeSaleCompletionSchema, saleCompletionSchema, saleMonth, salePaymentMethods, saleSchedule, type SaleCompletionInput } from "@/modules/opportunities/domain/sale-completion-contracts";
 import { createPaymentService } from "@/modules/payments/application/payment-service";
+import { syncActiveProspectingCommercialStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createRevenueService } from "@/modules/revenue/application/revenue-service";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys, type PermissionKey } from "@/modules/users/permissions/permission-keys";
@@ -48,7 +49,8 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
     await assertOriginCapability(database, context, await authorization.authorize(context, PermissionKeys.OPPORTUNITIES_WRITE, resource), opportunity.lead.sourceId, "canTransition");
     const required: PermissionKey[] = [PermissionKeys.CONTRACTS_CREATE];
     if (input.sellerMemberId !== opportunity.ownerMemberId) required.push(PermissionKeys.OWNERSHIP_ASSIGN);
-    if (input.acceptance) required.push(PermissionKeys.CONTRACTS_DRAFT_WRITE, PermissionKeys.CONTRACTS_ISSUE, PermissionKeys.CONTRACTS_ACCEPT_RECORD, PermissionKeys.REVENUE_MANAGE, PermissionKeys.REVENUE_EVENTS_RECORD, PermissionKeys.PAYMENTS_MANAGE);
+    required.push(PermissionKeys.CONTRACTS_DRAFT_WRITE, PermissionKeys.CONTRACTS_ISSUE, PermissionKeys.CONTRACTS_ACCEPT_RECORD, PermissionKeys.REVENUE_MANAGE, PermissionKeys.REVENUE_EVENTS_RECORD, PermissionKeys.PAYMENTS_MANAGE);
+    if (BigInt(input.receivedCents) > 0n) required.push(PermissionKeys.FINANCE_MANAGE);
     if (input.onboardingOwnerMemberId) required.push(PermissionKeys.ONBOARDING_MANAGE);
     for (const key of required) await authorization.assertAuthorized(context, key, resource);
     if (input.customer || !opportunity.accountId || !opportunity.lead.accountId) {
@@ -86,18 +88,48 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
     await assertPipelineRequiredFields(database, opportunity.id, stage.id, { accountWillBeLinked: true });
     await assertRequiredStageActivitiesComplete(database, context.workspaceId, opportunity.id);
     await assertConsultativeSalesGates(database, opportunity.id, "WON");
-    if (input.acceptance && new Date(input.startsAt) > options.now()) fail("A ativação imediata exige início de vigência já atingido. Gere o rascunho para contratos futuros.");
-    if (input.acceptance && saleMonth(input.startsAt, input.durationMonths) <= options.now()) fail("A vigência já terminou. Registre o histórico pelo módulo de contratos, sem ativar MRR atual.");
+    if (new Date(input.startsAt) > options.now()) fail("A ativação da venda exige início de vigência já atingido.");
+    if (saleMonth(input.startsAt, input.durationMonths) <= options.now()) fail("A vigência já terminou. Registre o histórico pelo módulo de contratos.");
+    if (input.receivedAt && new Date(input.receivedAt) > options.now()) fail("A data do recebimento não pode estar no futuro.", "PAYMENT_RECEIPT_FUTURE_DATE", 400);
+    if (BigInt(input.receivedCents) > 0n) {
+      const financialAccount = await database.financialAccount.findFirst({ where: { id: input.financialAccountId!, workspaceId: context.workspaceId, active: true } });
+      if (!financialAccount) fail("Conta financeira ativa não encontrada.", "FINANCE_ACCOUNT_NOT_FOUND", 404);
+    }
     if (input.onboardingOwnerMemberId) {
       if (!await database.workspaceMember.findFirst({ where: { workspaceId: context.workspaceId, id: input.onboardingOwnerMemberId, status: "ACTIVE", deletedAt: null } })) fail("Responsável de onboarding inválido.");
       if (!await database.onboardingTemplateVersion.findFirst({ where: { workspaceId: context.workspaceId, status: "PUBLISHED" } })) fail("Publique um modelo de onboarding antes de iniciar o pós-venda.");
     }
     const pendingSteps = [
-      ...(!input.acceptance ? ["Contrato em rascunho: registre o aceite real para ativar assinatura e emitir recebíveis."] : []),
       ...(!input.onboardingOwnerMemberId ? ["Defina o responsável do onboarding para iniciar o handoff."] : []),
-      "Pagamentos serão baixados somente após confirmação de recebimento.",
+      ...(BigInt(input.receivedCents) < BigInt(input.totalCents) ? [`Saldo a receber: ${BigInt(input.totalCents) - BigInt(input.receivedCents)} centavos.`] : []),
     ];
     return { opportunity, authorization, offer, seller, template, stage, pendingSteps, customer };
+  }
+
+  async function getOptions(context: AuthenticatedContext, opportunityId: string) {
+    const opportunity = await options.database.opportunity.findFirst({
+      where: { id: opportunityId, workspaceId: context.workspaceId, deletedAt: null },
+      select: {
+        id: true,
+        ownerMemberId: true,
+        lead: { select: { sourceId: true, routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } },
+      },
+    });
+    if (!opportunity) fail("Oportunidade não encontrada.", "NOT_FOUND", 404);
+    const resource = { workspaceId: context.workspaceId, resourceType: "Opportunity", resourceId: opportunity.id, opportunityId: opportunity.id, ownerMemberId: opportunity.ownerMemberId, sourceId: opportunity.lead.sourceId, teamId: opportunity.lead.routingQueue?.teamId ?? opportunity.lead.queue?.teamId ?? null };
+    const authorization = createAuthorizationService({ database: options.database });
+    const write = await authorization.authorize(context, PermissionKeys.OPPORTUNITIES_WRITE, resource);
+    if (!write.allowed) await authorization.assertAuthorized(context, PermissionKeys.OPPORTUNITIES_WRITE, resource);
+    await assertOriginCapability(options.database, context, write, opportunity.lead.sourceId, "canTransition");
+    const [payments, finance] = await Promise.all([
+      authorization.authorize(context, PermissionKeys.PAYMENTS_MANAGE, resource),
+      authorization.authorize(context, PermissionKeys.FINANCE_MANAGE, { workspaceId: context.workspaceId, resourceType: "Finance", resourceId: context.workspaceId }),
+    ]);
+    const canRecordReceipt = payments.allowed && finance.allowed;
+    const financialAccounts = canRecordReceipt
+      ? await options.database.financialAccount.findMany({ where: { workspaceId: context.workspaceId, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } })
+      : [];
+    return { canRecordReceipt, financialAccounts, paymentMethods: salePaymentMethods };
   }
 
   async function authorize(context: AuthenticatedContext, raw: unknown) {
@@ -108,7 +140,7 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
     const payload = saleCompletionSchema.parse(raw);
     const state = await inspect(options.database, context, payload);
     const reviewedPayload = state.customer!.mode === "LINK" ? { ...payload, customer: { mode: "LINK" as const, accountId: state.customer!.accountId! } } : payload;
-    return { payload: reviewedPayload, customer: state.customer!, customerName: state.customer!.name, sellerName: state.seller!.user.displayName, contractTemplateName: state.template!.name, schedule: saleSchedule(payload), pendingSteps: state.pendingSteps!, summary: `${state.opportunity.name}: ${state.customer!.mode === "CREATE" ? "cadastro do cliente, " : state.customer!.mode === "LINK" ? "vínculo ao cliente, " : ""}contrato, venda ganha e comissão prevista${payload.acceptance ? ", assinatura e recebíveis" : ""}${payload.onboardingOwnerMemberId ? ", handoff de onboarding" : ""}. Nenhuma baixa de pagamento.` };
+    return { payload: reviewedPayload, customer: state.customer!, customerName: state.customer!.name, sellerName: state.seller!.user.displayName, contractTemplateName: state.template!.name, schedule: saleSchedule(payload), pendingSteps: state.pendingSteps!, summary: `${state.opportunity.name}: ${state.customer!.mode === "CREATE" ? "cadastro do cliente, " : state.customer!.mode === "LINK" ? "vínculo ao cliente, " : ""}contrato aceito, venda ganha, MRR, recebíveis e comissão${payload.onboardingOwnerMemberId ? ", handoff de onboarding" : ""}${BigInt(payload.receivedCents) > 0n ? ", com baixa do valor recebido" : ""}.` };
   }
 
   async function execute(context: AuthenticatedContext, raw: unknown) {
@@ -147,10 +179,11 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
       const won = await createOpportunityService({ database, authorization: state.authorization, now: options.now, automationPublisher }).transition(context, { action: "TRANSITION", opportunityId: input.opportunityId, expectedRevision, targetStageId: state.stage!.id, reason: "Fechamento integrado confirmado pelo usuário.", origin: "OPPORTUNITY_CARD", confirmed: true });
       const contracts = createContractService({ database, authorization: state.authorization, now: options.now });
       const endsAt = saleMonth(input.startsAt, input.durationMonths).toISOString();
-      const contract = await contracts.create(context, { opportunityId: input.opportunityId, offerId: state.offer!.id, templateVersionId: input.templateVersionId, billingFrequency: BigInt(input.monthlyCents) > 0n ? "MONTHLY" : "ONE_TIME", durationMonths: input.durationMonths, proposedStartsAt: input.startsAt, proposedEndsAt: endsAt, paymentTerms: `Entrada: ${input.upfrontCents} centavos; ${input.durationMonths} mensalidade(s) de ${input.monthlyCents} centavos.`, idempotencyKey: `sale:${idempotencyKey}:contract` });
+      const contract = await contracts.create(context, { opportunityId: input.opportunityId, offerId: state.offer!.id, templateVersionId: input.templateVersionId, billingFrequency: BigInt(input.monthlyCents) > 0n ? "MONTHLY" : "ONE_TIME", durationMonths: input.durationMonths, proposedStartsAt: input.startsAt, proposedEndsAt: endsAt, paymentTerms: `Forma: ${input.paymentMethod}. Condição: ${input.paymentCondition}. Entrada: ${input.upfrontCents} centavos; ${input.durationMonths} mensalidade(s) de ${input.monthlyCents} centavos. Recebido no fechamento: ${input.receivedCents} centavos.`, idempotencyKey: `sale:${idempotencyKey}:contract` });
       let subscriptionId: string | null = null;
       let handoffId: string | null = null;
       const invoiceIds: string[] = [];
+      const paymentIds: string[] = [];
       if (input.acceptance) {
         let revision = 1;
         for (const action of ["REQUEST_REVIEW", "MARK_READY", "ISSUE", "ACCEPT_LOCAL"] as const) {
@@ -161,23 +194,48 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
         subscriptionId = subscription.id;
         await revenue.action(context, subscription.id, { action: "ACTIVATE", effectiveAt: input.startsAt, reason: "Aceite contratual documentado no fechamento.", idempotencyKey: `sale:${idempotencyKey}:activate` });
         const payments = createPaymentService({ database, now: options.now });
+        let remainingReceived = BigInt(input.receivedCents);
         for (const installment of saleSchedule(input)) {
           const invoice = await payments.createInvoice(context, { subscriptionId, billingPeriodStart: installment.dueAt, billingPeriodEnd: installment.periodEnd, dueAt: installment.dueAt, description: `${state.opportunity.name} — parcela ${installment.installment}/${input.durationMonths}`, upfrontCents: installment.installment === 1 ? input.upfrontCents : "0", idempotencyKey: `sale:${idempotencyKey}:invoice:${installment.installment}` });
-          await payments.act(context, invoice.id, { action: "ISSUE", expectedRevision: invoice.revision, reason: "Recebível emitido a partir do fechamento confirmado." });
+          const issued = await payments.act(context, invoice.id, { action: "ISSUE", expectedRevision: invoice.revision, reason: "Recebível emitido a partir do fechamento confirmado." });
           invoiceIds.push(invoice.id);
+          if (remainingReceived > 0n) {
+            const allocation = remainingReceived > invoice.totalCents ? invoice.totalCents : remainingReceived;
+            if (allocation > 0n) {
+              const receipt = await payments.recordReceipt(context, {
+                invoiceId: invoice.id,
+                financialAccountId: input.financialAccountId!,
+                expectedRevision: "invoice" in issued ? issued.invoice.revision : invoice.revision + 1,
+                amountCents: allocation,
+                receivedAt: input.receivedAt!,
+                method: input.paymentMethod,
+                reference: `${input.paymentReference!} · parcela ${installment.installment}`,
+                confirmed: true,
+                idempotencyKey: randomUUID(),
+              });
+              paymentIds.push(receipt.payment.id);
+              remainingReceived -= allocation;
+            }
+          }
         }
         if (input.onboardingOwnerMemberId) {
           const handoff = await createOnboardingService({ database, now: options.now }).createHandoff(context, { opportunityId: input.opportunityId, ownerMemberId: input.onboardingOwnerMemberId, reason: "Handoff iniciado pelo fechamento integrado confirmado.", idempotencyKey: `sale:${idempotencyKey}:handoff` });
           handoffId = handoff.id;
         }
       }
+      await syncActiveProspectingCommercialStageInTransaction(tx, context, {
+        leadId: state.opportunity.leadId,
+        targetCode: "CLIENT",
+        reason: "Lead convertido em cliente pelo fechamento integrado da venda.",
+        commercialEvent: "SALE_WON",
+      }, now);
       await tx.commission.updateMany({ where: { workspaceId: context.workspaceId, opportunityId: input.opportunityId, contractId: null }, data: { contractId: contract.contractId } });
-      const result = { opportunityId: input.opportunityId, accountId, customerCreated: state.customer!.mode === "CREATE", revision: won.revision, contractId: contract.contractId, subscriptionId, invoiceIds, handoffId, pendingSteps: state.pendingSteps!, paymentReceived: false, replayed: false };
+      const result = { opportunityId: input.opportunityId, accountId, customerCreated: state.customer!.mode === "CREATE", revision: won.revision, contractId: contract.contractId, subscriptionId, invoiceIds, paymentIds, handoffId, pendingSteps: state.pendingSteps!, paymentReceived: paymentIds.length > 0, receivedCents: input.receivedCents, outstandingCents: (BigInt(input.totalCents) - BigInt(input.receivedCents)).toString(), replayed: false };
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "sale.completed", entityType: "Opportunity", entityId: input.opportunityId, occurredAt: now, changes: { totalCents: input.totalCents, monthlyCents: input.monthlyCents, upfrontCents: input.upfrontCents, sellerMemberId: input.sellerMemberId }, metadata: { idempotencyKey, fingerprint, result } } });
       return result;
     }, { isolationLevel: "Serializable", timeout: 60_000 });
   }
-  return { preview, execute, authorize };
+  return { preview, execute, authorize, getOptions };
 }
 
 export function getSaleCompletionService() {

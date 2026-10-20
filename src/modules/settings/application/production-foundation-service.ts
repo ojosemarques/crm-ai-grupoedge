@@ -33,17 +33,20 @@ const activeProspectingStages = [
   ["active-prospecting.meeting-scheduled", "Reunião marcada", "OPEN", "MEETING_SCHEDULED"],
   ["active-prospecting.meeting-no-show", "Noshow", "OPEN", "MEETING_NO_SHOW"],
   ["active-prospecting.meeting-completed", "Reunião feita", "OPEN", "MEETING_COMPLETED"],
+  ["active-prospecting.proposal", "Proposta", "OPEN", "PROPOSAL"],
+  ["active-prospecting.client", "Cliente", "WON", "CLIENT"],
   ["active-prospecting.closed-no-response", "Encerrado — sem retorno", "LOST", "NURTURING"],
   ["active-prospecting.discarded", "Descartado", "LOST", "DISQUALIFIED"],
 ] as const;
 const activeProspectingTransitions = [
-  [0, 1], [0, 8],
-  [1, 2], [1, 3], [1, 4], [1, 8],
-  [2, 3], [2, 4], [2, 7], [2, 8],
-  [3, 4], [3, 8],
+  [0, 1], [0, 10],
+  [1, 2], [1, 3], [1, 4], [1, 10],
+  [2, 3], [2, 4], [2, 9], [2, 10],
+  [3, 4], [3, 10],
   [4, 5], [4, 6],
   [5, 4], [5, 6],
-  [6, 4], [6, 5],
+  [6, 4], [6, 5], [6, 7],
+  [7, 8], [7, 4], [7, 9], [7, 10],
 ] as const;
 const priorityBands = [
   { code: "P1", name: "P1 — atendimento imediato", scoreMin: 70, scoreMax: 100, leadPriority: "URGENT", policyKey: "p1-immediate" },
