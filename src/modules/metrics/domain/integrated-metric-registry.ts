@@ -20,7 +20,7 @@ const metric = (definition: IntegratedMetricDefinition) => Object.freeze(definit
 
 export const contactActionEventTypes = ["CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT", "EMAIL_SENT", "INSTAGRAM_MESSAGE_SENT"] as const;
 
-export const INTEGRATED_METRIC_REGISTRY_VERSION = "indicators.12";
+export const INTEGRATED_METRIC_REGISTRY_VERSION = "indicators.13";
 
 export const integratedMetricRegistry = Object.freeze([
   metric({ id: "work.tasks_created", label: "Tarefas criadas", description: "Tarefas persistidas no período.", unit: "COUNT", eventTypes: ["TASK_CREATED"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
@@ -68,6 +68,7 @@ export const integratedMetricRegistry = Object.freeze([
   metric({ id: "funnel.stage_entries", label: "Entradas em etapa", description: "Eventos de entrada em etapa.", unit: "COUNT", eventTypes: ["STAGE_ENTERED"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
   metric({ id: "funnel.stage_exits", label: "Saídas de etapa", description: "Eventos de saída de etapa.", unit: "COUNT", eventTypes: ["STAGE_EXITED"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
   metric({ id: "qualification.leads", label: "Leads qualificados", description: "Leads distintos que alcançaram qualificação.", unit: "COUNT", eventTypes: ["LEAD_QUALIFIED"], aggregation: "DISTINCT_LEAD", desiredDirection: "UP", limitations: [] }),
+  metric({ id: "qualification.disqualified", label: "Leads desqualificados", description: "Leads distintos desqualificados no período.", unit: "COUNT", eventTypes: ["LEAD_DISQUALIFIED"], aggregation: "DISTINCT_LEAD", desiredDirection: "DOWN", limitations: [] }),
   metric({ id: "qualification.pacto_validated", label: "PACTO validado", description: "Revisões PACTO validadas por humano.", unit: "COUNT", eventTypes: ["PACTO_VALIDATED"], aggregation: "DISTINCT_LEAD", desiredDirection: "UP", limitations: [] }),
   metric({ id: "meetings.scheduled", label: "Reuniões agendadas", description: "Reuniões criadas na agenda; mover um card de etapa não cria uma reunião.", unit: "COUNT", eventTypes: ["MEETING_SCHEDULED"], sourceEntityTypes: ["MeetingHistory"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
   metric({ id: "meetings.stage_marked", label: "Cards marcados como reunião", description: "Entradas manuais na etapa Reunião marcada sem reunião criada na agenda.", unit: "COUNT", eventTypes: ["MEETING_SCHEDULED"], sourceEntityTypes: ["StageHistory"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: ["Representa movimento de pipeline, não reunião na agenda."] }),

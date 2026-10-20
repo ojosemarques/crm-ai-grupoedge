@@ -11,13 +11,14 @@ export function summarizeDashboardSellerActivity(
 ): readonly DashboardSellerActivity[] {
   const rows = new Map<string, MutableSellerActivity>();
   const qualifiedBalances = new Map<string, Map<string, number>>();
+  const disqualifiedBalances = new Map<string, Map<string, number>>();
   const callFactsByMember = new Map<string, IntegratedActivityFact[]>();
   for (const seller of sellers) rows.set(seller.id, {
-    ...seller, tasksCompleted: 0, stageEntries: 0, calls: 0, connected: 0, effectiveContacts: 0, unanswered: 0, callbackRequested: 0, whatsappShared: 0,
+    ...seller, tasksCompleted: 0, stageEntries: 0, calls: 0, connected: 0, callsNotAnswered: 0, numberFailures: 0, effectiveContacts: 0, unanswered: 0, callbackRequested: 0, whatsappShared: 0, whatsappMessages: 0,
     noAnswer: 0, busy: 0, voicemail: 0, otherUnanswered: 0, callFailed: 0, wrongNumber: 0, channelUnavailable: 0, otherFailures: 0, withoutOutcome: 0,
     instagramMessages: 0, instagramFollows: 0, emailsSent: 0, instagramMessagesProfileNotFound: 0, instagramMessagesFailed: 0,
     instagramFollowsAlreadyFollowing: 0, instagramFollowsProfileNotFound: 0, instagramFollowsFailed: 0,
-    qualified: 0, meetingsScheduled: 0, meetingStageMarked: 0, proposals: 0, sales: 0, salesValueCents: 0n,
+    qualified: 0, meetingsScheduled: 0, meetingStageMarked: 0, meetingsBooked: 0, meetingsCompleted: 0, proposals: 0, disqualified: 0, sales: 0, salesValueCents: 0n,
   });
   for (const fact of facts) {
     const memberId = fact.eventType === "MEETING_SCHEDULED"
@@ -65,6 +66,7 @@ export function summarizeDashboardSellerActivity(
         else if (fact.result === "CHANNEL_UNAVAILABLE") row.channelUnavailable += count;
         break;
       }
+      case "WHATSAPP_MESSAGE_SENT": row.whatsappMessages += count; break;
       case "INSTAGRAM_MESSAGE_SENT": row.instagramMessages += count; break;
       case "INSTAGRAM_FOLLOW_COMPLETED": row.instagramFollows += count; break;
       case "EMAIL_SENT": row.emailsSent += count; break;
@@ -80,6 +82,14 @@ export function summarizeDashboardSellerActivity(
         else if (fact.sourceEntityType === "StageHistory") row.meetingStageMarked += count;
         break;
       }
+      case "MEETING_COMPLETED": row.meetingsCompleted += count; break;
+      case "LEAD_DISQUALIFIED": {
+        if (!fact.leadId) break;
+        const balances = disqualifiedBalances.get(memberId!) ?? new Map<string, number>();
+        balances.set(fact.leadId, (balances.get(fact.leadId) ?? 0) + count);
+        disqualifiedBalances.set(memberId!, balances);
+        break;
+      }
       case "PROPOSAL_REACHED": {
         if (fact.sourceEntityType === "Offer") row.proposals += count;
         break;
@@ -91,12 +101,19 @@ export function summarizeDashboardSellerActivity(
     const row = rows.get(memberId);
     if (row) row.qualified = [...balances.values()].filter((balance) => balance > 0).length;
   }
+  for (const [memberId, balances] of disqualifiedBalances) {
+    const row = rows.get(memberId);
+    if (row) row.disqualified = [...balances.values()].filter((balance) => balance > 0).length;
+  }
   const effectiveContacts = summarizeEffectiveContacts(facts).byMember;
   for (const row of rows.values()) {
     row.effectiveContacts = effectiveContacts.get(row.id) ?? 0;
     row.otherUnanswered = Math.max(0, row.unanswered - row.noAnswer - row.busy - row.voicemail);
     row.otherFailures = Math.max(0, row.callFailed - row.wrongNumber - row.channelUnavailable);
     row.withoutOutcome = countUnresolvedCallAttempts(callFactsByMember.get(row.id) ?? []);
+    row.callsNotAnswered = Math.max(0, row.noAnswer + row.busy + row.otherUnanswered);
+    row.numberFailures = Math.max(0, row.callFailed + row.voicemail);
+    row.meetingsBooked = Math.max(0, row.meetingsScheduled + row.meetingStageMarked);
   }
   return Object.freeze([...rows.values()]
     .map((row) => Object.freeze({ ...row, salesValueCents: row.salesValueCents.toString() }))

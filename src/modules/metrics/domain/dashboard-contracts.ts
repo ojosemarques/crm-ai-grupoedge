@@ -157,10 +157,13 @@ export type DashboardSellerActivity = Readonly<{
   stageEntries: number;
   calls: number;
   connected: number;
+  callsNotAnswered: number;
+  numberFailures: number;
   effectiveContacts: number;
   unanswered: number;
   callbackRequested: number;
   whatsappShared: number;
+  whatsappMessages: number;
   noAnswer: number;
   busy: number;
   voicemail: number;
@@ -181,7 +184,10 @@ export type DashboardSellerActivity = Readonly<{
   qualified: number;
   meetingsScheduled: number;
   meetingStageMarked: number;
+  meetingsBooked: number;
+  meetingsCompleted: number;
   proposals: number;
+  disqualified: number;
   sales: number;
   salesValueCents: string;
 }>;

@@ -93,6 +93,33 @@ describe("atividade integrada do dashboard", () => {
     });
   });
 
+  it("consolida os indicadores simples exibidos na performance da equipe", () => {
+    const facts = [
+      fact("CALL_UNANSWERED", { result: "NO_ANSWER" }),
+      fact("CALL_UNANSWERED", { result: "BUSY" }),
+      fact("CALL_UNANSWERED", { result: "VOICEMAIL" }),
+      fact("CALL_UNANSWERED"),
+      fact("CALL_FAILED", { quantity: 2, result: "WRONG_NUMBER" }),
+      fact("WHATSAPP_MESSAGE_SENT"),
+      fact("MEETING_SCHEDULED", { sourceEntityType: "MeetingHistory", bookedByMemberId: memberId }),
+      fact("MEETING_SCHEDULED", { sourceEntityType: "StageHistory", bookedByMemberId: memberId }),
+      fact("MEETING_COMPLETED"),
+      fact("LEAD_DISQUALIFIED"),
+      fact("LEAD_DISQUALIFIED"),
+      fact("LEAD_DISQUALIFIED", { leadId: "lead-2" }),
+      fact("LEAD_DISQUALIFIED", { leadId: "lead-2", quantity: -1 }),
+    ];
+
+    expect(summarizeDashboardSellerActivity(facts, [{ id: memberId, name: "Vendedor" }])[0]).toMatchObject({
+      callsNotAnswered: 3,
+      numberFailures: 3,
+      whatsappMessages: 1,
+      meetingsBooked: 2,
+      meetingsCompleted: 1,
+      disqualified: 1,
+    });
+  });
+
   it("expõe resultados de tarefas de Instagram sem confundir falhas com envios", () => {
     const facts = [
       fact("TASK_COMPLETED", { taskKind: "INSTAGRAM_MESSAGE", result: "PROFILE_NOT_FOUND" }),
