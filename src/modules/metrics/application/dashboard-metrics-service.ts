@@ -24,7 +24,7 @@ import {
   resolveDashboardPeriod,
 } from "@/modules/metrics/domain/dashboard-period";
 import { buildDashboardTimeSeries, mergeIntegratedActivitySeries } from "@/modules/metrics/domain/dashboard-series";
-import { applyLedgerMilestoneBalance, chronologicalLeadStages, earliestLeadMilestones, effectiveLeadMilestones, leadMilestoneTimeline } from "@/modules/metrics/domain/dashboard-funnel";
+import { applyLedgerMilestoneBalance, chronologicalLeadStagesWithInferredUpstream, earliestLeadMilestones, effectiveLeadMilestones, leadMilestoneTimeline } from "@/modules/metrics/domain/dashboard-funnel";
 import { summarizeDashboardSellerActivity } from "@/modules/metrics/domain/dashboard-seller-activity";
 import { summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
 import { summarizeEmailCadenceMetrics } from "@/modules/metrics/domain/email-cadence-metrics";
@@ -576,7 +576,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     attempted = applyLedgerMilestoneBalance(attempted, activityBalances, ["CALL_ATTEMPTED:"]);
     contacted = applyLedgerMilestoneBalance(contacted, activityBalances, ["CALL_CONNECTED:", "INBOUND_MESSAGE_RECEIVED:"]);
     qualified = applyLedgerMilestoneBalance(qualified, activityBalances, ["LEAD_QUALIFIED:"]);
-    scheduled = applyLedgerMilestoneBalance(scheduled, activityBalances, ["MEETING_SCHEDULED:agenda:"]);
+    scheduled = applyLedgerMilestoneBalance(scheduled, activityBalances, ["MEETING_SCHEDULED:"]);
     const cohortKeys = [...cohort].map(leadKey);
     const keysFor = (idsForKeys: ReadonlySet<string>) => [...idsForKeys].map(leadKey);
     const heldKeys = overview.evidence.heldMeetings.map((item) => meetingKey(item.meetingId));
@@ -694,10 +694,10 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     const attemptedTimes = effectiveLeadMilestones(overview.evidence.firstAttempts, activityFacts, ["CALL_ATTEMPTED"], attempted);
     const contactedTimes = effectiveLeadMilestones(overview.evidence.firstConnections, activityFacts, ["CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED"], contacted);
     const qualifiedTimes = effectiveLeadMilestones(overview.evidence.qualifications, activityFacts, ["LEAD_QUALIFIED"], qualified);
-    const scheduledTimes = effectiveLeadMilestones(overview.evidence.scheduledMeetings, activityFacts, ["MEETING_SCHEDULED"], scheduled, "MeetingHistory");
+    const scheduledTimes = effectiveLeadMilestones(overview.evidence.scheduledMeetings, activityFacts, ["MEETING_SCHEDULED"], scheduled);
     const opportunityTimes = leadMilestoneTimeline(overview.evidence.opportunitiesCreated);
     const proposalTimes = leadMilestoneTimeline(overview.evidence.proposals);
-    const [attemptedStageTimes, contactedStageTimes, qualifiedStageTimes, scheduledStageTimes, opportunityStageTimes, proposalStageTimes] = chronologicalLeadStages(receiptTimes, [
+    const [attemptedStageTimes, contactedStageTimes, qualifiedStageTimes, scheduledStageTimes, opportunityStageTimes, proposalStageTimes] = chronologicalLeadStagesWithInferredUpstream(receiptTimes, [
       attemptedTimes, contactedTimes, qualifiedTimes, scheduledTimes, opportunityTimes, proposalTimes,
     ]);
     const attemptedStage = new Set(attemptedStageTimes.keys());

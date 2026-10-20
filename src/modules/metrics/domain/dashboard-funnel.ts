@@ -59,6 +59,26 @@ export function chronologicalLeadStages<const T extends readonly ReadonlyMap<str
   })) as { readonly [K in keyof T]: ReadonlyMap<string, string> };
 }
 
+export function chronologicalLeadStagesWithInferredUpstream<
+  const T extends readonly ReadonlyMap<string, readonly string[]>[],
+>(
+  receipts: ReadonlyMap<string, string>,
+  milestones: T,
+): { readonly [K in keyof T]: ReadonlyMap<string, string> } {
+  const inferred = milestones.map((milestone) => new Map(
+    [...milestone].map(([leadId, times]) => [leadId, [...times]] as const),
+  ));
+  let downstream = new Map<string, readonly string[]>();
+  for (let index = inferred.length - 1; index >= 0; index -= 1) {
+    const current = inferred[index]!;
+    for (const [leadId, times] of downstream) {
+      current.set(leadId, [...new Set([...(current.get(leadId) ?? []), ...times])].sort());
+    }
+    downstream = current;
+  }
+  return chronologicalLeadStages(receipts, inferred) as { readonly [K in keyof T]: ReadonlyMap<string, string> };
+}
+
 export function applyLedgerMilestoneBalance(
   initial: ReadonlySet<string>,
   balances: ReadonlyMap<string, number>,

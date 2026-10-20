@@ -915,6 +915,72 @@ describe("camada confiável de métricas", () => {
     })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
+  it("inclui no funil uma reunião da coorte sem exigir etapa Qualificado explícita", async () => {
+    const systemActor = await database.actor.findFirstOrThrow({ where: { workspaceId, key: "system" } });
+    const meetingSource = await database.leadSource.create({
+      data: {
+        workspaceId,
+        key: `meeting-funnel-${randomUUID()}`,
+        name: "Reunião sem qualificação explícita",
+        type: "MANUAL",
+        createdByActorId: systemActor.id,
+        updatedByActorId: systemActor.id,
+      },
+    });
+    try {
+      const lead = await createLeadScenario({
+        label: `meeting-without-qualified-${randomUUID()}`,
+        sourceId: meetingSource.id,
+        receivedAt: at("02T12:00"),
+        priority: "P1",
+        automaticSeconds: 2,
+        attemptSeconds: 30,
+        connectedSeconds: 40,
+      });
+      const meeting = await addMeeting({ leadId: lead.leadId, startsAt: at("08T12:00"), status: "COMPLETED" });
+      const scheduledHistory = await database.meetingHistory.findFirstOrThrow({
+        where: { workspaceId, meetingId: meeting.id, action: "SCHEDULED" },
+      });
+      await database.commercialMetricFact.create({
+        data: {
+          workspaceId,
+          eventKey: `test:meeting-scheduled:${scheduledHistory.id}`,
+          eventType: "MEETING_SCHEDULED",
+          occurredAt: scheduledHistory.occurredAt,
+          sourceEntityType: "MeetingHistory",
+          sourceEntityId: scheduledHistory.id,
+          leadId: lead.leadId,
+          meetingId: meeting.id,
+          creditedMemberId: sdr1.memberId,
+          bookedByMemberId: sdr1.memberId,
+          sourceId: meetingSource.id,
+          executionMode: "MANUAL",
+          inputFingerprint: randomUUID(),
+        },
+      });
+
+      const result = await dashboard(manager, { source: [meetingSource.id] });
+      expect(result.kpis.find((item) => item.id === "qualified")?.value).toBe(0);
+      expect(result.fullFunnel.stages.map((item) => [item.id, item.value])).toEqual([
+        ["received", 1], ["attempted", 1], ["connected", 1], ["qualified", 1],
+        ["meeting", 1], ["opportunity", 0], ["proposal", 0],
+      ]);
+    } finally {
+      await database.meeting.updateMany({
+        where: { workspaceId, lead: { sourceId: meetingSource.id } },
+        data: { deletedAt: now, updatedAt: now },
+      });
+      await database.lead.updateMany({
+        where: { workspaceId, sourceId: meetingSource.id },
+        data: { deletedAt: now, updatedAt: now },
+      });
+      await database.leadSource.update({
+        where: { id: meetingSource.id },
+        data: { deletedAt: now, updatedAt: now },
+      });
+    }
+  });
+
   it("mantém resposta operacional com 300 leads sem consultas por linha", async () => {
     const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId, entityType: "LEAD", isDefault: true, deletedAt: null } });
     const [stage, band, queue, systemActor] = await Promise.all([
