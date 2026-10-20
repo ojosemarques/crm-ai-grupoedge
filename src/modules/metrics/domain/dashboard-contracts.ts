@@ -21,6 +21,7 @@ export type DashboardQuery = Readonly<{
   toDate: string;
   from: string;
   to: string;
+  integratedMemberId?: string | null;
   filters: MetricsFilters;
 }>;
 
@@ -203,9 +204,14 @@ export type DashboardSegment = Readonly<{
 
 export type DashboardFilterOption = Readonly<{ id: string; name: string }>;
 
+export type DashboardIntegratedMemberOption = DashboardFilterOption & Readonly<{
+  roleLabel: "Pré-vendedor" | "Vendedor" | "Pré-vendedor e vendedor";
+}>;
+
 export type DashboardFilterOptions = Readonly<{
   sdrs: readonly DashboardFilterOption[];
   closers: readonly DashboardFilterOption[];
+  integratedMembers: readonly DashboardIntegratedMemberOption[];
   teams: readonly DashboardFilterOption[];
   sources: readonly DashboardFilterOption[];
   campaigns: readonly DashboardFilterOption[];
@@ -219,6 +225,7 @@ export type DashboardScreen = Readonly<{
   comparisonPeriod: DashboardPeriodInterval;
   overview: MetricsOverview;
   integrated: IntegratedMetricsOverview;
+  integratedOperation: IntegratedMetricsOverview;
   kpis: readonly DashboardKpi[];
   comparisons: readonly DashboardComparison[];
   timeSeries: readonly DashboardTimeSeries[];

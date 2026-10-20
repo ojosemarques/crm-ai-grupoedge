@@ -71,6 +71,11 @@ const listParam = z.preprocess((value) => {
   return values.flatMap((item) => typeof item === "string" ? item.split(",") : []);
 }, z.array(z.string()).max(100));
 
+const optionalUuidParam = z.preprocess(
+  (value) => value === "" || value === undefined ? undefined : value,
+  z.string().uuid().optional(),
+);
+
 const inputSchema = z.object({
   preset: z.enum(dashboardPeriodPresets).optional().default("MONTH"),
   fromDate: z.string().optional(),
@@ -83,6 +88,7 @@ const inputSchema = z.object({
   creative: listParam.optional().default([]),
   priority: listParam.optional().default([]),
   product: listParam.optional().default([]),
+  integratedMember: optionalUuidParam,
 }).passthrough();
 
 const drilldownSchema = z.object({
@@ -107,7 +113,7 @@ function unique(values: readonly string[]): string[] {
   return [...new Set(values)].sort();
 }
 
-function optionSort(options: readonly DashboardFilterOption[]) {
+function optionSort<const T extends DashboardFilterOption>(options: readonly T[]): T[] {
   return [...options].sort((left, right) => left.name.localeCompare(right.name, "pt-BR"));
 }
 
@@ -272,7 +278,11 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
         productIds: parsed.data.product,
       },
     });
-    return Object.freeze({ ...period, filters: normalized.filters });
+    return Object.freeze({
+      ...period,
+      integratedMemberId: parsed.data.integratedMember ?? null,
+      filters: normalized.filters,
+    });
   }
 
   async function getScreen(
@@ -280,9 +290,31 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     input: unknown,
   ): Promise<DashboardScreen> {
     const query = await parseQuery(context, input);
-    const [overview, integrated] = await Promise.all([
-      metrics.getOverview(context, { from: query.from, to: query.to, filters: query.filters }),
-      metrics.getIntegratedOverview(context, { from: query.from, to: query.to, filters: query.filters }),
+    const overviewPromise = metrics.getOverview(context, {
+      from: query.from,
+      to: query.to,
+      filters: query.filters,
+    });
+    const integratedPromise = metrics.getIntegratedOverview(context, {
+      from: query.from,
+      to: query.to,
+      filters: query.filters,
+    });
+    const integratedOperationPromise = query.integratedMemberId
+      ? metrics.getIntegratedOverview(context, {
+          from: query.from,
+          to: query.to,
+          filters: {
+            ...query.filters,
+            sdrMemberIds: [query.integratedMemberId],
+            closerMemberIds: [query.integratedMemberId],
+          },
+        })
+      : integratedPromise;
+    const [overview, integrated, integratedOperation] = await Promise.all([
+      overviewPromise,
+      integratedPromise,
+      integratedOperationPromise,
     ]);
     const comparisonPeriod = resolveDashboardComparisonPeriod(
       query,
@@ -1248,6 +1280,13 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     const filterOptions = Object.freeze({
       sdrs: dedupeOptions(commercialFunctions.filter((item) => item.role === "SDR").map((item) => ({ id: item.id, name: item.name }))),
       closers: dedupeOptions(commercialFunctions.filter((item) => item.role === "CLOSER").map((item) => ({ id: item.id, name: item.name }))),
+      integratedMembers: optionSort([...new Map(commercialFunctions.map((member) => {
+        const roles = commercialFunctions.filter((item) => item.id === member.id).map((item) => item.role);
+        const roleLabel = roles.includes("SDR") && roles.includes("CLOSER")
+          ? "Pré-vendedor e vendedor" as const
+          : roles.includes("SDR") ? "Pré-vendedor" as const : "Vendedor" as const;
+        return [member.id, { id: member.id, name: member.name, roleLabel }] as const;
+      })).values()]),
       teams: dedupeOptions(teamMembers.map((item) => item.team)),
       sources: optionSort(sources), campaigns: optionSort(campaigns), creatives: optionSort(creatives), products: optionSort(products),
       priorities: Object.freeze([
@@ -1256,7 +1295,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     });
 
     return Object.freeze({
-      query, comparisonPeriod, overview, integrated, kpis: Object.freeze(kpis),
+      query, comparisonPeriod, overview, integrated, integratedOperation, kpis: Object.freeze(kpis),
       comparisons: Object.freeze(comparisons), timeSeries, previousTimeSeries,
       funnel: Object.freeze(funnel), fullFunnel, attention: Object.freeze(attention),
       stageConversion: Object.freeze(stageConversion), stageTime: Object.freeze(stageTime),

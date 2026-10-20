@@ -19,6 +19,7 @@ import { integratedMetricRegistry } from "@/modules/metrics/domain/integrated-me
 
 function paramsFor(query: DashboardQuery, extras: Record<string, string> = {}) {
   const params = new URLSearchParams({ preset: query.preset, fromDate: query.fromDate, toDate: query.toDate, ...extras });
+  if (query.integratedMemberId) params.set("integratedMember", query.integratedMemberId);
   const mappings = [
     ["sdr", query.filters.sdrMemberIds], ["closer", query.filters.closerMemberIds],
     ["team", query.filters.teamIds], ["source", query.filters.sourceIds],
@@ -281,7 +282,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
     "sales.bookings",
     "cash.received",
   ];
-  const integratedPulse = integratedMetricIds.flatMap((id) => screen.integrated.values.find((metric) => metric.metricId === id) ?? []);
+  const integratedPulse = integratedMetricIds.flatMap((id) => screen.integratedOperation.values.find((metric) => metric.metricId === id) ?? []);
   const integratedLabelById = new Map(integratedMetricRegistry.map((metric) => [metric.id, metric.label]));
   const ticketKpi = kpiById.get("ticket");
   const salesComparison = comparisonById.get("sales");
@@ -311,6 +312,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
           <summary className={styles.filterSummary}><Icon name="filtro" size={15} /> Filtros{activeFilterCount > 0 ? <span className={styles.filterCount}>{activeFilterCount}</span> : null}</summary>
           <div className={styles.filterPanel}><div className={styles.filterPanelHeader}><div><strong>Refinar análise</strong><span>O mesmo recorte será preservado nos indicadores e drilldowns.</span></div></div><form className={styles.filterForm} method="get">
             <DashboardPeriodFields fromDate={q.fromDate} key={`${q.preset}:${q.fromDate}:${q.toDate}`} preset={q.preset} toDate={q.toDate} />
+            {q.integratedMemberId ? <input name="integratedMember" type="hidden" value={q.integratedMemberId} /> : null}
             <SelectFilter label="Prioridade" name="priority" options={screen.filterOptions.priorities} selected={q.filters.priorityCodes} /><SelectFilter label="SDR" name="sdr" options={screen.filterOptions.sdrs} selected={q.filters.sdrMemberIds} /><SelectFilter label="Closer" name="closer" options={screen.filterOptions.closers} selected={q.filters.closerMemberIds} /><SelectFilter label="Equipe" name="team" options={screen.filterOptions.teams} selected={q.filters.teamIds} /><SelectFilter label="Origem" name="source" options={screen.filterOptions.sources} selected={q.filters.sourceIds} /><SelectFilter label="Campanha" name="campaign" options={screen.filterOptions.campaigns} selected={q.filters.campaignIds} /><SelectFilter label="Criativo" name="creative" options={screen.filterOptions.creatives} selected={q.filters.creativeIds} /><SelectFilter label="Produto" name="product" options={screen.filterOptions.products} selected={q.filters.productIds} />
             <div className={styles.filterActions}><Link className={styles.filterClear} href={`${basePath}?preset=MONTH`}>Limpar</Link><button className={styles.filterApply} type="submit">Aplicar filtros</button></div>
           </form></div>
@@ -339,9 +341,9 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
       <PerformancePanel screen={screen} />
 
       <section className={`${styles.panel} ${styles.integratedPanel}`}>
-        <header className={styles.panelHeader}><div><h2>Operação integrada</h2><p>Atividade, contato, e-mail, reuniões e receita na mesma base auditável.</p></div><span className={styles.qualityBadge} data-state={screen.integrated.quality.reconciliationState}>{screen.integrated.quality.coverageBasisPoints === null ? "Cobertura pendente" : `${(screen.integrated.quality.coverageBasisPoints / 100).toLocaleString("pt-BR")}% atribuída`}</span></header>
-        <div className={styles.integratedGrid}>{integratedPulse.map((metric) => <a href={integratedHref(q, metric.metricId)} key={metric.metricId}><span>{integratedLabelById.get(metric.metricId) ?? metric.metricId}</span><strong>{integratedValue(metric)}</strong><small data-state={metric.state}>{metric.state === "NO_DENOMINATOR" ? "Sem denominador elegível" : metric.reason}</small></a>)}</div>
-        <p className={styles.qualityNote}>{screen.integrated.quality.reason} · {screen.integrated.quality.totalFacts.toLocaleString("pt-BR")} fatos no recorte.</p>
+        <header className={styles.integratedHeader}><div><h2>Operação integrada</h2><p>Atividade, contato, e-mail, reuniões e receita na mesma base auditável.</p></div><div className={styles.integratedControls}><form className={styles.integratedMemberForm} method="get">{Array.from(paramsFor(q).entries()).filter(([name]) => name !== "integratedMember").map(([name, value], index) => <input key={`${name}:${value}:${index}`} name={name} type="hidden" value={value} />)}<label>Responsável<select defaultValue={q.integratedMemberId ?? ""} name="integratedMember"><option value="">Todos</option>{screen.filterOptions.integratedMembers.map((member) => <option key={member.id} value={member.id}>{member.name} · {member.roleLabel}</option>)}</select></label><button type="submit">Mostrar</button></form><span className={styles.qualityBadge} data-state={screen.integratedOperation.quality.reconciliationState}>{screen.integratedOperation.quality.coverageBasisPoints === null ? "Cobertura pendente" : `${(screen.integratedOperation.quality.coverageBasisPoints / 100).toLocaleString("pt-BR")}% atribuída`}</span></div></header>
+        <div className={styles.integratedGrid}>{integratedPulse.map((metric) => <a href={integratedHref(q, metric.metricId, q.integratedMemberId ?? undefined)} key={metric.metricId}><span>{integratedLabelById.get(metric.metricId) ?? metric.metricId}</span><strong>{integratedValue(metric)}</strong><small data-state={metric.state}>{metric.state === "NO_DENOMINATOR" ? "Sem denominador elegível" : metric.reason}</small></a>)}</div>
+        <p className={styles.qualityNote}>{screen.integratedOperation.quality.reason} · {screen.integratedOperation.quality.totalFacts.toLocaleString("pt-BR")} fatos no recorte.</p>
       </section>
 
       <section className={`${styles.panel} ${styles.performancePanel}`} aria-labelledby="dashboard-email-cadence-title">

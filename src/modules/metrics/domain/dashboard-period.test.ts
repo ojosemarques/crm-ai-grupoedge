@@ -34,6 +34,7 @@ describe("períodos civis do dashboard", () => {
   ): DashboardQuery {
     return {
       ...resolveDashboardPeriod(preset, fromDate, toDate, reference, zone),
+      integratedMemberId: null,
       filters: {
         sdrMemberIds: [], closerMemberIds: [], teamIds: [], sourceIds: [],
         campaignIds: [], creativeIds: [], priorityCodes: [], productIds: [],

@@ -832,6 +832,58 @@ describe("camada confiável de métricas", () => {
     expect(long.timeSeries[0]?.granularity).toBe("WEEK");
   });
 
+  it("filtra apenas a Operação integrada por vendedor ou pré-vendedor", async () => {
+    const filterSourceId = randomUUID();
+    await database.commercialMetricFact.createMany({
+      data: [sdr1, sdr2].map((member) => ({
+        workspaceId,
+        eventKey: `test:integrated-member-filter:${member.memberId}:${randomUUID()}`,
+        eventType: "CALL_ATTEMPTED" as const,
+        occurredAt: at("06T12:00"),
+        sourceEntityType: "Activity",
+        sourceEntityId: randomUUID(),
+        sourceId: filterSourceId,
+        creditedMemberId: member.memberId,
+        performedByMemberId: member.memberId,
+        executionMode: "MANUAL" as const,
+        inputFingerprint: randomUUID(),
+      })),
+    });
+    const unfiltered = await dashboard(manager, { source: [filterSourceId] });
+    const filtered = await dashboard(manager, {
+      source: [filterSourceId],
+      integratedMember: sdr2.memberId,
+    });
+    const ownScopeSelectingAnotherMember = await dashboard(sdr2, {
+      source: [filterSourceId],
+      integratedMember: sdr1.memberId,
+    });
+    const metric = (result: typeof filtered, metricId: string, section: "integrated" | "integratedOperation") =>
+      result[section].values.find((item) => item.metricId === metricId)?.value;
+
+    expect(filtered.query.integratedMemberId).toBe(sdr2.memberId);
+    expect(filtered.filterOptions.integratedMembers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: sdr1.memberId, roleLabel: "Pré-vendedor" }),
+      expect.objectContaining({ id: sdr2.memberId, roleLabel: "Pré-vendedor" }),
+    ]));
+    expect(metric(unfiltered, "outreach.calls_attempted", "integrated")).toBe(2);
+    expect(metric(filtered, "outreach.calls_attempted", "integrated")).toBe(
+      metric(unfiltered, "outreach.calls_attempted", "integrated"),
+    );
+    expect(metric(filtered, "outreach.calls_attempted", "integratedOperation")).toBe(1);
+    expect(filtered.integratedOperation.values[0]?.filters).toMatchObject({
+      sdrMemberIds: [sdr2.memberId],
+      closerMemberIds: [sdr2.memberId],
+    });
+    expect(ownScopeSelectingAnotherMember.filterOptions.integratedMembers).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: sdr1.memberId })]),
+    );
+    expect(metric(ownScopeSelectingAnotherMember, "outreach.calls_attempted", "integratedOperation")).toBe(0);
+    await expect(dashboard(manager, { integratedMember: "id-invalido" })).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
+  });
+
   it("compara intervalo equivalente com filtros, RBAC e drilldowns dos dois períodos", async () => {
     const systemActor = await database.actor.findFirstOrThrow({ where: { workspaceId, key: "system" } });
     const comparisonSource = await database.leadSource.create({
