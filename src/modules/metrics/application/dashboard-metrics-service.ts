@@ -1158,15 +1158,6 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
           && meeting.newStartsAt >= from && meeting.newStartsAt < to)
         .map((meeting) => meetingKey(meeting.meetingId));
     });
-    const opportunityCutoff = new Date(to.getTime() - workspaceSettings.leadStagnationDays * 86_400_000);
-    const stalledOpportunityKeys = leads.flatMap((lead) => lead.opportunities
-      .filter((opportunity) => {
-        if (opportunity.status !== "OPEN") return false;
-        const currentStage = opportunity.stageHistory.find((history) =>
-          history.enteredAt < to && (history.exitedAt === null || history.exitedAt >= to));
-        return currentStage !== undefined && currentStage.enteredAt <= opportunityCutoff;
-      })
-      .map((opportunity) => opportunityKey(opportunity.id)));
     const failedAutomationKeys = failedAutomationRuns.map((run) => automationRunKey(run.id));
     const attention: DashboardAttentionItem[] = [
       {
@@ -1203,15 +1194,6 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
         drilldownId: addDrilldown(
           "attention.meetings-without-pacto", "Reuniões sem PACTO completo", "Reuniões ativas no período sem qualificação humana mínima.",
           "reunião SCHEDULED ou CONFIRMED e PACTO humano incompleto", meetingsWithoutPactoKeys,
-        ),
-      },
-      {
-        id: "stalled-opportunities", label: "Oportunidades paradas",
-        value: stalledOpportunityKeys.length, severity: "WARNING",
-        detail: `Oportunidades abertas há pelo menos ${workspaceSettings.leadStagnationDays} dias na etapa.`,
-        drilldownId: addDrilldown(
-          "attention.stalled-opportunities", "Oportunidades paradas", "Oportunidades abertas acima do limite persistido de estagnação.",
-          `oportunidade OPEN na etapa há pelo menos ${workspaceSettings.leadStagnationDays} dias`, stalledOpportunityKeys,
         ),
       },
       {

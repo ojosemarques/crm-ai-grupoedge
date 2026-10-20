@@ -729,7 +729,7 @@ describe("camada confiável de métricas", () => {
     expect(kpi.scheduled).toMatchObject({ value: 2, numerator: 2, denominator: 2 });
     expect(kpi.held).toMatchObject({ value: 1, numerator: 1, denominator: 2 });
     expect(kpi["no-show"]).toMatchObject({ value: 1, numerator: 1, denominator: 2 });
-    expect(kpi.opportunities).toMatchObject({ value: 2, numerator: 2 });
+    expect(kpi.opportunities).toBeUndefined();
     expect(kpi.proposals).toMatchObject({ value: 1, numerator: 1, denominator: 2 });
     expect(kpi.sales).toMatchObject({ value: 1, numerator: 1 });
     expect(kpi.revenue).toMatchObject({ value: "100000", numerator: 1 });
@@ -750,14 +750,14 @@ describe("camada confiável de métricas", () => {
     expect(result.funnel.map((item) => item.value)).toEqual([3, 2, 2, 2, 2, 1]);
     expect(result.fullFunnel.stages.map((item) => [item.id, item.value])).toEqual([
       ["received", 3], ["attempted", 2], ["connected", 2], ["qualified", 2],
-      ["meeting", 2], ["opportunity", 2], ["proposal", 1],
+      ["meeting", 2], ["proposal", 1],
     ]);
     expect(result.fullFunnel.outcomes.map((item) => [item.id, item.value, item.branchFrom])).toEqual([
       ["won", 1, "proposal"], ["lost", 0, "proposal"], ["disqualified", 1, "received"],
     ]);
     expect(result.attention.map((item) => item.id)).toEqual([
       "without-next-action", "critical-sla", "stalled-leads", "meetings-without-pacto",
-      "stalled-opportunities", "no-show", "automation-errors",
+      "no-show", "automation-errors",
     ]);
     expect(result.attention.find((item) => item.id === "critical-sla")).toMatchObject({ value: 0, severity: "CRITICAL" });
     expect(result.sourceConversion).toEqual(expect.arrayContaining([
@@ -771,7 +771,7 @@ describe("camada confiável de métricas", () => {
     expect(series.leads!.granularity).toBe("DAY");
     expect(series.leads!.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(3);
     expect(series.attempts!.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(2);
-    expect(series.opportunities!.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(2);
+    expect(series.opportunities).toBeUndefined();
     expect(series.proposals!.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(1);
     expect(series.sales!.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(1);
     expect(series.losses!.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(1);
@@ -963,7 +963,7 @@ describe("camada confiável de métricas", () => {
       expect(result.kpis.find((item) => item.id === "qualified")?.value).toBe(0);
       expect(result.fullFunnel.stages.map((item) => [item.id, item.value])).toEqual([
         ["received", 1], ["attempted", 1], ["connected", 1], ["qualified", 1],
-        ["meeting", 1], ["opportunity", 0], ["proposal", 0],
+        ["meeting", 1], ["proposal", 0],
       ]);
       expect(result.fullFunnel.stages.find((item) => item.id === "meeting")).toMatchObject({
         secondaryValue: 1,
