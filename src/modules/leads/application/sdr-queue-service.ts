@@ -31,8 +31,15 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 import { z } from "zod";
 
+const localDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Informe uma data válida.").refine((value) => {
+  const [year, month, day] = value.split("-").map(Number);
+  const instant = new Date(Date.UTC(year!, month! - 1, day));
+  return instant.toISOString().slice(0, 10) === value;
+}, "Informe uma data válida.");
+
 const queueQuerySchema = z.object({
   memberId: z.string().uuid().optional(),
+  date: localDateSchema.optional(),
 });
 
 const sectionDefinitions: ReadonlyArray<Readonly<{
@@ -117,7 +124,7 @@ function callablePhoneSql(): Prisma.Sql {
   `;
 }
 
-function bucketSql(bucket: SdrQueueBucket, now: Date): Prisma.Sql {
+function bucketSql(bucket: SdrQueueBucket, now: Date, selectedLocalDate: string): Prisma.Sql {
   switch (bucket) {
     case "NOW":
       return Prisma.sql`TRUE`;
@@ -139,7 +146,7 @@ function bucketSql(bucket: SdrQueueBucket, now: Date): Prisma.Sql {
     case "RETURN_TODAY":
       return Prisma.sql`l."nextActionAt" IS NOT NULL
         AND (l."nextActionAt" AT TIME ZONE workspace."timeZone")::date
-          = (${now}::timestamptz AT TIME ZONE workspace."timeZone")::date`;
+          = ${selectedLocalDate}::date`;
     case "OVERDUE":
       return Prisma.sql`l."nextActionAt" < ${now}`;
     case "MEETINGS_TODAY":
@@ -202,11 +209,23 @@ function sdrOptionWhere(
 function drilldownHref(
   bucket: SdrQueueBucket,
   memberId: string | null,
+  selectedLocalDate: string,
+  selectedDay: Readonly<{ start: Date; end: Date }>,
+  isCurrentDate: boolean,
 ): string {
+  if (bucket === "MEETINGS_TODAY" && !isCurrentDate) {
+    return `/agenda?${new URLSearchParams({ view: "day", date: selectedLocalDate }).toString()}`;
+  }
   const params = new URLSearchParams({
-    operationalBucket: bucket,
     sort: "operational",
   });
+  if (bucket === "RETURN_TODAY" && !isCurrentDate) {
+    params.set("statuses", "OPEN,QUALIFIED");
+    params.set("nextActionFrom", selectedDay.start.toISOString());
+    params.set("nextActionTo", new Date(selectedDay.end.getTime() - 1).toISOString());
+  } else {
+    params.set("operationalBucket", bucket);
+  }
   if (memberId) params.set("responsibles", `member:${memberId}`);
   return `/leads?${params.toString()}`;
 }
@@ -263,6 +282,10 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     }
     const selectedMemberId =
       parsed.data.memberId ?? (scope.scope === "OWN" ? context.memberId : null);
+    const currentLocalDate = workspaceDateAt(now, workspace.timeZone);
+    const selectedLocalDate = parsed.data.date ?? currentLocalDate;
+    const selectedDay = workspaceDayRange(selectedLocalDate, workspace.timeZone);
+    const isCurrentDate = selectedLocalDate === currentLocalDate;
     const dailyGoalMembers = manageDailyGoalsDecision.allowed
       ? await options.database.workspaceMember.findMany({
           where: {
@@ -370,7 +393,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           AND meeting."status"::text <> 'CANCELLED'
           AND meeting."deletedAt" IS NULL
           AND (meeting."startsAt" AT TIME ZONE workspace."timeZone")::date
-            = (${now}::timestamptz AT TIME ZONE workspace."timeZone")::date
+            = ${selectedLocalDate}::date
         ORDER BY meeting."startsAt", meeting."id"
         LIMIT 1
       ) meeting_today ON TRUE
@@ -428,14 +451,14 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
             meeting_today."startsAt" AS "meetingTodayStartsAt",
             COUNT(*) OVER()::integer AS "sectionTotal"
           ${joins}
-          WHERE ${baseWhere} AND ${bucketSql(definition.key, now)}
+          WHERE ${baseWhere} AND ${bucketSql(definition.key, now, selectedLocalDate)}
           ORDER BY ${order}
           LIMIT ${definition.limit}
         `),
       ),
     );
-    const today = workspaceDayRange(workspaceDateAt(now, workspace.timeZone), workspace.timeZone);
-    const todayLocal = workspaceDateAt(now, workspace.timeZone);
+    const today = selectedDay;
+    const todayLocal = selectedLocalDate;
     const productivityMemberSql = productivityMemberIds.length === 0
       ? Prisma.sql`AND FALSE`
       : Prisma.sql`AND task."assigneeMemberId" IN (${Prisma.join(productivityMemberIds)})`;
@@ -865,12 +888,23 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       });
       return {
         key: definition.key,
-        title: definition.title,
-        description: definition.description,
+        title: definition.key === "RETURN_TODAY"
+          ? isCurrentDate ? "Retorno para hoje" : `Retornos de ${selectedLocalDate.split("-").reverse().join("/")}`
+          : definition.key === "MEETINGS_TODAY"
+            ? isCurrentDate ? "Reuniões de hoje" : `Reuniões de ${selectedLocalDate.split("-").reverse().join("/")}`
+            : definition.title,
+        description: definition.key === "RETURN_TODAY"
+          ? "Próxima ação na data selecionada, no fuso do workspace."
+          : definition.key === "MEETINGS_TODAY"
+            ? "Reuniões não canceladas na data selecionada."
+            : definition.description,
         total: rawRows[0]?.sectionTotal ?? 0,
         drilldownHref: drilldownHref(
           definition.key,
           scope.scope === "OWN" ? null : selectedMemberId,
+          selectedLocalDate,
+          selectedDay,
+          isCurrentDate,
         ),
         items,
       };
@@ -879,6 +913,9 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     return {
       generatedAt: now.toISOString(),
       timeZone: workspace.timeZone,
+      selectedDate: selectedLocalDate,
+      currentDate: currentLocalDate,
+      isCurrentDate,
       viewer: {
         memberId: context.memberId,
         displayName: context.displayName,

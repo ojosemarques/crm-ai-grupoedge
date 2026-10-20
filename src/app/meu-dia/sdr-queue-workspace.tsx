@@ -87,6 +87,13 @@ function formatTime(value: string, timeZone: string): string {
   }).format(new Date(value));
 }
 
+function formatLocalDate(value: string): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "long",
+    timeZone: "UTC",
+  }).format(new Date(`${value}T12:00:00.000Z`));
+}
+
 function formatGoalValue(value: string, unit: "COUNT" | "CURRENCY_CENTS"): string {
   if (unit === "COUNT") return Number(value).toLocaleString("pt-BR");
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(BigInt(value)) / 100);
@@ -348,7 +355,7 @@ function SidePanel({
   onOpenQueue: (key: SdrQueueBucket) => void;
 }>) {
   return (
-    <aside aria-label="Riscos e compromissos de hoje" className={styles.sidePanel}>
+    <aside aria-label="Riscos e compromissos da data selecionada" className={styles.sidePanel}>
       {groups.map((group) => (
         <section
           className={styles.sideCard}
@@ -476,7 +483,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
     const groups: SideGroup[] = [
       {
         key: "MEETINGS_TODAY",
-        title: "Próximas reuniões",
+        title: screen.isCurrentDate ? "Próximas reuniões" : "Reuniões da data selecionada",
         total: sectionsByKey.get("MEETINGS_TODAY")?.total ?? 0,
         items: takeUnique("MEETINGS_TODAY"),
       },
@@ -504,7 +511,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
     ];
 
     return groups;
-  }, [sectionsByKey]);
+  }, [screen.isCurrentDate, sectionsByKey]);
 
   const secondsUntilRefresh = Math.max(
     0,
@@ -538,6 +545,14 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
     const params = new URLSearchParams(searchParams.toString());
     if (memberId) params.set("memberId", memberId);
     else params.delete("memberId");
+    router.push(`${pathname}${params.size ? `?${params.toString()}` : ""}`);
+  }
+
+  function selectDate(date: string) {
+    if (!date) return;
+    const params = new URLSearchParams(searchParams.toString());
+    if (date === screen.currentDate) params.delete("date");
+    else params.set("date", date);
     router.push(`${pathname}${params.size ? `?${params.toString()}` : ""}`);
   }
 
@@ -608,6 +623,15 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
       : "Todos no meu escopo";
   const goalEditorProfile = screen.dailyGoalProfiles.find((profile) => profile.memberId === goalEditorMemberId);
   const goalEditorMemberName = screen.dailyGoalMemberOptions.find((member) => member.id === goalEditorMemberId)?.name ?? "pessoa selecionada";
+  const selectedDateLabel = formatLocalDate(screen.selectedDate);
+  const selectedPeriodText = screen.isCurrentDate ? "hoje" : `em ${selectedDateLabel}`;
+  const dashboardParams = new URLSearchParams({
+    preset: "CUSTOM",
+    fromDate: screen.selectedDate,
+    toDate: screen.selectedDate,
+  });
+  if (screen.selectedMemberId) dashboardParams.set("sdr", screen.selectedMemberId);
+  const dashboardHref = `/dashboard?${dashboardParams.toString()}`;
 
   return (
     <div className={styles.workspace}>
@@ -633,7 +657,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
           <p className={styles.eyebrow}>Operação SDR</p>
           <h1 className={styles.title}>Meu Dia</h1>
           <p className={styles.context}>
-            Prioridades de {selectedSdrName} · dados em {screen.timeZone}
+            Prioridades de {selectedSdrName} · período: {selectedDateLabel} · dados em {screen.timeZone}
           </p>
         </div>
 
@@ -663,6 +687,16 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
             </strong>
             <span>Atualização automática em até {secondsUntilRefresh}s</span>
           </div>
+          <label className={styles.dateField}>
+            Data
+            <input
+              aria-label="Filtrar Meu Dia por data"
+              onChange={(event) => selectDate(event.target.value)}
+              required
+              type="date"
+              value={screen.selectedDate}
+            />
+          </label>
           <Button
             disabled={isRefreshing}
             onClick={() => startRefresh(() => router.refresh())}
@@ -685,7 +719,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         <div className={styles.productionHeading}>
           <div>
             <p className={styles.eyebrow}>Execução diária</p>
-            <h2 id="producao-hoje">Plano e produção de hoje</h2>
+            <h2 id="producao-hoje">Plano e produção {selectedPeriodText}</h2>
           </div>
           <div className={styles.productionActions}><Link href="/metas">Ver metas e quotas</Link>{screen.permissions.manageDailyGoals ? <Button disabled={screen.dailyGoalMemberOptions.length === 0} onClick={() => { setGoalEditorMemberId(screen.selectedMemberId ?? screen.dailyGoalMemberOptions[0]?.id ?? ""); setGoalNotice(null); setGoalEditorOpen(true); }} size="sm" type="button" variant="secondary">Configurar metas por pessoa</Button> : null}</div>
         </div>
@@ -700,7 +734,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
             <small>{screen.dailyProduction.prospecting.pending} pendentes na prospecção fria</small>
           </div>
         </div>
-        <h3 className={styles.operationalDemandTitle}>Atividades da meta de hoje</h3>
+        <h3 className={styles.operationalDemandTitle}>Atividades da meta {selectedPeriodText}</h3>
         {screen.dailyProduction.prospecting.activityPlan.length > 0 ? (
           <div className={styles.activityPlanGrid}>
             {screen.dailyProduction.prospecting.activityPlan.map((activity) => (
@@ -712,7 +746,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
             ))}
           </div>
         ) : (
-          <p className={styles.emptyActivityPlan}>{screen.dailyProduction.prospecting.businessDay ? "Nenhuma atividade de prospecção ou retorno está prevista para este recorte hoje." : "A meta e as atividades ficam pausadas em dias não úteis."}</p>
+          <p className={styles.emptyActivityPlan}>{screen.dailyProduction.prospecting.businessDay ? `Nenhuma atividade de prospecção ou retorno está prevista para ${selectedDateLabel}.` : "A meta e as atividades ficam pausadas em dias não úteis."}</p>
         )}
         <div className={styles.dailyGoal}>
           <div>
@@ -731,10 +765,10 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
         <div className={styles.goalMetricGrid}>
           {screen.dailyProduction.dailyGoal.metrics.map((metric) => <article data-achieved={metric.achieved} key={metric.key}><span>{metric.label}</span><strong>{formatGoalValue(metric.actualValue, metric.unit)} <small>/ {BigInt(metric.targetValue) > 0n ? formatGoalValue(metric.targetValue, metric.unit) : "sem meta"}</small></strong><div aria-label={`${metric.label}: ${metric.progressPercent ?? 0}% da meta`} aria-valuemax={100} aria-valuemin={0} aria-valuenow={metric.progressPercent ?? 0} role="progressbar"><i style={{ width: `${metric.progressPercent ?? 0}%` }} /></div><small>{BigInt(metric.targetValue) === 0n ? "Aguardando configuração" : metric.achieved ? "Meta atingida" : `Faltam ${formatGoalValue(metric.remainingValue, metric.unit)}`}</small></article>)}
         </div>
-        <h3 className={styles.operationalDemandTitle}>Demandas operacionais de hoje</h3>
+        <h3 className={styles.operationalDemandTitle}>Demandas operacionais {selectedPeriodText}</h3>
         <div className={styles.productionGrid}>
           <Link href="/email-agente?view=activities"><span>Políticos já trabalhados na fila</span><strong>{screen.dailyProduction.prospecting.worked}</strong><small>Meta de prospecção; cada político conta uma vez</small></Link>
-          <Link href={screen.selectedMemberId ? `/dashboard?preset=TODAY&sdr=${encodeURIComponent(screen.selectedMemberId)}` : "/dashboard?preset=TODAY"}><span>Abordados em todos os canais</span><strong>{screen.dailyProduction.outreachLeadsTouched}</strong><small>Ligações, mensagens, seguimentos e e-mails do log</small></Link>
+          <Link href={dashboardHref}><span>Abordados em todos os canais</span><strong>{screen.dailyProduction.outreachLeadsTouched}</strong><small>Ligações, mensagens, seguimentos e e-mails do log</small></Link>
           <Link href="/atividades"><span>Políticos pendentes</span><strong>{screen.dailyProduction.prospecting.pending}</strong><small>Com tarefa fria ainda aberta</small></Link>
           <button onClick={() => selectSection("RETURN_TODAY")} type="button"><span>Retornos</span><strong>{screen.dailyProduction.prospecting.returns}</strong><small>Priorizados antes de novas liberações</small></button>
           <Link href="/atividades"><span>Cadência</span><strong>{screen.dailyProduction.prospecting.cadence}</strong><small>Políticos em nova tentativa</small></Link>
@@ -743,7 +777,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
           <Link href="/atividades"><span>WhatsApp</span><strong>{screen.dailyProduction.whatsappPending}</strong><small>{screen.dailyProduction.whatsappMessagesSent} mensagens enviadas · {screen.dailyProduction.whatsappUnavailable} sem WhatsApp · {screen.dailyProduction.whatsappOther} outros resultados</small></Link>
           <Link href="/atividades"><span>Instagram</span><strong>{screen.dailyProduction.messagesPending}</strong><small>{screen.dailyProduction.instagramMessagesSent} mensagens enviadas · {screen.dailyProduction.instagramFollowsCompleted} perfis seguidos · {screen.dailyProduction.instagramFollowsAlreadyFollowing} já seguidos · {screen.dailyProduction.instagramFollowsProfileNotFound + screen.dailyProduction.instagramMessagesProfileNotFound} perfis não encontrados · {screen.dailyProduction.instagramFollowsFailed + screen.dailyProduction.instagramMessagesFailed} falhas</small></Link>
           <button onClick={() => selectSection("OVERDUE")} type="button"><span>Acompanhamentos atrasados</span><strong>{screen.dailyProduction.overdueFollowUps}</strong><small>Abrir fila de atrasados</small></button>
-          <Link href="/agenda"><span>Reuniões marcadas hoje</span><strong>{screen.dailyProduction.meetingsScheduled}</strong><small>{screen.dailyProduction.meetingsToday} na agenda hoje · {screen.dailyProduction.meetingsCompleted} realizadas</small></Link>
+          <Link href={`/agenda?view=day&date=${encodeURIComponent(screen.selectedDate)}`}><span>Reuniões marcadas {selectedPeriodText}</span><strong>{screen.dailyProduction.meetingsScheduled}</strong><small>{screen.dailyProduction.meetingsToday} na agenda em {selectedDateLabel} · {screen.dailyProduction.meetingsCompleted} realizadas</small></Link>
           <button onClick={() => selectSection("STALE_CONTACT")} type="button"><span>Sem contato recente</span><strong>{screen.dailyProduction.staleLeads}</strong><small>Há mais de 72 horas</small></button>
           <Link href="/atividades"><span>Total de tarefas pendentes</span><strong>{screen.dailyProduction.tasksDue}</strong><small>{screen.dailyProduction.emails} e-mails enviados</small></Link>
         </div>
@@ -760,7 +794,7 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
               onClick={() => selectSection(summary.key)}
               type="button"
             >
-              <span className={styles.summaryLabel}>{summary.label}<Icon name={summary.icon} size={17} /></span>
+              <span className={styles.summaryLabel}>{summary.key === "MEETINGS_TODAY" && !screen.isCurrentDate ? "Reuniões na data" : summary.label}<Icon name={summary.icon} size={17} /></span>
               <strong>{section?.total ?? 0}</strong>
               <small>Abrir fila <Icon name="seta-direita" size={12} /></small>
             </button>

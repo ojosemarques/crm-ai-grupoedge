@@ -20,7 +20,8 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
 
   try {
     screen = await getSdrQueueService().getScreen(context, {
-      ...(typeof query.memberId === "string" ? { memberId: query.memberId } : {}),
+      memberId: query.memberId,
+      date: query.date,
     });
   } catch (error) {
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
@@ -43,7 +44,7 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
   return (
     <main className="page-canvas">
       <SdrQueueWorkspace
-        key={`${screen.selectedMemberId ?? "all"}:${screen.generatedAt}`}
+        key={`${screen.selectedMemberId ?? "all"}:${screen.selectedDate}:${screen.generatedAt}`}
         screen={screen}
       />
     </main>

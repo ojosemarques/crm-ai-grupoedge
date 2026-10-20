@@ -73,6 +73,9 @@ export type SdrQueueSection = Readonly<{
 export type SdrQueueScreen = Readonly<{
   generatedAt: string;
   timeZone: string;
+  selectedDate: string;
+  currentDate: string;
+  isCurrentDate: boolean;
   viewer: Readonly<{
     memberId: string;
     displayName: string;

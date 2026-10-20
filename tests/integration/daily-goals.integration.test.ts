@@ -11,6 +11,7 @@ import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-servi
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
+import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL is required for daily goal tests.");
@@ -53,6 +54,37 @@ describe("metas diárias configuráveis", () => {
 
   it("bloqueia vendedor sem permissão de gestão", async () => {
     await expect(createDailyGoalService({ database, authorization }).save(sdr, { memberId: sdr.memberId, expectedRevision: 1, callsTarget: 60, messagesTarget: 40, effectiveContactsTarget: 10, qualificationsTarget: 5, meetingsScheduledTarget: 3, proposalsTarget: 2, salesValueTargetCents: "2500000" })).rejects.toBeInstanceOf(AccessDeniedError);
+  });
+
+  it("recalcula o Meu Dia para a data local selecionada e rejeita datas inválidas", async () => {
+    const queueService = createSdrQueueService({ database, authorization, now: () => now });
+    const selectedDate = "2033-05-09";
+    const beforeSelectedDay = await queueService.getScreen(sdr, { date: selectedDate });
+    const beforeCurrentDay = await queueService.getScreen(sdr, {});
+    const eventId = randomUUID();
+
+    await recordCommercialMetricFactInTransaction(database, {
+      workspaceId: sdr.workspaceId,
+      eventKey: `daily-goal:${eventId}:selected-date:v1`,
+      eventType: "CALL_ATTEMPTED",
+      occurredAt: new Date("2033-05-09T15:00:00.000Z"),
+      sourceEntityType: "DailyGoalDateFilterFixture",
+      sourceEntityId: eventId,
+      creditedMemberId: sdr.memberId,
+    });
+
+    const afterSelectedDay = await queueService.getScreen(sdr, { date: selectedDate });
+    const afterCurrentDay = await queueService.getScreen(sdr, {});
+    expect(afterSelectedDay).toMatchObject({
+      selectedDate,
+      currentDate: "2033-05-10",
+      isCurrentDate: false,
+    });
+    expect(afterSelectedDay.sections.find((section) => section.key === "RETURN_TODAY")?.drilldownHref).toContain("nextActionFrom=");
+    expect(afterSelectedDay.sections.find((section) => section.key === "MEETINGS_TODAY")?.drilldownHref).toBe(`/agenda?view=day&date=${selectedDate}`);
+    expect(afterSelectedDay.dailyProduction.calls - beforeSelectedDay.dailyProduction.calls).toBe(1);
+    expect(afterCurrentDay.dailyProduction.calls).toBe(beforeCurrentDay.dailyProduction.calls);
+    await expect(queueService.getScreen(sdr, { date: "2033-02-30" })).rejects.toBeInstanceOf(ApplicationError);
   });
 
   it("mantém ações e contatos efetivos de Meu Dia e Prospecção iguais ao log de Indicadores", async () => {

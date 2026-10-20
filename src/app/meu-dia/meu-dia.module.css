@@ -52,7 +52,8 @@
   justify-content: flex-end;
 }
 
-.memberField {
+.memberField,
+.dateField {
   color: var(--muted-foreground);
   display: grid;
   font-size: 0.72rem;
@@ -61,9 +62,21 @@
   min-width: 12.5rem;
 }
 
-.memberField select {
+.memberField select,
+.dateField input {
   height: 2.35rem;
+}
+
+.memberField select {
   padding: 0 2.25rem 0 0.75rem;
+}
+
+.dateField {
+  min-width: 10rem;
+}
+
+.dateField input {
+  padding: 0 0.75rem;
 }
 
 .refreshStatus {
@@ -950,6 +963,7 @@
   }
 
   .memberField,
+  .dateField,
   .refreshStatus {
     min-width: 0;
     text-align: left;
