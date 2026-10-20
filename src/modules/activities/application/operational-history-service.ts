@@ -29,6 +29,7 @@ import {
   applyProspectingTaskCompletionInTransaction,
   stopColdCadenceInTransaction,
 } from "@/modules/prospecting/application/prospecting-cadence-service";
+import { resolveCadenceStopReasonForContact } from "@/modules/prospecting/domain/prospecting-cadence";
 import { recordTaskCompletionMetricFactsInTransaction } from "@/modules/metrics/application/task-completion-metric-facts";
 import {
   recordCommercialMetricCorrectionInTransaction,
@@ -1409,12 +1410,16 @@ export function createOperationalHistoryService(
       });
       const responseRecorded = isConnected(parsed.data.type, result) || isInboundResponse(parsed.data.type);
       const inboundResponse = isInboundResponse(parsed.data.type);
-      if (responseRecorded) {
+      const cadenceStopReason = resolveCadenceStopReasonForContact({
+        connectedContact: responseRecorded,
+        inboundResponse,
+      });
+      if (cadenceStopReason) {
         await stopColdCadenceInTransaction(transaction, {
           workspaceId: context.workspaceId,
           leadId: lead.id,
           actorId: context.actorId,
-          reason: "HUMAN_REPLY",
+          reason: cadenceStopReason,
           occurredAt,
         });
       }

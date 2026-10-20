@@ -269,6 +269,22 @@ describe("staging governado da Prospecção Ativa", () => {
     expect(await database.prospectingCadenceStep.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "call-1" } })).toMatchObject({ resultCode: "WRONG_NUMBER", resultReason: "Número incorreto informado pelo vendedor." });
     expect(await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id } })).toMatchObject({ status: "ACTIVE" });
     expect(await database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id, status: "SCHEDULED" } })).toBe(6);
+    const connectedCall = await database.prospectingCadenceStep.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "call-2" } });
+    await expect(database.$transaction(async (transaction) => {
+      await transaction.task.update({ where: { id: connectedCall.taskId! }, data: { status: "COMPLETED", completedAt: clock, result: "CONNECTED", updatedByActorId: systemActorId } });
+      await applyProspectingTaskCompletionInTransaction(transaction, {
+        workspaceId: principal.workspaceId,
+        leadId,
+        taskId: connectedCall.taskId!,
+        result: "CONNECTED",
+        actorId: systemActorId,
+        completedAt: clock,
+      });
+      await expect(transaction.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id } })).resolves.toMatchObject({ status: "CONVERSATION_STARTED", stopReasonCode: "CONTACT_CONNECTED" });
+      await expect(transaction.lead.findUniqueOrThrow({ where: { id: leadId } })).resolves.toMatchObject({ awaitingHumanResponse: false, lastInboundResponseAt: null });
+      await expect(transaction.task.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, leadId, sourceKey: `active-prospecting:${cadence.id}:respond-human` } })).resolves.toMatchObject({ title: "Continuar conversa iniciada" });
+      throw new Error("ROLLBACK_CONNECTED_CONTACT_ASSERTIONS");
+    })).rejects.toThrow("ROLLBACK_CONNECTED_CONTACT_ASSERTIONS");
     const whatsappTwo = await database.prospectingCadenceStep.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "whatsapp-2" } });
     await expect(database.$transaction((transaction) => applyProspectingTaskCompletionInTransaction(transaction, {
       workspaceId: principal.workspaceId,

@@ -3,12 +3,13 @@ import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import {
   ACCEPTED_MANUAL_RESULTS,
   D1_GATE_STEP_KEYS,
+  resolveCadenceStopReasonForContact,
   resolveProspectingManualResultReason,
 } from "@/modules/prospecting/domain/prospecting-cadence";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
-type StopReason = "HUMAN_REPLY" | "MEETING_SCHEDULED" | "REFUSAL" | "DO_NOT_CONTACT" | "BOUNCE" | "AUTO_REPLY" | "D30_NO_RESPONSE";
+type StopReason = "HUMAN_REPLY" | "CONTACT_CONNECTED" | "MEETING_SCHEDULED" | "REFUSAL" | "DO_NOT_CONTACT" | "BOUNCE" | "AUTO_REPLY" | "D30_NO_RESPONSE";
 
 function fail(message: string, code: string, statusCode = 409): never {
   throw new ApplicationError(message, { code, statusCode, expose: true });
@@ -92,8 +93,10 @@ export async function stopColdCadenceInTransaction(
         : ["active-prospecting.new-lead", "active-prospecting.initial-outreach", "active-prospecting.active-cadence"];
     await moveStage(transaction, { ...input, stableKey, allowedCurrentStableKeys, reason: `Interrupção da cadência: ${input.reason}.` });
   }
-  if (input.reason === "HUMAN_REPLY") {
-    await transaction.lead.update({ where: { id: input.leadId }, data: { awaitingHumanResponse: true, lastInboundResponseAt: input.occurredAt, updatedByActorId: input.actorId } });
+  if (input.reason === "HUMAN_REPLY" || input.reason === "CONTACT_CONNECTED") {
+    if (input.reason === "HUMAN_REPLY") {
+      await transaction.lead.update({ where: { id: input.leadId }, data: { awaitingHumanResponse: true, lastInboundResponseAt: input.occurredAt, updatedByActorId: input.actorId } });
+    }
     const responseTaskSourceKey = `active-prospecting:${cadence.id}:respond-human`;
     const responseTask = await transaction.task.findFirst({
       where: { workspaceId: input.workspaceId, leadId: input.leadId, sourceKey: responseTaskSourceKey, deletedAt: null },
@@ -105,8 +108,10 @@ export async function stopColdCadenceInTransaction(
           workspaceId: input.workspaceId,
           leadId: input.leadId,
           assigneeMemberId: cadence.ownerMemberId,
-          title: "Responder conversa iniciada",
-          description: "O contato respondeu à prospecção ativa. Assuma a conversa antes de qualquer novo envio.",
+          title: input.reason === "HUMAN_REPLY" ? "Responder conversa iniciada" : "Continuar conversa iniciada",
+          description: input.reason === "HUMAN_REPLY"
+            ? "O contato respondeu à prospecção ativa. Assuma a conversa antes de qualquer novo envio."
+            : "Houve contato efetivo na ligação. Registre a próxima ação combinada.",
           kind: "FOLLOW_UP",
           sourceKey: responseTaskSourceKey,
           status: "OPEN",
@@ -205,7 +210,9 @@ export async function applyProspectingTaskCompletionInTransaction(
     return { terminal: true as const, nextActionAt: null, nextActionDescription: null };
   }
   if (step.action === "CALL" && ["CONNECTED", "CALLBACK_REQUESTED", "WHATSAPP_SHARED"].includes(code)) {
-    await stopColdCadenceInTransaction(transaction, { workspaceId: input.workspaceId, leadId: input.leadId, actorId: input.actorId, reason: "HUMAN_REPLY", occurredAt: input.completedAt });
+    const reason = resolveCadenceStopReasonForContact({ connectedContact: true, inboundResponse: false });
+    if (!reason) fail("Resultado conectado sem motivo de interrupção da cadência.", "PROSPECTING_CONTACT_STOP_REASON_MISSING", 500);
+    await stopColdCadenceInTransaction(transaction, { workspaceId: input.workspaceId, leadId: input.leadId, actorId: input.actorId, reason, occurredAt: input.completedAt });
     return { terminal: false as const, nextActionAt: input.completedAt, nextActionDescription: "Atender conversa iniciada" };
   }
   const cadence = await transaction.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: step.cadenceInstanceId } });

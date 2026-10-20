@@ -43,6 +43,17 @@ export const ACCEPTED_MANUAL_RESULTS = Object.freeze({
   INSTAGRAM_FOLLOW: ["COMPLETED", "ALREADY_FOLLOWING", "FAILED", "PROFILE_NOT_FOUND", "CHANNEL_UNAVAILABLE"],
 } as const);
 
+export type ProspectingContactStopReason = "HUMAN_REPLY" | "CONTACT_CONNECTED";
+
+export function resolveCadenceStopReasonForContact(input: Readonly<{
+  connectedContact: boolean;
+  inboundResponse: boolean;
+}>): ProspectingContactStopReason | null {
+  if (input.inboundResponse) return "HUMAN_REPLY";
+  if (input.connectedContact) return "CONTACT_CONNECTED";
+  return null;
+}
+
 const AUTOMATIC_RESULT_REASONS: Readonly<Record<string, string>> = Object.freeze({
   WRONG_NUMBER: "Número incorreto informado pelo vendedor.",
   CHANNEL_UNAVAILABLE: "Canal indisponível informado pelo vendedor.",

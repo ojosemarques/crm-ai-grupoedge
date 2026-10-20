@@ -4,11 +4,18 @@ import {
   ACCEPTED_MANUAL_RESULTS,
   manualCapacityDates,
   PROSPECTING_CADENCE,
+  resolveCadenceStopReasonForContact,
   resolveProspectingManualResultReason,
   scheduleProspectingCadence,
 } from "@/modules/prospecting/domain/prospecting-cadence";
 
 describe("cadência de prospecção política", () => {
+  it("não classifica ligação conectada como resposta recebida", () => {
+    expect(resolveCadenceStopReasonForContact({ connectedContact: true, inboundResponse: false })).toBe("CONTACT_CONNECTED");
+    expect(resolveCadenceStopReasonForContact({ connectedContact: true, inboundResponse: true })).toBe("HUMAN_REPLY");
+    expect(resolveCadenceStopReasonForContact({ connectedContact: false, inboundResponse: false })).toBeNull();
+  });
+
   it("materializa seis e-mails e o restante da cadência, incluindo WhatsApp nos quatro ciclos", () => {
     const schedule = scheduleProspectingCadence({ d1Date: "2026-10-05", timeZone: "America/Sao_Paulo", holidays: new Set() });
     expect(schedule).toHaveLength(20);
