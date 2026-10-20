@@ -10,7 +10,7 @@ import {
   resolveProspectingMetricsPeriod,
 } from "@/modules/prospecting/domain/prospecting-metrics-period";
 import { summarizeProspectingTaskResults } from "@/modules/prospecting/domain/prospecting-daily-metrics";
-import { summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
+import { effectiveContactEventTypes, summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
 import { countUnresolvedCallAttempts } from "@/modules/metrics/domain/unresolved-call-attempts";
 import { EMAIL_CADENCE_METRIC_EVENT_TYPES, summarizeEmailCadenceMetrics } from "@/modules/metrics/domain/email-cadence-metrics";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -238,12 +238,12 @@ export function createProspectingWorkspaceService(options: Readonly<{
       }),
       options.database.commercialMetricFact.groupBy({
         by: ["bookedByMemberId", "creditedMemberId"],
-        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", occurredAt: { gte: today.start, lt: today.end }, ...(scopedMemberIds === null ? {} : { OR: [{ bookedByMemberId: { in: scopedMemberIds } }, { bookedByMemberId: null, creditedMemberId: { in: scopedMemberIds } }] }) },
+        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", occurredAt: { gte: today.start, lt: today.end }, ...(scopedMemberIds === null ? {} : { OR: [{ bookedByMemberId: { in: scopedMemberIds } }, { bookedByMemberId: null, creditedMemberId: { in: scopedMemberIds } }] }) },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({
         by: ["creditedMemberId", "eventType", "leadId"],
-        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, leadId: { not: null }, eventType: { in: ["CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED"] } },
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, leadId: { not: null }, eventType: { in: [...effectiveContactEventTypes] } },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({
@@ -316,16 +316,16 @@ export function createProspectingWorkspaceService(options: Readonly<{
       }),
       options.database.commercialMetricFact.groupBy({
         by: ["bookedByMemberId", "creditedMemberId"],
-        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, ...(scopedMemberIds === null ? {} : { OR: [{ bookedByMemberId: { in: scopedMemberIds } }, { bookedByMemberId: null, creditedMemberId: { in: scopedMemberIds } }] }) },
+        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, ...(scopedMemberIds === null ? {} : { OR: [{ bookedByMemberId: { in: scopedMemberIds } }, { bookedByMemberId: null, creditedMemberId: { in: scopedMemberIds } }] }) },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.aggregate({
-        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, ...(scopedMemberIds === null ? {} : { OR: [{ bookedByMemberId: { in: scopedMemberIds } }, { bookedByMemberId: null, creditedMemberId: { in: scopedMemberIds } }] }) },
+        where: { workspaceId: context.workspaceId, eventType: "MEETING_SCHEDULED", occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, ...(scopedMemberIds === null ? {} : { OR: [{ bookedByMemberId: { in: scopedMemberIds } }, { bookedByMemberId: null, creditedMemberId: { in: scopedMemberIds } }] }) },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({
         by: ["creditedMemberId", "eventType", "leadId"],
-        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, leadId: { not: null }, eventType: { in: ["CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED"] } },
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, leadId: { not: null }, eventType: { in: [...effectiveContactEventTypes] } },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({

@@ -404,6 +404,7 @@ describe("razão comercial integrada", () => {
     expect(value("outreach.calls_attempted")?.value).toBe(15);
     expect(value("outreach.contact_actions")?.value).toBe(31);
     expect(value("outreach.calls_connected")?.value).toBe(6);
+    expect(value("outreach.effective_contacts")?.value).toBe(20);
     expect(value("outreach.calls_callback_requested")?.value).toBe(0);
     expect(value("outreach.calls_whatsapp_shared")?.value).toBe(0);
     expect(value("outreach.calls_unanswered")?.value).toBe(9);
@@ -418,8 +419,8 @@ describe("razão comercial integrada", () => {
     expect(value("email.replied")?.value).toBe(1);
     expect(value("email.reply_rate")?.value).toBe(10_000);
     expect(value("qualification.leads")?.value).toBe(3);
-    expect(value("meetings.scheduled")?.value).toBe(2);
-    expect(value("meetings.stage_marked")?.value).toBe(1);
+    expect(value("meetings.scheduled")?.value).toBe(3);
+    expect(value("meetings.stage_marked")).toBeUndefined();
     expect(value("meetings.completed")?.value).toBe(1);
     expect(value("sales.proposals")?.value).toBe(1);
     expect(value("revenue.new_mrr")?.value).toBe("1000");
@@ -438,7 +439,7 @@ describe("razão comercial integrada", () => {
     expect(emailReplyDrilldown.records).toHaveLength(1);
     expect(emailReplyDrilldown.records[0]?.eventType).toBe("INBOUND_MESSAGE_RECEIVED");
     const meetingDrilldown = await metrics.getIntegratedDrilldown(context, { metricId: "meetings.scheduled", query: { from: from.toISOString(), to: to.toISOString(), filters: {} }, limit: 20 });
-    expect(meetingDrilldown.records).toHaveLength(2);
+    expect(meetingDrilldown.records).toHaveLength(3);
     const proposalDrilldown = await metrics.getIntegratedDrilldown(context, { metricId: "sales.proposals", query: { from: from.toISOString(), to: to.toISOString(), filters: {} }, limit: 20 });
     expect(proposalDrilldown.records).toHaveLength(1);
     const activity = await metrics.getIntegratedActivityFacts(context, { from: from.toISOString(), to: to.toISOString(), filters: {} });
@@ -448,10 +449,13 @@ describe("razão comercial integrada", () => {
     const dashboard = await createDashboardMetricsService({ database, authorization, now: () => now }).getScreen(context, {
       preset: "CUSTOM", fromDate: "2052-04-20", toDate: "2052-04-21",
     });
-    expect(dashboard.timeSeries.find((item) => item.id === "scheduled")?.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(2);
+    expect(dashboard.timeSeries.find((item) => item.id === "scheduled")?.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(3);
+    expect(dashboard.kpis.some((item) => item.id === "opportunities")).toBe(false);
+    expect(dashboard.fullFunnel.stages.some((item) => item.id === "opportunity")).toBe(false);
+    expect(dashboard.fullFunnel.stages.find((item) => item.id === "proposal")?.branchFrom).toBe("meeting");
     expect(dashboard.timeSeries.find((item) => item.id === "leads")?.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(1);
     expect(dashboard.timeSeries.find((item) => item.id === "calls")?.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(15);
-    expect(dashboard.timeSeries.find((item) => item.id === "connected")?.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(6);
+    expect(dashboard.timeSeries.find((item) => item.id === "connected")?.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(20);
     expect(dashboard.timeSeries.find((item) => item.id === "proposals")?.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(1);
     for (const [comparisonId, metricId] of [
       ["leads", "contacts.leads_created"],

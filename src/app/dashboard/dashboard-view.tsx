@@ -201,7 +201,7 @@ function PerformancePanel({ screen }: Readonly<{ screen: DashboardScreen }>) {
       <header className={styles.panelHeader}><div><h2>Performance da equipe</h2><p>Atividades e resultados registrados por vendedor no período selecionado.</p></div></header>
       <div className={styles.performanceScroll}><table className={`${styles.performanceTable} ${styles.teamPerformanceTable}`}><thead><tr><th>Pessoa</th><th>Ligações</th><th>Atenderam</th><th>Não atenderam</th><th>Falhas no número</th><th>WhatsApp</th><th>Mensagens Instagram</th><th>Seguiu Instagram</th><th>Reuniões agendadas</th><th>Reuniões feitas</th><th>Propostas enviadas</th><th>Desqualificados</th><th>Vendas</th><th>Receita</th></tr></thead><tbody>{screen.sellerActivity.map((row) => {
         const cell = (metricId: string, value: number) => <td><a href={integratedHref(screen.query, metricId, row.id)}>{value.toLocaleString("pt-BR")}</a></td>;
-        return <tr key={row.id}><td><strong>{row.name}</strong></td>{cell("outreach.calls_attempted", row.calls)}{cell("outreach.calls_connected", row.connected)}<td>{row.callsNotAnswered.toLocaleString("pt-BR")}</td><td>{row.numberFailures.toLocaleString("pt-BR")}</td>{cell("outreach.whatsapp_messages", row.whatsappMessages)}{cell("outreach.instagram_messages", row.instagramMessages)}{cell("outreach.instagram_follows", row.instagramFollows)}<td>{row.meetingsBooked.toLocaleString("pt-BR")}</td>{cell("meetings.completed", row.meetingsCompleted)}{cell("sales.proposals", row.proposals)}{cell("qualification.disqualified", row.disqualified)}{cell("sales.won", row.sales)}<td><a href={integratedHref(screen.query, "sales.won_value", row.id)}>{formatMoney(row.salesValueCents)}</a></td></tr>;
+        return <tr key={row.id}><td><strong>{row.name}</strong></td>{cell("outreach.calls_attempted", row.calls)}{cell("outreach.calls_connected", row.connected)}<td>{row.callsNotAnswered.toLocaleString("pt-BR")}</td><td>{row.numberFailures.toLocaleString("pt-BR")}</td>{cell("outreach.whatsapp_messages", row.whatsappMessages)}{cell("outreach.instagram_messages", row.instagramMessages)}{cell("outreach.instagram_follows", row.instagramFollows)}{cell("meetings.scheduled", row.meetingsBooked)}{cell("meetings.completed", row.meetingsCompleted)}{cell("sales.proposals", row.proposals)}{cell("qualification.disqualified", row.disqualified)}{cell("sales.won", row.sales)}<td><a href={integratedHref(screen.query, "sales.won_value", row.id)}>{formatMoney(row.salesValueCents)}</a></td></tr>;
       })}</tbody></table></div>
       <p className={styles.qualityNote}>“Não atenderam” reúne não atendeu, ocupado e resultados sem subtipo. “Falhas no número” reúne falhas de ligação e caixa postal. “Reuniões agendadas” soma reuniões criadas na agenda e cards movidos para a etapa de reunião; WhatsApp conta mensagens com envio confirmado. As ações são creditadas ao vendedor responsável registrado no evento.{screen.overview.scope !== "WORKSPACE" ? " A tabela exibe apenas pessoas do seu escopo; os totais incluem os fatos de leads que você pode acessar." : ""}</p>
       <details><summary>Ver conversão e SLA por coorte</summary>{screen.performance.length === 0 ? <div className={styles.segmentEmpty}>Sem atividade atribuída no período.</div> : (
@@ -232,10 +232,8 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
     ["outreach.calls_attempted", "Ligações realizadas"],
     ["outreach.effective_contacts", "Leads conectados"],
     ["qualification.leads", "Qualificados"],
-    ["meetings.stage_marked", "Cards marcados para reunião"],
     ["meetings.scheduled", "Reuniões agendadas"],
     ["outreach.instagram_follows", "Perfis seguidos"],
-    ["sales.opportunities_created", "Oportunidades"],
     ["sales.proposals", "Propostas"],
   ] as const;
   const integratedMetricIds = [
@@ -256,7 +254,6 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
     "outreach.instagram_follows",
     "outreach.inbound_responses",
     "meetings.scheduled",
-    "meetings.stage_marked",
     "meetings.completed",
     "email.sent",
     "email.delivery_rate",

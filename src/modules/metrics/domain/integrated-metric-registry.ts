@@ -1,4 +1,5 @@
 import type { CommercialMetricEventType } from "@/generated/prisma/client";
+import { effectiveContactEventTypes } from "@/modules/metrics/domain/effective-contact-metrics";
 
 export type IntegratedMetricDefinition = Readonly<{
   id: string;
@@ -20,7 +21,7 @@ const metric = (definition: IntegratedMetricDefinition) => Object.freeze(definit
 
 export const contactActionEventTypes = ["CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT", "EMAIL_SENT", "INSTAGRAM_MESSAGE_SENT"] as const;
 
-export const INTEGRATED_METRIC_REGISTRY_VERSION = "indicators.13";
+export const INTEGRATED_METRIC_REGISTRY_VERSION = "indicators.14";
 
 export const integratedMetricRegistry = Object.freeze([
   metric({ id: "work.tasks_created", label: "Tarefas criadas", description: "Tarefas persistidas no período.", unit: "COUNT", eventTypes: ["TASK_CREATED"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
@@ -49,7 +50,7 @@ export const integratedMetricRegistry = Object.freeze([
   metric({ id: "outreach.instagram_follows", label: "Perfis seguidos", description: "Ações de follow realmente concluídas.", unit: "COUNT", eventTypes: ["INSTAGRAM_FOLLOW_COMPLETED"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
   metric({ id: "outreach.inbound_responses", label: "Leads com resposta", description: "Leads distintos com mensagem inbound registrada no período.", unit: "COUNT", eventTypes: ["INBOUND_MESSAGE_RECEIVED"], aggregation: "DISTINCT_LEAD", desiredDirection: "UP", limitations: [] }),
   metric({ id: "outreach.response_rate", label: "Taxa de resposta", description: "Leads abordados no período que também tiveram mensagem inbound no período, divididos pelos leads abordados.", unit: "BASIS_POINTS", eventTypes: ["INBOUND_MESSAGE_RECEIVED"], denominatorEventTypes: ["CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT", "INSTAGRAM_MESSAGE_SENT", "EMAIL_SENT"], denominatorAggregation: "DISTINCT_LEAD", aggregation: "RATE", desiredDirection: "UP", limitations: [] }),
-  metric({ id: "outreach.effective_contacts", label: "Contatos efetivos", description: "Leads distintos com mensagem inbound ou ligação conectada no período.", unit: "COUNT", eventTypes: ["INBOUND_MESSAGE_RECEIVED", "CALL_CONNECTED"], aggregation: "DISTINCT_LEAD", desiredDirection: "UP", limitations: [] }),
+  metric({ id: "outreach.effective_contacts", label: "Leads conectados", description: "Leads distintos com ligação atendida, mensagem recebida ou mensagem enviada por WhatsApp, Instagram ou e-mail no período.", unit: "COUNT", eventTypes: effectiveContactEventTypes, aggregation: "DISTINCT_LEAD", desiredDirection: "UP", limitations: [] }),
   metric({ id: "email.scheduled", label: "E-mails agendados", description: "Ordens válidas enfileiradas.", unit: "COUNT", eventTypes: ["EMAIL_SCHEDULED"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
   metric({ id: "email.sent", label: "E-mails enviados", description: "Aceite de envio confirmado.", unit: "COUNT", eventTypes: ["EMAIL_SENT"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
   metric({ id: "email.delivered", label: "E-mails entregues", description: "Entrega comprovada pelo transportador.", unit: "COUNT", eventTypes: ["EMAIL_DELIVERED"], aggregation: "COUNT", desiredDirection: "UP", limitations: ["Disponível apenas quando o provider emite evento de entrega."] }),
@@ -70,8 +71,7 @@ export const integratedMetricRegistry = Object.freeze([
   metric({ id: "qualification.leads", label: "Leads qualificados", description: "Leads distintos que alcançaram qualificação.", unit: "COUNT", eventTypes: ["LEAD_QUALIFIED"], aggregation: "DISTINCT_LEAD", desiredDirection: "UP", limitations: [] }),
   metric({ id: "qualification.disqualified", label: "Leads desqualificados", description: "Leads distintos desqualificados no período.", unit: "COUNT", eventTypes: ["LEAD_DISQUALIFIED"], aggregation: "DISTINCT_LEAD", desiredDirection: "DOWN", limitations: [] }),
   metric({ id: "qualification.pacto_validated", label: "PACTO validado", description: "Revisões PACTO validadas por humano.", unit: "COUNT", eventTypes: ["PACTO_VALIDATED"], aggregation: "DISTINCT_LEAD", desiredDirection: "UP", limitations: [] }),
-  metric({ id: "meetings.scheduled", label: "Reuniões agendadas", description: "Reuniões criadas na agenda; mover um card de etapa não cria uma reunião.", unit: "COUNT", eventTypes: ["MEETING_SCHEDULED"], sourceEntityTypes: ["MeetingHistory"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
-  metric({ id: "meetings.stage_marked", label: "Cards marcados como reunião", description: "Entradas manuais na etapa Reunião marcada sem reunião criada na agenda.", unit: "COUNT", eventTypes: ["MEETING_SCHEDULED"], sourceEntityTypes: ["StageHistory"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: ["Representa movimento de pipeline, não reunião na agenda."] }),
+  metric({ id: "meetings.scheduled", label: "Reuniões agendadas", description: "Agendamentos registrados pela agenda ou pelo movimento do card para a etapa de reunião.", unit: "COUNT", eventTypes: ["MEETING_SCHEDULED"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
   metric({ id: "meetings.completed", label: "Reuniões realizadas", description: "Reuniões com comparecimento registrado.", unit: "COUNT", eventTypes: ["MEETING_COMPLETED"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
   metric({ id: "meetings.cancelled", label: "Reuniões canceladas", description: "Cancelamentos persistidos.", unit: "COUNT", eventTypes: ["MEETING_CANCELLED"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
   metric({ id: "meetings.no_show", label: "No-shows", description: "Ausências confirmadas.", unit: "COUNT", eventTypes: ["MEETING_NO_SHOW"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),

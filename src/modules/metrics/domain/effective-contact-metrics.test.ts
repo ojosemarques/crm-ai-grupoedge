@@ -10,10 +10,13 @@ describe("contatos efetivos por lead e vendedor", () => {
       { eventType: "CALL_CONNECTED", leadId: "lead-2", creditedMemberId: "seller-1", quantity: -1 },
       { eventType: "INBOUND_MESSAGE_RECEIVED", leadId: "lead-3", creditedMemberId: "seller-2", quantity: 1 },
       { eventType: "CALL_ATTEMPTED", leadId: "lead-4", creditedMemberId: "seller-2", quantity: 1 },
+      { eventType: "WHATSAPP_MESSAGE_SENT", leadId: "lead-4", creditedMemberId: "seller-2", quantity: 1 },
+      { eventType: "INSTAGRAM_MESSAGE_SENT", leadId: "lead-4", creditedMemberId: "seller-2", quantity: 1 },
+      { eventType: "EMAIL_SENT", leadId: "lead-5", creditedMemberId: "seller-2", quantity: 1 },
     ];
     const summary = summarizeEffectiveContacts(rows);
-    expect(summary.total).toBe(2);
-    expect([...summary.byMember]).toEqual([["seller-1", 1], ["seller-2", 1]]);
+    expect(summary.total).toBe(4);
+    expect([...summary.byMember]).toEqual([["seller-1", 1], ["seller-2", 3]]);
   });
 
   it("não duplica o total do workspace quando dois vendedores contatam o mesmo lead", () => {

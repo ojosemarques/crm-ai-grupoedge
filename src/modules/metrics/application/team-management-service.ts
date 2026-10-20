@@ -79,7 +79,7 @@ export async function getTeamManagementScreen(
   for (const seller of dashboard.sellerActivity) {
     const person = ensure(seller.id, seller.name);
     person.tasksCompleted = seller.tasksCompleted;
-    person.meetings = seller.meetingsScheduled;
+    person.meetings = seller.meetingsBooked;
     person.contacts = seller.calls + seller.instagramMessages + seller.emailsSent;
   }
   const withoutNextAction = new Set(dashboard.overview.evidence.leadsWithoutNextActionIds);

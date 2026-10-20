@@ -15,7 +15,7 @@ import {
 } from "@/modules/leads/domain/sdr-queue-contracts";
 import { staleContactCutoff } from "@/modules/leads/domain/lead-operational-policy";
 import { buildDailyGoalProgress } from "@/modules/goals/domain/daily-goal-contracts";
-import { summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
+import { effectiveContactEventTypes, summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
 import { countUnresolvedCallAttempts } from "@/modules/metrics/domain/unresolved-call-attempts";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -563,7 +563,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           workspaceId: context.workspaceId,
           creditedMemberId: { in: productivityMemberIds },
           occurredAt: { gte: today.start, lt: today.end },
-          eventType: { in: ["CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED"] },
+          eventType: { in: [...effectiveContactEventTypes] },
           leadId: { not: null },
         },
         _sum: { quantity: true },
@@ -584,7 +584,6 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           workspaceId: context.workspaceId,
           occurredAt: { gte: today.start, lt: today.end },
           eventType: "MEETING_SCHEDULED",
-          sourceEntityType: "MeetingHistory",
           OR: [
             { bookedByMemberId: { in: productivityMemberIds } },
             { bookedByMemberId: null, creditedMemberId: { in: productivityMemberIds } },

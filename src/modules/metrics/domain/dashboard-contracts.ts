@@ -182,8 +182,6 @@ export type DashboardSellerActivity = Readonly<{
   instagramFollowsProfileNotFound: number;
   instagramFollowsFailed: number;
   qualified: number;
-  meetingsScheduled: number;
-  meetingStageMarked: number;
   meetingsBooked: number;
   meetingsCompleted: number;
   proposals: number;

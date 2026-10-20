@@ -5,11 +5,19 @@ type ContactRow = Readonly<{
   quantity: number;
 }>;
 
+export const effectiveContactEventTypes = [
+  "CALL_CONNECTED",
+  "INBOUND_MESSAGE_RECEIVED",
+  "WHATSAPP_MESSAGE_SENT",
+  "INSTAGRAM_MESSAGE_SENT",
+  "EMAIL_SENT",
+] as const;
+
 export function summarizeEffectiveContacts(rows: readonly ContactRow[]) {
   const totalBalances = new Map<string, number>();
   const memberBalances = new Map<string, Map<string, number>>();
   for (const row of rows) {
-    if (!row.leadId || (row.eventType !== "CALL_CONNECTED" && row.eventType !== "INBOUND_MESSAGE_RECEIVED")) continue;
+    if (!row.leadId || !effectiveContactEventTypes.some((eventType) => eventType === row.eventType)) continue;
     const key = `${row.eventType}:${row.leadId}`;
     totalBalances.set(key, (totalBalances.get(key) ?? 0) + row.quantity);
     if (!row.creditedMemberId) continue;

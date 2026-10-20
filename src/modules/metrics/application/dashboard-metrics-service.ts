@@ -26,7 +26,7 @@ import {
 import { buildDashboardTimeSeries, mergeIntegratedActivitySeries } from "@/modules/metrics/domain/dashboard-series";
 import { applyLedgerMilestoneBalance, chronologicalLeadStagesWithInferredUpstream, earliestLeadMilestones, effectiveLeadMilestones, leadMilestoneTimeline } from "@/modules/metrics/domain/dashboard-funnel";
 import { summarizeDashboardSellerActivity } from "@/modules/metrics/domain/dashboard-seller-activity";
-import { summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
+import { effectiveContactEventTypes, summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
 import { summarizeEmailCadenceMetrics } from "@/modules/metrics/domain/email-cadence-metrics";
 import {
   createMetricsService,
@@ -161,8 +161,7 @@ function comparableMetrics(overview: MetricsOverview): readonly ComparableMetric
     { id: "scheduled", label: "Reuniões agendadas", kind: "COUNT", value: evidence.scheduledMeetings.length, numerator: evidence.scheduledMeetings.length, denominator: evidence.qualifications.length, keys: leadKeys(evidence.scheduledLeadIds), formula: "qualificados agendados / qualificados", desiredDirection: "UP" },
     { id: "held", label: "Reuniões realizadas", kind: "COUNT", value: evidence.heldMeetings.length, numerator: evidence.heldMeetings.length, denominator: evidence.heldMeetings.length + evidence.noShowMeetings.length, keys: meetingKeys(evidence.heldMeetings), formula: "reuniões realizadas / reuniões decididas", desiredDirection: "UP" },
     { id: "no-show", label: "No-shows", kind: "COUNT", value: evidence.noShowMeetings.length, numerator: evidence.noShowMeetings.length, denominator: evidence.heldMeetings.length + evidence.noShowMeetings.length, keys: meetingKeys(evidence.noShowMeetings), formula: "no-shows / reuniões decididas", desiredDirection: "DOWN" },
-    { id: "opportunities", label: "Oportunidades", kind: "COUNT", value: evidence.opportunitiesCreated.length, numerator: evidence.opportunitiesCreated.length, denominator: null, keys: opportunityKeys(evidence.opportunitiesCreated), formula: "oportunidades criadas no período", desiredDirection: "UP" },
-    { id: "proposals", label: "Propostas", kind: "COUNT", value: evidence.proposals.length, numerator: evidence.proposals.length, denominator: evidence.opportunitiesCreated.length, keys: opportunityKeys(evidence.proposals), formula: "oportunidades que entraram em Proposta / oportunidades criadas", desiredDirection: "UP" },
+    { id: "proposals", label: "Propostas", kind: "COUNT", value: evidence.proposals.length, numerator: evidence.proposals.length, denominator: evidence.scheduledMeetings.length, keys: opportunityKeys(evidence.proposals), formula: "propostas / reuniões agendadas", desiredDirection: "UP" },
     { id: "sales", label: "Vendas", kind: "COUNT", value: evidence.periodWins.length, numerator: evidence.periodWins.length, denominator: evidence.leadReceipts.length, keys: opportunityKeys(evidence.periodWins), formula: "ganhos vigentes no período", desiredDirection: "UP" },
     { id: "losses", label: "Perdas", kind: "COUNT", value: evidence.periodLosses.length, numerator: evidence.periodLosses.length, denominator: evidence.opportunitiesCreated.length, keys: opportunityKeys(evidence.periodLosses), formula: "perdas vigentes no período", desiredDirection: "CONTEXT" },
     { id: "disqualified", label: "Desqualificados", kind: "COUNT", value: evidence.disqualifications.length, numerator: evidence.disqualifications.length, denominator: evidence.leadReceipts.length, keys: leadKeys(evidence.disqualifications.map((row) => row.leadId)), formula: "desqualificações ocorridas no período e vigentes no corte", desiredDirection: "CONTEXT" },
@@ -574,7 +573,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       activityBalances.set(key, (activityBalances.get(key) ?? 0) + fact.quantity);
     }
     attempted = applyLedgerMilestoneBalance(attempted, activityBalances, ["CALL_ATTEMPTED:"]);
-    contacted = applyLedgerMilestoneBalance(contacted, activityBalances, ["CALL_CONNECTED:", "INBOUND_MESSAGE_RECEIVED:"]);
+    contacted = applyLedgerMilestoneBalance(contacted, activityBalances, effectiveContactEventTypes.map((eventType) => `${eventType}:`));
     qualified = applyLedgerMilestoneBalance(qualified, activityBalances, ["LEAD_QUALIFIED:"]);
     scheduled = applyLedgerMilestoneBalance(scheduled, activityBalances, ["MEETING_SCHEDULED:"]);
     const cohortKeys = [...cohort].map(leadKey);
@@ -584,9 +583,6 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     const winKeys = overview.evidence.periodWins.map((item) => opportunityKey(item.opportunityId));
     const slaKeys = overview.evidence.slaCycles.map((item) => slaKey(item.cycleId));
 
-    const periodOpportunities = leads.flatMap((lead) => lead.opportunities
-      .filter((item) => item.createdAt >= from && item.createdAt < to)
-      .map((item) => ({ lead, item })));
     const proposalOpportunities = leads.flatMap((lead) => lead.opportunities
       .filter((item) => item.stageHistory.some((history) =>
         history.stage.opportunityStageCode === "PROPOSAL"
@@ -600,13 +596,12 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     };
     addKpi({ id: "leads", label: "Leads recebidos", kind: "COUNT", value: cohort.size, numerator: cohort.size, denominator: null, detail: "Novas identidades recebidas no período." }, cohortKeys, "LeadFormSubmission com resultado CREATED no período");
     addKpi({ id: "attempts", label: "Tentativas", kind: "COUNT", value: attempted.size, numerator: attempted.size, denominator: cohort.size, detail: "Leads recebidos com primeira tentativa humana até o corte." }, keysFor(attempted), "leads tentados / leads recebidos");
-    addKpi({ id: "connected", label: "Conectados", kind: "COUNT", value: contacted.size, numerator: contacted.size, denominator: attempted.size, detail: "Leads com primeira conexão humana." }, keysFor(contacted), "leads conectados / leads tentados");
+    addKpi({ id: "connected", label: "Leads conectados", kind: "COUNT", value: contacted.size, numerator: contacted.size, denominator: attempted.size, detail: "Leads com ligação atendida, mensagem recebida ou mensagem enviada por WhatsApp, Instagram ou e-mail." }, keysFor(contacted), "leads conectados / leads tentados");
     addKpi({ id: "qualified", label: "Qualificados", kind: "COUNT", value: qualified.size, numerator: qualified.size, denominator: cohort.size, detail: "Leads da coorte que entraram em Qualificado." }, keysFor(qualified), "leads qualificados / leads recebidos");
     addKpi({ id: "scheduled", label: "Reuniões agendadas", kind: "COUNT", value: scheduled.size, numerator: scheduled.size, denominator: qualified.size, detail: "Leads qualificados com agendamento registrado." }, keysFor(scheduled), "qualificados agendados / qualificados");
     addKpi({ id: "held", label: "Reuniões realizadas", kind: "COUNT", value: heldKeys.length, numerator: heldKeys.length, denominator: heldKeys.length + noShowKeys.length, detail: "Reuniões decididas com comparecimento." }, heldKeys, "reuniões realizadas / reuniões decididas");
     addKpi({ id: "no-show", label: "No-shows", kind: "COUNT", value: noShowKeys.length, numerator: noShowKeys.length, denominator: heldKeys.length + noShowKeys.length, detail: "Reuniões decididas sem comparecimento." }, noShowKeys, "no-shows / reuniões decididas");
-    addKpi({ id: "opportunities", label: "Oportunidades", kind: "COUNT", value: periodOpportunities.length, numerator: periodOpportunities.length, denominator: null, detail: "Oportunidades criadas no período." }, periodOpportunities.map(({ item }) => opportunityKey(item.id)), "oportunidades criadas no período");
-    addKpi({ id: "proposals", label: "Oportunidades em Proposta", kind: "COUNT", value: proposalOpportunities.length, numerator: proposalOpportunities.length, denominator: periodOpportunities.length, detail: "Oportunidades que entraram na etapa Proposta no período; ofertas registradas são contadas separadamente." }, proposalOpportunities.map(({ item }) => opportunityKey(item.id)), "oportunidades em Proposta / oportunidades criadas");
+    addKpi({ id: "proposals", label: "Propostas", kind: "COUNT", value: proposalOpportunities.length, numerator: proposalOpportunities.length, denominator: scheduled.size, detail: "Propostas que alcançaram a etapa comercial no período; ofertas registradas são contadas separadamente." }, proposalOpportunities.map(({ item }) => opportunityKey(item.id)), "propostas / reuniões agendadas");
     addKpi({ id: "sales", label: "Vendas", kind: "COUNT", value: winKeys.length, numerator: winKeys.length, denominator: cohort.size, detail: "Ganhos vigentes ocorridos no período." }, winKeys, "ganhos vigentes / leads recebidos");
     addKpi({ id: "revenue", label: "Receita", kind: "MONEY", value: overview.revenue.cents, numerator: overview.revenue.numerator, denominator: null, detail: "Valor congelado dos ganhos do período." }, winKeys, "soma de amountCents dos ganhos vigentes");
     addKpi({ id: "mrr", label: "MRR vendido no período", kind: "MONEY", value: overview.mrr.cents, numerator: overview.mrr.numerator, denominator: null, detail: "MRR congelado dos ganhos do período." }, winKeys, "soma de mrrCents dos ganhos vigentes");
@@ -692,19 +687,17 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
 
     const receiptTimes = earliestLeadMilestones(overview.evidence.leadReceipts);
     const attemptedTimes = effectiveLeadMilestones(overview.evidence.firstAttempts, activityFacts, ["CALL_ATTEMPTED"], attempted);
-    const contactedTimes = effectiveLeadMilestones(overview.evidence.firstConnections, activityFacts, ["CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED"], contacted);
+    const contactedTimes = effectiveLeadMilestones(overview.evidence.firstConnections, activityFacts, effectiveContactEventTypes, contacted);
     const qualifiedTimes = effectiveLeadMilestones(overview.evidence.qualifications, activityFacts, ["LEAD_QUALIFIED"], qualified);
     const scheduledTimes = effectiveLeadMilestones(overview.evidence.scheduledMeetings, activityFacts, ["MEETING_SCHEDULED"], scheduled);
-    const opportunityTimes = leadMilestoneTimeline(overview.evidence.opportunitiesCreated);
     const proposalTimes = leadMilestoneTimeline(overview.evidence.proposals);
-    const [attemptedStageTimes, contactedStageTimes, qualifiedStageTimes, scheduledStageTimes, opportunityStageTimes, proposalStageTimes] = chronologicalLeadStagesWithInferredUpstream(receiptTimes, [
-      attemptedTimes, contactedTimes, qualifiedTimes, scheduledTimes, opportunityTimes, proposalTimes,
+    const [attemptedStageTimes, contactedStageTimes, qualifiedStageTimes, scheduledStageTimes, proposalStageTimes] = chronologicalLeadStagesWithInferredUpstream(receiptTimes, [
+      attemptedTimes, contactedTimes, qualifiedTimes, scheduledTimes, proposalTimes,
     ]);
     const attemptedStage = new Set(attemptedStageTimes.keys());
     const contactedStage = new Set(contactedStageTimes.keys());
     const qualifiedStage = new Set(qualifiedStageTimes.keys());
     const scheduledStage = new Set(scheduledStageTimes.keys());
-    const opportunityStage = new Set(opportunityStageTimes.keys());
     const proposalStage = new Set(proposalStageTimes.keys());
     const scheduledEventCount = [...activityBalances].reduce((total, [key, balance]) =>
       key.startsWith("MEETING_SCHEDULED:") ? total + Math.max(0, balance) : total, 0);
@@ -740,8 +733,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       ["connected", "Conectado", contactedStage, "attempted"],
       ["qualified", "Qualificado", qualifiedStage, "connected"],
       ["meeting", "Reunião", scheduledStage, "qualified"],
-      ["opportunity", "Oportunidade", opportunityStage, "meeting"],
-      ["proposal", "Proposta", proposalStage, "opportunity"],
+      ["proposal", "Proposta", proposalStage, "meeting"],
     ] as const;
     const fullFunnelStages: DashboardFunnelNode[] = fullFunnelStageSets.map(([id, label, values, branchFrom], index) => {
       const denominator = index === 0 ? null : fullFunnelStageSets[index - 1]![2].size;
@@ -968,20 +960,20 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     }
     const closerIds = new Set([
       ...closerGroups.keys(),
-      ...periodOpportunities.map(({ item }) => item.owner.id),
+      ...proposalOpportunities.map(({ item }) => item.owner.id),
     ]);
     const closerPerformanceRows: DashboardPerformanceRow[] = [...closerIds].map((id) => {
       const group = closerGroups.get(id);
-      const opportunitiesForCloser = periodOpportunities.filter(({ item }) => item.owner.id === id);
+      const proposalsForCloser = proposalOpportunities.filter(({ item }) => item.owner.id === id);
       const decided = (group?.held.length ?? 0) + (group?.noShow.length ?? 0);
-      const name = group?.name ?? opportunitiesForCloser[0]?.item.owner.user.displayName ?? "Closer";
+      const name = group?.name ?? proposalsForCloser[0]?.item.owner.user.displayName ?? "Closer";
       const drilldownId = addDrilldown(
         `performance.closer.${id}`,
         `Performance de ${name}`,
-        "Oportunidades, reuniões decididas e ganhos do closer no período.",
-        "ganhos / oportunidades criadas; show / reuniões decididas",
+        "Propostas, reuniões decididas e ganhos do closer no período.",
+        "ganhos / propostas; show / reuniões decididas",
         unique([
-          ...opportunitiesForCloser.map(({ item }) => opportunityKey(item.id)),
+          ...proposalsForCloser.map(({ item }) => opportunityKey(item.id)),
           ...(group?.held ?? []),
           ...(group?.noShow ?? []),
         ]),
@@ -990,8 +982,8 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
         id,
         name,
         role: "CLOSER" as const,
-        volume: opportunitiesForCloser.length,
-        conversionPercentage: percent(group?.wins.length ?? 0, opportunitiesForCloser.length),
+        volume: proposalsForCloser.length,
+        conversionPercentage: percent(group?.wins.length ?? 0, proposalsForCloser.length),
         revenueCents: (group?.revenue ?? 0n).toString(),
         slaSeconds: null,
         meetings: decided,
@@ -1014,8 +1006,8 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
         drilldownId: addDrilldown(
           `performance.closer.${member.id}`,
           `Performance de ${member.name}`,
-          "Nenhuma oportunidade ou reunião decidida no período.",
-          "ganhos / oportunidades criadas; show / reuniões decididas",
+          "Nenhuma proposta ou reunião decidida no período.",
+          "ganhos / propostas; show / reuniões decididas",
           [],
         ),
       }));
@@ -1269,7 +1261,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       pactoQuality: Object.freeze(pactoQuality), backlogByStage: Object.freeze(backlogByStage), agingByStage: Object.freeze(agingByStage),
       filterOptions, records: Object.freeze([...records.values()].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || a.key.localeCompare(b.key))),
       drilldowns: Object.freeze([...drilldowns.values()]),
-      hasData: cohort.size > 0 || periodOpportunities.length > 0 || heldKeys.length > 0 || noShowKeys.length > 0 || winKeys.length > 0 || open.size > 0 || activityFacts.length > 0,
+      hasData: cohort.size > 0 || proposalOpportunities.length > 0 || heldKeys.length > 0 || noShowKeys.length > 0 || winKeys.length > 0 || open.size > 0 || activityFacts.length > 0,
     });
   }
 

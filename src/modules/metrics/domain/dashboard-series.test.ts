@@ -30,13 +30,16 @@ describe("séries comerciais do log integrado", () => {
       fact({ id: "c1", eventType: "CALL_CONNECTED", occurredAt: first, leadId: "lead-1" }),
       fact({ id: "c2", eventType: "CALL_CONNECTED", occurredAt: second, leadId: "lead-1" }),
       fact({ id: "r1", eventType: "INBOUND_MESSAGE_RECEIVED", occurredAt: second, leadId: "lead-2" }),
+      fact({ id: "w1", eventType: "WHATSAPP_MESSAGE_SENT", occurredAt: second, leadId: "lead-3" }),
+      fact({ id: "i1", eventType: "INSTAGRAM_MESSAGE_SENT", occurredAt: second, leadId: "lead-3" }),
+      fact({ id: "e1", eventType: "EMAIL_SENT", occurredAt: second, leadId: "lead-3" }),
       fact({ id: "q1", eventType: "LEAD_QUALIFIED", occurredAt: first, leadId: "lead-2" }),
       fact({ id: "q2", eventType: "LEAD_QUALIFIED", occurredAt: first, leadId: "lead-2", quantity: -1 }),
       fact({ id: "q3", eventType: "LEAD_QUALIFIED", occurredAt: second, leadId: "lead-2" }),
     ];
     const result = mergeIntegratedActivitySeries([series("connected"), series("qualified")], facts);
     expect(result.map((item) => [item.id, item.points.map((point) => point.value)])).toEqual([
-      ["connected", [1, 2]], ["qualified", [0, 1]],
+      ["connected", [1, 3]], ["qualified", [0, 1]],
     ]);
   });
 
@@ -68,7 +71,7 @@ describe("séries comerciais do log integrado", () => {
     expect(mergeIntegratedActivitySeries([series("connected")], facts)[0]?.points.map((point) => point.value)).toEqual([0, 1]);
   });
 
-  it("separa reunião criada na agenda de card marcado e soma vendas com receita", () => {
+  it("unifica reunião criada na agenda e card marcado e soma vendas com receita", () => {
     const facts = [
       fact({ id: "stage", eventType: "MEETING_SCHEDULED", sourceEntityType: "StageHistory", occurredAt: first }),
       fact({ id: "meeting", eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", occurredAt: first }),
@@ -78,13 +81,13 @@ describe("séries comerciais do log integrado", () => {
     ];
     const result = mergeIntegratedActivitySeries([series("scheduled"), series("proposals"), series("sales"), series("revenue", "MONEY")], facts);
     expect(result.map((item) => [item.id, item.points.map((point) => point.value)])).toEqual([
-      ["scheduled", [1, 0]], ["proposals", [0, 1]], ["sales", [0, 1]], ["revenue", ["0", "12500"]],
+      ["scheduled", [2, 0]], ["proposals", [0, 1]], ["sales", [0, 1]], ["revenue", ["0", "12500"]],
     ]);
   });
 
-  it("mostra zero para cards marcados sem reunião na agenda e mantém legado sem fatos relacionados", () => {
+  it("conta card marcado como reunião e mantém legado sem fatos relacionados", () => {
     const legacy = series("scheduled");
-    expect(mergeIntegratedActivitySeries([legacy], [fact({ id: "stage", eventType: "MEETING_SCHEDULED", sourceEntityType: "StageHistory", occurredAt: first })])[0]?.points.map((point) => point.value)).toEqual([0, 0]);
+    expect(mergeIntegratedActivitySeries([legacy], [fact({ id: "stage", eventType: "MEETING_SCHEDULED", sourceEntityType: "StageHistory", occurredAt: first })])[0]?.points.map((point) => point.value)).toEqual([1, 0]);
     expect(mergeIntegratedActivitySeries([series("sales"), series("revenue", "MONEY")], [fact({ id: "call", eventType: "CALL_ATTEMPTED", occurredAt: first })]).map((item) => item.points.map((point) => point.value))).toEqual([[0, 0], ["0", "0"]]);
     expect(mergeIntegratedActivitySeries([legacy], [])).toEqual([legacy]);
   });

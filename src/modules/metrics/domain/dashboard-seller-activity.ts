@@ -18,7 +18,7 @@ export function summarizeDashboardSellerActivity(
     noAnswer: 0, busy: 0, voicemail: 0, otherUnanswered: 0, callFailed: 0, wrongNumber: 0, channelUnavailable: 0, otherFailures: 0, withoutOutcome: 0,
     instagramMessages: 0, instagramFollows: 0, emailsSent: 0, instagramMessagesProfileNotFound: 0, instagramMessagesFailed: 0,
     instagramFollowsAlreadyFollowing: 0, instagramFollowsProfileNotFound: 0, instagramFollowsFailed: 0,
-    qualified: 0, meetingsScheduled: 0, meetingStageMarked: 0, meetingsBooked: 0, meetingsCompleted: 0, proposals: 0, disqualified: 0, sales: 0, salesValueCents: 0n,
+    qualified: 0, meetingsBooked: 0, meetingsCompleted: 0, proposals: 0, disqualified: 0, sales: 0, salesValueCents: 0n,
   });
   for (const fact of facts) {
     const memberId = fact.eventType === "MEETING_SCHEDULED"
@@ -78,8 +78,7 @@ export function summarizeDashboardSellerActivity(
         break;
       }
       case "MEETING_SCHEDULED": {
-        if (fact.sourceEntityType === "MeetingHistory") row.meetingsScheduled += count;
-        else if (fact.sourceEntityType === "StageHistory") row.meetingStageMarked += count;
+        row.meetingsBooked += count;
         break;
       }
       case "MEETING_COMPLETED": row.meetingsCompleted += count; break;
@@ -113,7 +112,7 @@ export function summarizeDashboardSellerActivity(
     row.withoutOutcome = countUnresolvedCallAttempts(callFactsByMember.get(row.id) ?? []);
     row.callsNotAnswered = Math.max(0, row.noAnswer + row.busy + row.otherUnanswered);
     row.numberFailures = Math.max(0, row.callFailed + row.voicemail);
-    row.meetingsBooked = Math.max(0, row.meetingsScheduled + row.meetingStageMarked);
+    row.meetingsBooked = Math.max(0, row.meetingsBooked);
   }
   return Object.freeze([...rows.values()]
     .map((row) => Object.freeze({ ...row, salesValueCents: row.salesValueCents.toString() }))

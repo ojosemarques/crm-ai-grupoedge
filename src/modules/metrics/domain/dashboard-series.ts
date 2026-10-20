@@ -5,6 +5,7 @@ import type {
   DashboardTimeSeriesPoint,
 } from "@/modules/metrics/domain/dashboard-contracts";
 import { durationStatistics } from "@/modules/metrics/domain/metric-math";
+import { effectiveContactEventTypes } from "@/modules/metrics/domain/effective-contact-metrics";
 import type { IntegratedActivityFact, MetricsOverview } from "@/modules/metrics/domain/metrics-contracts";
 import {
   addLocalDays,
@@ -169,8 +170,7 @@ export function buildDashboardTimeSeries(
     countSeries("scheduled", "Reuniões agendadas", evidence.scheduledMeetings, "primeiro agendamento por lead qualificado", "kpi.scheduled"),
     countSeries("held", "Reuniões realizadas", evidence.heldMeetings, "último estado COMPLETED no corte", "kpi.held"),
     countSeries("no-show", "No-shows", evidence.noShowMeetings, "último estado NO_SHOW no corte", "kpi.no-show"),
-    countSeries("opportunities", "Oportunidades", evidence.opportunitiesCreated, "oportunidades criadas por createdAt", "kpi.opportunities"),
-    countSeries("proposals", "Oportunidades em Proposta", evidence.proposals, "primeira entrada da oportunidade em Proposta no período", "kpi.proposals"),
+    countSeries("proposals", "Propostas", evidence.proposals, "primeira entrada em Proposta no período", "kpi.proposals"),
     countSeries("sales", "Vendas", evidence.periodWins, "ganhos vigentes por occurredAt", "kpi.sales"),
     countSeries("losses", "Perdas", evidence.periodLosses, "perdas vigentes por occurredAt", "full-funnel.lost"),
     countSeries("disqualified", "Desqualificados", evidence.disqualifications, "desqualificações vigentes por enteredAt", "full-funnel.disqualified"),
@@ -211,9 +211,9 @@ export function mergeIntegratedActivitySeries(
   const definitions = {
     leads: { eventTypes: ["LEAD_CREATED"], label: "Leads recebidos", formula: "identidades de lead criadas no período" },
     calls: { eventTypes: ["CALL_ATTEMPTED"], label: "Ligações realizadas", formula: "tentativas outbound registradas no período" },
-    connected: { eventTypes: ["CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED"], label: "Leads conectados", formula: "leads distintos com ligação atendida ou mensagem inbound em cada intervalo", distinctLead: true, distinctLeadPerBucket: true },
+    connected: { eventTypes: effectiveContactEventTypes, label: "Leads conectados", formula: "leads distintos com ligação atendida, mensagem recebida ou mensagem enviada por WhatsApp, Instagram ou e-mail", distinctLead: true, distinctLeadPerBucket: true },
     qualified: { eventTypes: ["LEAD_QUALIFIED"], label: "Qualificados", formula: "leads distintos com qualificação registrada no período", distinctLead: true },
-    scheduled: { eventTypes: ["MEETING_SCHEDULED"], label: "Reuniões agendadas", formula: "reuniões criadas na agenda no período", sourceEntityType: "MeetingHistory" },
+    scheduled: { eventTypes: ["MEETING_SCHEDULED"], label: "Reuniões agendadas", formula: "agendamentos registrados pela agenda ou pelo movimento do card no período" },
     proposals: { eventTypes: ["PROPOSAL_REACHED"], label: "Propostas", formula: "ofertas comerciais registradas no período", sourceEntityType: "Offer" },
     sales: { eventTypes: ["SALE_WON"], label: "Vendas", formula: "ganhos registrados no período" },
     revenue: { eventTypes: ["SALE_WON"], label: "Receita", formula: "valor vendido nos ganhos registrados no período", money: true },

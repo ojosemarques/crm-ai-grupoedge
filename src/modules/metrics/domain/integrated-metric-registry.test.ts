@@ -13,6 +13,16 @@ describe("registro integrado de métricas", () => {
     }
   });
 
+  it("mantém contatos e reuniões em métricas canônicas únicas", () => {
+    const byId = new Map(integratedMetricRegistry.map((metric) => [metric.id, metric]));
+    expect(byId.get("outreach.effective_contacts")?.eventTypes).toEqual([
+      "CALL_CONNECTED", "INBOUND_MESSAGE_RECEIVED", "WHATSAPP_MESSAGE_SENT", "INSTAGRAM_MESSAGE_SENT", "EMAIL_SENT",
+    ]);
+    expect(byId.get("outreach.connected_leads")?.eventTypes).toEqual(["CALL_CONNECTED"]);
+    expect(byId.get("meetings.scheduled")?.sourceEntityTypes).toBeUndefined();
+    expect(byId.has("meetings.stage_marked")).toBe(false);
+  });
+
   it("gera fingerprint determinístico sem depender da ordem do metadata", () => {
     const base = {
       workspaceId: "00000000-0000-0000-0000-000000000001",

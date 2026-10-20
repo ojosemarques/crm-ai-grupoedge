@@ -19,7 +19,7 @@ function series(id: string): DashboardTimeSeries {
 }
 
 describe("atividade integrada do dashboard", () => {
-  it("separa reunião criada de card marcado e detalha a execução do vendedor", () => {
+  it("unifica reunião criada e card marcado e detalha a execução do vendedor", () => {
     const facts = [
       fact("TASK_COMPLETED"), fact("CALL_ATTEMPTED"),
       fact("CALL_UNANSWERED", { result: "NO_ANSWER" }),
@@ -33,9 +33,9 @@ describe("atividade integrada do dashboard", () => {
     ];
     expect(summarizeDashboardSellerActivity(facts, [{ id: memberId, name: "Vendedor" }])[0]).toMatchObject({
       tasksCompleted: 1, stageEntries: 1, calls: 1, noAnswer: 1, instagramMessages: 1, instagramFollows: 1,
-      meetingsScheduled: 1, meetingStageMarked: 1, proposals: 1,
+      meetingsBooked: 2, proposals: 1,
     });
-    expect(mergeIntegratedActivitySeries([series("scheduled")], facts)[0]?.points[0]?.value).toBe(1);
+    expect(mergeIntegratedActivitySeries([series("scheduled")], facts)[0]?.points[0]?.value).toBe(2);
   });
 
   it("conta leads conectados uma vez no período e soma vendas reais", () => {

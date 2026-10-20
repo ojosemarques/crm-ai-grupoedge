@@ -96,7 +96,7 @@ describe("metas diárias configuráveis", () => {
     const beforeProspecting = await prospectingService.getScreen(manager, {});
     const beforeMetrics = await metricService.getIntegratedOverview(manager, period);
     const eventId = randomUUID();
-    const touchedLead = await database.lead.findFirstOrThrow({ where: { workspaceId: sdr.workspaceId }, select: { id: true } });
+    const touchedLeadId = randomUUID();
     for (const [suffix, eventType, result] of [
       ["call-attempt", "CALL_ATTEMPTED", null],
       ["call-without-outcome", "CALL_ATTEMPTED", null],
@@ -112,7 +112,7 @@ describe("metas diárias configuráveis", () => {
       sourceEntityType: "DailyGoalParityFixture",
       sourceEntityId: eventId,
       creditedMemberId: sdr.memberId,
-      leadId: touchedLead.id,
+      leadId: touchedLeadId,
       result,
     });
     const qualifiedLeadId = randomUUID();
@@ -149,6 +149,19 @@ describe("metas diárias configuráveis", () => {
       leadId: qualifiedLeadId,
       executionMode: "MANUAL",
     });
+    await recordCommercialMetricFactInTransaction(database, {
+      workspaceId: sdr.workspaceId,
+      eventKey: `daily-goal:${eventId}:meeting-stage:v1`,
+      eventType: "MEETING_SCHEDULED",
+      occurredAt: now,
+      sourceEntityType: "StageHistory",
+      sourceEntityId: randomUUID(),
+      creditedMemberId: sdr.memberId,
+      bookedByMemberId: sdr.memberId,
+      performedByMemberId: sdr.memberId,
+      leadId: qualifiedLeadId,
+      executionMode: "MANUAL",
+    });
     const afterDay = await queueService.getScreen(sdr, {});
     const afterProspecting = await prospectingService.getScreen(manager, {});
     const afterMetrics = await metricService.getIntegratedOverview(manager, period);
@@ -164,14 +177,14 @@ describe("metas diárias configuráveis", () => {
     const effectiveContacts = (screen: typeof afterDay) => Number(screen.dailyProduction.dailyGoal.metrics.find((metric) => metric.key === "EFFECTIVE_CONTACTS")?.actualValue ?? 0);
     const sellerContacts = (screen: typeof afterProspecting) => screen.metrics.dailyBySeller.find((row) => row.memberId === sdr.memberId)?.effectiveContacts ?? 0;
     const contactDelta = value(afterMetrics, "outreach.effective_contacts") - value(beforeMetrics, "outreach.effective_contacts");
-    expect(contactDelta).toBe(1);
+    expect(contactDelta).toBe(2);
     expect(effectiveContacts(afterDay) - effectiveContacts(beforeDay)).toBe(contactDelta);
     expect(sellerContacts(afterProspecting) - sellerContacts(beforeProspecting)).toBe(contactDelta);
     const qualifications = (screen: typeof afterDay) => Number(screen.dailyProduction.dailyGoal.metrics.find((metric) => metric.key === "QUALIFICATIONS")?.actualValue ?? 0);
     expect(qualifications(afterDay) - qualifications(beforeDay)).toBe(value(afterMetrics, "qualification.leads") - value(beforeMetrics, "qualification.leads"));
     const meetingDelta = value(afterMetrics, "meetings.scheduled") - value(beforeMetrics, "meetings.scheduled");
     const sellerMeetings = (screen: typeof afterProspecting) => screen.metrics.dailyBySeller.find((row) => row.memberId === sdr.memberId)?.meetingsScheduled ?? 0;
-    expect(meetingDelta).toBe(1);
+    expect(meetingDelta).toBe(2);
     expect(afterDay.dailyProduction.meetingsScheduled - beforeDay.dailyProduction.meetingsScheduled).toBe(meetingDelta);
     expect(sellerMeetings(afterProspecting) - sellerMeetings(beforeProspecting)).toBe(meetingDelta);
   }, 60_000);
