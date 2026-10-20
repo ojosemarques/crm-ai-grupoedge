@@ -188,11 +188,15 @@ export async function applyProspectingTaskCompletionInTransaction(
   const step = await transaction.prospectingCadenceStep.findUnique({ where: { workspaceId_taskId: { workspaceId: input.workspaceId, taskId: input.taskId } } });
   if (!step) return null;
   const accepted = step.action === "CALL" ? ACCEPTED_MANUAL_RESULTS.CALL
+    : step.action === "WHATSAPP" ? ACCEPTED_MANUAL_RESULTS.WHATSAPP
     : step.action === "INSTAGRAM_MESSAGE" ? ACCEPTED_MANUAL_RESULTS.INSTAGRAM_MESSAGE
       : step.action === "INSTAGRAM_FOLLOW" ? ACCEPTED_MANUAL_RESULTS.INSTAGRAM_FOLLOW
         : [];
   const code = input.result.trim().toUpperCase().replaceAll(" ", "_");
   if (!(accepted as readonly string[]).includes(code)) fail("Resultado inválido para o passo da cadência.", "PROSPECTING_MANUAL_RESULT_INVALID", 400);
+  if (step.action === "WHATSAPP" && code === "OTHER" && !input.resultReason?.trim()) {
+    fail("Descreva o resultado ao selecionar Outro.", "PROSPECTING_WHATSAPP_OTHER_REASON_REQUIRED", 400);
+  }
   const resultReason = resolveProspectingManualResultReason(code, input.resultReason);
   if (input.stopReason && !input.resultReason?.trim()) fail("Informe o motivo da recusa ou pedido de parada.", "PROSPECTING_STOP_REASON_REQUIRED", 400);
   await transaction.prospectingCadenceStep.update({ where: { id: step.id }, data: { status: "COMPLETED", resultCode: code, resultReason, completedAt: input.completedAt } });

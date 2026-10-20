@@ -16,6 +16,9 @@ describe("métricas diárias da prospecção", () => {
       { kind: "CALL", result: "VOICEMAIL", count: 5 },
       { kind: "CALL", result: "WRONG_NUMBER", count: 1 },
       { kind: "CALL", result: "CHANNEL_UNAVAILABLE", count: 2 },
+      { kind: "WHATSAPP", result: "SENT", count: 8 },
+      { kind: "WHATSAPP", result: "NO_WHATSAPP", count: 3 },
+      { kind: "WHATSAPP", result: "OTHER", count: 2 },
       { kind: "INSTAGRAM_MESSAGE", result: "SENT", count: 6 },
       { kind: "INSTAGRAM_MESSAGE", result: "PROFILE_NOT_FOUND", count: 2 },
       { kind: "INSTAGRAM_MESSAGE", result: "FAILED", count: 1 },
@@ -34,6 +37,10 @@ describe("métricas diárias da prospecção", () => {
       callsWrongNumber: 1,
       callsChannelUnavailable: 2,
       callsFailed: 3,
+      whatsappCompleted: 13,
+      whatsappSent: 8,
+      whatsappUnavailable: 3,
+      whatsappOther: 2,
       instagramMessagesCompleted: 9,
       instagramMessagesSent: 6,
       instagramMessagesProfileNotFound: 2,
@@ -50,6 +57,7 @@ describe("métricas diárias da prospecção", () => {
     expect(buildProspectingDailyActionPlan([
       { stepKey: "instagram-message-2", action: "INSTAGRAM_MESSAGE", completed: 4, pending: 21 },
       { stepKey: "call-1", action: "CALL", completed: 18, pending: 32 },
+      { stepKey: "whatsapp-1", action: "WHATSAPP", completed: 12, pending: 38 },
       { stepKey: "follow-up", action: "FOLLOW_UP", completed: 2, pending: 3 },
       { stepKey: "instagram-follow", action: "INSTAGRAM_FOLLOW", completed: 0, pending: 50 },
       { stepKey: "email-1", action: "EMAIL", completed: 10, pending: 0 },
@@ -58,6 +66,7 @@ describe("métricas diárias da prospecção", () => {
       { key: "follow-up", label: "Retornos", kind: "FOLLOW_UP", dayNumber: null, planned: 5, completed: 2, pending: 3 },
       { key: "call-1", label: "Ligação 1", kind: "CALL", dayNumber: 1, planned: 50, completed: 18, pending: 32 },
       { key: "instagram-follow", label: "Seguir no Instagram", kind: "INSTAGRAM_FOLLOW", dayNumber: 1, planned: 50, completed: 0, pending: 50 },
+      { key: "whatsapp-1", label: "WhatsApp 1", kind: "WHATSAPP", dayNumber: 1, planned: 50, completed: 12, pending: 38 },
       { key: "instagram-message-2", label: "Mensagem no Instagram 2", kind: "INSTAGRAM_MESSAGE", dayNumber: 8, planned: 25, completed: 4, pending: 21 },
     ]);
   });

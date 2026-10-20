@@ -17,6 +17,10 @@ export type ProspectingTaskResultSummary = Readonly<{
   callsWrongNumber: number;
   callsChannelUnavailable: number;
   callsFailed: number;
+  whatsappCompleted: number;
+  whatsappSent: number;
+  whatsappUnavailable: number;
+  whatsappOther: number;
   instagramMessagesCompleted: number;
   instagramMessagesSent: number;
   instagramMessagesProfileNotFound: number;
@@ -38,7 +42,7 @@ export type ProspectingDailyActionRow = Readonly<{
 export type ProspectingDailyAction = Readonly<{
   key: string;
   label: string;
-  kind: "CALL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW" | "FOLLOW_UP";
+  kind: "CALL" | "WHATSAPP" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW" | "FOLLOW_UP";
   dayNumber: number | null;
   planned: number;
   completed: number;
@@ -52,6 +56,7 @@ function actionLabel(stepKey: string, action: ProspectingDailyAction["kind"]): s
   if (action === "FOLLOW_UP") return "Retornos";
   const sequence = stepKey.match(/-(\d+)$/)?.[1];
   if (action === "CALL") return sequence ? `Ligação ${sequence}` : "Ligação";
+  if (action === "WHATSAPP") return sequence ? `WhatsApp ${sequence}` : "WhatsApp";
   if (action === "INSTAGRAM_MESSAGE") return sequence ? `Mensagem no Instagram ${sequence}` : "Mensagem no Instagram";
   return "Seguir no Instagram";
 }
@@ -61,6 +66,7 @@ export function buildProspectingDailyActionPlan(
 ): readonly ProspectingDailyAction[] {
   const supportedKinds = new Set<ProspectingDailyAction["kind"]>([
     "CALL",
+    "WHATSAPP",
     "INSTAGRAM_MESSAGE",
     "INSTAGRAM_FOLLOW",
     "FOLLOW_UP",
@@ -118,6 +124,10 @@ export function summarizeProspectingTaskResults(
     callsWrongNumber,
     callsChannelUnavailable,
     callsFailed: callsWrongNumber + callsChannelUnavailable,
+    whatsappCompleted: count("WHATSAPP"),
+    whatsappSent: count("WHATSAPP", ["SENT"]),
+    whatsappUnavailable: count("WHATSAPP", ["NO_WHATSAPP"]),
+    whatsappOther: count("WHATSAPP", ["OTHER"]),
     instagramMessagesCompleted: count("INSTAGRAM_MESSAGE"),
     instagramMessagesSent: count("INSTAGRAM_MESSAGE", ["SENT"]),
     instagramMessagesProfileNotFound: count("INSTAGRAM_MESSAGE", ["PROFILE_NOT_FOUND"]),

@@ -119,7 +119,7 @@ export type SdrQueueScreen = Readonly<{
       activityPlan: readonly Readonly<{
         key: string;
         label: string;
-        kind: "CALL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW" | "FOLLOW_UP";
+        kind: "CALL" | "WHATSAPP" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW" | "FOLLOW_UP";
         dayNumber: number | null;
         planned: number;
         completed: number;
@@ -142,6 +142,11 @@ export type SdrQueueScreen = Readonly<{
     callsWithoutOutcome: number;
     callsPending: number;
     messages: number;
+    whatsappMessagesCompleted: number;
+    whatsappMessagesSent: number;
+    whatsappUnavailable: number;
+    whatsappOther: number;
+    whatsappPending: number;
     instagramMessagesCompleted: number;
     instagramMessagesSent: number;
     instagramMessagesProfileNotFound: number;
@@ -216,10 +221,11 @@ export function getOperationalRank(
   now: Date,
 ): number {
   const coldProspectingTask = item.nextActionSourceKey?.startsWith("active-prospecting:")
-    && ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"].includes(item.nextActionKind ?? "");
+    && ["CALL", "WHATSAPP", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"].includes(item.nextActionKind ?? "");
   if (coldProspectingTask && item.nextActionKind === "CALL") return 0;
   if (coldProspectingTask && item.nextActionKind === "INSTAGRAM_FOLLOW") return 1;
   if (coldProspectingTask && item.nextActionKind === "INSTAGRAM_MESSAGE") return 2;
+  if (coldProspectingTask && item.nextActionKind === "WHATSAPP") return 3;
   if (item.awaitingHumanResponse || item.meetingTodayId) return 4;
   if (item.nextActionAt && new Date(item.nextActionAt) < now) return 5;
   if (item.stagePosition === 0 && item.priorityCode === "P1") return 6;
@@ -257,11 +263,11 @@ export function getSdrQueueRecommendation(
       href: `${historyHref}#registrar-atividade`,
     };
   }
-  if (item.nextActionKind === "MESSAGE") {
+  if (item.nextActionKind === "MESSAGE" || item.nextActionKind === "WHATSAPP") {
     return {
       code: "RECORD_MESSAGE",
-      label: "Registrar mensagem",
-      reason: "A próxima tarefa persistida é uma mensagem.",
+      label: item.nextActionKind === "WHATSAPP" ? "Registrar WhatsApp" : "Registrar mensagem",
+      reason: item.nextActionKind === "WHATSAPP" ? "A próxima tarefa persistida é uma mensagem de WhatsApp." : "A próxima tarefa persistida é uma mensagem.",
       href: `${historyHref}#registrar-atividade`,
     };
   }

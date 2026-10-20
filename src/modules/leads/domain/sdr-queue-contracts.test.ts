@@ -44,6 +44,7 @@ describe("fila determinística do SDR", () => {
     expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:cadence:instagram-message-1", nextActionKind: "INSTAGRAM_MESSAGE", stagePosition: 1, priorityCode: "P2", nextActionAt: "2033-05-10T14:00:00.000Z" }, now)).toBe(2);
     expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:cadence:call-2", nextActionKind: "CALL", stagePosition: 1, priorityCode: "P2", nextActionAt: "2033-05-10T14:00:00.000Z" }, now)).toBe(0);
     expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:cadence:instagram-message-2", nextActionKind: "INSTAGRAM_MESSAGE", stagePosition: 1, priorityCode: "P2", nextActionAt: "2033-05-10T14:00:00.000Z" }, now)).toBe(2);
+    expect(getOperationalRank({ awaitingHumanResponse: false, nextActionSourceKey: "active-prospecting:cadence:whatsapp-2", nextActionKind: "WHATSAPP", stagePosition: 1, priorityCode: "P2", nextActionAt: "2033-05-10T14:00:00.000Z" }, now)).toBe(3);
     expect(getOperationalRank({ awaitingHumanResponse: true, stagePosition: 2, priorityCode: "P3", nextActionAt: null }, now)).toBe(4);
     expect(getOperationalRank({ awaitingHumanResponse: false, meetingTodayId: "meeting", stagePosition: 2, priorityCode: "P3", nextActionAt: null }, now)).toBe(4);
     expect(getOperationalRank({ awaitingHumanResponse: false, stagePosition: 1, priorityCode: "P1", nextActionAt: "2033-05-10T14:59:59.000Z" }, now)).toBe(5);

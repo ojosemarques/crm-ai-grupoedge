@@ -9,10 +9,16 @@ import {
 } from "@/modules/prospecting/domain/prospecting-cadence";
 
 describe("cadência de prospecção política", () => {
-  it("materializa seis e-mails e o restante da cadência, incluindo três passos manuais no D1", () => {
+  it("materializa seis e-mails e o restante da cadência, incluindo WhatsApp nos quatro ciclos", () => {
     const schedule = scheduleProspectingCadence({ d1Date: "2026-10-05", timeZone: "America/Sao_Paulo", holidays: new Set() });
-    expect(schedule).toHaveLength(16);
-    expect(schedule.filter((step) => ["call-1", "instagram-message-1", "instagram-follow"].includes(step.stepKey)).map((step) => step.dayNumber)).toEqual([1, 1, 1]);
+    expect(schedule).toHaveLength(20);
+    expect(schedule.filter((step) => ["call-1", "instagram-message-1", "instagram-follow", "whatsapp-1"].includes(step.stepKey)).map((step) => step.dayNumber)).toEqual([1, 1, 1, 1]);
+    expect(schedule.filter((step) => step.action === "WHATSAPP").map((step) => [step.stepKey, step.dayNumber])).toEqual([
+      ["whatsapp-1", 1],
+      ["whatsapp-2", 8],
+      ["whatsapp-3", 16],
+      ["whatsapp-4", 24],
+    ]);
     expect(schedule.filter((step) => step.executor === "OPEN_DOT").map((step) => [step.stepKey, step.dayNumber - 1])).toEqual([
       ["email-1", 0],
       ["email-2", 3],
@@ -21,7 +27,7 @@ describe("cadência de prospecção política", () => {
       ["email-5", 18],
       ["email-6", 25],
     ]);
-    expect(new Set(PROSPECTING_CADENCE.map((step) => step.stepKey)).size).toBe(16);
+    expect(new Set(PROSPECTING_CADENCE.map((step) => step.stepKey)).size).toBe(20);
   });
 
   it("empurra sábado, domingo e feriado para o próximo dia útil", () => {
@@ -45,11 +51,13 @@ describe("cadência de prospecção política", () => {
   it("registra motivo automático para resultados de exceção sem exigir texto adicional", () => {
     expect(ACCEPTED_MANUAL_RESULTS.INSTAGRAM_MESSAGE).toContain("PROFILE_NOT_FOUND");
     expect(ACCEPTED_MANUAL_RESULTS.INSTAGRAM_FOLLOW).toContain("PROFILE_NOT_FOUND");
+    expect(ACCEPTED_MANUAL_RESULTS.WHATSAPP).toEqual(["SENT", "NO_WHATSAPP", "OTHER"]);
     expect(ACCEPTED_MANUAL_RESULTS.CALL).toEqual(expect.arrayContaining(["CALLBACK_REQUESTED", "WHATSAPP_SHARED"]));
     expect(resolveProspectingManualResultReason("WRONG_NUMBER")).toBe("Número incorreto informado pelo vendedor.");
     expect(resolveProspectingManualResultReason("CHANNEL_UNAVAILABLE")).toBe("Canal indisponível informado pelo vendedor.");
     expect(resolveProspectingManualResultReason("FAILED")).toBe("Falha informada pelo vendedor.");
     expect(resolveProspectingManualResultReason("PROFILE_NOT_FOUND")).toBe("Perfil não encontrado informado pelo vendedor.");
+    expect(resolveProspectingManualResultReason("NO_WHATSAPP")).toBe("Contato sem WhatsApp informado pelo vendedor.");
     expect(resolveProspectingManualResultReason("WRONG_NUMBER", "Telefone pertence a outra pessoa.")).toBe("Telefone pertence a outra pessoa.");
     expect(resolveProspectingManualResultReason("NO_ANSWER")).toBeNull();
   });

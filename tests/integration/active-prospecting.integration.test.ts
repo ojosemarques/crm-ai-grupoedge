@@ -231,12 +231,32 @@ describe("staging governado da Prospecção Ativa", () => {
       expect.objectContaining({ type: "INSTAGRAM", label: "Direto", normalizedValue: "@fluxocompleto" }),
     ]));
     const cadence = await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { workspaceId_leadId: { workspaceId: principal.workspaceId, leadId } } });
-    expect(cadence.status).toBe("PENDING_D1");
-    expect(await database.prospectingCadenceStep.count({ where: { cadenceInstanceId: cadence.id } })).toBe(16);
+    expect(cadence).toMatchObject({ status: "PENDING_D1", templateVersion: 3 });
+    expect(await database.prospectingCadenceStep.count({ where: { cadenceInstanceId: cadence.id } })).toBe(20);
+    await expect(database.prospectingCadenceStep.findMany({
+      where: { cadenceInstanceId: cadence.id, action: "WHATSAPP" },
+      orderBy: { stepKey: "asc" },
+      select: { stepKey: true },
+    })).resolves.toEqual([
+      { stepKey: "whatsapp-1" },
+      { stepKey: "whatsapp-2" },
+      { stepKey: "whatsapp-3" },
+      { stepKey: "whatsapp-4" },
+    ]);
+    await expect(database.task.findMany({
+      where: { leadId, kind: "WHATSAPP", sourceKey: { startsWith: `active-prospecting:${cadence.id}:whatsapp-` } },
+      orderBy: { title: "asc" },
+      select: { kind: true, title: true, status: true },
+    })).resolves.toEqual([
+      { kind: "WHATSAPP", title: "Enviar mensagem WhatsApp nº 1", status: "OPEN" },
+      { kind: "WHATSAPP", title: "Enviar mensagem WhatsApp nº 2", status: "OPEN" },
+      { kind: "WHATSAPP", title: "Enviar mensagem WhatsApp nº 3", status: "OPEN" },
+      { kind: "WHATSAPP", title: "Enviar mensagem WhatsApp nº 4", status: "OPEN" },
+    ]);
     expect(await database.lead.count({ where: { workspaceId: principal.workspaceId, id: leadId } })).toBe(1);
 
     clock = new Date(clock.getTime() + 1_000);
-    const d1Results = new Map<string, string>([["call-1", "WRONG_NUMBER"], ["instagram-message-1", "SENT"], ["instagram-follow", "COMPLETED"]]);
+    const d1Results = new Map<string, string>([["call-1", "WRONG_NUMBER"], ["instagram-message-1", "SENT"], ["instagram-follow", "COMPLETED"], ["whatsapp-1", "SENT"]]);
     const d1Steps = await database.prospectingCadenceStep.findMany({ where: { cadenceInstanceId: cadence.id, stepKey: { in: [...d1Results.keys()] } }, orderBy: { scheduledAt: "asc" } });
     for (const step of d1Steps) {
       const result = d1Results.get(step.stepKey);
@@ -249,6 +269,15 @@ describe("staging governado da Prospecção Ativa", () => {
     expect(await database.prospectingCadenceStep.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "call-1" } })).toMatchObject({ resultCode: "WRONG_NUMBER", resultReason: "Número incorreto informado pelo vendedor." });
     expect(await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id } })).toMatchObject({ status: "ACTIVE" });
     expect(await database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id, status: "SCHEDULED" } })).toBe(6);
+    const whatsappTwo = await database.prospectingCadenceStep.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "whatsapp-2" } });
+    await expect(database.$transaction((transaction) => applyProspectingTaskCompletionInTransaction(transaction, {
+      workspaceId: principal.workspaceId,
+      leadId,
+      taskId: whatsappTwo.taskId!,
+      result: "OTHER",
+      actorId: systemActorId,
+      completedAt: clock,
+    }))).rejects.toMatchObject({ code: "PROSPECTING_WHATSAPP_OTHER_REASON_REQUIRED" });
 
     const firstEmail = await database.prospectingEmailJob.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "email-1" } });
     clock = new Date(Math.max(clock.getTime(), firstEmail.scheduledAt.getTime()) + 5 * 60_000);

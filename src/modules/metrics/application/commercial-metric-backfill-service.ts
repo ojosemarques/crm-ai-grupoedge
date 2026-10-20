@@ -192,7 +192,7 @@ function sources(database: PrismaClient, workspaceId: string): readonly Source[]
         const facts = await database.commercialMetricFact.findMany({
           where: {
             workspaceId, sourceEntityType: "Task", quantity: 1, correctionOfFactId: null,
-            eventType: { in: ["TASK_COMPLETED", "CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED"] },
+            eventType: { in: ["TASK_COMPLETED", "CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "WHATSAPP_MESSAGE_SENT", "WHATSAPP_UNAVAILABLE", "WHATSAPP_OTHER", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED"] },
             ...(cursor ? { id: { gt: cursor } } : {}),
           },
           orderBy: { id: "asc" }, take,

@@ -11,7 +11,7 @@ export const goalMetricUnits = {
 
 export const goalMetricCatalog = [
   { key: "LEADS_ASSIGNED", label: "Leads recebidos", unit: "COUNT", fact: "LEAD_CREATED", direction: "HIGHER_IS_BETTER" },
-  { key: "HUMAN_ATTEMPTS", label: "Ações de contato", unit: "COUNT", fact: "CALL_ATTEMPTED + EMAIL_SENT + INSTAGRAM_MESSAGE_SENT", direction: "HIGHER_IS_BETTER" },
+  { key: "HUMAN_ATTEMPTS", label: "Ações de contato", unit: "COUNT", fact: "CALL_ATTEMPTED + WHATSAPP_MESSAGE_SENT + EMAIL_SENT + INSTAGRAM_MESSAGE_SENT", direction: "HIGHER_IS_BETTER" },
   { key: "MEETINGS_HELD", label: "Reuniões realizadas", unit: "COUNT", fact: "MEETING_COMPLETED", direction: "HIGHER_IS_BETTER" },
   { key: "OPPORTUNITIES_WON", label: "Vendas", unit: "COUNT", fact: "SALE_WON", direction: "HIGHER_IS_BETTER" },
   { key: "REVENUE_WON_CENTS", label: "Receita ganha", unit: "CURRENCY_CENTS", fact: "soma de SALE_WON.valueCents", direction: "HIGHER_IS_BETTER" },

@@ -167,6 +167,8 @@ function operationalOrderSql(now: Date): Prisma.Sql {
         AND next_task."kind"::text = 'INSTAGRAM_FOLLOW' THEN 1
       WHEN next_task."sourceKey" LIKE 'active-prospecting:%'
         AND next_task."kind"::text = 'INSTAGRAM_MESSAGE' THEN 2
+      WHEN next_task."sourceKey" LIKE 'active-prospecting:%'
+        AND next_task."kind"::text = 'WHATSAPP' THEN 3
       WHEN l."awaitingHumanResponse" OR meeting_today."id" IS NOT NULL THEN 4
       WHEN COALESCE(next_task."dueAt", l."nextActionAt") < ${now} THEN 5
       WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P1' THEN 6
@@ -308,7 +310,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         WHERE task."workspaceId" = l."workspaceId"
           AND task."leadId" = l."id"
           AND task."sourceKey" LIKE 'active-prospecting:%'
-          AND task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
+          AND task."kind"::text IN ('CALL', 'WHATSAPP', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
           AND (task."kind"::text <> 'CALL' OR (${callablePhoneSql()}))
           AND task."status"::text IN ('OPEN', 'IN_PROGRESS')
           AND task."deletedAt" IS NULL
@@ -595,7 +597,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           AND task."status"::text = 'COMPLETED'
           AND task."completedAt" >= ${today.start}
           AND task."completedAt" < ${today.end}
-          AND task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
+          AND task."kind"::text IN ('CALL', 'WHATSAPP', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
           AND task."deletedAt" IS NULL
       `),
       options.database.$queryRaw<Array<{ leadId: string }>>(Prisma.sql`
@@ -671,7 +673,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         WHERE task."workspaceId" = ${context.workspaceId}::uuid
           ${productivityMemberSql}
           AND step."executor"::text = 'SELLER'
-          AND task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
+          AND task."kind"::text IN ('CALL', 'WHATSAPP', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
           AND task."deletedAt" IS NULL
           AND (
             (
@@ -737,7 +739,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         where: {
           workspaceId: context.workspaceId,
           creditedMemberId: { in: productivityMemberIds },
-          taskKind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] },
+          taskKind: { in: ["CALL", "WHATSAPP", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] },
           eventType: "TASK_COMPLETED",
           sourceEntityType: "Task",
           occurredAt: { gte: today.start, lt: today.end },
@@ -750,7 +752,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           workspaceId: context.workspaceId,
           creditedMemberId: { in: productivityMemberIds },
           occurredAt: { gte: today.start, lt: today.end },
-          eventType: { in: ["CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] },
+          eventType: { in: ["CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "WHATSAPP_MESSAGE_SENT", "WHATSAPP_UNAVAILABLE", "WHATSAPP_OTHER", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] },
         },
         _sum: { quantity: true },
       }),
@@ -762,7 +764,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       .filter((item) => kinds.includes(item.kind) && statuses.includes(item.status))
       .reduce((total, item) => total + item._count._all, 0);
     const openStatuses = ["OPEN", "IN_PROGRESS"];
-    const actionableKinds = ["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "EMAIL", "FOLLOW_UP"];
+    const actionableKinds = ["GENERAL", "IMMEDIATE_CALL", "CALL", "MESSAGE", "WHATSAPP", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "EMAIL", "FOLLOW_UP"];
     const tasksDue = taskCount(actionableKinds, openStatuses);
     const prospectingResults = summarizeProspectingTaskResults(prospectingTaskResultCounts.map((row) => ({
       kind: row.taskKind ?? "",
@@ -773,7 +775,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       .filter((fact) => fact.eventType === eventType && (!results || (fact.result !== null && results.includes(fact.result))))
       .reduce((total, fact) => total + (fact._sum.quantity ?? 0), 0);
     const calls = metricCount("CALL_ATTEMPTED");
-    const messages = metricCount("INSTAGRAM_MESSAGE_SENT");
+    const messages = metricCount("WHATSAPP_MESSAGE_SENT") + metricCount("INSTAGRAM_MESSAGE_SENT");
     const callsUnanswered = metricCount("CALL_UNANSWERED");
     const callsFailed = metricCount("CALL_FAILED");
     const callsUnansweredOther = Math.max(0, callsUnanswered - metricCount("CALL_UNANSWERED", ["NO_ANSWER", "BUSY", "VOICEMAIL"]));
@@ -783,7 +785,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     })));
     const touchedBalances = new Map<string, number>();
     for (const fact of dailyMetricFacts) {
-      if (!fact.leadId || !["CALL_ATTEMPTED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"].includes(fact.eventType)) continue;
+      if (!fact.leadId || !["CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"].includes(fact.eventType)) continue;
       const key = `${fact.eventType}:${fact.leadId}`;
       touchedBalances.set(key, (touchedBalances.get(key) ?? 0) + (fact._sum.quantity ?? 0));
     }
@@ -936,6 +938,11 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         callsWithoutOutcome,
         callsPending: taskCount(["IMMEDIATE_CALL", "CALL"], openStatuses),
         messages,
+        whatsappMessagesCompleted: prospectingResults.whatsappCompleted,
+        whatsappMessagesSent: metricCount("WHATSAPP_MESSAGE_SENT"),
+        whatsappUnavailable: metricCount("WHATSAPP_UNAVAILABLE"),
+        whatsappOther: metricCount("WHATSAPP_OTHER"),
+        whatsappPending: taskCount(["WHATSAPP"], openStatuses),
         instagramMessagesCompleted: prospectingResults.instagramMessagesCompleted,
         instagramMessagesSent: metricCount("INSTAGRAM_MESSAGE_SENT"),
         instagramMessagesProfileNotFound: prospectingResults.instagramMessagesProfileNotFound,

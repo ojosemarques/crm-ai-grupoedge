@@ -115,6 +115,7 @@ const taskKinds = [
   "IMMEDIATE_CALL",
   "CALL",
   "MESSAGE",
+  "WHATSAPP",
   "INSTAGRAM_MESSAGE",
   "INSTAGRAM_FOLLOW",
   "EMAIL",

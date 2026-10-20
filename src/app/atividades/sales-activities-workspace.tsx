@@ -31,7 +31,7 @@ function dayBucket(value: string, now: number): "Atrasadas" | "Hoje" | "Futuras"
 }
 function localInputTomorrow() { const value = new Date(Date.now() + 86_400_000); value.setSeconds(0, 0); return new Date(value.getTime() - value.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); }
 const originLabels: Readonly<Record<ActivityOrigin, string>> = Object.freeze({ LEAD: "Tarefa do lead", CADENCE: "Cadência", MEETING: "Reunião", OPPORTUNITY: "Oportunidade", OPPORTUNITY_STAGE: "Etapa da oportunidade", POST_SALE: "Pós-venda" });
-const kindLabels: Readonly<Record<string, string>> = Object.freeze({ GENERAL: "Tarefa", IMMEDIATE_CALL: "Ligação imediata", CALL: "Ligação", MESSAGE: "Mensagem", EMAIL: "E-mail", MEETING: "Reunião", FOLLOW_UP: "Acompanhamento" });
+const kindLabels: Readonly<Record<string, string>> = Object.freeze({ GENERAL: "Tarefa", IMMEDIATE_CALL: "Ligação imediata", CALL: "Ligação", MESSAGE: "Mensagem", WHATSAPP: "WhatsApp", INSTAGRAM_MESSAGE: "Mensagem no Instagram", INSTAGRAM_FOLLOW: "Seguir no Instagram", EMAIL: "E-mail", MEETING: "Reunião", FOLLOW_UP: "Acompanhamento" });
 const statusLabels: Readonly<Record<string, string>> = Object.freeze({ OPEN: "Aberta", IN_PROGRESS: "Em andamento", COMPLETED: "Concluída", CANCELLED: "Cancelada" });
 
 function ActivityCard({ item, now, checked, selectable, onToggle }: Readonly<{ item: ActivityItem; now: number; checked: boolean; selectable: boolean; onToggle: () => void }>) {

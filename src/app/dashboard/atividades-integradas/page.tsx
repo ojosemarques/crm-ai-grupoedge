@@ -62,7 +62,8 @@ function formatResult(value: string | null) {
     CONNECTED: "Atendida", NOT_CONNECTED: "Sem atendimento", NO_ANSWER: "Não atendeu", BUSY: "Ocupado",
     VOICEMAIL: "Caixa postal", WRONG_NUMBER: "Número incorreto", CHANNEL_UNAVAILABLE: "Canal indisponível",
     CALLBACK_REQUESTED: "Pediu retorno", WHATSAPP_SHARED: "Passou WhatsApp", SENT: "Enviado",
-    COMPLETED: "Concluído", PROFILE_NOT_FOUND: "Perfil não encontrado", ALREADY_FOLLOWING: "Já seguia",
+    NO_WHATSAPP: "Não tem WhatsApp", OTHER: "Outro", COMPLETED: "Concluído",
+    PROFILE_NOT_FOUND: "Perfil não encontrado", ALREADY_FOLLOWING: "Já seguia",
   };
   return labels[value] ?? value.replaceAll("_", " ").toLocaleLowerCase("pt-BR");
 }
@@ -74,6 +75,7 @@ function formatMoney(value: string | null) {
 function formatEvent(value: string) {
   const labels: Record<string, string> = {
     CALL_ATTEMPTED: "Ligação realizada", CALL_CONNECTED: "Ligação atendida", CALL_UNANSWERED: "Ligação sem atendimento", CALL_FAILED: "Ligação com falha",
+    WHATSAPP_MESSAGE_SENT: "Mensagem de WhatsApp enviada", WHATSAPP_UNAVAILABLE: "Sem WhatsApp", WHATSAPP_OTHER: "Outro resultado de WhatsApp",
     INSTAGRAM_MESSAGE_SENT: "Mensagem no Instagram", INSTAGRAM_FOLLOW_COMPLETED: "Perfil seguido",
     MEETING_SCHEDULED: "Reunião agendada", MEETING_COMPLETED: "Reunião realizada", LEAD_QUALIFIED: "Lead qualificado",
     TASK_CREATED: "Tarefa criada", TASK_COMPLETED: "Tarefa concluída", TASK_CANCELLED: "Tarefa cancelada",

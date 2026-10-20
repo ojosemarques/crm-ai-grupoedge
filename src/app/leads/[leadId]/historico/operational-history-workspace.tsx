@@ -81,6 +81,9 @@ const taskKindLabels: Readonly<Record<string, string>> = {
   CALL: "Ligação",
   IMMEDIATE_CALL: "Ligação imediata",
   MESSAGE: "Mensagem",
+  WHATSAPP: "WhatsApp",
+  INSTAGRAM_MESSAGE: "Mensagem no Instagram",
+  INSTAGRAM_FOLLOW: "Seguir no Instagram",
   EMAIL: "E-mail",
   MEETING: "Reunião",
   FOLLOW_UP: "Acompanhamento",
@@ -141,6 +144,7 @@ const contactPointLabels: Readonly<Record<ContactPointView["type"], string>> = {
 
 const prospectingResultOptions = Object.freeze({
   CALL: [["CONNECTED", "Conectou"], ["CALLBACK_REQUESTED", "Pediu retorno"], ["WHATSAPP_SHARED", "Passou contato/WhatsApp"], ["NO_ANSWER", "Não atendeu"], ["BUSY", "Ocupado"], ["VOICEMAIL", "Caixa postal"], ["WRONG_NUMBER", "Número incorreto"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
+  WHATSAPP: [["NO_WHATSAPP", "Não tem WhatsApp"], ["SENT", "Mensagem enviada"], ["OTHER", "Outro (preencher)"]],
   INSTAGRAM_MESSAGE: [["SENT", "Feito"], ["FAILED", "Falhou"], ["PROFILE_NOT_FOUND", "Não achou Instagram"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
   INSTAGRAM_FOLLOW: [["COMPLETED", "Feito"], ["ALREADY_FOLLOWING", "Já seguia"], ["FAILED", "Falhou"], ["PROFILE_NOT_FOUND", "Não achou Instagram"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
 } as const);
@@ -1032,7 +1036,7 @@ export function OperationalHistoryWorkspace({
               <fieldset className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
                 <legend className="px-1 text-sm font-semibold">Conclusão da tarefa da cadência</legend>
                 <label className="text-sm">Resultado<select className={inputClass} name="cadenceResult" required><option value="">Selecione</option>{prospectingResultOptions[quickCurrentTask.kind].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                <label className="text-sm">Motivo/observação<input className={inputClass} name="resultReason" placeholder="Opcional; o CRM registra o resultado" /></label>
+                <label className="text-sm">Motivo/observação<input className={inputClass} name="resultReason" placeholder={quickCurrentTask.kind === "WHATSAPP" ? "Obrigatório ao selecionar Outro" : "Opcional; o CRM registra o resultado"} /></label>
                 <label className="text-sm sm:col-span-2">Interromper cadência<select className={inputClass} defaultValue="" name="stopReason"><option value="">Não interromper</option><option value="REFUSAL">Recusa</option><option value="DO_NOT_CONTACT">Pedido de não contato</option></select></label>
               </fieldset>
             ) : !quickCurrentTask || quickCurrentTask.kind === "IMMEDIATE_CALL" ? (
@@ -1398,7 +1402,17 @@ export function OperationalHistoryWorkspace({
                                 </div>
                               </form>
                             ) : <Button className="mt-3" onClick={() => setEditingTaskId(task.id)} size="sm" type="button" variant="secondary">Editar tarefa concluída</Button> : null}
-                            {operations.permissions.canManageTasks && (task.status === "OPEN" || task.status === "IN_PROGRESS") && task.kind !== "IMMEDIATE_CALL" ? <form className="mt-3 grid gap-3" onSubmit={(event) => submitCompletion(event, task.id)}>{task.sourceKey?.startsWith("active-prospecting:") ? <><label className="text-sm">Resultado da conclusão<select className={inputClass} name="result" required>{task.kind === "CALL" ? <><option value="">Selecione</option><option value="CONNECTED">Conectou</option><option value="CALLBACK_REQUESTED">Pediu retorno</option><option value="WHATSAPP_SHARED">Passou contato/WhatsApp</option><option value="NO_ANSWER">Não atendeu</option><option value="BUSY">Ocupado</option><option value="VOICEMAIL">Caixa postal</option><option value="WRONG_NUMBER">Número incorreto</option><option value="CHANNEL_UNAVAILABLE">Canal indisponível</option></> : task.kind === "INSTAGRAM_MESSAGE" ? <><option value="">Selecione</option><option value="SENT">Feito</option><option value="FAILED">Falhou</option><option value="PROFILE_NOT_FOUND">Não achou Instagram</option><option value="CHANNEL_UNAVAILABLE">Canal indisponível</option></> : <><option value="">Selecione</option><option value="COMPLETED">Feito</option><option value="ALREADY_FOLLOWING">Já seguia</option><option value="FAILED">Falhou</option><option value="PROFILE_NOT_FOUND">Não achou Instagram</option><option value="CHANNEL_UNAVAILABLE">Canal indisponível</option></>}</select></label><label className="text-sm">Motivo/observação<input className={inputClass} name="resultReason" placeholder="Opcional; o CRM registra o resultado automaticamente" /></label><label className="text-sm">Interromper cadência<select className={inputClass} defaultValue="" name="stopReason"><option value="">Não interromper</option><option value="REFUSAL">Recusa</option><option value="DO_NOT_CONTACT">Pedido de não contato</option></select></label></> : <label className="text-sm">Resultado da conclusão<input className={inputClass} name="result" required /></label>}<NextActionFields /><Button disabled={pending} size="sm" type="submit">Concluir tarefa</Button></form> : null}
+                            {operations.permissions.canManageTasks && (task.status === "OPEN" || task.status === "IN_PROGRESS") && task.kind !== "IMMEDIATE_CALL" ? (
+                              <form className="mt-3 grid gap-3" onSubmit={(event) => submitCompletion(event, task.id)}>
+                                {isColdProspectingTask(task) ? <>
+                                  <label className="text-sm">Resultado da conclusão<select className={inputClass} name="result" required><option value="">Selecione</option>{prospectingResultOptions[task.kind].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                                  <label className="text-sm">Motivo/observação<input className={inputClass} name="resultReason" placeholder={task.kind === "WHATSAPP" ? "Obrigatório ao selecionar Outro" : "Opcional; o CRM registra o resultado automaticamente"} /></label>
+                                  <label className="text-sm">Interromper cadência<select className={inputClass} defaultValue="" name="stopReason"><option value="">Não interromper</option><option value="REFUSAL">Recusa</option><option value="DO_NOT_CONTACT">Pedido de não contato</option></select></label>
+                                </> : <label className="text-sm">Resultado da conclusão<input className={inputClass} name="result" required /></label>}
+                                <NextActionFields />
+                                <Button disabled={pending} size="sm" type="submit">Concluir tarefa</Button>
+                              </form>
+                            ) : null}
                             {task.kind === "IMMEDIATE_CALL" && (task.status === "OPEN" || task.status === "IN_PROGRESS") ? <p className="mt-3 text-xs text-muted-foreground">Conclua registrando a ligação, com a próxima ação quando necessária.</p> : null}
                           </div>
                         </details>

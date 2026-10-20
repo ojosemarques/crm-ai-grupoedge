@@ -189,7 +189,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
         select: { id: true, stages: { where: { deletedAt: null }, orderBy: { position: "asc" }, select: { id: true, stableKey: true, name: true, position: true, type: true, _count: { select: { currentLeads: { where: { deletedAt: null, ownerMemberId: memberScope } } } } } } },
       }),
       options.database.task.findMany({
-        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, sourceKey: { startsWith: "active-prospecting:" }, kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "FOLLOW_UP"] }, status: { in: ["OPEN", "IN_PROGRESS", "COMPLETED"] }, deletedAt: null },
+        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, sourceKey: { startsWith: "active-prospecting:" }, kind: { in: ["CALL", "WHATSAPP", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "FOLLOW_UP"] }, status: { in: ["OPEN", "IN_PROGRESS", "COMPLETED"] }, deletedAt: null },
         orderBy: [{ dueAt: "asc" }, { id: "asc" }],
         skip: (query.activityPage - 1) * pageSize,
         take: pageSize,
@@ -211,7 +211,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       options.database.prospectingCadenceInstance.groupBy({ by: ["status"], where: { workspaceId: context.workspaceId, ownerMemberId: memberScope }, _count: { _all: true } }),
       options.database.commercialMetricFact.groupBy({
         by: ["eventType", "creditedMemberId", "leadId"],
-        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, leadId: { not: null }, eventType: { in: ["CALL_ATTEMPTED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, leadId: { not: null }, eventType: { in: ["CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
         _sum: { quantity: true },
       }),
       options.database.prospectRelease.count({ where: { workspaceId: context.workspaceId, plannedMemberId: memberScope, releasedAt: { gte: today.start, lt: today.end }, status: "RELEASED" } }),
@@ -228,12 +228,12 @@ export function createProspectingWorkspaceService(options: Readonly<{
       }),
       options.database.commercialMetricFact.groupBy({
         by: ["creditedMemberId", "taskKind", "result"],
-        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, eventType: "TASK_COMPLETED", sourceEntityType: "Task", taskKind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] } },
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, eventType: "TASK_COMPLETED", sourceEntityType: "Task", taskKind: { in: ["CALL", "WHATSAPP", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] } },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({
         by: ["creditedMemberId", "eventType", "result", "leadId"],
-        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, eventType: { in: ["CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: today.start, lt: today.end }, eventType: { in: ["CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "WHATSAPP_MESSAGE_SENT", "WHATSAPP_UNAVAILABLE", "WHATSAPP_OTHER", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({
@@ -248,7 +248,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       }),
       options.database.commercialMetricFact.groupBy({
         by: ["eventType", "creditedMemberId", "leadId"],
-        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, leadId: { not: null }, eventType: { in: ["CALL_ATTEMPTED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, leadId: { not: null }, eventType: { in: ["CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
         _sum: { quantity: true },
       }),
       options.database.prospectRelease.count({ where: { workspaceId: context.workspaceId, plannedMemberId: memberScope, releasedAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, status: "RELEASED" } }),
@@ -267,7 +267,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
       options.database.openDotRequestReceipt.findFirst({ where: { workspaceId: context.workspaceId, scope: { in: ["EMAIL_CLAIM", "EMAIL_RECEIPT", "EMAIL_EVENT_WRITE"] } }, orderBy: { receivedAt: "desc" }, select: { receivedAt: true, clientId: true } }),
       options.database.prospectingEmailJob.count({ where: { workspaceId: context.workspaceId, ...leadScope, status: "SCHEDULED", scheduledAt: { lt: now } } }),
       options.database.prospectingCadenceInstance.count({ where: { workspaceId: context.workspaceId, ownerMemberId: memberScope, status: "PENDING_D1", d1Date: { lt: new Date(`${todayLocal}T00:00:00.000Z`) } } }),
-      options.database.task.count({ where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, sourceKey: { startsWith: "active-prospecting:" }, kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "FOLLOW_UP"] }, status: { in: ["OPEN", "IN_PROGRESS", "COMPLETED"] }, deletedAt: null } }),
+      options.database.task.count({ where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, sourceKey: { startsWith: "active-prospecting:" }, kind: { in: ["CALL", "WHATSAPP", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "FOLLOW_UP"] }, status: { in: ["OPEN", "IN_PROGRESS", "COMPLETED"] }, deletedAt: null } }),
       options.database.prospectingEmailJob.count({ where: { workspaceId: context.workspaceId, ...leadScope } }),
       options.database.$queryRaw<CapacityTaskRow[]>(Prisma.sql`
         SELECT task."assigneeMemberId" AS "memberId",
@@ -282,7 +282,7 @@ export function createProspectingWorkspaceService(options: Readonly<{
             : scopedMemberIds.length === 0
               ? Prisma.sql`AND FALSE`
               : Prisma.sql`AND task."assigneeMemberId" IN (${Prisma.join(scopedMemberIds)})`}
-          AND task."kind"::text IN ('CALL', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
+          AND task."kind"::text IN ('CALL', 'WHATSAPP', 'INSTAGRAM_MESSAGE', 'INSTAGRAM_FOLLOW')
           AND task."deletedAt" IS NULL
           AND (task."dueAt" AT TIME ZONE ${workspace.timeZone})::date BETWEEN ${todayLocal}::date AND ${capacityEndLocal}::date
         GROUP BY 1, 2
@@ -293,12 +293,12 @@ export function createProspectingWorkspaceService(options: Readonly<{
       }),
       options.database.task.groupBy({
         by: ["kind"],
-        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
+        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, status: "COMPLETED", kind: { in: ["CALL", "WHATSAPP", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
         _count: { _all: true },
       }),
       options.database.task.groupBy({
         by: ["kind", "result"],
-        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, status: "COMPLETED", kind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
+        where: { workspaceId: context.workspaceId, assigneeMemberId: memberScope, completedAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, status: "COMPLETED", kind: { in: ["CALL", "WHATSAPP", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] }, sourceKey: { startsWith: "active-prospecting:" }, deletedAt: null },
         _count: { _all: true },
       }),
       options.database.prospectingCadenceInstance.groupBy({ by: ["stopReasonCode"], where: { workspaceId: context.workspaceId, ownerMemberId: memberScope, stoppedAt: { gte: metricsPeriod.start, lt: metricsPeriod.end } }, _count: { _all: true } }),
@@ -306,12 +306,12 @@ export function createProspectingWorkspaceService(options: Readonly<{
       options.database.prospectCandidateSource.aggregate({ where: { workspaceId: context.workspaceId, ...(scopedMemberIds === null ? {} : { candidateId: { in: scopedCandidateIds } }) }, _max: { observedAt: true } }),
       options.database.commercialMetricFact.groupBy({
         by: ["creditedMemberId", "taskKind", "result"],
-        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, eventType: "TASK_COMPLETED", sourceEntityType: "Task", taskKind: { in: ["CALL", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] } },
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, eventType: "TASK_COMPLETED", sourceEntityType: "Task", taskKind: { in: ["CALL", "WHATSAPP", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW"] } },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({
         by: ["creditedMemberId", "eventType", "result", "leadId"],
-        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, eventType: { in: ["CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
+        where: { workspaceId: context.workspaceId, creditedMemberId: memberScope, occurredAt: { gte: metricsPeriod.start, lt: metricsPeriod.end }, eventType: { in: ["CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED", "WHATSAPP_MESSAGE_SENT", "WHATSAPP_UNAVAILABLE", "WHATSAPP_OTHER", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "EMAIL_SENT"] } },
         _sum: { quantity: true },
       }),
       options.database.commercialMetricFact.groupBy({
@@ -487,6 +487,9 @@ export function createProspectingWorkspaceService(options: Readonly<{
         }))),
         instagramMessagesSent: metricCount("INSTAGRAM_MESSAGE_SENT"),
         instagramFollowsCompleted: metricCount("INSTAGRAM_FOLLOW_COMPLETED"),
+        whatsappMessagesSent: metricCount("WHATSAPP_MESSAGE_SENT"),
+        whatsappUnavailable: metricCount("WHATSAPP_UNAVAILABLE"),
+        whatsappOther: metricCount("WHATSAPP_OTHER"),
         emailsSent: metricCount("EMAIL_SENT"),
       };
     });

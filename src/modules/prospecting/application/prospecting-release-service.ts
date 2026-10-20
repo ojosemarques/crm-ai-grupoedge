@@ -19,8 +19,9 @@ import { logger } from "@/shared/core/logging/logger";
 
 type Options = Readonly<{ database: PrismaClient; now: () => Date }>;
 
-function taskKind(action: "CALL" | "EMAIL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW" | "CLOSE"): TaskKind {
+function taskKind(action: "CALL" | "WHATSAPP" | "EMAIL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW" | "CLOSE"): TaskKind {
   if (action === "CALL") return "CALL";
+  if (action === "WHATSAPP") return "WHATSAPP";
   if (action === "INSTAGRAM_MESSAGE") return "INSTAGRAM_MESSAGE";
   if (action === "INSTAGRAM_FOLLOW") return "INSTAGRAM_FOLLOW";
   if (action === "EMAIL") return "EMAIL";
@@ -29,6 +30,7 @@ function taskKind(action: "CALL" | "EMAIL" | "INSTAGRAM_MESSAGE" | "INSTAGRAM_FO
 
 function actionTitle(stepKey: string): string {
   if (stepKey.startsWith("call-")) return `Ligação nº ${stepKey.slice(-1)}`;
+  if (stepKey.startsWith("whatsapp-")) return `Enviar mensagem WhatsApp nº ${stepKey.slice(-1)}`;
   if (stepKey.startsWith("instagram-message-")) return `Mensagem Instagram nº ${stepKey.slice(-1)}`;
   if (stepKey === "instagram-follow") return "Seguir perfil no Instagram";
   return stepKey;
@@ -266,7 +268,7 @@ export function createProspectingReleaseService(options: Options) {
           let emailJobId: string | null = null;
           const channelAvailable = step.action === "CALL"
             ? Boolean(primaryPhone)
-            : step.action === "INSTAGRAM_MESSAGE" || step.action === "INSTAGRAM_FOLLOW"
+            : step.action === "WHATSAPP" || step.action === "INSTAGRAM_MESSAGE" || step.action === "INSTAGRAM_FOLLOW"
               ? true
               : step.action === "EMAIL"
                 ? Boolean(primaryEmail)
