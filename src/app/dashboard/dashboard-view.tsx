@@ -176,7 +176,7 @@ function FunnelPanel({ screen }: Readonly<{ screen: DashboardScreen }>) {
     .flatMap((id) => screen.kpis.find((kpi) => kpi.id === id) ?? []);
   return (
     <section className={`${styles.panel} ${styles.funnelPanel}`}>
-      <header className={styles.panelHeader}><div><h2>Conversão dos leads recebidos no período</h2><p>Cada lead aparece uma vez. Um marco posterior comprova os anteriores mesmo quando uma etapa intermediária não foi registrada; o total de agendamentos válidos aparece abaixo da etapa Reunião.</p></div></header>
+      <header className={styles.panelHeader}><div><h2>Conversão dos leads recebidos no período</h2><p>Até Qualificado, cada lead aparece uma vez e um marco posterior comprova os anteriores. Em Reunião, o volume mostra todos os agendamentos válidos; o rodapé informa quantos leads distintos foram agendados.</p></div></header>
       <ConnectedFunnel stages={screen.fullFunnel.stages.map((stage) => ({ ...stage, href: dashboardHref(screen.query, stage.drilldownId) }))} />
       <details className={styles.chartTableDetails}><summary>Todos os marcos da coorte, incluindo caminhos alternativos</summary><div className={styles.outcomeGrid}>{cohortMilestones.map((milestone) => <Link className={styles.outcome} href={dashboardHref(screen.query, milestone.drilldownId)} key={milestone.id}><span>{milestone.label}</span><strong>{formatValue(milestone.kind, milestone.value)}</strong><small>Leads distintos recebidos no período</small></Link>)}</div></details>
       <div className={styles.outcomeGrid} aria-label="Desfechos do funil">

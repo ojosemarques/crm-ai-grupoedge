@@ -759,6 +759,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     const proposalStage = new Set(proposalStageTimes.keys());
     const scheduledEventCount = [...activityBalances].reduce((total, [key, balance]) =>
       key.startsWith("MEETING_SCHEDULED:") ? total + Math.max(0, balance) : total, 0);
+    const scheduledMeetingCount = Math.max(scheduledEventCount, scheduledStage.size);
     const funnelSets = [
       ["recebidos", "Recebidos", cohort],
       ["tentados", "Tentados", attemptedStage],
@@ -786,30 +787,34 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     }));
 
     const fullFunnelStageSets = [
-      ["received", "Lead recebido", cohort, null],
-      ["attempted", "Tentativa", attemptedStage, "received"],
-      ["connected", "Conectado", contactedStage, "attempted"],
-      ["qualified", "Qualificado", qualifiedStage, "connected"],
-      ["meeting", "Reunião", scheduledStage, "qualified"],
-      ["proposal", "Proposta", proposalStage, "meeting"],
+      ["received", "Lead recebido", cohort, cohort.size, null],
+      ["attempted", "Tentativa", attemptedStage, attemptedStage.size, "received"],
+      ["connected", "Conectado", contactedStage, contactedStage.size, "attempted"],
+      ["qualified", "Qualificado", qualifiedStage, qualifiedStage.size, "connected"],
+      ["meeting", "Reunião", scheduledStage, scheduledMeetingCount, "qualified"],
+      ["proposal", "Proposta", proposalStage, proposalStage.size, "meeting"],
     ] as const;
-    const fullFunnelStages: DashboardFunnelNode[] = fullFunnelStageSets.map(([id, label, values, branchFrom], index) => {
-      const denominator = index === 0 ? null : fullFunnelStageSets[index - 1]![2].size;
+    const fullFunnelStages: DashboardFunnelNode[] = fullFunnelStageSets.map(([id, label, values, value, branchFrom], index) => {
+      const denominator = index === 0 ? null : fullFunnelStageSets[index - 1]![3];
       return Object.freeze({
         id,
         label,
-        value: values.size,
+        value,
         denominator,
-        percentage: denominator === null ? null : percent(values.size, denominator),
-        secondaryValue: id === "meeting" ? scheduledEventCount : null,
-        secondaryLabel: id === "meeting" ? "agendamentos válidos" : null,
+        percentage: denominator === null ? null : percent(value, denominator),
+        secondaryValue: id === "meeting" ? values.size : null,
+        secondaryLabel: id === "meeting" ? "leads com reunião" : null,
         branchFrom,
         nodeType: "STAGE" as const,
         drilldownId: addDrilldown(
           `full-funnel.${id}`,
-          `${label} · funil completo`,
-          "Leads da coorte que alcançaram este marco até o corte do período.",
-          denominator === null ? "leads recebidos" : `${label.toLocaleLowerCase("pt-BR")} / etapa anterior`,
+          id === "meeting" ? "Leads com reunião · funil completo" : `${label} · funil completo`,
+          id === "meeting"
+            ? `${value.toLocaleString("pt-BR")} agendamentos válidos distribuídos entre ${values.size.toLocaleString("pt-BR")} leads da coorte.`
+            : "Leads da coorte que alcançaram este marco até o corte do período.",
+          id === "meeting"
+            ? "agendamentos válidos / leads qualificados; registros detalham os leads distintos"
+            : denominator === null ? "leads recebidos" : `${label.toLocaleLowerCase("pt-BR")} / etapa anterior`,
           [...values].map(leadKey),
         ),
       });

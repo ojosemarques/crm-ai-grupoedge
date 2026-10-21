@@ -973,7 +973,7 @@ describe("camada confiável de métricas", () => {
     })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
-  it("inclui no funil uma reunião da coorte sem exigir etapa Qualificado explícita", async () => {
+  it("mostra no funil o total de reuniões válidas, inclusive quando um lead tem mais de uma", async () => {
     const systemActor = await database.actor.findFirstOrThrow({ where: { workspaceId, key: "system" } });
     const meetingSource = await database.leadSource.create({
       data: {
@@ -995,12 +995,16 @@ describe("camada confiável de métricas", () => {
         attemptSeconds: 30,
         connectedSeconds: 40,
       });
-      const meeting = await addMeeting({ leadId: lead.leadId, startsAt: at("08T12:00"), status: "COMPLETED" });
-      const scheduledHistory = await database.meetingHistory.findFirstOrThrow({
-        where: { workspaceId, meetingId: meeting.id, action: "SCHEDULED" },
+      const meetings = await Promise.all([
+        addMeeting({ leadId: lead.leadId, startsAt: at("08T12:00"), status: "COMPLETED" }),
+        addMeeting({ leadId: lead.leadId, startsAt: at("09T12:00"), status: "COMPLETED" }),
+      ]);
+      const scheduledHistories = await database.meetingHistory.findMany({
+        where: { workspaceId, meetingId: { in: meetings.map((meeting) => meeting.id) }, action: "SCHEDULED" },
+        orderBy: { occurredAt: "asc" },
       });
-      await database.commercialMetricFact.create({
-        data: {
+      await database.commercialMetricFact.createMany({
+        data: scheduledHistories.map((scheduledHistory) => ({
           workspaceId,
           eventKey: `test:meeting-scheduled:${scheduledHistory.id}`,
           eventType: "MEETING_SCHEDULED",
@@ -1008,24 +1012,26 @@ describe("camada confiável de métricas", () => {
           sourceEntityType: "MeetingHistory",
           sourceEntityId: scheduledHistory.id,
           leadId: lead.leadId,
-          meetingId: meeting.id,
+          meetingId: scheduledHistory.meetingId,
           creditedMemberId: sdr1.memberId,
           bookedByMemberId: sdr1.memberId,
           sourceId: meetingSource.id,
           executionMode: "MANUAL",
           inputFingerprint: randomUUID(),
-        },
+        })),
       });
 
       const result = await dashboard(manager, { source: [meetingSource.id] });
       expect(result.kpis.find((item) => item.id === "qualified")?.value).toBe(0);
       expect(result.fullFunnel.stages.map((item) => [item.id, item.value])).toEqual([
         ["received", 1], ["attempted", 1], ["connected", 1], ["qualified", 1],
-        ["meeting", 1], ["proposal", 0],
+        ["meeting", 2], ["proposal", 0],
       ]);
       expect(result.fullFunnel.stages.find((item) => item.id === "meeting")).toMatchObject({
+        denominator: 1,
+        percentage: 200,
         secondaryValue: 1,
-        secondaryLabel: "agendamentos válidos",
+        secondaryLabel: "leads com reunião",
       });
     } finally {
       await database.meeting.updateMany({
