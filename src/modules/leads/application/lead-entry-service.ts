@@ -240,6 +240,9 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
         })),
       priorityBands,
       pipelines,
+      defaultOwnerMemberId: sellers.some(({ id }) => id === context.memberId)
+        ? context.memberId
+        : null,
       sellers: sellers.map(({ id, user }) => ({ id, name: user.displayName })),
     };
   }
@@ -268,15 +271,25 @@ export function createLeadEntryService(options: LeadEntryServiceOptions) {
           },
         );
       }
+      const creatingSeller = parsed.data.ownerMemberId
+        ? null
+        : await options.database.workspaceMember.findFirst({
+            where: commercialMemberWhere({
+              workspaceId: context.workspaceId,
+              memberId: context.memberId,
+              functions: ["SDR", "CLOSER"],
+              requireLeadAvailability: true,
+            }),
+            select: { id: true },
+          });
+      const ownerMemberId = parsed.data.ownerMemberId ?? creatingSeller?.id;
       return await options.intake.intake(
         toLeadIntakeInput(parsed.data.lead, {
           channel: "MANUAL",
           idempotencyKey: `manual:${parsed.data.idempotencyKey}`,
           rawPayload: payload as Record<string, unknown>,
           ...(parsed.data.pipelineId ? { pipelineId: parsed.data.pipelineId } : {}),
-          ...(parsed.data.ownerMemberId
-            ? { ownerMemberId: parsed.data.ownerMemberId }
-            : {}),
+          ...(ownerMemberId ? { ownerMemberId } : {}),
         }),
         context,
       );

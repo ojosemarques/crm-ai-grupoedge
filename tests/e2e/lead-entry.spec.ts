@@ -137,6 +137,7 @@ test("vendedor da Prospecção Ativa cadastra lead e escolhe qualquer vendedor",
   await expect(sellerSelect.locator(`option[value="${targetOwner.id}"]`)).toHaveText(
     DEMO_USERS[5].displayName,
   );
+  await expect(sellerSelect).toHaveValue(seller.id);
 
   const phone = uniquePhone("e2e-active-prospecting-seller");
   await sellerSelect.selectOption(targetOwner.id);

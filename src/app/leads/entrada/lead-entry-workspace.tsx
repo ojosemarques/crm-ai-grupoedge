@@ -34,6 +34,7 @@ type EntryOptions = Readonly<{
     name: string;
     isDefault: boolean;
   }>[];
+  defaultOwnerMemberId: string | null;
   sellers: readonly Readonly<{ id: string; name: string }>[];
 }>;
 
@@ -263,7 +264,7 @@ function ManualEntry({ options }: { options: EntryOptions }) {
         </label>
         <label className="text-sm font-medium">
           Vendedor responsável
-          <select className={inputClass} defaultValue="" name="ownerMemberId">
+          <select className={inputClass} defaultValue={options.defaultOwnerMemberId ?? ""} name="ownerMemberId">
             <option value="">Distribuição automática</option>
             {options.sellers.map((seller) => (
               <option key={seller.id} value={seller.id}>{seller.name}</option>

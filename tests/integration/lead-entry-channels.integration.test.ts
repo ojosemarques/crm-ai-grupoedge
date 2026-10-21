@@ -255,9 +255,31 @@ describe("canais locais de entrada da CRM-07", () => {
     expect(options.pipelines).toEqual([
       expect.objectContaining({ id: pipeline.id, name: pipeline.name }),
     ]);
+    expect(options.defaultOwnerMemberId).toBe(sellerContext.memberId);
     expect(options.sellers).toContainEqual({
       id: otherSellerContext.memberId,
       name: DEMO_USERS[5].displayName,
+    });
+
+    const selfCreated = await service.createManual(
+      {
+        ...manualPayload(uniquePhone("active-prospecting-self-owned")),
+        pipelineId: pipeline.id,
+      },
+      sellerContext,
+    );
+    if (selfCreated.outcome === "REJECTED") throw new Error("Entrada deveria ser aceita.");
+    await expect(database.lead.findUniqueOrThrow({
+      where: { id: selfCreated.leadId },
+      select: { ownerMemberId: true },
+    })).resolves.toEqual({ ownerMemberId: sellerContext.memberId });
+    await expect(database.leadAssignment.findFirstOrThrow({
+      where: { workspaceId: managerContext.workspaceId, leadId: selfCreated.leadId },
+      orderBy: { assignedAt: "desc" },
+      select: { type: true, toMemberId: true },
+    })).resolves.toEqual({
+      type: "MANUAL",
+      toMemberId: sellerContext.memberId,
     });
 
     const created = await service.createManual(
