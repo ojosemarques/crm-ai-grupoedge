@@ -489,6 +489,44 @@ describe("staging governado da Prospecção Ativa", () => {
     await expect(database.auditLog.count({ where: { workspaceId: principal.workspaceId, action: "prospecting.instagram_task.repaired", entityType: "ProspectingCadenceStep" } })).resolves.toBe(5);
   });
 
+  it("recria de forma idempotente as quatro tarefas de WhatsApp em cadência antiga ativa", async () => {
+    const released = await database.prospectCandidate.findFirstOrThrow({
+      where: { workspaceId: principal.workspaceId, externalIdentityKey: "tse:2024:3550308:councilor:775", status: "RELEASED" },
+      select: { leadId: true },
+    });
+    const leadBefore = await database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { currentStageId: true } });
+    const cadence = await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { workspaceId_leadId: { workspaceId: principal.workspaceId, leadId: released.leadId! } } });
+    const whatsappSteps = await database.prospectingCadenceStep.findMany({
+      where: { cadenceInstanceId: cadence.id, action: "WHATSAPP" },
+      select: { id: true, taskId: true },
+    });
+    await database.$transaction(async (transaction) => {
+      await transaction.prospectingCadenceStep.deleteMany({ where: { id: { in: whatsappSteps.map((step) => step.id) } } });
+      await transaction.task.deleteMany({ where: { id: { in: whatsappSteps.flatMap((step) => step.taskId ? [step.taskId] : []) } } });
+      await transaction.prospectingCadenceInstance.update({ where: { id: cadence.id }, data: { templateVersion: 2 } });
+    });
+
+    const reconciliation = createProspectingReconciliationService({ database, now: () => clock });
+    await expect(reconciliation.repairMissingWhatsappCadenceTasks("integration:whatsapp-task-repair", principal.workspaceId))
+      .resolves.toEqual({ status: "WHATSAPP_TASKS_REPAIRED", repaired: 4, upgradedCadences: 1 });
+    await expect(database.prospectingCadenceStep.count({ where: { cadenceInstanceId: cadence.id, action: "WHATSAPP", status: "OPEN", taskId: { not: null } } })).resolves.toBe(4);
+    await expect(database.task.findMany({
+      where: { leadId: released.leadId!, kind: "WHATSAPP", status: "OPEN" },
+      orderBy: { title: "asc" },
+      select: { title: true },
+    })).resolves.toEqual([
+      { title: "Enviar mensagem WhatsApp nº 1" },
+      { title: "Enviar mensagem WhatsApp nº 2" },
+      { title: "Enviar mensagem WhatsApp nº 3" },
+      { title: "Enviar mensagem WhatsApp nº 4" },
+    ]);
+    await expect(database.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id }, select: { templateVersion: true } })).resolves.toEqual({ templateVersion: 3 });
+    await expect(database.lead.findUniqueOrThrow({ where: { id: released.leadId! }, select: { currentStageId: true } })).resolves.toEqual(leadBefore);
+    await expect(reconciliation.repairMissingWhatsappCadenceTasks("integration:whatsapp-task-repair:replay", principal.workspaceId))
+      .resolves.toEqual({ status: "IDLE", repaired: 0, upgradedCadences: 0 });
+    await expect(database.auditLog.count({ where: { workspaceId: principal.workspaceId, action: "prospecting.whatsapp_task.repaired", entityType: "ProspectingCadenceStep" } })).resolves.toBe(4);
+  });
+
   it("repara Instagram ausente no contato canônico de candidato já liberado", async () => {
     const released = await database.prospectCandidate.findFirstOrThrow({
       where: { workspaceId: principal.workspaceId, externalIdentityKey: "tse:2024:3550308:councilor:777", status: "RELEASED" },

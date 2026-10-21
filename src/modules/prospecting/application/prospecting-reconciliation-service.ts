@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
+import { PROSPECTING_CADENCE_VERSION } from "@/modules/prospecting/domain/prospecting-cadence";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
@@ -70,6 +71,20 @@ type MissingInstagramCadenceTask = Readonly<{
   ownerMemberId: string;
   stepKey: string;
   action: "INSTAGRAM_MESSAGE" | "INSTAGRAM_FOLLOW";
+  scheduledAt: Date;
+  politicianName: string;
+  role: "MAYOR" | "COUNCILOR";
+  municipalityName: string;
+  stateCode: string;
+}>;
+type MissingWhatsappCadenceTask = Readonly<{
+  workspaceId: string;
+  cadenceInstanceId: string;
+  leadId: string;
+  ownerMemberId: string;
+  actorId: string;
+  stepKey: string;
+  dayOffset: number;
   scheduledAt: Date;
   politicianName: string;
   role: "MAYOR" | "COUNCILOR";
@@ -398,6 +413,162 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
     }, { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 });
   }
 
+  async function repairMissingWhatsappCadenceTasks(workerId: string, workspaceId?: string) {
+    const now = options.now();
+    const workspaceFilter = workspaceId
+      ? Prisma.sql`AND cadence."workspaceId" = ${workspaceId}::uuid`
+      : Prisma.empty;
+    return options.database.$transaction(async (database) => {
+      const steps = await database.$queryRaw<MissingWhatsappCadenceTask[]>(Prisma.sql`
+        SELECT
+          cadence."workspaceId",
+          cadence."id" AS "cadenceInstanceId",
+          cadence."leadId",
+          cadence."ownerMemberId",
+          actor."id" AS "actorId",
+          desired."stepKey",
+          desired."dayOffset",
+          reference_step."scheduledAt" + interval '15 minutes' AS "scheduledAt",
+          candidate."politicianName",
+          candidate."role"::text AS "role",
+          candidate."municipalityName",
+          candidate."stateCode"
+        FROM "prospecting_cadence_instances" cadence
+        JOIN "prospect_candidates" candidate
+          ON candidate."workspaceId" = cadence."workspaceId"
+         AND candidate."id" = cadence."candidateId"
+        JOIN "leads" lead
+          ON lead."workspaceId" = cadence."workspaceId"
+         AND lead."id" = cadence."leadId"
+         AND lead."deletedAt" IS NULL
+        JOIN "pipeline_stages" stage
+          ON stage."workspaceId" = lead."workspaceId"
+         AND stage."id" = lead."currentStageId"
+         AND stage."stableKey" IN (
+           'active-prospecting.new-lead',
+           'active-prospecting.initial-outreach',
+           'active-prospecting.active-cadence'
+         )
+        JOIN LATERAL (
+          SELECT system_actor."id"
+          FROM "actors" system_actor
+          WHERE system_actor."workspaceId" = cadence."workspaceId"
+            AND system_actor."type"::text = 'SYSTEM'
+            AND system_actor."key" = 'system'
+            AND system_actor."userId" IS NULL
+          ORDER BY system_actor."createdAt" ASC, system_actor."id" ASC
+          LIMIT 1
+        ) actor ON TRUE
+        CROSS JOIN (VALUES
+          ('whatsapp-1', 0, 'instagram-follow'),
+          ('whatsapp-2', 7, 'instagram-message-2'),
+          ('whatsapp-3', 15, 'instagram-message-3'),
+          ('whatsapp-4', 23, 'instagram-message-4')
+        ) AS desired("stepKey", "dayOffset", "referenceStepKey")
+        JOIN "prospecting_cadence_steps" reference_step
+          ON reference_step."workspaceId" = cadence."workspaceId"
+         AND reference_step."cadenceInstanceId" = cadence."id"
+         AND reference_step."stepKey" = desired."referenceStepKey"
+        WHERE cadence."templateVersion" < ${PROSPECTING_CADENCE_VERSION}
+          AND cadence."status"::text IN ('PENDING_D1', 'ACTIVE', 'PAUSED')
+          ${workspaceFilter}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "prospecting_cadence_steps" existing_step
+            WHERE existing_step."workspaceId" = cadence."workspaceId"
+              AND existing_step."cadenceInstanceId" = cadence."id"
+              AND existing_step."stepKey" = desired."stepKey"
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "tasks" existing_task
+            WHERE existing_task."workspaceId" = cadence."workspaceId"
+              AND existing_task."sourceKey" = 'active-prospecting:' || cadence."id"::text || ':' || desired."stepKey"
+          )
+        ORDER BY cadence."createdAt" ASC, cadence."id" ASC, desired."dayOffset" ASC
+        LIMIT 100
+        FOR UPDATE OF cadence SKIP LOCKED
+      `);
+      if (steps.length === 0) return { status: "IDLE" as const, repaired: 0, upgradedCadences: 0 };
+
+      const taskIds = new Map<string, string>();
+      const keyFor = (step: MissingWhatsappCadenceTask) => `${step.workspaceId}:${step.cadenceInstanceId}:${step.stepKey}`;
+      for (const step of steps) taskIds.set(keyFor(step), randomUUID());
+      await database.task.createMany({
+        data: steps.map((step) => ({
+          id: taskIds.get(keyFor(step))!,
+          workspaceId: step.workspaceId,
+          leadId: step.leadId,
+          assigneeMemberId: step.ownerMemberId,
+          title: `Enviar mensagem WhatsApp nº ${step.stepKey.slice(-1)}`,
+          description: `${step.politicianName} · ${step.role === "MAYOR" ? "Prefeito" : "Vereador"} · ${step.municipalityName}/${step.stateCode}.`,
+          kind: "WHATSAPP" as const,
+          sourceKey: `active-prospecting:${step.cadenceInstanceId}:${step.stepKey}`,
+          status: "OPEN" as const,
+          priority: "MEDIUM" as const,
+          dueAt: step.scheduledAt,
+          createdByActorId: step.actorId,
+          updatedByActorId: step.actorId,
+        })),
+      });
+      const cadenceStepIds = new Map<string, string>();
+      for (const step of steps) cadenceStepIds.set(keyFor(step), randomUUID());
+      await database.prospectingCadenceStep.createMany({
+        data: steps.map((step) => ({
+          id: cadenceStepIds.get(keyFor(step))!,
+          workspaceId: step.workspaceId,
+          cadenceInstanceId: step.cadenceInstanceId,
+          leadId: step.leadId,
+          stepKey: step.stepKey,
+          dayOffset: step.dayOffset,
+          executor: "SELLER" as const,
+          action: "WHATSAPP" as const,
+          status: "OPEN" as const,
+          scheduledAt: step.scheduledAt,
+          taskId: taskIds.get(keyFor(step))!,
+          createdByActorId: step.actorId,
+        })),
+      });
+
+      const cadenceIds = [...new Set(steps.map((step) => step.cadenceInstanceId))];
+      const upgradedCadences = await database.$executeRaw(Prisma.sql`
+        UPDATE "prospecting_cadence_instances" cadence
+        SET "templateVersion" = ${PROSPECTING_CADENCE_VERSION},
+            "revision" = cadence."revision" + 1,
+            "updatedAt" = ${now}
+        WHERE cadence."id" IN (${Prisma.join(cadenceIds)})
+          AND cadence."templateVersion" < ${PROSPECTING_CADENCE_VERSION}
+          AND 4 = (
+            SELECT COUNT(*)
+            FROM "prospecting_cadence_steps" step
+            WHERE step."workspaceId" = cadence."workspaceId"
+              AND step."cadenceInstanceId" = cadence."id"
+              AND step."action"::text = 'WHATSAPP'
+          )
+      `);
+      await database.auditLog.createMany({
+        data: steps.map((step) => ({
+          workspaceId: step.workspaceId,
+          actorId: step.actorId,
+          action: "prospecting.whatsapp_task.repaired",
+          entityType: "ProspectingCadenceStep",
+          entityId: cadenceStepIds.get(keyFor(step))!,
+          origin: "SYSTEM" as const,
+          requestId: workerId,
+          occurredAt: now,
+          changes: {
+            taskId: taskIds.get(keyFor(step))!,
+            cadenceInstanceId: step.cadenceInstanceId,
+            stepKey: step.stepKey,
+            action: "WHATSAPP",
+            externalEgress: false,
+          },
+        })),
+      });
+      return { status: "WHATSAPP_TASKS_REPAIRED" as const, repaired: steps.length, upgradedCadences };
+    }, { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 });
+  }
+
   async function collect(database: Prisma.TransactionClient, workspaceId: string, now: Date) {
     const staleSourceCutoff = new Date(now.getTime() - 30 * DAY_MS);
     const recentDeliveryCutoff = new Date(now.getTime() - 30 * DAY_MS);
@@ -568,6 +739,8 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
   async function processNext(workerId: string) {
     const stageRepair = await restoreOverwrittenSellerStages(workerId);
     if (stageRepair.restored > 0) return stageRepair;
+    const whatsappTaskRepair = await repairMissingWhatsappCadenceTasks(workerId);
+    if (whatsappTaskRepair.repaired > 0) return whatsappTaskRepair;
     const repair = await repairMissingInstagramContacts(workerId);
     if (repair.repaired > 0) return repair;
     const taskRepair = await repairMissingInstagramCadenceTasks(workerId);
@@ -587,7 +760,7 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
     return reconcileWorkspace(workspace.workspaceId, workerId);
   }
 
-  return Object.freeze({ processNext, reconcileWorkspace, repairMissingInstagramCadenceTasks, repairMissingInstagramContacts, restoreOverwrittenSellerStages });
+  return Object.freeze({ processNext, reconcileWorkspace, repairMissingWhatsappCadenceTasks, repairMissingInstagramCadenceTasks, repairMissingInstagramContacts, restoreOverwrittenSellerStages });
 }
 
 let singleton: ReturnType<typeof createProspectingReconciliationService> | undefined;
