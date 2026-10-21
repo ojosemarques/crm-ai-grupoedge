@@ -70,16 +70,17 @@ export function LeadStageWorkspace({
         <span className="rounded border px-2 py-1">Próxima ação: {pipeline.hasNextAction ? "presente" : "ausente"}</span>
         <span className="rounded border px-2 py-1">PACTO: {pipeline.pactoReady ? "validado" : "incompleto"}</span>
       </div>
+      <p className="mt-2 text-xs text-muted-foreground">Esses dados e as tarefas pendentes são informativos e não bloqueiam a mudança de etapa.</p>
       {pipeline.canWrite ? (
         <form className="mt-4 grid gap-4" onSubmit={submit}>
           {pipeline.canCorrect ? <label className="flex items-center gap-2 text-sm"><input name="managerCorrection" type="checkbox" /> Correção gerencial</label> : null}
           <label className="text-sm">Etapa de destino
             <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" name="targetStageId" required>
               <option value="">Selecione</option>
-              {pipeline.transitions.map((option) => <option key={option.stageId} value={option.stageId}>{option.name}{option.allowed ? "" : ` — ${option.blockReason}`}</option>)}
+              {pipeline.transitions.map((option) => <option disabled={!option.allowed} key={option.stageId} value={option.stageId}>{option.name}{option.allowed ? "" : ` — ${option.blockReason}`}</option>)}
             </select>
           </label>
-          <label className="text-sm">Motivo<textarea className="mt-1 min-h-20 w-full rounded-md border bg-background px-3 py-2" name="reason" required /></label>
+          <label className="text-sm">Motivo (opcional)<textarea className="mt-1 min-h-20 w-full rounded-md border bg-background px-3 py-2" name="reason" /></label>
           <label className="text-sm">Motivo de desqualificação
             <select className="mt-1 w-full rounded-md border bg-background px-3 py-2" name="disqualificationReasonId"><option value="">Não se aplica</option>{pipeline.disqualificationReasons.map((reason) => <option key={reason.id} value={reason.id}>{reason.name}</option>)}</select>
           </label>

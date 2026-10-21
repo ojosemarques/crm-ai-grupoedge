@@ -88,3 +88,31 @@ test("conclui atendimento, agenda a próxima ação e abre o próximo lead da fi
     page.getByText("Retornar pelo fluxo rápido", { exact: true }).first(),
   ).toBeVisible();
 });
+
+test("move a etapa sem exigir a conclusão das tarefas pendentes", async ({ page }) => {
+  const leadName = `Lead movimento livre ${randomUUID().slice(0, 8)}`;
+
+  await login(page);
+  await page.goto("/leads/entrada");
+  await page.getByLabel("Nome", { exact: true }).fill(leadName);
+  await page.getByLabel("Telefone", { exact: true }).fill(uniquePhone());
+  await page.locator('select[name="pipelineId"]').selectOption({ label: "Prospecção Ativa" });
+  await page.getByRole("button", { name: "Cadastrar lead" }).click();
+  await page
+    .getByRole("link", { name: "Abrir histórico operacional do lead" })
+    .click();
+
+  const quickFlow = page.locator("article").filter({
+    has: page.getByRole("heading", {
+      name: "Concluir atendimento e abrir próximo",
+    }),
+  });
+  await quickFlow.getByRole("button", { name: "Abrir fluxo" }).click();
+  const form = quickFlow.locator("form");
+  await form.locator('select[name="targetStageId"]').selectOption({ label: "Cadência ativa" });
+  await quickFlow.getByRole("button", { name: "Mover etapa sem concluir tarefas" }).click();
+
+  await expect(page.getByRole("status")).toContainText("Etapa atualizada para Cadência ativa.");
+  await expect(page.getByText("Cadência ativa", { exact: true }).first()).toBeVisible();
+  await expect(page.locator("#tarefas").getByText("Ligar agora", { exact: true })).toBeVisible();
+});

@@ -534,18 +534,21 @@ export function OperationalHistoryWorkspace({
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const moveStageOnly = submitter instanceof HTMLButtonElement && submitter.value === "MOVE_STAGE_ONLY";
     setPending(true);
     setNotice(null);
     let operationSaved = quickOperationCompletedForId === operations.lead.id;
     try {
+      if (moveStageOnly && !quickStageId) throw new Error("Selecione a etapa de destino.");
       const currentTask = operations.tasks.find(
         (task) => task.id === operations.lead.nextAction?.taskId,
       );
       const cadenceTask = isColdProspectingTask(currentTask);
       const nextTask = nextTaskFromForm(form);
-      if (!cadenceTask && !nextTask) throw new Error("Defina a próxima ação antes de concluir este atendimento.");
+      if (!moveStageOnly && !cadenceTask && !nextTask) throw new Error("Defina a próxima ação antes de concluir este atendimento.");
       const resultDescription = formText(form, "resultDescription");
-      if (!cadenceTask && !resultDescription) throw new Error("Descreva o resultado do atendimento.");
+      if (!moveStageOnly && !cadenceTask && !resultDescription) throw new Error("Descreva o resultado do atendimento.");
       const action = currentTask && currentTask.kind !== "IMMEDIATE_CALL"
         ? "COMPLETE_TASK"
         : "RECORD_ACTIVITY";
@@ -574,7 +577,7 @@ export function OperationalHistoryWorkspace({
             observation: resultDescription,
             nextTask,
           };
-      if (!operationSaved) {
+      if (!moveStageOnly && !operationSaved) {
         const operationResponse = await fetch(`/api/leads/${operations.lead.id}/operations`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -600,12 +603,14 @@ export function OperationalHistoryWorkspace({
         setQuickOperationCompletedForId(operations.lead.id);
       }
 
+      let movedStageName: string | null = null;
       if (quickStageId) {
         const currentStateResponse = await fetch(`/api/leads/${operations.lead.id}/stage`, {
           cache: "no-store",
         });
         const currentState = (await readResponse(currentStateResponse)) as LeadPipelineState;
         if (currentState.currentStageId === quickStageId) {
+          movedStageName = currentState.currentStageName;
           setQuickStageId("");
         } else {
           const stageOption = currentState.transitions.find((option) => option.stageId === quickStageId);
@@ -624,8 +629,18 @@ export function OperationalHistoryWorkspace({
             }),
           });
           await readResponse(stageResponse);
+          movedStageName = stageOption.name;
           setQuickStageId("");
         }
+      }
+
+      if (moveStageOnly) {
+        await refresh();
+        setNotice({
+          kind: "success",
+          message: `Etapa atualizada para ${movedStageName ?? "a etapa selecionada"}. As tarefas pendentes foram mantidas sem exigir preenchimento.`,
+        });
+        return;
       }
 
       let nextLead = nextQueueLeadLoadedForId === operations.lead.id ? nextQueueLead : null;
@@ -1081,7 +1096,10 @@ export function OperationalHistoryWorkspace({
             {quickOperationCompleted ? <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">O resultado e a próxima ação já foram salvos. Corrija somente a etapa e tente novamente.</p> : null}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">O próximo lead já está sendo preparado em segundo plano.</p>
-              <Button disabled={pending} type="submit"><Icon name="seta-direita" size={14} />{pending ? "Concluindo…" : "Concluir e próximo"}</Button>
+              <div className="flex flex-wrap gap-2">
+                {quickStageId ? <Button disabled={pending} formNoValidate name="intent" type="submit" value="MOVE_STAGE_ONLY" variant="secondary"><Icon name="seta-direita" size={14} />{pending ? "Movendo…" : "Mover etapa sem concluir tarefas"}</Button> : null}
+                <Button disabled={pending} type="submit"><Icon name="seta-direita" size={14} />{pending ? "Concluindo…" : "Concluir e próximo"}</Button>
+              </div>
             </div>
             </form>
           </div>
