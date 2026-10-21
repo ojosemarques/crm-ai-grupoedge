@@ -233,6 +233,8 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
     .locator("..");
   await expect(contactSidebar.getByText("Instagram", { exact: true })).toBeVisible();
   await expect(contactSidebar.getByText(instagram, { exact: true })).toBeVisible();
+  const commercialActions = contactSidebar.locator('#vendedor-do-lead + [aria-label="Ações comerciais do lead"]');
+  await expect(commercialActions.getByRole("button", { name: "Marcar vendido", exact: true })).toBeVisible();
   await expect.poll(() => database.contactPoint.count({
     where: { workspaceId: createdLead.workspaceId, contactId: createdLead.contactId!, type: { in: ["WHATSAPP", "INSTAGRAM"] }, deletedAt: null },
   })).toBe(2);
@@ -271,6 +273,83 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
   }
   await expect(page.getByRole("link", { name: "Abrir Indicadores", exact: true })).toHaveAttribute("href", "/dashboard?preset=MONTH");
+});
+
+test("abre o fechamento integrado pelo card da Prospecção Ativa", async ({ page }) => {
+  await login(page, DEMO_USERS[1].email);
+  const leadName = `Venda no card ${randomUUID().slice(0, 8)}`;
+  await page.goto("/email-agente?view=pipeline");
+  await page.getByRole("button", { name: "Adicionar", exact: true }).click();
+  const addLeadDialog = page.getByRole("dialog");
+  await addLeadDialog.getByLabel("Nome", { exact: true }).fill(leadName);
+  await addLeadDialog.getByLabel("Telefone", { exact: true }).fill(uniquePhone(leadName));
+  await addLeadDialog.getByRole("button", { name: "Adicionar lead" }).click();
+  await expect(page.locator("article").filter({ hasText: leadName })).toBeVisible();
+
+  const database = getDatabaseClient();
+  const lead = await database.lead.findFirstOrThrow({
+    where: { workspace: { slug: "politizai" }, fullName: leadName },
+    select: { id: true, workspaceId: true, createdByActorId: true },
+  });
+  const salesPipeline = await database.pipeline.findFirstOrThrow({
+    where: { workspaceId: lead.workspaceId, entityType: "OPPORTUNITY", isDefault: true, deletedAt: null },
+    include: { stages: { where: { opportunityStageCode: "NEGOTIATION", deletedAt: null } } },
+  });
+  const stage = salesPipeline.stages[0]!;
+  const closer = await database.workspaceMember.findFirstOrThrow({
+    where: {
+      workspaceId: lead.workspaceId,
+      status: "ACTIVE",
+      deletedAt: null,
+      teamMemberships: { some: { function: "CLOSER", deletedAt: null } },
+    },
+    select: { id: true },
+  });
+  const opportunity = await database.opportunity.create({
+    data: {
+      workspaceId: lead.workspaceId,
+      leadId: lead.id,
+      pipelineId: salesPipeline.id,
+      currentStageId: stage.id,
+      ownerMemberId: closer.id,
+      name: `Negócio de ${leadName}`,
+      interestDescription: "Fechamento iniciado pelo card do lead.",
+      amountCents: 500000n,
+      mrrCents: 500000n,
+      tcvCents: 500000n,
+      probabilityBps: 8000,
+      createdByActorId: lead.createdByActorId,
+      updatedByActorId: lead.createdByActorId,
+    },
+  });
+  await database.stageHistory.create({
+    data: {
+      workspaceId: lead.workspaceId,
+      pipelineId: salesPipeline.id,
+      stageId: stage.id,
+      opportunityId: opportunity.id,
+      enteredAt: new Date(),
+      enteredByActorId: lead.createdByActorId,
+      transitionOrigin: "OPPORTUNITY_CARD",
+      transitionReason: "Cenário E2E do fechamento pelo card do lead.",
+    },
+  });
+
+  await page.goto(`/email-agente?view=pipeline&q=${encodeURIComponent(leadName)}`);
+  await page.reload();
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/leads/${lead.id}/opportunities`);
+    const body = await response.json() as { result: { opportunities: unknown[] } };
+    return body.result.opportunities.length;
+  }).toBe(1);
+  await page.locator("article").filter({ hasText: leadName }).click();
+  const leadDialog = page.getByRole("dialog");
+  const saleButton = leadDialog.getByRole("button", { name: "Marcar vendido", exact: true });
+  await expect(saleButton).toBeEnabled();
+  await saleButton.click();
+  const salePanel = leadDialog.getByRole("tabpanel", { name: "Marcar vendido" });
+  await expect(salePanel).toBeVisible();
+  await expect(salePanel.getByRole("combobox", { name: "Modelo de contrato", exact: true })).toBeEnabled();
 });
 
 test("preserva os cards carregados ao mover um lead na Prospecção Ativa", async ({ page }) => {

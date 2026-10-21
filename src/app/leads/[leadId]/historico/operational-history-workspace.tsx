@@ -13,6 +13,7 @@ import { ScoringWorkspace } from "@/app/leads/[leadId]/historico/scoring-workspa
 import { LeadStageWorkspace } from "@/app/leads/[leadId]/historico/lead-stage-workspace";
 import { LeadMeetingsWorkspace } from "@/app/leads/[leadId]/historico/lead-meetings-workspace";
 import { LeadOpportunitiesWorkspace } from "@/app/leads/[leadId]/historico/lead-opportunities-workspace";
+import { SaleCompletionPanel } from "@/components/opportunities/sale-completion-panel";
 import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
 import type { LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
 import type { LeadOpportunityScreen } from "@/modules/opportunities/domain/opportunity-contracts";
@@ -44,7 +45,8 @@ type TabKey =
   | "qualification"
   | "timeline"
   | "meetings"
-  | "opportunity";
+  | "opportunity"
+  | "sale";
 
 const inputClass =
   "mt-1.5 h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring";
@@ -365,10 +367,22 @@ export function OperationalHistoryWorkspace({
   const [quickFlowOpen, setQuickFlowOpen] = useState(false);
   const [sellerMemberId, setSellerMemberId] = useState(initialOperations.lead.ownerMemberId ?? "");
   const [sellerTargetsLoading, setSellerTargetsLoading] = useState(false);
+  const [saleOpportunityId, setSaleOpportunityId] = useState<string | null>(null);
   const hasWhatsapp = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "WHATSAPP"));
   const hasInstagram = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "INSTAGRAM"));
   const instagramPoint = contactIdentity?.contact?.points.find((point) => point.type === "INSTAGRAM" && point.isPrimary)
     ?? contactIdentity?.contact?.points.find((point) => point.type === "INSTAGRAM");
+  const saleOpportunities = initialOpportunities.opportunities.filter((opportunity) =>
+    opportunity.status === "OPEN" && opportunity.canWrite,
+  );
+  const saleOpportunity = saleOpportunities.find((opportunity) => opportunity.id === saleOpportunityId)
+    ?? saleOpportunities[0]
+    ?? null;
+  const saleActionHint = !initialOpportunities.canRead
+    ? "Seu perfil não possui acesso aos negócios deste lead."
+    : initialOpportunities.opportunities.some((opportunity) => opportunity.status === "OPEN")
+      ? "Seu perfil não pode concluir a venda deste negócio."
+      : "Crie um negócio para este lead antes de marcar a venda.";
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
@@ -912,7 +926,10 @@ export function OperationalHistoryWorkspace({
     Math.floor((clock - new Date(operations.lead.receivedAt).getTime()) / 1_000),
   );
 
-  const visibleTabs = showOpportunities ? tabs : tabs.filter((tab) => tab.key !== "opportunity");
+  const standardTabs = showOpportunities ? tabs : tabs.filter((tab) => tab.key !== "opportunity");
+  const visibleTabs = activeTab === "sale"
+    ? [...standardTabs, { key: "sale" as const, label: "Marcar vendido" }]
+    : standardTabs;
   const nextQueueLeadLoaded = nextQueueLeadLoadedForId === operations.lead.id;
   const currentNextQueueLead = nextQueueLeadLoaded ? nextQueueLead : null;
   const quickOperationCompleted = quickOperationCompletedForId === operations.lead.id;
@@ -1159,6 +1176,22 @@ export function OperationalHistoryWorkspace({
                 </form>
               </details>
             ) : null}
+            <div aria-label="Ações comerciais do lead" className="grid gap-1.5">
+              <Button
+                disabled={!saleOpportunity}
+                onClick={() => {
+                  if (!saleOpportunity) return;
+                  setSaleOpportunityId(saleOpportunity.id);
+                  setActiveTab("sale");
+                }}
+                size="sm"
+                title={saleOpportunity ? `Concluir ${saleOpportunity.name} como venda` : saleActionHint}
+                type="button"
+              >
+                Marcar vendido
+              </Button>
+              {!saleOpportunity ? <p className="text-xs text-muted-foreground">{saleActionHint}</p> : null}
+            </div>
           </div>
         </aside>
         <div className={styles.content}>
@@ -1464,6 +1497,37 @@ export function OperationalHistoryWorkspace({
       {showOpportunities && activeTab === "opportunity" ? (
         <div aria-labelledby="tab-opportunity" id="panel-opportunity" role="tabpanel">
           <LeadOpportunitiesWorkspace initialScreen={initialOpportunities} onCommitted={refresh} />
+        </div>
+      ) : null}
+      {activeTab === "sale" ? (
+        <div aria-labelledby="lead-sale-title" className="grid gap-4" id="panel-sale" role="tabpanel">
+          <div>
+            <h2 id="lead-sale-title">Marcar vendido</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Confirme a venda para atualizar cliente, financeiro e indicadores no mesmo fluxo.</p>
+          </div>
+          {saleOpportunities.length > 1 ? (
+            <label className="text-sm">Negócio
+              <select className={inputClass} onChange={(event) => setSaleOpportunityId(event.target.value)} value={saleOpportunity?.id ?? ""}>
+                {saleOpportunities.map((opportunity) => <option key={opportunity.id} value={opportunity.id}>{opportunity.name}</option>)}
+              </select>
+            </label>
+          ) : null}
+          {saleOpportunity ? (
+            <SaleCompletionPanel
+              initiallyExpanded
+              key={saleOpportunity.id}
+              onBusyChange={setPending}
+              onCommitted={() => {
+                void refresh().catch((error: unknown) => setNotice({
+                  kind: "error",
+                  message: error instanceof Error ? error.message : "Venda registrada, mas os dados do card não foram atualizados.",
+                }));
+                router.refresh();
+              }}
+              opportunity={saleOpportunity}
+              sellers={initialOpportunities.closerOptions}
+            />
+          ) : <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">{saleActionHint}</p>}
         </div>
       ) : null}
         </div>
