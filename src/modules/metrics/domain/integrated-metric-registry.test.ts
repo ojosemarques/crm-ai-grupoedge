@@ -23,6 +23,15 @@ describe("registro integrado de métricas", () => {
     expect(byId.has("meetings.stage_marked")).toBe(false);
   });
 
+  it("conta somente mensagens de WhatsApp confirmadas como enviadas", () => {
+    const whatsapp = integratedMetricRegistry.find((metric) => metric.id === "outreach.whatsapp_messages");
+    expect(whatsapp).toMatchObject({
+      label: "Mensagens WhatsApp enviadas",
+      eventTypes: ["WHATSAPP_MESSAGE_SENT"],
+      aggregation: "COUNT",
+    });
+  });
+
   it("gera fingerprint determinístico sem depender da ordem do metadata", () => {
     const base = {
       workspaceId: "00000000-0000-0000-0000-000000000001",

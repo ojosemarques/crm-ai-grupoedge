@@ -21,7 +21,7 @@ const metric = (definition: IntegratedMetricDefinition) => Object.freeze(definit
 
 export const contactActionEventTypes = ["CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT", "EMAIL_SENT", "INSTAGRAM_MESSAGE_SENT"] as const;
 
-export const INTEGRATED_METRIC_REGISTRY_VERSION = "indicators.14";
+export const INTEGRATED_METRIC_REGISTRY_VERSION = "indicators.15";
 
 export const integratedMetricRegistry = Object.freeze([
   metric({ id: "work.tasks_created", label: "Tarefas criadas", description: "Tarefas persistidas no período.", unit: "COUNT", eventTypes: ["TASK_CREATED"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
@@ -43,7 +43,7 @@ export const integratedMetricRegistry = Object.freeze([
   metric({ id: "outreach.calls_wrong_number", label: "Número incorreto", description: "Ligações concluídas com número incorreto.", unit: "COUNT", eventTypes: ["CALL_FAILED"], results: ["WRONG_NUMBER"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
   metric({ id: "outreach.calls_channel_unavailable", label: "Canal indisponível", description: "Ligações sem canal telefônico utilizável.", unit: "COUNT", eventTypes: ["CALL_FAILED"], results: ["CHANNEL_UNAVAILABLE"], aggregation: "COUNT", desiredDirection: "DOWN", limitations: [] }),
   metric({ id: "outreach.call_connection_rate", label: "Taxa de conexão", description: "Ligações atendidas sobre tentadas.", unit: "BASIS_POINTS", eventTypes: ["CALL_CONNECTED"], denominatorEventTypes: ["CALL_ATTEMPTED"], aggregation: "RATE", desiredDirection: "UP", limitations: [] }),
-  metric({ id: "outreach.whatsapp_messages", label: "Mensagens WhatsApp", description: "Mensagens de WhatsApp confirmadas como enviadas nas tarefas da cadência.", unit: "COUNT", eventTypes: ["WHATSAPP_MESSAGE_SENT"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
+  metric({ id: "outreach.whatsapp_messages", label: "Mensagens WhatsApp enviadas", description: "Mensagens de WhatsApp confirmadas como enviadas pelos vendedores nas tarefas da cadência.", unit: "COUNT", eventTypes: ["WHATSAPP_MESSAGE_SENT"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),
   metric({ id: "outreach.whatsapp_unavailable", label: "Sem WhatsApp", description: "Tarefas da cadência concluídas com o resultado Não tem WhatsApp.", unit: "COUNT", eventTypes: ["WHATSAPP_UNAVAILABLE"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
   metric({ id: "outreach.whatsapp_other", label: "Outros resultados de WhatsApp", description: "Tarefas de WhatsApp concluídas como Outro, sempre acompanhadas de observação.", unit: "COUNT", eventTypes: ["WHATSAPP_OTHER"], aggregation: "COUNT", desiredDirection: "NEUTRAL", limitations: [] }),
   metric({ id: "outreach.instagram_messages", label: "Mensagens Instagram", description: "Mensagens efetivamente enviadas.", unit: "COUNT", eventTypes: ["INSTAGRAM_MESSAGE_SENT"], aggregation: "COUNT", desiredDirection: "UP", limitations: [] }),

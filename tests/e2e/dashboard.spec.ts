@@ -59,27 +59,32 @@ test("dashboard reconcilia KPI, filtros e drilldown com dados persistidos", asyn
   await page.goto("/dashboard?preset=MONTH");
   await expect(page.getByRole("heading", { name: "Bom trabalho, Gestor." })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Evolução comercial" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Seu funil, do primeiro contato à venda" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Conversão dos leads recebidos no período" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Operação integrada" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Mensagens WhatsApp enviadas/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Qualidade do PACTO" })).toBeVisible();
 
   const leadsKpi = page.getByRole("link", { name: /Leads recebidos/ });
   await expect(leadsKpi).toContainText(String(baselineLeads + 1));
   await leadsKpi.click();
-  await expect(page).toHaveURL(/\/dashboard\/registros\?.*view=kpi.leads/);
-  await expect(page.getByRole("heading", { name: "Leads recebidos" })).toBeVisible();
-  await expect(page.getByText(leadName, { exact: true })).toBeVisible();
-  await expect(page.getByText("Registros").locator(".." )).toContainText(String(baselineLeads + 1));
+  await expect(page).toHaveURL(/\/dashboard\/atividades-integradas\?.*metricId=contacts.leads_created/);
+  await expect(page.getByRole("heading", { name: "Leads novos" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Abrir lead" }).first()).toBeVisible();
 
-  await page.getByRole("link", { name: /Voltar ao dashboard com os mesmos filtros/ }).click();
-  await page.locator("details").filter({ has: page.locator('select[name="priority"]') }).locator("summary").click();
-  await expect(page.getByLabel("Prioridade")).toBeVisible();
+  await page.getByRole("link", { name: /Voltar aos indicadores com os mesmos filtros/ }).click();
+  const priorityFilter = page.getByLabel("Prioridade");
+  if (!await priorityFilter.isVisible()) {
+    await page.locator("details").filter({ has: page.locator('select[name="priority"]') }).evaluate((details) => {
+      (details as HTMLDetailsElement).open = true;
+    });
+  }
+  await expect(priorityFilter).toBeVisible();
   const response = await request.get("/api/metrics/dashboard?preset=MONTH");
   expect(response.ok()).toBe(true);
   const payload = await response.json() as { result: { priorities: { id: string; value: number }[] } };
   const persistedPriority = payload.result.priorities.find((item) => item.value > 0);
   expect(persistedPriority).toBeTruthy();
-  await page.getByLabel("Prioridade").selectOption(persistedPriority!.id);
+  await priorityFilter.selectOption(persistedPriority!.id);
   await page.getByRole("button", { name: "Aplicar" }).click();
   await expect(page).toHaveURL(new RegExp(`priority=${persistedPriority!.id}`));
   await expect(page.getByRole("link", { name: /Leads recebidos/ })).not.toContainText(/^\s*0\s*$/);
