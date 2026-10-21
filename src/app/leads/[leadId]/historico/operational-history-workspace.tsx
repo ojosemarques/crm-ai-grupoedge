@@ -145,7 +145,7 @@ const contactPointLabels: Readonly<Record<ContactPointView["type"], string>> = {
 };
 
 const prospectingResultOptions = Object.freeze({
-  CALL: [["CONNECTED", "Conectou"], ["CALLBACK_REQUESTED", "Pediu retorno"], ["WHATSAPP_SHARED", "Passou contato/WhatsApp"], ["NO_ANSWER", "Não atendeu"], ["BUSY", "Ocupado"], ["VOICEMAIL", "Caixa postal"], ["WRONG_NUMBER", "Número incorreto"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
+  CALL: [["CONNECTED", "Conectou"], ["CALLBACK_REQUESTED", "Pediu retorno"], ["WHATSAPP_SHARED", "Passou contato/WhatsApp"], ["MEETING_SCHEDULED", "Reunião agendada"], ["NO_ANSWER", "Não atendeu"], ["BUSY", "Ocupado"], ["VOICEMAIL", "Caixa postal"], ["WRONG_NUMBER", "Número incorreto"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
   WHATSAPP: [["NO_WHATSAPP", "Não tem WhatsApp"], ["SENT", "Mensagem enviada"], ["OTHER", "Outro (preencher)"]],
   INSTAGRAM_MESSAGE: [["SENT", "Feito"], ["FAILED", "Falhou"], ["PROFILE_NOT_FOUND", "Não achou Instagram"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
   INSTAGRAM_FOLLOW: [["COMPLETED", "Feito"], ["ALREADY_FOLLOWING", "Já seguia"], ["FAILED", "Falhou"], ["PROFILE_NOT_FOUND", "Não achou Instagram"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
@@ -605,23 +605,27 @@ export function OperationalHistoryWorkspace({
           cache: "no-store",
         });
         const currentState = (await readResponse(currentStateResponse)) as LeadPipelineState;
-        const stageOption = currentState.transitions.find((option) => option.stageId === quickStageId);
-        if (!stageOption) throw new Error("A etapa escolhida não está mais disponível para este lead.");
-        const stageResponse = await fetch(`/api/leads/${operations.lead.id}/stage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            targetStageId: quickStageId,
-            expectedUpdatedAt: currentState.updatedAt,
-            reason: formText(form, "stageReason"),
-            origin: "LEAD_CARD",
-            managerCorrection: false,
-            confirmed: form.get("stageConfirmed") === "on",
-            disqualificationReasonId: formText(form, "disqualificationReasonId") ?? null,
-          }),
-        });
-        await readResponse(stageResponse);
-        setQuickStageId("");
+        if (currentState.currentStageId === quickStageId) {
+          setQuickStageId("");
+        } else {
+          const stageOption = currentState.transitions.find((option) => option.stageId === quickStageId);
+          if (!stageOption) throw new Error("A etapa escolhida não está mais disponível para este lead.");
+          const stageResponse = await fetch(`/api/leads/${operations.lead.id}/stage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              targetStageId: quickStageId,
+              expectedUpdatedAt: currentState.updatedAt,
+              reason: formText(form, "stageReason"),
+              origin: "LEAD_CARD",
+              managerCorrection: false,
+              confirmed: form.get("stageConfirmed") === "on",
+              disqualificationReasonId: formText(form, "disqualificationReasonId") ?? null,
+            }),
+          });
+          await readResponse(stageResponse);
+          setQuickStageId("");
+        }
       }
 
       let nextLead = nextQueueLeadLoadedForId === operations.lead.id ? nextQueueLead : null;

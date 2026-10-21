@@ -29,7 +29,9 @@ import {
   applyProspectingTaskCompletionInTransaction,
   stopColdCadenceInTransaction,
 } from "@/modules/prospecting/application/prospecting-cadence-service";
+import { syncActiveProspectingStageInTransaction } from "@/modules/prospecting/application/active-prospecting-stage-service";
 import { resolveCadenceStopReasonForContact } from "@/modules/prospecting/domain/prospecting-cadence";
+import { manualActivityStageOutcome } from "@/modules/prospecting/domain/prospecting-stage-outcome";
 import { recordTaskCompletionMetricFactsInTransaction } from "@/modules/metrics/application/task-completion-metric-facts";
 import {
   recordCommercialMetricCorrectionInTransaction,
@@ -1410,6 +1412,11 @@ export function createOperationalHistoryService(
       });
       const responseRecorded = isConnected(parsed.data.type, result) || isInboundResponse(parsed.data.type);
       const inboundResponse = isInboundResponse(parsed.data.type);
+      const stageOutcome = manualActivityStageOutcome({
+        type: parsed.data.type,
+        result,
+        direction: parsed.data.direction,
+      });
       const cadenceStopReason = resolveCadenceStopReasonForContact({
         connectedContact: responseRecorded,
         inboundResponse,
@@ -1421,6 +1428,23 @@ export function createOperationalHistoryService(
           actorId: context.actorId,
           reason: cadenceStopReason,
           occurredAt,
+        });
+      }
+      if (stageOutcome === "MEETING_SCHEDULED") {
+        await stopColdCadenceInTransaction(transaction, {
+          workspaceId: context.workspaceId,
+          leadId: lead.id,
+          actorId: context.actorId,
+          reason: "MEETING_SCHEDULED",
+          occurredAt,
+        });
+      }
+      if (stageOutcome) {
+        await syncActiveProspectingStageInTransaction(transaction, context, {
+          leadId: lead.id,
+          outcome: stageOutcome,
+          occurredAt,
+          reason: `Atividade ${parsed.data.type} concluída com resultado ${result ?? "sem resultado"}.`,
         });
       }
       const nextTask = await findNextTask(transaction, context.workspaceId, lead.id);

@@ -1,11 +1,13 @@
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 
+import { syncActiveProspectingStageInTransaction } from "@/modules/prospecting/application/active-prospecting-stage-service";
 import {
   ACCEPTED_MANUAL_RESULTS,
   D1_GATE_STEP_KEYS,
   resolveCadenceStopReasonForContact,
   resolveProspectingManualResultReason,
 } from "@/modules/prospecting/domain/prospecting-cadence";
+import { prospectingTaskStageOutcome } from "@/modules/prospecting/domain/prospecting-stage-outcome";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
@@ -13,40 +15,6 @@ type StopReason = "HUMAN_REPLY" | "CONTACT_CONNECTED" | "MEETING_SCHEDULED" | "R
 
 function fail(message: string, code: string, statusCode = 409): never {
   throw new ApplicationError(message, { code, statusCode, expose: true });
-}
-
-async function moveStage(
-  transaction: Prisma.TransactionClient,
-  input: Readonly<{
-    workspaceId: string;
-    leadId: string;
-    stableKey: string;
-    allowedCurrentStableKeys: readonly string[];
-    actorId: string;
-    occurredAt: Date;
-    reason: string;
-  }>,
-) {
-  const lead = await transaction.lead.findFirst({
-    where: { id: input.leadId, workspaceId: input.workspaceId, deletedAt: null },
-    select: { id: true, pipelineId: true, currentStageId: true, currentStage: { select: { stableKey: true } } },
-  });
-  if (!lead) fail("Lead da cadência não encontrado.", "PROSPECTING_LEAD_NOT_FOUND", 404);
-  const stage = await transaction.pipelineStage.findFirst({ where: { workspaceId: input.workspaceId, pipelineId: lead.pipelineId, stableKey: input.stableKey, deletedAt: null }, select: { id: true } });
-  if (!stage) fail("Etapa estável da Prospecção Ativa não encontrada.", "PROSPECTING_STAGE_NOT_FOUND", 503);
-  if (stage.id === lead.currentStageId) return;
-  if (!lead.currentStage.stableKey || !input.allowedCurrentStableKeys.includes(lead.currentStage.stableKey)) return;
-  const openHistories = await transaction.stageHistory.findMany({
-    where: { workspaceId: input.workspaceId, leadId: lead.id, exitedAt: null },
-    select: { enteredAt: true },
-  });
-  const transitionAt = openHistories.reduce(
-    (latest, history) => history.enteredAt >= latest ? new Date(history.enteredAt.getTime() + 1) : latest,
-    input.occurredAt,
-  );
-  await transaction.stageHistory.updateMany({ where: { workspaceId: input.workspaceId, leadId: lead.id, exitedAt: null }, data: { exitedAt: transitionAt, exitedByActorId: input.actorId } });
-  await transaction.stageHistory.create({ data: { workspaceId: input.workspaceId, pipelineId: lead.pipelineId, stageId: stage.id, leadId: lead.id, enteredAt: transitionAt, enteredByActorId: input.actorId, transitionOrigin: "AUTOMATION", transitionReason: input.reason } });
-  await transaction.lead.update({ where: { id: lead.id }, data: { currentStageId: stage.id, updatedByActorId: input.actorId } });
 }
 
 export async function stopColdCadenceInTransaction(
@@ -80,18 +48,18 @@ export async function stopColdCadenceInTransaction(
     where: { workspaceId: input.workspaceId, cadenceInstanceId: cadence.id, status: { in: ["BLOCKED", "SCHEDULED", "CLAIMED", "FAILED"] } },
     data: { status: terminalColdStop ? "CANCELLED" : "SUPPRESSED", finalizedAt: input.occurredAt, lastErrorCode: input.reason, leaseExpiresAt: null, lastAuthorizedAt: null },
   });
-  const stableKey = status === "MEETING_SCHEDULED" ? "active-prospecting.meeting-scheduled"
-    : status === "CLOSED_NO_RESPONSE" ? "active-prospecting.closed-no-response"
-      : status === "DISCARDED" ? "active-prospecting.discarded"
-        : status === "CONVERSATION_STARTED" ? "active-prospecting.conversation-started"
+  const stageOutcome = status === "MEETING_SCHEDULED" ? "MEETING_SCHEDULED"
+    : status === "CLOSED_NO_RESPONSE" ? "CLOSED_NO_RESPONSE"
+      : status === "DISCARDED" ? "DISCARDED"
+        : status === "CONVERSATION_STARTED" ? "CONTACT_CONNECTED"
           : null;
-  if (stableKey) {
-    const allowedCurrentStableKeys = status === "CONVERSATION_STARTED"
-      ? ["active-prospecting.new-lead", "active-prospecting.initial-outreach", "active-prospecting.active-cadence"]
-      : status === "MEETING_SCHEDULED"
-        ? ["active-prospecting.new-lead", "active-prospecting.initial-outreach", "active-prospecting.active-cadence", "active-prospecting.conversation-started"]
-        : ["active-prospecting.new-lead", "active-prospecting.initial-outreach", "active-prospecting.active-cadence"];
-    await moveStage(transaction, { ...input, stableKey, allowedCurrentStableKeys, reason: `Interrupção da cadência: ${input.reason}.` });
+  if (stageOutcome) {
+    await syncActiveProspectingStageInTransaction(transaction, input, {
+      leadId: input.leadId,
+      outcome: stageOutcome,
+      occurredAt: input.occurredAt,
+      reason: `Interrupção da cadência: ${input.reason}.`,
+    });
   }
   if (input.reason === "HUMAN_REPLY" || input.reason === "CONTACT_CONNECTED") {
     if (input.reason === "HUMAN_REPLY") {
@@ -209,24 +177,34 @@ export async function applyProspectingTaskCompletionInTransaction(
     await stopColdCadenceInTransaction(transaction, { workspaceId: input.workspaceId, leadId: input.leadId, actorId: input.actorId, reason: input.stopReason, occurredAt: input.completedAt });
     return { terminal: true as const, nextActionAt: null, nextActionDescription: null };
   }
-  if (step.action === "CALL" && ["CONNECTED", "CALLBACK_REQUESTED", "WHATSAPP_SHARED"].includes(code)) {
+  const stageOutcome = prospectingTaskStageOutcome(step.action, code);
+  if (stageOutcome === "MEETING_SCHEDULED") {
+    await stopColdCadenceInTransaction(transaction, { workspaceId: input.workspaceId, leadId: input.leadId, actorId: input.actorId, reason: "MEETING_SCHEDULED", occurredAt: input.completedAt });
+    return { terminal: true as const, nextActionAt: null, nextActionDescription: null };
+  }
+  if (stageOutcome === "CONTACT_CONNECTED") {
     const reason = resolveCadenceStopReasonForContact({ connectedContact: true, inboundResponse: false });
     if (!reason) fail("Resultado conectado sem motivo de interrupção da cadência.", "PROSPECTING_CONTACT_STOP_REASON_MISSING", 500);
     await stopColdCadenceInTransaction(transaction, { workspaceId: input.workspaceId, leadId: input.leadId, actorId: input.actorId, reason, occurredAt: input.completedAt });
     return { terminal: false as const, nextActionAt: input.completedAt, nextActionDescription: "Atender conversa iniciada" };
+  }
+  if (stageOutcome === "OUTREACH_ATTEMPTED") {
+    await syncActiveProspectingStageInTransaction(transaction, input, {
+      leadId: input.leadId,
+      outcome: stageOutcome,
+      occurredAt: input.completedAt,
+      reason: `Resultado ${code} registrado na tarefa ${step.stepKey}.`,
+    });
   }
   const cadence = await transaction.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: step.cadenceInstanceId } });
   if (D1_GATE_STEP_KEYS.includes(step.stepKey as (typeof D1_GATE_STEP_KEYS)[number])) {
     const remaining = await transaction.prospectingCadenceStep.count({ where: { workspaceId: input.workspaceId, cadenceInstanceId: cadence.id, stepKey: { in: [...D1_GATE_STEP_KEYS] }, status: { not: "COMPLETED" } } });
     if (remaining === 0 && cadence.status === "PENDING_D1") {
       await transaction.prospectingCadenceInstance.update({ where: { id: cadence.id }, data: { status: "ACTIVE", d1GateCompletedAt: input.completedAt, revision: { increment: 1 } } });
-      await moveStage(transaction, {
-        workspaceId: input.workspaceId,
+      await syncActiveProspectingStageInTransaction(transaction, input, {
         leadId: input.leadId,
-        actorId: input.actorId,
+        outcome: "OUTREACH_ATTEMPTED",
         occurredAt: input.completedAt,
-        stableKey: "active-prospecting.active-cadence",
-        allowedCurrentStableKeys: ["active-prospecting.initial-outreach"],
         reason: "Gate D1 concluído.",
       });
       const settings = await transaction.prospectingSettings.findUnique({ where: { workspaceId: input.workspaceId } });

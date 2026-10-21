@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PrismaClient } from "@/generated/prisma/client";
+import { createOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
 import { createOpenDotRequestService } from "@/modules/prospecting/application/open-dot-request-service";
 import { applyProspectingTaskCompletionInTransaction } from "@/modules/prospecting/application/prospecting-cadence-service";
 import { createProspectingEmailService } from "@/modules/prospecting/application/prospecting-email-service";
@@ -14,6 +15,7 @@ import { PROSPECTING_CADENCE } from "@/modules/prospecting/domain/prospecting-ca
 import type { OpenDotPrincipal } from "@/modules/prospecting/domain/open-dot-policy";
 import { signOpenDotRequest } from "@/modules/prospecting/domain/open-dot-policy";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
+import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
 
 const connectionString = process.env.DATABASE_URL;
@@ -21,6 +23,11 @@ if (!connectionString) throw new Error("DATABASE_URL is required for prospecting
 const database = new PrismaClient({ adapter: createPostgresAdapter(connectionString, { max: 10 }) });
 let clock = new Date("2026-10-05T15:00:00.000Z");
 const service = createProspectingStagingService({ database, now: () => clock });
+const operationalHistory = createOperationalHistoryService({
+  database,
+  authorization: createAuthorizationService({ database }),
+  now: () => clock,
+});
 let principal: OpenDotPrincipal;
 let batchId: string;
 let systemActorId: string;
@@ -261,15 +268,44 @@ describe("staging governado da Prospecção Ativa", () => {
     for (const step of d1Steps) {
       const result = d1Results.get(step.stepKey);
       if (!result) throw new Error(`Resultado D1 ausente para ${step.stepKey}.`);
-      await database.$transaction(async (transaction) => {
-        await transaction.task.update({ where: { id: step.taskId! }, data: { status: "COMPLETED", completedAt: clock, result, updatedByActorId: systemActorId } });
-        await applyProspectingTaskCompletionInTransaction(transaction, { workspaceId: principal.workspaceId, leadId, taskId: step.taskId!, result, actorId: systemActorId, completedAt: clock });
+      await operationalHistory.completeTask({
+        workspaceId: principal.workspaceId,
+        actorId: systemActorId,
+        actorKey: "system",
+        actorType: "SYSTEM",
+      }, {
+        leadId,
+        taskId: step.taskId!,
+        result,
+        completedAt: clock,
       });
+      if (step.stepKey === "call-1") {
+        await expect(database.lead.findUniqueOrThrow({
+          where: { id: leadId },
+          select: { currentStage: { select: { stableKey: true } } },
+        })).resolves.toEqual({ currentStage: { stableKey: "active-prospecting.active-cadence" } });
+      }
     }
     expect(await database.prospectingCadenceStep.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "call-1" } })).toMatchObject({ resultCode: "WRONG_NUMBER", resultReason: "Número incorreto informado pelo vendedor." });
     expect(await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id } })).toMatchObject({ status: "ACTIVE" });
     expect(await database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id, status: "SCHEDULED" } })).toBe(6);
     const connectedCall = await database.prospectingCadenceStep.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "call-2" } });
+    await expect(database.$transaction(async (transaction) => {
+      await applyProspectingTaskCompletionInTransaction(transaction, {
+        workspaceId: principal.workspaceId,
+        leadId,
+        taskId: connectedCall.taskId!,
+        result: "MEETING_SCHEDULED",
+        actorId: systemActorId,
+        completedAt: clock,
+      });
+      await expect(transaction.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id } })).resolves.toMatchObject({ status: "MEETING_SCHEDULED", stopReasonCode: "MEETING_SCHEDULED" });
+      await expect(transaction.lead.findUniqueOrThrow({
+        where: { id: leadId },
+        select: { currentStage: { select: { stableKey: true } } },
+      })).resolves.toEqual({ currentStage: { stableKey: "active-prospecting.meeting-scheduled" } });
+      throw new Error("ROLLBACK_MEETING_SCHEDULED_ASSERTIONS");
+    })).rejects.toThrow("ROLLBACK_MEETING_SCHEDULED_ASSERTIONS");
     await expect(database.$transaction(async (transaction) => {
       await transaction.task.update({ where: { id: connectedCall.taskId! }, data: { status: "COMPLETED", completedAt: clock, result: "CONNECTED", updatedByActorId: systemActorId } });
       await applyProspectingTaskCompletionInTransaction(transaction, {
