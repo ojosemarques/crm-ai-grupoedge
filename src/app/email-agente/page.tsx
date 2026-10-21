@@ -37,11 +37,17 @@ export default async function ActiveProspectingPage({ searchParams }: Readonly<{
   try {
     if (view === "pipeline") {
       const database = getDatabaseClient();
-      await ensureActiveProspectingPipeline(database, context.workspaceId, context.actorId);
-      const activeProspecting = await database.pipeline.findFirstOrThrow({
+      let activeProspecting = await database.pipeline.findFirst({
         where: { workspaceId: context.workspaceId, entityType: "LEAD", name: ACTIVE_PROSPECTING_PIPELINE_NAME, deletedAt: null },
         select: { id: true },
       });
+      if (!activeProspecting) {
+        await ensureActiveProspectingPipeline(database, context.workspaceId, context.actorId);
+        activeProspecting = await database.pipeline.findFirstOrThrow({
+          where: { workspaceId: context.workspaceId, entityType: "LEAD", name: ACTIVE_PROSPECTING_PIPELINE_NAME, deletedAt: null },
+          select: { id: true },
+        });
+      }
       pipelineScreen = await getPreSalesPipelineService().getScreen(context, {
         pipelineId: activeProspecting.id,
         q: first(params.q), responsible: first(params.responsible), priority: first(params.priority), stageCode: first(params.stageCode), phoneType: first(params.phoneType), gender: first(params.gender), stateCode: first(params.stateCode),

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { FormEvent, type UIEvent, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -62,6 +62,8 @@ async function fetchLeadEntryOptions(): Promise<LeadEntryOptions> {
 const quickInputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring";
 const boardEdgeScrollZone = 80;
 const boardEdgeScrollStep = 32;
+const stagePageBatchSize = 50;
+const stageAutoLoadThreshold = 240;
 
 function optionalFormValue(form: FormData, name: string): string | undefined {
   const value = String(form.get(name) ?? "").trim();
@@ -206,6 +208,7 @@ export function PreSalesPipelineWorkspace({
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [loadingStageId, setLoadingStageId] = useState<string | null>(null);
+  const loadingStageIdRef = useRef<string | null>(null);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
   const [, startRefresh] = useTransition();
   const entryOptionsRequest = useRef<Promise<LeadEntryOptions> | null>(null);
@@ -223,6 +226,8 @@ export function PreSalesPipelineWorkspace({
   }
 
   async function loadMore(stage: LeadPipelineStageColumn) {
+    if (loadingStageIdRef.current !== null || stage.leads.length >= stage.count) return;
+    loadingStageIdRef.current = stage.id;
     setLoadingStageId(stage.id);
     setNotice(null);
     try {
@@ -236,7 +241,7 @@ export function PreSalesPipelineWorkspace({
         gender: screen.filters.gender,
         stateCode: screen.filters.stateCode,
         offset: String(stage.leads.length),
-        limit: String(screen.cardLimitPerStage),
+        limit: String(stagePageBatchSize),
       });
       const response = await fetch(`/api/pipeline-stages/${stage.id}?${query.toString()}`, { cache: "no-store" });
       const page = await responseResult<LeadPipelineStagePage>(response);
@@ -248,8 +253,16 @@ export function PreSalesPipelineWorkspace({
     } catch (error) {
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Não foi possível carregar mais cards." });
     } finally {
+      loadingStageIdRef.current = null;
       setLoadingStageId(null);
     }
+  }
+
+  function handleStageScroll(event: UIEvent<HTMLDivElement>, stage: LeadPipelineStageColumn) {
+    const container = event.currentTarget;
+    sessionStorage.setItem(columnScrollKey(stage.id), String(container.scrollTop));
+    const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (remaining <= stageAutoLoadThreshold && stage.leads.length < stage.count) void loadMore(stage);
   }
 
   function columnScrollKey(stageId: string) {
@@ -514,7 +527,7 @@ export function PreSalesPipelineWorkspace({
                 </dl>
                 <p>Conversão dos últimos {stage.health.conversionPeriodDays} dias{stage.health.expectedLimitHours ? ` · limite ${stage.health.expectedLimitHours}h` : ""}.</p>
               </details>
-              <div className={styles.cards} onScroll={(event) => sessionStorage.setItem(columnScrollKey(stage.id), String(event.currentTarget.scrollTop))} ref={(node) => { if (node && node.scrollTop === 0) node.scrollTop = Number(sessionStorage.getItem(columnScrollKey(stage.id)) ?? 0); }}>
+              <div className={styles.cards} onScroll={(event) => handleStageScroll(event, stage)} ref={(node) => { if (node && node.scrollTop === 0) node.scrollTop = Number(sessionStorage.getItem(columnScrollKey(stage.id)) ?? 0); }}>
                 {stage.leads.map((lead) => (
                   <article className={styles.card} data-dragging={draggedLeadId === lead.id || undefined} draggable={!touchControls && screen.canWrite && !pending} key={lead.id} onClick={() => { if (!pending) openLeadCard(lead); }} onDragEnd={() => { setDraggedLeadId(null); setDropStageId(null); }} onDragStart={(event) => startDrag(event, lead)} onFocusCapture={() => prefetchLeadCard(lead)} onMouseEnter={() => prefetchLeadCard(lead)} onPointerDown={() => prefetchLeadCard(lead)} onTouchStart={() => prefetchLeadCard(lead)}>
                     <div className={styles.cardBody}>
@@ -544,7 +557,7 @@ export function PreSalesPipelineWorkspace({
           {cards.length === 0 ? <EmptyState description="Ajuste os filtros ou cadastre um lead para começar." title="Nenhum negócio neste recorte" /> : null}
           {visibleStages.some((stage) => stage.count > stage.displayedCount) ? (
             <p className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
-              Esta lista operacional mostra até {screen.cardLimitPerStage} leads por etapa. Use a lista completa para consultar todos os registros deste recorte.
+              O quadro carrega automaticamente os próximos leads ao rolar cada etapa. Use a lista completa para consultar todos os registros deste recorte de uma só vez.
             </p>
           ) : null}
           <DataTableShell>

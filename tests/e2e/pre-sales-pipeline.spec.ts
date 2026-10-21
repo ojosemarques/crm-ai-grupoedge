@@ -352,7 +352,7 @@ test("abre o fechamento integrado pelo card da Prospecção Ativa", async ({ pag
   await expect(salePanel.getByRole("combobox", { name: "Modelo de contrato", exact: true })).toBeEnabled();
 });
 
-test("preserva os cards carregados ao mover um lead na Prospecção Ativa", async ({ page }) => {
+test("carrega todos os cards ao rolar e preserva os carregados ao mover um lead", async ({ page }) => {
   await login(page, DEMO_USERS[1].email);
   await page.goto("/email-agente?view=pipeline");
 
@@ -381,7 +381,12 @@ test("preserva os cards carregados ao mover um lead na Prospecção Ativa", asyn
   await page.goto(`/email-agente?view=pipeline&q=${encodeURIComponent(prefix)}`);
   const source = page.getByRole("region", { name: "Etapa Novo lead" });
   await expect(source.locator("article")).toHaveCount(12);
-  await source.getByRole("button", { name: "Carregar mais (12 de 14)" }).click();
+  await source.getByRole("button", { name: "Carregar mais (12 de 14)" }).evaluate((button) => {
+    const scroller = button.parentElement;
+    if (!scroller) throw new Error("Coluna rolável do pipeline não encontrada.");
+    scroller.scrollTop = scroller.scrollHeight;
+    scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
   await expect(source.locator("article")).toHaveCount(14);
 
   await source.getByRole("button", { name: `Alterar etapa de ${leads[0]!.name}` }).click();

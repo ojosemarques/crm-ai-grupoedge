@@ -154,7 +154,7 @@ export async function ensureActiveProspectingPipeline(
     const result: Counters = { settings: 0, cadence: 0, pipelines: 0, stages: 0, transitions: 0, scoringRules: 0, slaPolicies: 0, priorityBands: 0, reasons: 0 };
     await ensureActiveProspectingPipelineInTransaction(transaction, workspaceId, actorId, result);
     return result;
-  }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 });
+  }, { maxWait: 10_000, timeout: 30_000 });
 }
 
 async function ensureSalesPipeline(tx: Prisma.TransactionClient, workspaceId: string, actorId: string, result: Counters) {
