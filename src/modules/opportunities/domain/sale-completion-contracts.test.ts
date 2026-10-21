@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { executeSaleCompletionSchema, saleCompletionSchema, saleMonth, saleSchedule } from "./sale-completion-contracts";
+import { executeSaleCompletionSchema, prepareLeadSaleSchema, saleCompletionSchema, saleMonth, saleSchedule } from "./sale-completion-contracts";
 
 const input = { opportunityId: "00000000-0000-4000-8000-000000000001", sellerMemberId: "00000000-0000-4000-8000-000000000002", templateVersionId: "00000000-0000-4000-8000-000000000003", expectedRevision: 1, totalCents: "2500000", monthlyCents: "300000", upfrontCents: "700000", receivedCents: "0", paymentMethod: "PIX", paymentCondition: "Entrada e seis parcelas mensais", durationMonths: 6, startsAt: "2026-01-31T12:00:00.000Z", acceptance: { acceptedByName: "Cliente", acceptedByRole: "Diretor", evidenceText: "Aceite documentado." } } as const;
 
@@ -29,5 +29,20 @@ describe("fechamento integrado", () => {
     expect(saleCompletionSchema.safeParse({ ...input, customer: { mode: "LINK", name: "Cliente" } }).success).toBe(false);
     expect(saleCompletionSchema.parse({ ...input, customer: { mode: "CREATE", name: "  Cliente confirmado  " } }).customer).toEqual({ mode: "CREATE", name: "Cliente confirmado" });
     expect(saleCompletionSchema.safeParse({ ...input, customer: { mode: "LINK", accountId: input.opportunityId, workspaceId: input.opportunityId } }).success).toBe(false);
+  });
+  it("valida à vista, parcelas e entrada mais parcelas sem diferença no total", () => {
+    const base = {
+      leadId: input.opportunityId,
+      sellerMemberId: input.sellerMemberId,
+      productId: input.templateVersionId,
+      description: "Venda anual da plataforma",
+      paymentMethod: "PIX" as const,
+      totalCents: "1800000",
+      idempotencyKey: "00000000-0000-4000-8000-000000000004",
+    };
+    expect(prepareLeadSaleSchema.safeParse({ ...base, paymentPlan: "UPFRONT_INSTALLMENTS", upfrontCents: "300000", installmentCents: "150000", installmentCount: 10 }).success).toBe(true);
+    expect(prepareLeadSaleSchema.safeParse({ ...base, paymentPlan: "INSTALLMENTS", upfrontCents: "0", installmentCents: "180000", installmentCount: 10 }).success).toBe(true);
+    expect(prepareLeadSaleSchema.safeParse({ ...base, paymentPlan: "CASH", upfrontCents: "1800000", installmentCents: "0", installmentCount: 1 }).success).toBe(true);
+    expect(prepareLeadSaleSchema.safeParse({ ...base, paymentPlan: "UPFRONT_INSTALLMENTS", upfrontCents: "300000", installmentCents: "140000", installmentCount: 10 }).success).toBe(false);
   });
 });

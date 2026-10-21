@@ -3,13 +3,16 @@ import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createAccountService, normalizeAccountName } from "@/modules/accounts/application/account-service";
 import { createAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
+import { isCatalogItemSellable } from "@/modules/catalog/domain/catalog-sellability-policy";
 import { createContractService } from "@/modules/contracts/application/contract-service";
 import { createLifecycleService } from "@/modules/lifecycle/application/lifecycle-service";
+import { projectOpportunityOwnership } from "@/modules/lifecycle/application/lifecycle-projection-writer";
+import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { createOnboardingService } from "@/modules/onboarding/application/onboarding-service";
 import { assertOriginCapability, createOpportunityService } from "@/modules/opportunities/application/opportunity-service";
 import { assertConsultativeSalesGates, assertRequiredStageActivitiesComplete } from "@/modules/opportunities/application/sales-gate-service";
 import { assertPipelineRequiredFields } from "@/modules/pipeline-templates/application/opportunity-required-fields";
-import { executeSaleCompletionSchema, saleCompletionSchema, saleMonth, salePaymentMethods, saleSchedule, type SaleCompletionInput } from "@/modules/opportunities/domain/sale-completion-contracts";
+import { executeSaleCompletionSchema, prepareLeadSaleSchema, saleCompletionSchema, saleMonth, salePaymentMethods, saleSchedule, type SaleCompletionInput } from "@/modules/opportunities/domain/sale-completion-contracts";
 import { createPaymentService } from "@/modules/payments/application/payment-service";
 import { syncActiveProspectingCommercialStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createRevenueService } from "@/modules/revenue/application/revenue-service";
@@ -104,6 +107,89 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
       ...(BigInt(input.receivedCents) < BigInt(input.totalCents) ? [`Saldo a receber: ${BigInt(input.totalCents) - BigInt(input.receivedCents)} centavos.`] : []),
     ];
     return { opportunity, authorization, offer, seller, template, stage, pendingSteps, customer };
+  }
+
+  async function prepareLeadSale(context: AuthenticatedContext, raw: unknown) {
+    const input = prepareLeadSaleSchema.parse(raw);
+    const fingerprint = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    const lead = await options.database.lead.findFirst({
+      where: { id: input.leadId, workspaceId: context.workspaceId, deletedAt: null },
+      select: { id: true, ownerMemberId: true, queueId: true, sourceId: true, routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } },
+    });
+    if (!lead) fail("Lead não encontrado.", "NOT_FOUND", 404);
+    const authorization = createAuthorizationService({ database: options.database });
+    await authorization.assertAuthorized(context, PermissionKeys.LEADS_READ, {
+      workspaceId: context.workspaceId,
+      resourceType: "Lead",
+      resourceId: lead.id,
+      ownerMemberId: lead.ownerMemberId,
+      queueId: lead.queueId,
+      sourceId: lead.sourceId,
+      teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null,
+    });
+    const opportunityResource = { workspaceId: context.workspaceId, resourceType: "Opportunity", ownerMemberId: input.sellerMemberId, sourceId: lead.sourceId, teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null };
+    const write = await authorization.authorize(context, PermissionKeys.OPPORTUNITIES_WRITE, opportunityResource);
+    if (!write.allowed) await authorization.assertAuthorized(context, PermissionKeys.OPPORTUNITIES_WRITE, opportunityResource);
+    await assertOriginCapability(options.database, context, write, lead.sourceId, "canTransition");
+
+    return options.database.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`prepare-sale:${context.workspaceId}:${input.idempotencyKey}`}, 0))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`lead-sale:${context.workspaceId}:${input.leadId}`}, 0))`;
+      const replay = await tx.auditLog.findFirst({ where: { workspaceId: context.workspaceId, action: "sale.preparation.created", metadata: { path: ["idempotencyKey"], equals: input.idempotencyKey } } });
+      if (replay) {
+        const metadata = replay.metadata as { fingerprint?: string; opportunityId?: string };
+        if (metadata.fingerprint !== fingerprint || !metadata.opportunityId) fail("A mesma preparação foi reutilizada com dados diferentes.", "SALE_PREPARATION_IDEMPOTENCY_CONFLICT");
+        return { opportunityId: metadata.opportunityId, replayed: true };
+      }
+      const currentLead = await tx.lead.findFirst({ where: { id: input.leadId, workspaceId: context.workspaceId, deletedAt: null }, include: { contact: true } });
+      if (!currentLead?.contact || currentLead.contact.deletedAt) fail("Vincule um contato ativo ao lead antes de marcar a venda.");
+      if (await tx.opportunity.findFirst({ where: { workspaceId: context.workspaceId, leadId: input.leadId, status: "OPEN", deletedAt: null } })) {
+        fail("Este lead já possui um negócio aberto. Recarregue o card para continuar o fechamento.", "OPEN_OPPORTUNITY_EXISTS");
+      }
+      const [pipeline, seller, product] = await Promise.all([
+        tx.pipeline.findFirst({ where: { workspaceId: context.workspaceId, entityType: "OPPORTUNITY", isDefault: true, deletedAt: null }, include: { stages: { where: { deletedAt: null } }, transitions: { where: { active: true } } } }),
+        tx.workspaceMember.findFirst({ where: { id: input.sellerMemberId, workspaceId: context.workspaceId, status: "ACTIVE", deletedAt: null, user: { status: "ACTIVE", deletedAt: null }, teamMemberships: { some: { function: "CLOSER", deletedAt: null } } } }),
+        tx.product.findFirst({ where: { id: input.productId, workspaceId: context.workspaceId, active: true, deletedAt: null } }),
+      ]);
+      if (!pipeline) fail("Pipeline de vendas padrão não encontrado.", "PIPELINE_CONFIGURATION_INVALID");
+      const negotiation = pipeline.stages.find((stage) => stage.opportunityStageCode === "NEGOTIATION");
+      const won = pipeline.stages.find((stage) => stage.opportunityStageCode === "WON");
+      if (!negotiation || !won || !pipeline.transitions.some((transition) => transition.fromStageId === negotiation.id && transition.toStageId === won.id)) {
+        fail("O pipeline de vendas não permite preparar o fechamento direto.", "PIPELINE_CONFIGURATION_INVALID");
+      }
+      if (!seller) fail("Vendedor inexistente ou inativo neste workspace.", "NOT_FOUND", 404);
+      if (!product || !isCatalogItemSellable(product, options.now())) fail("Produto inexistente ou indisponível para venda.", "CATALOG_ITEM_NOT_SELLABLE");
+      const now = options.now();
+      const opportunity = await tx.opportunity.create({ data: {
+        workspaceId: context.workspaceId,
+        leadId: currentLead.id,
+        accountId: currentLead.accountId,
+        pipelineId: pipeline.id,
+        currentStageId: negotiation.id,
+        ownerMemberId: seller.id,
+        productId: product.id,
+        name: `Venda — ${currentLead.fullName}`,
+        interestDescription: input.description,
+        status: "OPEN",
+        amountCents: BigInt(input.totalCents),
+        mrrCents: BigInt(input.installmentCents),
+        tcvCents: BigInt(input.totalCents),
+        probabilityBps: 10000,
+        commercialNotes: input.description,
+        createdByActorId: context.actorId,
+        updatedByActorId: context.actorId,
+        createdAt: now,
+        updatedAt: now,
+      } });
+      await projectOpportunityOwnership(tx, { workspaceId: context.workspaceId, opportunityId: opportunity.id, leadId: currentLead.id, memberId: seller.id, actorId: context.actorId, occurredAt: now });
+      const history = await tx.stageHistory.create({ data: { workspaceId: context.workspaceId, pipelineId: pipeline.id, stageId: negotiation.id, opportunityId: opportunity.id, enteredAt: now, enteredByActorId: context.actorId, transitionOrigin: "OPPORTUNITY_CARD", transitionReason: "Negócio preparado pelo atalho Marcar vendido." } });
+      const offer = await tx.offer.create({ data: { workspaceId: context.workspaceId, opportunityId: opportunity.id, productId: product.id, name: `Proposta — ${currentLead.fullName}`, quantity: 1, unitPriceCents: BigInt(input.totalCents), discountCents: 0n, totalCents: BigInt(input.totalCents), justification: input.description, createdByActorId: context.actorId, updatedByActorId: context.actorId, createdAt: now, updatedAt: now } });
+      await tx.offerLine.create({ data: { workspaceId: context.workspaceId, offerId: offer.id, productId: product.id, position: 1, productVersionSnapshot: product.version, productSkuSnapshot: product.sku, productNameSnapshot: product.name, productKindSnapshot: product.kind, revenueCategorySnapshot: product.revenueCategory, approvedConditionsSnapshot: product.approvedConditions, quantity: 1, unitPriceCents: BigInt(input.totalCents), discountCents: 0n, totalCents: BigInt(input.totalCents) } });
+      const activity = await tx.activity.create({ data: { workspaceId: context.workspaceId, leadId: currentLead.id, opportunityId: opportunity.id, type: "STAGE_CHANGE", direction: "INTERNAL", result: "INFORMATION", subject: `Fechamento preparado: ${opportunity.name}`, description: input.description, occurredAt: now, newValues: { stageCode: "NEGOTIATION", productId: product.id, totalCents: input.totalCents, offerId: offer.id }, createdByActorId: context.actorId, updatedByActorId: context.actorId, createdAt: now, updatedAt: now } });
+      await recordCommercialMetricFactInTransaction(tx, { workspaceId: context.workspaceId, eventKey: `opportunity:${opportunity.id}:created:v1`, eventType: "OPPORTUNITY_CREATED", occurredAt: now, sourceEntityType: "Opportunity", sourceEntityId: opportunity.id, leadId: currentLead.id, activityId: activity.id, opportunityId: opportunity.id, pipelineId: pipeline.id, stageId: negotiation.id, creditedMemberId: seller.id, performedByMemberId: context.memberId, leadOwnerMemberIdAtEvent: currentLead.ownerMemberId, opportunityOwnerMemberIdAtEvent: seller.id, valueCents: BigInt(input.totalCents), executionMode: "MANUAL" });
+      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "sale.preparation.created", entityType: "Opportunity", entityId: opportunity.id, occurredAt: now, changes: { leadId: currentLead.id, sellerMemberId: seller.id, productId: product.id, totalCents: input.totalCents, paymentPlan: input.paymentPlan }, metadata: { idempotencyKey: input.idempotencyKey, fingerprint, opportunityId: opportunity.id, offerId: offer.id, stageHistoryId: history.id } } });
+      return { opportunityId: opportunity.id, replayed: false };
+    }, { isolationLevel: "Serializable" });
   }
 
   async function getOptions(context: AuthenticatedContext, opportunityId: string) {
@@ -235,7 +321,7 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
       return result;
     }, { isolationLevel: "Serializable", timeout: 60_000 });
   }
-  return { preview, execute, authorize, getOptions };
+  return { preview, execute, authorize, getOptions, prepareLeadSale };
 }
 
 export function getSaleCompletionService() {

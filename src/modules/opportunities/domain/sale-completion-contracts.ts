@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const salePaymentMethods = ["PIX", "BANK_TRANSFER", "CARD", "CASH", "OTHER"] as const;
+export const salePaymentPlans = ["CASH", "INSTALLMENTS", "UPFRONT_INSTALLMENTS"] as const;
 
 const cents = z.string().regex(/^\d{1,15}$/).refine((value) => BigInt(value) <= BigInt(Number.MAX_SAFE_INTEGER), "Valor fora do limite seguro.");
 const terms = z.object({
@@ -51,6 +52,36 @@ function consistent(input: z.infer<typeof terms>, ctx: z.RefinementCtx) {
 export const saleCompletionSchema = terms.superRefine(consistent);
 export const executeSaleCompletionSchema = terms.extend({ confirmed: z.literal(true), idempotencyKey: z.string().uuid() }).superRefine(consistent);
 export type SaleCompletionInput = z.infer<typeof saleCompletionSchema>;
+
+const prepareLeadSaleTerms = z.object({
+  leadId: z.string().uuid(),
+  sellerMemberId: z.string().uuid(),
+  productId: z.string().uuid(),
+  description: z.string().trim().min(3).max(2_000),
+  paymentPlan: z.enum(salePaymentPlans),
+  paymentMethod: z.enum(salePaymentMethods),
+  totalCents: cents.refine((value) => BigInt(value) > 0n),
+  upfrontCents: cents.default("0"),
+  installmentCents: cents.default("0"),
+  installmentCount: z.number().int().min(1).max(60),
+  idempotencyKey: z.string().uuid(),
+}).strict();
+
+export const prepareLeadSaleSchema = prepareLeadSaleTerms.superRefine((input, ctx) => {
+  const total = BigInt(input.totalCents);
+  const upfront = BigInt(input.upfrontCents);
+  const installments = BigInt(input.installmentCents) * BigInt(input.installmentCount);
+  if (input.paymentPlan === "CASH" && (upfront !== total || BigInt(input.installmentCents) !== 0n || input.installmentCount !== 1)) {
+    ctx.addIssue({ code: "custom", path: ["totalCents"], message: "À vista exige entrada igual ao valor total, sem parcelas." });
+  }
+  if (input.paymentPlan === "INSTALLMENTS" && (upfront !== 0n || installments !== total)) {
+    ctx.addIssue({ code: "custom", path: ["totalCents"], message: "No parcelamento sem entrada, o total deve ser igual ao número de parcelas × valor da parcela." });
+  }
+  if (input.paymentPlan === "UPFRONT_INSTALLMENTS" && (upfront <= 0n || installments <= 0n || upfront + installments !== total)) {
+    ctx.addIssue({ code: "custom", path: ["totalCents"], message: "O total deve ser igual à entrada mais o número de parcelas × valor da parcela." });
+  }
+});
+export type PrepareLeadSaleInput = z.infer<typeof prepareLeadSaleSchema>;
 
 // Anchor every installment to the original day: Jan 31 → Feb 28 → Mar 31.
 export function saleMonth(at: string, months: number): Date {

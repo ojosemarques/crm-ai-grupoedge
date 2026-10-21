@@ -14,6 +14,7 @@ import { LeadStageWorkspace } from "@/app/leads/[leadId]/historico/lead-stage-wo
 import { LeadMeetingsWorkspace } from "@/app/leads/[leadId]/historico/lead-meetings-workspace";
 import { LeadOpportunitiesWorkspace } from "@/app/leads/[leadId]/historico/lead-opportunities-workspace";
 import { SaleCompletionPanel } from "@/components/opportunities/sale-completion-panel";
+import { LeadSalePreparationPanel, type PreparedSaleTerms } from "@/components/opportunities/lead-sale-preparation-panel";
 import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
 import type { LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
 import type { LeadOpportunityScreen } from "@/modules/opportunities/domain/opportunity-contracts";
@@ -367,22 +368,26 @@ export function OperationalHistoryWorkspace({
   const [quickFlowOpen, setQuickFlowOpen] = useState(false);
   const [sellerMemberId, setSellerMemberId] = useState(initialOperations.lead.ownerMemberId ?? "");
   const [sellerTargetsLoading, setSellerTargetsLoading] = useState(false);
+  const [opportunities, setOpportunities] = useState(initialOpportunities);
   const [saleOpportunityId, setSaleOpportunityId] = useState<string | null>(null);
+  const [preparedSaleTerms, setPreparedSaleTerms] = useState<PreparedSaleTerms | undefined>();
   const hasWhatsapp = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "WHATSAPP"));
   const hasInstagram = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "INSTAGRAM"));
   const instagramPoint = contactIdentity?.contact?.points.find((point) => point.type === "INSTAGRAM" && point.isPrimary)
     ?? contactIdentity?.contact?.points.find((point) => point.type === "INSTAGRAM");
-  const saleOpportunities = initialOpportunities.opportunities.filter((opportunity) =>
+  const saleOpportunities = opportunities.opportunities.filter((opportunity) =>
     opportunity.status === "OPEN" && opportunity.canWrite,
   );
   const saleOpportunity = saleOpportunities.find((opportunity) => opportunity.id === saleOpportunityId)
     ?? saleOpportunities[0]
     ?? null;
-  const saleActionHint = !initialOpportunities.canRead
+  const saleActionHint = !opportunities.canRead
     ? "Seu perfil não possui acesso aos negócios deste lead."
-    : initialOpportunities.opportunities.some((opportunity) => opportunity.status === "OPEN")
+    : opportunities.opportunities.some((opportunity) => opportunity.status === "OPEN")
       ? "Seu perfil não pode concluir a venda deste negócio."
-      : "Crie um negócio para este lead antes de marcar a venda.";
+      : opportunities.canPrepareSale
+        ? "Informe os dados para preparar e confirmar a venda."
+        : "Não há vendedor ou produto disponível para preparar a venda.";
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
@@ -429,13 +434,16 @@ export function OperationalHistoryWorkspace({
   }, [autoOpenActivityPanel, showOpportunities]);
 
   async function refresh() {
-    const [operationsResponse, scoreResponse, pipelineResponse, contactResponse] = await Promise.all([
+    const [operationsResponse, scoreResponse, pipelineResponse, contactResponse, opportunitiesResponse] = await Promise.all([
       fetch(`/api/leads/${operations.lead.id}/operations?pageSize=20`, { cache: "no-store" }),
       fetch(`/api/leads/${operations.lead.id}/score`, { cache: "no-store" }),
       fetch(`/api/leads/${operations.lead.id}/stage`, { cache: "no-store" }),
       contactIdentityForbidden
         ? Promise.resolve(null)
         : fetch(`/api/leads/${operations.lead.id}/contact`, { cache: "no-store" }),
+      opportunities.canRead
+        ? fetch(`/api/leads/${operations.lead.id}/opportunities`, { cache: "no-store" })
+        : Promise.resolve(null),
     ]);
     const result = (await readResponse(operationsResponse)) as LeadCardOperations;
     const scoreResult = (await readResponse(scoreResponse)) as LeadScoreView;
@@ -444,6 +452,9 @@ export function OperationalHistoryWorkspace({
     setSellerMemberId(result.lead.ownerMemberId ?? "");
     setScore(scoreResult);
     setPipeline(pipelineResult);
+    if (opportunitiesResponse) {
+      setOpportunities((await readResponse(opportunitiesResponse)) as LeadOpportunityScreen);
+    }
     if (contactResponse) {
       setContactIdentity((await readResponse(contactResponse)) as LeadContactView);
     }
@@ -1029,7 +1040,7 @@ export function OperationalHistoryWorkspace({
           <Button disabled={!pipeline.canWrite} onClick={openStagePanel} size="sm" type="button" variant="secondary">Colocar em nutrição</Button>
           <Button disabled={!initialQualifications.canWrite} key="Qualificar" onClick={() => setActiveTab("qualification")} size="sm" type="button" variant="secondary">Qualificar</Button>
           <Button disabled={!initialMeetings.canSchedule} onClick={() => setActiveTab("meetings")} size="sm" type="button" variant="secondary">Agendar reunião</Button>
-          {showOpportunities ? <Button disabled={!initialOpportunities.canCreate} onClick={() => setActiveTab("opportunity")} size="sm" type="button" variant="secondary">Criar oportunidade</Button> : null}
+          {showOpportunities ? <Button disabled={!opportunities.canCreate} onClick={() => setActiveTab("opportunity")} size="sm" type="button" variant="secondary">Criar oportunidade</Button> : null}
         </div>
         {!operations.permissions.canWrite ? (
           <p className="mt-3 text-sm text-muted-foreground">Seu perfil possui acesso somente para leitura neste lead.</p>
@@ -1200,10 +1211,9 @@ export function OperationalHistoryWorkspace({
             ) : null}
             <div aria-label="Ações comerciais do lead" className="grid gap-1.5">
               <Button
-                disabled={!saleOpportunity}
+                disabled={!saleOpportunity && !opportunities.canPrepareSale}
                 onClick={() => {
-                  if (!saleOpportunity) return;
-                  setSaleOpportunityId(saleOpportunity.id);
+                  if (saleOpportunity) setSaleOpportunityId(saleOpportunity.id);
                   setActiveTab("sale");
                 }}
                 size="sm"
@@ -1518,7 +1528,7 @@ export function OperationalHistoryWorkspace({
       {activeTab === "meetings" ? <LeadMeetingsWorkspace initialMeetings={initialMeetings} onCommitted={refresh} /> : null}
       {showOpportunities && activeTab === "opportunity" ? (
         <div aria-labelledby="tab-opportunity" id="panel-opportunity" role="tabpanel">
-          <LeadOpportunitiesWorkspace initialScreen={initialOpportunities} onCommitted={refresh} />
+          <LeadOpportunitiesWorkspace initialScreen={opportunities} onCommitted={refresh} />
         </div>
       ) : null}
       {activeTab === "sale" ? (
@@ -1547,7 +1557,19 @@ export function OperationalHistoryWorkspace({
                 router.refresh();
               }}
               opportunity={saleOpportunity}
-              sellers={initialOpportunities.closerOptions}
+              sellers={opportunities.closerOptions}
+              initialTerms={preparedSaleTerms}
+            />
+          ) : opportunities.canPrepareSale ? (
+            <LeadSalePreparationPanel
+              screen={opportunities}
+              onPrepared={async (opportunityId, terms) => {
+                const response = await fetch(`/api/leads/${operations.lead.id}/opportunities`, { cache: "no-store" });
+                const next = (await readResponse(response)) as LeadOpportunityScreen;
+                setOpportunities(next);
+                setPreparedSaleTerms(terms);
+                setSaleOpportunityId(opportunityId);
+              }}
             />
           ) : <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">{saleActionHint}</p>}
         </div>
@@ -1556,7 +1578,7 @@ export function OperationalHistoryWorkspace({
         <aside className={styles.context}>
           <section><h2>Contexto político</h2><p>{operations.lead.organizationName ?? operations.lead.account?.name ?? "Partido, mandato ou equipe não informado"}</p></section>
           <section><h2>Próxima atividade</h2>{operations.lead.nextAction ? <><strong>{operations.lead.nextAction.title}</strong><p>{formatDate(operations.lead.nextAction.dueAt, operations.timeZone)}</p><Button variant="secondary" size="sm" onClick={() => openOperationalAction("NOTE", "tarefas")}>Ver atividade</Button></> : <p>Nenhuma atividade agendada.</p>}</section>
-          {showOpportunities ? <section><h2>Negócios</h2>{initialOpportunities.canRead ? <Button onClick={() => setActiveTab("opportunity")} size="sm" variant="secondary">Ver negócios do contato</Button> : <p>Acesso restrito ao seu perfil.</p>}</section> : null}
+          {showOpportunities ? <section><h2>Negócios</h2>{opportunities.canRead ? <Button onClick={() => setActiveTab("opportunity")} size="sm" variant="secondary">Ver negócios do contato</Button> : <p>Acesso restrito ao seu perfil.</p>}</section> : null}
           <section><h2>Conversas</h2>{communicationsForbidden ? <p>Acesso restrito ao seu perfil.</p> : <><p>{initialCommunications?.conversationCount ?? 0} conversas vinculadas</p><Link href={initialCommunications?.recent[0] ? `/inbox?conversationId=${initialCommunications.recent[0].id}` : "/inbox"}>Abrir conversa <Icon name="seta-direita" size={14} /></Link></>}</section>
           <section><h2>Privacidade</h2><span className="status-badge" data-tone={initialPrivacy?.outcome === "ALLOW" ? "success" : initialPrivacy?.outcome === "DENY" ? "danger" : "warning"}>{privacyForbidden ? "Acesso restrito" : initialPrivacy?.outcome === "ALLOW" ? "Autorizado" : initialPrivacy?.outcome === "DENY" ? "Contato bloqueado" : "Revisão necessária"}</span></section>
         </aside>

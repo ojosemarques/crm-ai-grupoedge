@@ -234,7 +234,29 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
   await expect(contactSidebar.getByText("Instagram", { exact: true })).toBeVisible();
   await expect(contactSidebar.getByText(instagram, { exact: true })).toBeVisible();
   const commercialActions = contactSidebar.locator('#vendedor-do-lead + [aria-label="Ações comerciais do lead"]');
-  await expect(commercialActions.getByRole("button", { name: "Marcar vendido", exact: true })).toBeVisible();
+  const directSaleButton = commercialActions.getByRole("button", { name: "Marcar vendido", exact: true });
+  await expect(directSaleButton).toBeVisible();
+  await expect(directSaleButton).toBeEnabled();
+  await directSaleButton.click();
+  const directSalePanel = prospectingLeadDialog.getByRole("tabpanel", { name: "Marcar vendido" });
+  await expect(directSalePanel).toBeVisible();
+  await expect(directSalePanel.getByRole("combobox", { name: "Vendedor", exact: true })).toBeVisible();
+  await expect(directSalePanel.getByLabel("Descrição da venda", { exact: true })).toBeVisible();
+  await expect(directSalePanel.getByRole("combobox", { name: "Condição de pagamento", exact: true })).toBeVisible();
+  await expect(directSalePanel.getByLabel("Valor total (R$)", { exact: true })).toBeVisible();
+  await expect(directSalePanel.getByLabel("Entrada (R$)", { exact: true })).toBeVisible();
+  await expect(directSalePanel.getByLabel("Número de parcelas", { exact: true })).toBeVisible();
+  await expect(directSalePanel.getByLabel("Valor de cada parcela (R$)", { exact: true })).toBeVisible();
+  await directSalePanel.getByLabel("Descrição da venda", { exact: true }).fill("Licença anual e implantação comercial");
+  await directSalePanel.getByLabel("Valor total (R$)", { exact: true }).fill("18.000,00");
+  await directSalePanel.getByLabel("Entrada (R$)", { exact: true }).fill("3.000,00");
+  await directSalePanel.getByLabel("Número de parcelas", { exact: true }).fill("10");
+  await directSalePanel.getByLabel("Valor de cada parcela (R$)", { exact: true }).fill("1.500,00");
+  await expect(directSalePanel.getByRole("status")).toContainText("valores conferem");
+  await directSalePanel.getByRole("button", { name: "Continuar fechamento", exact: true }).click();
+  await expect(directSalePanel.getByRole("combobox", { name: "Modelo de contrato", exact: true })).toBeEnabled();
+  await expect(directSalePanel.getByLabel("Valor total (R$)", { exact: true })).toHaveValue("18000,00");
+  await expect(directSalePanel.getByRole("textbox", { name: "Condição de pagamento detalhada", exact: true })).toHaveValue(/10 parcela\(s\) de R\$\s*1\.500,00/);
   await expect.poll(() => database.contactPoint.count({
     where: { workspaceId: createdLead.workspaceId, contactId: createdLead.contactId!, type: { in: ["WHATSAPP", "INSTAGRAM"] }, deletedAt: null },
   })).toBe(2);

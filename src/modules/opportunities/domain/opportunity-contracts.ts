@@ -98,6 +98,7 @@ export type LeadOpportunityScreen = Readonly<{
   timeZone: string;
   canRead: boolean;
   canCreate: boolean;
+  canPrepareSale: boolean;
   accountOptions: readonly OpportunityReference[];
   suggestedAccountId: string | null;
   closerOptions: readonly OpportunityReference[];

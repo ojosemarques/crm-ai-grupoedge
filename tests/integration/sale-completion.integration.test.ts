@@ -50,6 +50,53 @@ async function fixture(pipelineId?: string) {
 }
 
 describe("venda integrada atômica", () => {
+  it("prepara o fechamento direto do lead com vendedor e valores conciliados, sem registrar a venda antes da confirmação", async () => {
+    const actor = await database.actor.findFirstOrThrow({ where: { workspaceId, type: "SYSTEM" } });
+    const intake = await createLeadIntakeService({ database, authorization: createAuthorizationService({ database }), now: () => now }).intake({
+      channel: "MANUAL",
+      idempotencyKey: `sale-preparation-test:${randomUUID()}`,
+      fullName: "Lead para venda direta",
+      phone: `+55119${Math.floor(Math.random() * 90000000 + 10000000)}`,
+      sourceKey: "manual",
+      priorityBandCode: "P1",
+      interestSummary: "Venda direta pelo card",
+      rawPayload: { test: true },
+    }, { workspaceId, actorId: actor.id, actorKey: actor.key, actorType: "SYSTEM" });
+    if (intake.outcome === "REJECTED") throw new Error(intake.code);
+    const contact = await database.contact.create({ data: { workspaceId, preferredName: "Contato da venda direta", origin: "LEAD_BACKFILL", quality: "CONFIRMED", createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
+    await database.lead.update({ where: { id: intake.leadId }, data: { contactId: contact.id } });
+    const seller = await context("closer1@demo.politizai.local");
+    const product = await database.product.findFirstOrThrow({ where: { workspaceId, active: true, salesGateProfile: "STANDARD", deletedAt: null } });
+    const idempotencyKey = randomUUID();
+    const command = {
+      leadId: intake.leadId,
+      sellerMemberId: seller.memberId,
+      productId: product.id,
+      description: "Licença anual e implantação comercial",
+      paymentPlan: "UPFRONT_INSTALLMENTS" as const,
+      paymentMethod: "PIX" as const,
+      totalCents: "1800000",
+      upfrontCents: "300000",
+      installmentCents: "150000",
+      installmentCount: 10,
+      idempotencyKey,
+    };
+
+    const prepared = await service.prepareLeadSale(admin, command);
+    expect(prepared).toMatchObject({ opportunityId: expect.any(String), replayed: false });
+    expect(await service.prepareLeadSale(admin, command)).toEqual({ opportunityId: prepared.opportunityId, replayed: true });
+    const opportunity = await database.opportunity.findUniqueOrThrow({ where: { id: prepared.opportunityId }, include: { offers: true, currentStage: true } });
+    expect(opportunity).toMatchObject({ leadId: intake.leadId, ownerMemberId: seller.memberId, status: "OPEN", currentStage: { opportunityStageCode: "NEGOTIATION" } });
+    expect(opportunity.tcvCents).toBe(1800000n);
+    expect(opportunity.mrrCents).toBe(150000n);
+    expect(opportunity.offers).toHaveLength(1);
+    expect(opportunity.offers[0]?.totalCents).toBe(1800000n);
+    expect(await database.commercialContract.count({ where: { opportunityId: prepared.opportunityId } })).toBe(0);
+    expect(await database.commercialMetricFact.count({ where: { opportunityId: prepared.opportunityId, eventType: "SALE_WON" } })).toBe(0);
+    await expect(service.prepareLeadSale(admin, { ...command, totalCents: "1900000", upfrontCents: "400000" })).rejects.toMatchObject({ code: "SALE_PREPARATION_IDEMPOTENCY_CONFLICT" });
+    await expect(service.prepareLeadSale(viewer, { ...command, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+  });
+
   it("move o lead da Prospecção Ativa para Cliente e baixa o valor recebido sem perder o saldo", async () => {
     await ensureActiveProspectingPipeline(database, workspaceId, admin.actorId);
     const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId, name: "Prospecção Ativa", entityType: "LEAD", deletedAt: null } });

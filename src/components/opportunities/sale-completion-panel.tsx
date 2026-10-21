@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
+import type { PreparedSaleTerms } from "@/components/opportunities/lead-sale-preparation-panel";
 import type { OpportunityListItem } from "@/modules/opportunities/domain/opportunity-contracts";
 import { saleCompletionSchema, type SaleCompletionInput } from "@/modules/opportunities/domain/sale-completion-contracts";
 
@@ -33,10 +34,11 @@ async function result<T>(response: Response): Promise<T> {
   return body.result;
 }
 
-export function SaleCompletionPanel({ opportunity, sellers, initiallyExpanded = false, onBusyChange, onCommitted }: Readonly<{
+export function SaleCompletionPanel({ opportunity, sellers, initiallyExpanded = false, initialTerms, onBusyChange, onCommitted }: Readonly<{
   opportunity: OpportunityListItem;
   sellers: readonly { id: string; name: string }[];
   initiallyExpanded?: boolean;
+  initialTerms?: PreparedSaleTerms | undefined;
   onBusyChange: (busy: boolean) => void;
   onCommitted: () => void;
 }>) {
@@ -148,19 +150,19 @@ export function SaleCompletionPanel({ opportunity, sellers, initiallyExpanded = 
           </>}
           <label className="text-sm">Vendedor<select className={inputClass} name="sellerMemberId" defaultValue={opportunity.ownerMemberId} required>{sellers.some((seller) => seller.id === opportunity.ownerMemberId) ? null : <option value={opportunity.ownerMemberId}>{opportunity.ownerName}</option>}{sellers.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
           <label className="text-sm">Modelo de contrato<select className={inputClass} name="templateVersionId" required defaultValue=""><option value="">Selecione</option>{templates.map((template) => <option key={template.id} value={template.id}>{template.name} · v{template.version}</option>)}</select></label>
-          <label className="text-sm">Total do contrato (R$)<input className={inputClass} name="total" inputMode="decimal" defaultValue={reais(opportunity.offers[0]?.totalCents ?? opportunity.tcvCents)} required /></label>
-          <label className="text-sm">Entrada (R$)<input className={inputClass} name="upfront" inputMode="decimal" defaultValue="0,00" required /></label>
-          <label className="text-sm">Mensalidade (R$)<input className={inputClass} name="monthly" inputMode="decimal" defaultValue={reais(opportunity.mrrCents)} required /></label>
+          <label className="text-sm">Valor total (R$)<input className={inputClass} name="total" inputMode="decimal" defaultValue={initialTerms ? reais(initialTerms.totalCents) : reais(opportunity.offers[0]?.totalCents ?? opportunity.tcvCents)} required /></label>
+          <label className="text-sm">Entrada (R$)<input className={inputClass} name="upfront" inputMode="decimal" defaultValue={initialTerms ? reais(initialTerms.upfrontCents) : "0,00"} required /></label>
+          <label className="text-sm">Valor de cada parcela (R$)<input className={inputClass} name="monthly" inputMode="decimal" defaultValue={initialTerms ? reais(initialTerms.monthlyCents) : reais(opportunity.mrrCents)} required /></label>
           <label className="text-sm">Valor já recebido (R$)<input className={inputClass} name="received" inputMode="decimal" defaultValue="0,00" required /></label>
-          <label className="text-sm">Forma de pagamento<select className={inputClass} name="paymentMethod" required defaultValue="PIX"><option value="PIX">PIX</option><option value="BANK_TRANSFER">Transferência bancária</option><option value="CARD">Cartão</option><option value="CASH">Dinheiro</option><option value="OTHER">Outro</option></select></label>
-          <label className="text-sm sm:col-span-2">Condição de pagamento<textarea className={inputClass} name="paymentCondition" minLength={2} maxLength={500} required placeholder="Ex.: entrada no aceite e saldo em 6 parcelas mensais" /></label>
-          <label className="text-sm">Quantidade de meses<input className={inputClass} name="months" type="number" min="1" max="60" defaultValue="1" required /></label>
+          <label className="text-sm">Forma de pagamento<select className={inputClass} name="paymentMethod" required defaultValue={initialTerms?.paymentMethod ?? "PIX"}><option value="PIX">PIX</option><option value="BANK_TRANSFER">Transferência bancária</option><option value="CARD">Cartão</option><option value="CASH">Dinheiro</option><option value="OTHER">Outro</option></select></label>
+          <label className="text-sm sm:col-span-2">Condição de pagamento detalhada<textarea className={inputClass} defaultValue={initialTerms?.paymentCondition ?? ""} name="paymentCondition" minLength={2} maxLength={500} required placeholder="Ex.: entrada de R$ 3.000,00 e saldo em 10 parcelas de R$ 1.500,00" /></label>
+          <label className="text-sm">Número de parcelas<input className={inputClass} name="months" type="number" min="1" max="60" defaultValue={initialTerms?.durationMonths ?? 1} required /></label>
           <label className="text-sm">Início de vigência<input className={inputClass} name="startsAt" type="date" required /></label>
           <p className="self-end text-sm text-muted-foreground">Total = entrada + mensalidade × meses. Para venda avulsa, informe o total na entrada, mensalidade zero e um mês.</p>
           <fieldset className="grid gap-3 rounded-md border p-3 sm:col-span-2 sm:grid-cols-2"><legend className="px-1 text-sm font-semibold">Baixa do valor recebido</legend><p className="text-xs text-muted-foreground sm:col-span-2">Preencha conta, data e referência quando o valor recebido for maior que zero. O restante ficará em contas a receber.</p><label className="text-sm">Conta financeira<select className={inputClass} name="financialAccountId" defaultValue=""><option value="">Selecione se houve recebimento</option>{closeOptions?.financialAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label className="text-sm">Data do recebimento<input className={inputClass} name="receivedAt" type="date" /></label><label className="text-sm sm:col-span-2">Referência do recebimento<input className={inputClass} name="paymentReference" maxLength={180} placeholder="Ex.: PIX contrato outubro" /></label>{closeOptions && !closeOptions.canRecordReceipt ? <p className="text-xs text-destructive sm:col-span-2">Seu perfil pode registrar a venda, mas não possui acesso para baixar recebimentos.</p> : null}</fieldset>
           <label className="text-sm">Quem confirmou a venda<input className={inputClass} name="acceptedByName" minLength={2} maxLength={200} required /></label>
           <label className="text-sm">Cargo ou papel<input className={inputClass} name="acceptedByRole" minLength={2} maxLength={200} required /></label>
-          <label className="text-sm sm:col-span-2">Evidência da confirmação<textarea className={inputClass} name="evidenceText" minLength={5} maxLength={2000} required placeholder="Descreva onde e como a venda foi confirmada." /></label>
+          <label className="text-sm sm:col-span-2">Descrição da venda<textarea className={inputClass} defaultValue={initialTerms?.description ?? opportunity.interestDescription ?? ""} name="evidenceText" minLength={5} maxLength={2000} required placeholder="Descreva o que foi vendido e onde a venda foi confirmada." /></label>
           <label className="text-sm">Responsável pelo onboarding (opcional)<select className={inputClass} name="onboardingOwnerMemberId" defaultValue=""><option value="">Definir depois</option>{sellers.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
           <div className="sm:col-span-2"><Button type="submit" disabled={busy || preview !== null}>{busy ? "Processando…" : "Revisar fechamento"}</Button></div>
         </fieldset>
