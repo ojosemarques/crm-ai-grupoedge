@@ -4,6 +4,8 @@
 
 O projeto Vercel de produção foi confirmado como `Grupo Edge / grupo-edge-crm`. Como o ambiente Production não expõe `DATABASE_URL` e não possui `DIRECT_URL`, nenhuma credencial foi inventada ou promovida. A identidade do banco foi confirmada pelo Supabase (`CRM POLITIZAI`, `postgres`, schema `crm`, região `ca-central-1`) e as duas migrations aditivas foram aplicadas pela API oficial com `search_path` explícito. A verificação confirmou os objetos no schema correto e nenhum objeto homônimo novo em `public`. Rollback permanece deploy anterior + migrations aditivas compatíveis.
 
+O commit de implementação `e562f73` foi enviado para `main` e publicado pelo deployment Production `dpl_ETkNU5edwE77EBS4GETzYaVtb37N`, estado `Ready`. O smoke no domínio canônico confirmou health/readiness, proteção administrativa, resposta pública segura, CSP e ausência de erro/fatal/HTTP 5xx após o rollout.
+
 ## Estratégia
 
 Entrega aditiva e reversível em aplicação:

@@ -17,7 +17,7 @@ Este arquivo registra resultados reais. “Planejado” não equivale a execuç�
 | Integrações | outbox/no-egress/redaction | aprovado localmente | Meta somente com finalidade/base/consentimento ativos; Google bloqueado |
 | Segurança | auth/tenant/abuse/XSS/SSRF/redirect/CSV | aprovado no escopo | testes negativos, CSP e gates de capability |
 | Repositório | lint/typecheck/test/build/smoke/scan/audit | aprovado com ressalva documentada | 184 arquivos/899 testes; integração direcionada 10/10; integração global tem falhas preexistentes fora do módulo |
-| Produção | target/migration/deploy/smoke/logs | em execução | alvo e schema confirmados; duas migrations aplicadas e verificadas; deploy/smoke pendentes |
+| Produção | target/migration/deploy/smoke/logs | aprovado | migrations no schema `crm`; deployment Production Ready; smoke e logs sem 5xx/erro/fatal |
 
 ## Casos obrigatórios
 
@@ -92,6 +92,6 @@ Referências 01–11 e URL registradas em `00-audit-evidence.md`. Evidência a c
 
 ## Go/no-go
 
-Estado atual: **GO para deploy**, com o módulo aprovado localmente e as duas migrations já aplicadas no schema `crm` de produção pela API oficial do Supabase. Ainda não houve push nem deploy.
+Estado atual: **GO operacional**. O módulo foi aprovado localmente, as duas migrations foram aplicadas e verificadas no schema `crm` de produção, o commit `e562f73` está na `main` e o deployment Production `dpl_ETkNU5edwE77EBS4GETzYaVtb37N` está `Ready`.
 
-O rollout termina quando commit/push, deployment e smoke/logs remotos passarem e o deployment for confirmado no commit da `main`.
+Smoke remoto aprovado no domínio canônico: health/readiness 200 com banco `ok`; área administrativa protegida por login; API pública inexistente 404; página pública inexistente com `noindex`; CSP/headers presentes; consultas pós-deploy sem erro/fatal de runtime ou HTTP 5xx.

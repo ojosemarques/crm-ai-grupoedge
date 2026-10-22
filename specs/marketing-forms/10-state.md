@@ -18,13 +18,13 @@ Atualizado em: 2026-10-22 (America/Sao_Paulo)
 | T3–T8 | concluídas | serviços admin, builder, sete abas, referências CRM, estilo, publicação e runtime público |
 | T9–T14 | concluídas | receipt/intake idempotente, atribuição, QR/UTM, respostas/CSV, estatísticas e Meta consentida via outbox |
 | T15 | concluída | E2E funcional e smoke do build em 1440/1024/768/390, sem overflow ou violação CSP |
-| T16 | em execução | migrations aplicadas no Supabase de produção pela API oficial; commit/deploy/smoke remotos pendentes |
+| T16 | concluída | migrations verificadas, commit `e562f73` na `main`, deployment Production `dpl_ETkNU5edwE77EBS4GETzYaVtb37N` Ready e smoke remoto aprovado |
 
-Task atual: T16 — Integração, segurança, produção e operação.
+Task atual: nenhuma; escopo concluído.
 
 Última task concluída: T15 — Acessibilidade, responsividade e QA visual.
 
-Próximo passo: commit/push na `main`, deploy Vercel e smoke remoto.
+Próximo passo: operação normal e observação das métricas descritas em `13-rollout-operations.md`.
 
 O Vercel não expõe a `DATABASE_URL` sensível e Production não possui `DIRECT_URL`. A identidade foi confirmada sem credenciais pelo projeto Supabase `CRM POLITIZAI`, banco `postgres`, schema `crm`, região `ca-central-1`, entidades e histórico de migrations do repositório. As duas migrations aditivas foram aplicadas pela API oficial do Supabase com `search_path` fixado em `crm`; a verificação confirmou tabelas, coluna obrigatória, FK composta e ausência de criação acidental em `public`.
 
@@ -51,6 +51,9 @@ O Vercel não expõe a `DATABASE_URL` sensível e Production não possui `DIRECT
 - `pnpm test`: 184 arquivos e 899 testes aprovados no estado final integrado da `main`.
 - integração direcionada final: 113 migrations do zero; 2 arquivos e 10 testes aprovados.
 - produção: duas migrations aplicadas pela API oficial do Supabase e verificadas no schema `crm`; nenhum objeto novo correspondente foi criado em `public`.
+- `main`: commit de implementação `e562f73` enviado ao GitHub.
+- Vercel Production: deployment `dpl_ETkNU5edwE77EBS4GETzYaVtb37N` construído do commit `e562f73` e marcado `Ready`.
+- smoke remoto em `https://crm-ai-grupoedge.vercel.app`: health/readiness 200, banco `ok`, `/formularios` redireciona para login, API pública inexistente 404, página inexistente `noindex`, CSP nonce/headers presentes e nenhum erro/fatal/HTTP 5xx no deployment.
 - `pnpm test:integration`: gate global falhou em casos preexistentes/concorrentes fora do módulo; o runner isolou e aprovou diversas suites; nenhuma falha de marketing forms.
 - `pnpm build`: aprovado com `/formularios`, `/f/[slug]` e APIs no manifesto.
 - `pnpm ci:smoke`: aprovado; `pnpm security:scan`: aprovado; `pnpm audit --prod`: sem vulnerabilidades conhecidas.
@@ -68,4 +71,4 @@ O Vercel não expõe a `DATABASE_URL` sensível e Production não possui `DIRECT
 
 ## Próximo prompt exato
 
-Finalizar commit/push na `main`, deploy Vercel e smoke remoto, preservando o histórico de migrations confirmado no Supabase.
+Nenhum prompt de continuação é necessário para o escopo atual. Manter observabilidade e operar formulários reais somente com conteúdo, consentimento e integrações homologados.
