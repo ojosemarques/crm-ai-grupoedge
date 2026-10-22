@@ -145,10 +145,121 @@ export function createMarketingFormAdvertisingSyncService(options: Options) {
     };
   }
 
-  async function moveExistingLeads(context: AuthenticatedContext, formId: string) {
+  async function syncExistingResponses(context: AuthenticatedContext, formId: string) {
     return options.database.$transaction(async (transaction) => {
       await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`marketing-form-advertising-sync:${context.workspaceId}:${formId}`}, 0))`;
-      const snapshot = await inspect(context, formId, transaction);
+      let snapshot = await inspect(context, formId, transaction);
+      const acceptedReceipts = await transaction.marketingFormReceipt.findMany({
+        where: { workspaceId: context.workspaceId, marketingFormId: formId, status: "ACCEPTED", deletedAt: null },
+        select: { id: true },
+      });
+      const unlinkedSubmissions = acceptedReceipts.length
+        ? await transaction.leadFormSubmission.findMany({
+            where: {
+              workspaceId: context.workspaceId,
+              marketingFormId: formId,
+              marketingFormReceiptId: { in: acceptedReceipts.map((receipt) => receipt.id) },
+              leadId: null,
+            },
+            orderBy: [{ submittedAt: "asc" }, { id: "asc" }],
+            select: {
+              id: true,
+              contactId: true,
+              sourceId: true,
+              campaignId: true,
+              creativeId: true,
+              submittedFullName: true,
+              normalizedEmail: true,
+              normalizedPhone: true,
+              submittedJobTitle: true,
+              submittedOrganizationName: true,
+              submittedCity: true,
+              submittedStateCode: true,
+              submittedInterestSummary: true,
+              submittedBudgetCents: true,
+              submittedContactPreference: true,
+              submittedAt: true,
+            },
+          })
+        : [];
+      const definition = marketingFormDefinitionSchema.parse(snapshot.form.draftDefinition);
+      const configuredQueue = definition.destination.queueId
+        ? await transaction.queue.findFirst({
+            where: { workspaceId: context.workspaceId, id: definition.destination.queueId, deletedAt: null },
+            select: { id: true },
+          })
+        : null;
+      const destinationQueue = configuredQueue ?? await transaction.queue.findFirst({
+        where: { workspaceId: context.workspaceId, isGeneral: true, deletedAt: null },
+        orderBy: { createdAt: "asc" },
+        select: { id: true },
+      });
+      if (unlinkedSubmissions.length > 0 && !destinationQueue) {
+        fail("Nenhuma fila válida está disponível para receber os leads do formulário.", "ADVERTISING_DESTINATION_QUEUE_UNAVAILABLE", 503);
+      }
+      const queuedSubmissions = destinationQueue
+        ? unlinkedSubmissions.map((submission) => ({ submission, queueId: destinationQueue.id }))
+        : [];
+      const created = [] as string[];
+      for (const { submission, queueId } of queuedSubmissions) {
+        const lead = await transaction.lead.create({
+          data: {
+            workspaceId: context.workspaceId,
+            contactId: submission.contactId,
+            sourceId: submission.sourceId,
+            campaignId: submission.campaignId,
+            creativeId: submission.creativeId,
+            latestSourceId: submission.sourceId,
+            latestCampaignId: submission.campaignId,
+            latestCreativeId: submission.creativeId,
+            pipelineId: snapshot.pipeline.id,
+            currentStageId: snapshot.stage.id,
+            queueId,
+            routingQueueId: queueId,
+            fullName: submission.submittedFullName?.trim() || "Lead do formulário",
+            normalizedEmail: submission.normalizedEmail,
+            normalizedPhone: submission.normalizedPhone,
+            jobTitle: submission.submittedJobTitle,
+            organizationName: submission.submittedOrganizationName,
+            city: submission.submittedCity,
+            stateCode: submission.submittedStateCode,
+            interestSummary: submission.submittedInterestSummary,
+            latestInterestSummary: submission.submittedInterestSummary,
+            budgetCents: submission.submittedBudgetCents,
+            contactPreference: submission.submittedContactPreference ?? "UNKNOWN",
+            contactPreferenceUpdatedAt: submission.submittedContactPreference ? submission.submittedAt : null,
+            conversionCount: 1,
+            latestSubmissionAt: submission.submittedAt,
+            status: "OPEN",
+            priority: "MEDIUM",
+            slaStartedAt: submission.submittedAt,
+            slaDueAt: submission.submittedAt,
+            lastActivityAt: submission.submittedAt,
+            createdByActorId: context.actorId,
+            updatedByActorId: context.actorId,
+          },
+          select: { id: true },
+        });
+        await transaction.stageHistory.create({
+          data: {
+            workspaceId: context.workspaceId,
+            pipelineId: snapshot.pipeline.id,
+            stageId: snapshot.stage.id,
+            leadId: lead.id,
+            enteredAt: submission.submittedAt,
+            enteredByActorId: context.actorId,
+            transitionOrigin: "SYSTEM",
+            transitionReason: "Resposta histórica do formulário criada no pipeline de Anúncios.",
+            managerCorrection: true,
+          },
+        });
+        await transaction.leadFormSubmission.update({
+          where: { id: submission.id },
+          data: { leadId: lead.id, status: "LINKED", intakeOutcome: "CREATED" },
+        });
+        created.push(lead.id);
+      }
+      if (created.length > 0) snapshot = await inspect(context, formId, transaction);
       const moved = [] as string[];
       for (const leadId of snapshot.moveIds) {
         const histories = await transaction.stageHistory.findMany({
@@ -199,6 +310,7 @@ export function createMarketingFormAdvertisingSyncService(options: Options) {
             acceptedResponses: snapshot.summary.acceptedResponses,
             linkedResponses: snapshot.summary.linkedResponses,
             distinctLeads: snapshot.summary.distinctLeads,
+            createdLeads: created.length,
             movedLeads: moved.length,
             alreadyRouted: snapshot.summary.alreadyRouted,
             preservedHistoryRows: snapshot.summary.preservedHistoryRows,
@@ -210,7 +322,7 @@ export function createMarketingFormAdvertisingSyncService(options: Options) {
           },
         },
       });
-      return moved.length;
+      return { createdLeads: created.length, movedLeads: moved.length };
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 60_000 });
   }
 
@@ -246,9 +358,9 @@ export function createMarketingFormAdvertisingSyncService(options: Options) {
       if (!("form" in published)) fail("Não foi possível publicar o novo destino.", "MARKETING_FORM_PUBLISH_FAILED", 500);
       revision = published.form.revision;
     }
-    const movedLeads = await moveExistingLeads(context, formId);
+    const synchronized = await syncExistingResponses(context, formId);
     snapshot = await inspect(context, formId);
-    return { mode: input.mode, ...snapshot.summary, revision, movedLeads };
+    return { mode: input.mode, ...snapshot.summary, revision, ...synchronized };
   }
 
   return Object.freeze({ run });

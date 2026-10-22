@@ -341,6 +341,21 @@ describe("serviço administrativo de formulários", () => {
     const receipt = await database.marketingFormReceipt.findFirstOrThrow({ where: { publicId: accepted.receiptPublicId, workspaceId: tenantA.context.workspaceId } });
     const submission = await database.leadFormSubmission.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, marketingFormReceiptId: receipt.id } });
     const leadId = submission.leadId!;
+    const unlinkedAccepted = await submissionService.submit(slug, {
+      versionPublicId: published.version.publicId,
+      sessionPublicId: randomUUID(),
+      idempotencyToken: randomUUID(),
+      startedAt: new Date(now.getTime() - 1_000).toISOString(),
+      honeypot: "",
+      tracking: {},
+      answers: [
+        { questionKey: "nome-completo", value: "Lead importado sem vínculo" },
+        { questionKey: "telefone", value: "(62)99876-5432" },
+      ],
+    });
+    const unlinkedReceipt = await database.marketingFormReceipt.findFirstOrThrow({ where: { publicId: unlinkedAccepted.receiptPublicId, workspaceId: tenantA.context.workspaceId } });
+    const unlinkedSubmission = await database.leadFormSubmission.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, marketingFormReceiptId: unlinkedReceipt.id } });
+    await database.leadFormSubmission.update({ where: { id: unlinkedSubmission.id }, data: { leadId: null, status: "RECEIVED", intakeOutcome: null } });
     const initialHistory = await database.stageHistory.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, leadId, exitedAt: null } });
     const progressedAt = new Date(initialHistory.enteredAt.getTime() + 1);
     await database.stageHistory.update({
@@ -368,15 +383,16 @@ describe("serviço administrativo de formulários", () => {
 
     await expect(advertisingSyncService.run(tenantA.context, form.id, { mode: "PREVIEW" })).resolves.toMatchObject({
       mode: "PREVIEW",
-      acceptedResponses: 1,
+      acceptedResponses: 2,
       linkedResponses: 1,
+      unlinkedResponses: 1,
       distinctLeads: 1,
       toMove: 1,
       leadsWithClosedStageHistory: 1,
       futureResponsesConfigured: false,
     });
     const applied = await advertisingSyncService.run(tenantA.context, form.id, { mode: "APPLY", expectedRevision: published.form.revision });
-    expect(applied).toMatchObject({ mode: "APPLY", movedLeads: 1, toMove: 0, alreadyRouted: 1, futureResponsesConfigured: true });
+    expect(applied).toMatchObject({ mode: "APPLY", createdLeads: 1, movedLeads: 1, toMove: 0, alreadyRouted: 2, futureResponsesConfigured: true });
 
     const routed = await database.lead.findUniqueOrThrow({ where: { id: leadId }, include: { pipeline: true, currentStage: true } });
     expect(routed.pipeline.name).toBe("Anúncios");
@@ -386,10 +402,19 @@ describe("serviço administrativo de formulários", () => {
     expect(await database.task.count({ where: { workspaceId: tenantA.context.workspaceId, leadId } })).toBe(before.tasks);
     expect(await database.activity.count({ where: { workspaceId: tenantA.context.workspaceId, leadId } })).toBe(before.activities);
     expect(await database.goalQuota.count({ where: { workspaceId: tenantA.context.workspaceId } })).toBe(before.goals);
+    const createdLeadId = (await database.leadFormSubmission.findUniqueOrThrow({ where: { id: unlinkedSubmission.id }, select: { leadId: true } })).leadId!;
+    await expect(database.lead.findUniqueOrThrow({ where: { id: createdLeadId }, include: { pipeline: true, currentStage: true } })).resolves.toMatchObject({
+      fullName: "Lead importado sem vínculo",
+      queueId: tenantA.queueId,
+      pipeline: { name: "Anúncios" },
+      currentStage: { leadStageCode: "NEW" },
+    });
+    expect(await database.task.count({ where: { workspaceId: tenantA.context.workspaceId, leadId: createdLeadId } })).toBe(0);
+    expect(await database.activity.count({ where: { workspaceId: tenantA.context.workspaceId, leadId: createdLeadId } })).toBe(0);
 
     const current = await database.marketingForm.findUniqueOrThrow({ where: { id: form.id } });
     const replay = await advertisingSyncService.run(tenantA.context, form.id, { mode: "APPLY", expectedRevision: current.revision });
-    expect(replay).toMatchObject({ movedLeads: 0, toMove: 0, alreadyRouted: 1, futureResponsesConfigured: true });
+    expect(replay).toMatchObject({ createdLeads: 0, movedLeads: 0, toMove: 0, alreadyRouted: 2, futureResponsesConfigured: true });
     expect((await database.marketingForm.findUniqueOrThrow({ where: { id: form.id } })).currentVersion).toBe(2);
   });
 });
