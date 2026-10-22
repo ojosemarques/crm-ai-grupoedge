@@ -53,7 +53,7 @@ pelo Git e com permissão 0600. Não cole tokens em prompts, logs ou commits.
 | `listar_leads` | Busca `q`, responsáveis, equipes, etapas, status, cidade/UF e paginação | `crm:read` |
 | `consultar_historico_lead` | `leadId`, tarefas, atividades, timeline e próxima ação; `cursor`, `pageSize` | `crm:read` |
 | `consultar_oportunidades` | Pipeline, closer, produto, etapa, período, valores e próximos compromissos | `crm:read` |
-| `consultar_atividades` | Fila comercial de tarefas e atividades com atrasos | `crm:read` |
+| `consultar_atividades` | Fila comercial de tarefas e atividades com atrasos; `page`, `pageSize` | `crm:read` |
 | `consultar_agenda` | Reuniões por `date`, `view` (`day`/`week`) e `closerId` | `crm:read` |
 | `consultar_metas` | Planos, quotas e atingimento; membro, `asOf` e paginação | `crm:read` |
 | `consultar_forecast` | Ciclos, submissões, snapshots, membro e paginação | `crm:read` |
@@ -80,6 +80,14 @@ auditoria, com `clientId` e ferramenta, sem argumentos nem resultados.
   medianas, saldos ou contagens distintas entre janelas.
 - Paginação comum: `page` e `pageSize` (10–100). Histórico do lead aceita
   `pageSize` de 1–50; fatos integrados usam `limit` de 1–100 e cursor.
+- O dashboard retorna agregados e IDs de drilldowns. Consulte os registros
+  e evidências por `detalhar_dashboard`, evitando enviar todo o universo do
+  CRM em uma resposta. Auditoria consulta eventos e achados já persistidos,
+  sem executar a varredura completa de saúde da tela administrativa.
+- Na fila de atividades, a página limita separadamente as fontes de tarefas
+  e reuniões antes dos filtros canônicos de visibilidade. Pode haver páginas
+  vazias ou com menos itens; continue até `pagination.hasMore=false`. As
+  contagens retornadas são da página, não o total global da fila.
 - Valores monetários grandes são strings de centavos, preservando precisão.
   Taxas podem estar em basis points: respeite a unidade de cada definição.
 - Resultados incluem `generatedAt`. O fuso vem do workspace. Um dado

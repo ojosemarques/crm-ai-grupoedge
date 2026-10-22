@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { PrismaClient } from "@/generated/prisma/client";
 import { authenticateCrmMcp, parseCrmMcpClients, crmMcpScopes, type CrmMcpIdentity } from "./crm-mcp-authentication";
-import { assertCrmMcpPeriod, createCrmMcpServer, sanitizeCrmMcpResult } from "./crm-mcp-server";
+import { assertCrmMcpPeriod, createCrmMcpServer, sanitizeCrmMcpResult, summarizeCrmMcpDashboard } from "./crm-mcp-server";
 
 const mocks = vi.hoisted(() => ({
   overview: vi.fn(), revenueDrilldown: vi.fn(), authorize: vi.fn(), audit: vi.fn(),
@@ -148,6 +148,11 @@ describe("CRM MCP protocol and read tools", () => {
     expect(result.nested).toEqual({ access_token: "[REMOVIDO]" });
     expect(result.date).toBe("2026-01-01T00:00:00.000Z");
     expect(result.amount).toBe("99999999999999999");
+  });
+  it("separates dashboard aggregates from unbounded drilldown evidence", () => {
+    const result = summarizeCrmMcpDashboard({ kpis: [{ value: 90 }], overview: { leadsReceived: { count: 90 }, evidence: { leads: new Array(100000).fill("lead") } }, records: ["raw"], drilldowns: [{ id: "leads", title: "Leads", recordKeys: ["lead:1"] }] });
+    expect(result).toEqual({ kpis: [{ value: 90 }], overview: { leadsReceived: { count: 90 } }, drilldowns: [{ id: "leads", title: "Leads" }] });
+    expect(JSON.stringify(result).length).toBeLessThan(1000);
   });
   it("rejects partial or reversed periods", () => {
     expect(() => assertCrmMcpPeriod({ preset: "CUSTOM" })).toThrow();

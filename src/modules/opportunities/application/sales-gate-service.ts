@@ -328,7 +328,7 @@ export function createSalesGateService(options: SalesGateOptions) {
     return { generatedAt: options.now().toISOString(), counts: { open: items.filter((item) => item.status === "OPEN").length, acknowledged: items.filter((item) => item.status === "ACKNOWLEDGED").length }, items: items.map((item) => ({ id: item.id, opportunityId: item.opportunityId, opportunityName: item.opportunity?.name ?? "Oportunidade", ownerMemberId: item.opportunity?.ownerMemberId ?? null, stageName: item.opportunity?.currentStage.name ?? null, type: item.type, severity: item.severity, status: item.status, title: item.title, evidenceSummary: item.evidenceSummary, detectedAt: item.detectedAt.toISOString(), lastDetectedAt: item.lastDetectedAt.toISOString() })) };
   }
 
-  async function getActivityQueue(context: AuthenticatedContext) {
+  async function getActivityQueue(context: AuthenticatedContext, pagination?: Readonly<{ page: number; pageSize: number }>) {
     const resource = { workspaceId: context.workspaceId, resourceType: "UnifiedActivityQueue", ownerMemberId: context.memberId };
     const [tasksDecision, opportunityDecision, meetingDecision, postSaleDecision] = await Promise.all([
       options.authorization.authorize(context, PermissionKeys.TASKS_READ, resource),
@@ -359,8 +359,10 @@ export function createSalesGateService(options: SalesGateOptions) {
         })
       : [];
     const teamMemberIds = new Set(teamMembers.map((item) => item.workspaceMemberId));
-    const [tasks, meetings, originRules] = await Promise.all([
+    const sourcePage: { skip?: number; take?: number } = pagination ? { skip: (pagination.page - 1) * pagination.pageSize, take: pagination.pageSize + 1 } : {};
+    const [taskRows, meetingRows, originRules] = await Promise.all([
       options.database.task.findMany({
+        ...sourcePage,
         where: {
           workspaceId: context.workspaceId,
           status: { in: ["OPEN", "IN_PROGRESS"] },
@@ -379,6 +381,7 @@ export function createSalesGateService(options: SalesGateOptions) {
       }),
       meetingDecision.allowed
         ? options.database.meeting.findMany({
+            ...sourcePage,
             where: {
               workspaceId: context.workspaceId,
               deletedAt: null,
@@ -398,6 +401,8 @@ export function createSalesGateService(options: SalesGateOptions) {
         select: { sourceId: true, teamId: true, canRead: true },
       }),
     ]);
+    const tasks = pagination ? taskRows.slice(0, pagination.pageSize) : taskRows;
+    const meetings = pagination ? meetingRows.slice(0, pagination.pageSize) : meetingRows;
     const governedSources = new Set(originRules.map((rule) => rule.sourceId));
     const sourceAllowed = (sourceId: string) =>
       !governedSources.has(sourceId) ||
@@ -492,6 +497,7 @@ export function createSalesGateService(options: SalesGateOptions) {
         postSale: items.filter((item) => item.origin === "POST_SALE").length,
       },
       items,
+      ...(pagination ? { pagination: { ...pagination, hasMore: taskRows.length > pagination.pageSize || meetingRows.length > pagination.pageSize, countsScope: "PAGE" as const, boundary: "BEFORE_VISIBILITY_FILTER" as const } } : {}),
     };
   }
 

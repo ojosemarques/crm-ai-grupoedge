@@ -2,9 +2,9 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { getOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
-import { getAuditAdministrationService } from "@/modules/audit/application/audit-administration-service";
 import { auditOrigins, actorTypes, processViolationSeverities, processViolationStatuses, processViolationTypes } from "@/modules/audit/domain/audit-contracts";
 import type { CrmMcpIdentity } from "@/modules/crm-mcp/application/crm-mcp-authentication";
+import { readCrmMcpAudit } from "@/modules/crm-mcp/application/crm-mcp-audit";
 import { getForecastService } from "@/modules/forecast/application/forecast-service";
 import { getGoalService } from "@/modules/goals/application/goal-service";
 import { getIntegrationPlatformService } from "@/modules/integrations/application/integration-platform-service";
@@ -73,6 +73,14 @@ export function sanitizeCrmMcpResult(value: unknown): unknown {
   }));
 }
 
+export function summarizeCrmMcpDashboard(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value, (key, item: unknown) => {
+    if (["records", "recordKeys", "evidence"].includes(key)) return undefined;
+    if (typeof item === "bigint") return item.toString();
+    return item;
+  }));
+}
+
 export function createCrmMcpServer(identity: CrmMcpIdentity) {
   const { context } = identity;
   const server = new McpServer({ name: "Grupo Edge CRM", version: CRM_MCP_VERSION }, {
@@ -110,7 +118,7 @@ export function createCrmMcpServer(identity: CrmMcpIdentity) {
     limits: { maxPeriodDays: 93, maxResponseBytes: 1048576, requestsPerMinute: 60 },
     logCoverage: "Auditoria, telemetria, alertas e incidentes persistidos pelo CRM; não inclui logs brutos dos provedores de infraestrutura.",
   }));
-  add("consultar_dashboard", "metrics:read", "KPIs, conversões, funil, comparações e séries do dashboard oficial. CUSTOM exige fromDate/toDate YYYY-MM-DD.", z.object(periodShape).strict(), async (input) => { assertCrmMcpPeriod(input); return getDashboardMetricsService().getScreen(context, input); });
+  add("consultar_dashboard", "metrics:read", "KPIs, conversões, funil, comparações e séries do dashboard oficial, sem listas de evidências. Use detalhar_dashboard com os IDs retornados. CUSTOM exige fromDate/toDate YYYY-MM-DD.", z.object(periodShape).strict(), async (input) => { assertCrmMcpPeriod(input); return summarizeCrmMcpDashboard(await getDashboardMetricsService().getScreen(context, input)); });
   add("detalhar_dashboard", "metrics:read", "Registros que compõem um indicador do dashboard; use view retornado pelo dashboard e paginação.", z.object({ ...periodShape, view: text.min(1), ...paging }).strict(), async (input) => { assertCrmMcpPeriod(input); return getDashboardMetricsService().getDrilldown(context, input); });
   add("catalogar_indicadores", "metrics:read", "Definições, fórmulas, unidades, fontes e limitações dos indicadores integrados e de receita.", z.object({}).strict(), async () => ({ integrated: { version: INTEGRATED_METRIC_REGISTRY_VERSION, metrics: integratedMetricRegistry }, revenue: await getRevenueMetricsService().getCatalog(context) }));
   add("consultar_indicadores_integrados", "metrics:read", "Indicadores comerciais reconciliados por período ISO 8601 e filtros. Intervalo [from,to), até 93 dias.", metricQuery, async (input) => { assertCrmMcpPeriod(input); return getMetricsService().getIntegratedOverview(context, input); });
@@ -120,12 +128,12 @@ export function createCrmMcpServer(identity: CrmMcpIdentity) {
   add("listar_leads", "crm:read", "Lista de leads com busca, responsáveis, equipes, etapas, status e paginação, respeitando visibilidade atual.", z.object({ q: text.optional(), ...paging, responsibles: ids, teams: ids, stages: z.array(text).max(50).optional(), statuses: z.array(z.enum(["OPEN", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"])).max(5).optional(), priorities: z.array(z.enum(["P1", "P2", "P3"])).max(3).optional(), state: z.string().length(2).optional(), city: text.optional() }).strict(), (input) => getLeadListService().getScreen(context, input));
   add("consultar_historico_lead", "crm:read", "Histórico operacional, atividades, tarefas e próxima ação de um lead autorizado. Continue pelo cursor retornado.", z.object({ leadId: uuid, cursor: uuid.optional(), pageSize: z.number().int().min(1).max(50).default(20) }).strict(), (input) => getOperationalHistoryService().getLeadOperations(context, input));
   add("consultar_oportunidades", "crm:read", "Pipeline de vendas, oportunidades, valores e próximos compromissos.", z.object({ pipelineId: uuid.optional(), closerId: uuid.optional(), productId: uuid.optional(), stageCode: text.optional(), from: date.optional(), to: date.optional() }).strict(), async (input) => { assertCrmMcpPeriod(input); return getOpportunityService().getPipelineScreen(context, input); });
-  add("consultar_atividades", "crm:read", "Fila comercial de atividades e tarefas, com atrasos e responsáveis autorizados.", z.object({}).strict(), () => getSalesGateService().getActivityQueue(context));
+  add("consultar_atividades", "crm:read", "Fila comercial paginada de tarefas e reuniões, com atrasos. Contagens referem-se à página. Continue até pagination.hasMore=false; filtros de visibilidade podem produzir páginas vazias.", z.object(paging).strict(), (input) => getSalesGateService().getActivityQueue(context, input));
   add("consultar_agenda", "crm:read", "Reuniões, participantes e situação da agenda autorizada.", z.object({ view: z.enum(["day", "week"]).optional(), date: date.optional(), closerId: uuid.optional() }).strict(), (input) => getMeetingService().getAgenda(context, input));
   add("consultar_metas", "crm:read", "Metas, quotas e atingimento por membro, com paginação.", z.object({ planId: uuid.optional(), memberId: uuid.optional(), asOf: timestamp.optional(), ...paging }).strict(), (input) => getGoalService().screen(context, input));
   add("consultar_forecast", "crm:read", "Previsão comercial, ciclos, submissões e comparação de snapshots.", z.object({ cycleId: uuid.optional(), memberId: uuid.optional(), asOf: timestamp.optional(), compareFromId: uuid.optional(), compareToId: uuid.optional(), ...paging }).strict(), (input) => getForecastService().screen(context, input));
   add("buscar_crm", "crm:read", "Busca global autorizada de contas, contatos, leads e oportunidades; dados de contato seguem as máscaras do CRM.", z.object({ q: text.min(2) }).strict(), (input) => getWorkspaceExperienceService().search(context, input));
-  add("consultar_auditoria", "audit:read", "Trilha auditável e achados de saúde do processo, mascarados pelo serviço oficial. Pagine com auditPage e violationPage.", z.object({ auditSearch: text.max(100).optional(), auditActorType: z.enum(actorTypes).optional(), auditActorId: uuid.optional(), auditOrigin: z.enum(auditOrigins).optional(), auditAction: text.optional(), auditEntityType: text.optional(), auditFrom: timestamp.optional(), auditTo: timestamp.optional(), auditPage: paging.page, violationPage: paging.page, violationType: z.enum(processViolationTypes).optional(), violationSeverity: z.enum(processViolationSeverities).optional(), violationStatus: z.enum(processViolationStatuses).optional() }).strict(), async (input) => { assertCrmMcpPeriod({ from: input.auditFrom, to: input.auditTo }); return getAuditAdministrationService().getScreen(context, input); });
+  add("consultar_auditoria", "audit:read", "Trilha auditável e achados persistidos de saúde do processo, com máscaras canônicas. Não executa varredura. Pagine com auditPage e violationPage.", z.object({ auditSearch: text.max(100).optional(), auditActorType: z.enum(actorTypes).optional(), auditActorId: uuid.optional(), auditOrigin: z.enum(auditOrigins).optional(), auditAction: text.optional(), auditEntityType: text.optional(), auditFrom: timestamp.optional(), auditTo: timestamp.optional(), auditPage: paging.page, violationPage: paging.page, violationType: z.enum(processViolationTypes).optional(), violationSeverity: z.enum(processViolationSeverities).optional(), violationStatus: z.enum(processViolationStatuses).optional() }).strict(), async (input) => { assertCrmMcpPeriod({ from: input.auditFrom, to: input.auditTo }); return readCrmMcpAudit(context, input); });
   add("consultar_integracoes", "integrations:read", "Conexões, capacidades e situação das integrações; credenciais nunca são retornadas.", z.object({}).strict(), () => getIntegrationPlatformService().list(context));
   add("consultar_logs_operacionais", "operations:read", "Telemetria persistida pelo CRM, paginada e sanitizada; não inclui stdout/stderr da hospedagem.", z.object({ ...rangeShape, operation: text.optional(), ...paging }).strict(), async (input) => {
     assertCrmMcpPeriod(input);
