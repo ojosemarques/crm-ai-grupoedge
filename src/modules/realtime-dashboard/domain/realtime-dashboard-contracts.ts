@@ -46,6 +46,8 @@ export type RealtimeDashboardSnapshot = Readonly<{
   }>;
   week: Readonly<{
     period: RealtimeDashboardPeriod;
+    endsAt: string;
+    daily: readonly Readonly<{ date: string; totals: RealtimeDashboardTotals; future: boolean }>[];
     totals: RealtimeDashboardTotals;
     salesGoal: Readonly<{
       target: string | null;

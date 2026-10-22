@@ -2,7 +2,7 @@
 
 ## Resultado
 
-Nova área autenticada `Trabalho → TEMPO REAL` e placar público somente leitura para TV. As duas visões, Geral e Ranking, usam fatos de `CommercialMetricFact`, respeitam o timezone do workspace, alternam a cada 60 segundos e atualizam por polling resiliente a cada 15 segundos.
+Área autenticada `Trabalho → TEMPO REAL` e placar público somente leitura para TV. As duas visões, Ranking (carvão/menta) e Desempenho (branco/azul), usam fatos de `CommercialMetricFact`, respeitam o timezone do workspace, alternam a cada 60 segundos e atualizam por polling resiliente a cada 15 segundos. A refatoração visual de 22/10/2026 segue as imagens fornecidas pelo proprietário e está descrita em `13-tv-visual-refactor.md`.
 
 ## Mapa
 
@@ -19,6 +19,7 @@ Nova área autenticada `Trabalho → TEMPO REAL` e placar público somente leitu
 - `10-public-sharing-security.md`: RBAC, bearer e threat model.
 - `11-data-api-and-realtime.md`: schema, APIs, polling e concorrência.
 - `12-observability-rollout-production.md`: rollout, produção e rollback.
+- `13-tv-visual-refactor.md`: nova composição, modo TV, série diária e evidências da refatoração visual.
 
 ## Arquitetura recomendada
 

@@ -75,6 +75,22 @@ describe("dashboard tempo real", () => {
     ]);
   });
 
+  it("distribui fatos por dia local sem inventar valores futuros nem incluir o sábado", () => {
+    const periods = resolveRealtimeDashboardPeriods(new Date("2026-10-22T15:00:00Z"), "America/Sao_Paulo");
+    const summary = aggregateRealtimeDashboard([
+      fact({ id: "monday", eventType: "CALL_ATTEMPTED", occurredAt: "2026-10-20T02:59:00Z", creditedMemberId: "a" }),
+      fact({ id: "tuesday", eventType: "CALL_ATTEMPTED", occurredAt: "2026-10-20T03:00:00Z", creditedMemberId: "a" }),
+      fact({ id: "today", eventType: "WHATSAPP_MESSAGE_SENT", occurredAt: "2026-10-22T14:59:00Z", creditedMemberId: "a" }),
+      fact({ id: "future", eventType: "CALL_ATTEMPTED", occurredAt: "2026-10-23T12:00:00Z", creditedMemberId: "a" }),
+      fact({ id: "weekend", eventType: "CALL_ATTEMPTED", occurredAt: "2026-10-24T12:00:00Z", creditedMemberId: "a" }),
+    ], [{ id: "a", name: "Ana Lima" }], periods);
+    expect(summary.week.endsAt).toBe("2026-10-24T03:00:00.000Z");
+    expect(summary.week.daily.map((day) => [day.date, day.totals.calls, day.totals.messages, day.future])).toEqual([
+      ["2026-10-19", 1, 0, false], ["2026-10-20", 1, 0, false], ["2026-10-21", 0, 0, false], ["2026-10-22", 0, 1, false], ["2026-10-23", 0, 0, true],
+    ]);
+    expect(summary.week.daily.reduce((sum, day) => sum + day.totals.calls, 0)).toBe(summary.week.totals.calls);
+  });
+
   it("distingue meta ausente, zero e progresso acima de 100%", () => {
     expect(weeklySalesGoal(3, null, null)).toMatchObject({ target: null, progressBasisPoints: null });
     expect(weeklySalesGoal(0, 0n, "Meta")).toMatchObject({ target: "0", progressBasisPoints: 0 });

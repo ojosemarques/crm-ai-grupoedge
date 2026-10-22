@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ComponentProps,
 
 import { CopilotDrawer } from "@/components/layout/copilot-drawer";
 import { GlobalSearch } from "@/components/layout/global-search";
-import { isPublicShellRoute } from "@/components/layout/app-shell-routes";
+import { isPublicShellRoute, isStandaloneShellRoute } from "@/components/layout/app-shell-routes";
 import { announceCompanySwitch, useCompanySession } from "@/components/layout/use-company-session";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -236,7 +236,7 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
     }
   }
 
-  if (publicRoute) return children;
+  if (isStandaloneShellRoute(pathname)) return children;
 
   const roleKey = session?.user.role.key;
   const permissionKeys = new Set(session?.user.permissionKeys ?? []);

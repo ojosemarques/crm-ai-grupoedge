@@ -156,6 +156,20 @@ export function aggregateRealtimeDashboard(
     }),
     week: Object.freeze({
       period: periods.week,
+      endsAt: periods.weekGoalEnd.toISOString(),
+      daily: Object.freeze(Array.from({ length: 5 }, (_, index) => {
+        const date = addLocalDays(periods.week.fromDate, index);
+        const range = workspaceDayRange(date, periods.week.timeZone);
+        const to = new Date(Math.min(range.end.getTime(), Date.parse(periods.week.to)));
+        return Object.freeze({
+          date,
+          future: range.start.getTime() >= Date.parse(periods.today.to),
+          totals: summarizeRealtimeDashboardTotals(factsWithin(weekFacts, {
+            from: range.start.toISOString(),
+            to: to.toISOString(),
+          }), sellers),
+        });
+      })),
       totals: summarizeRealtimeDashboardTotals(weekFacts, sellers),
       ranking: buildRealtimeDashboardRanking(weekFacts, sellers),
     }),

@@ -7,3 +7,7 @@ export function isPublicShellRoute(pathname: string): boolean {
     || pathname === "/f"
     || pathname.startsWith("/f/");
 }
+
+export function isStandaloneShellRoute(pathname: string): boolean {
+  return pathname === "/tempo-real" || isPublicShellRoute(pathname);
+}

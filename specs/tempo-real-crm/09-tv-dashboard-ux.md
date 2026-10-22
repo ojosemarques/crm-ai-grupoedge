@@ -3,43 +3,47 @@
 ## Wireflow
 
 ```text
-[Marca | Workspace | AO VIVO/PARCIAL/ATRASADO | atualização | tela cheia]
-[Geral ● 60s ○ Ranking]
+[Rail: Ranking | Desempenho | Pausar | Tela cheia | Compartilhar | Voltar ao CRM]
+[TEMPO REAL | Status de conexão/qualidade | Workspace]
 
-GERAL
-[HOJE --------------------------------][SEMANA ------------------------------]
-[Contato][Ligações][Mensagens]         [Contato][Ligações][Mensagens]
-[Agendadas][Realizadas][Vendas]        [Agendadas][Realizadas][Vendas]
-                                      [Meta semanal + progresso]
+RANKING — carvão/menta
+[Total de ações][Contatos efetivos][Contagem regressiva até sábado 00h local]
+[1º com medalha dourada][2º][3º]
+[Tabela: posição | profissional | ligações | mensagens | contatos | reuniões | vendas | ações]
+[Atualização | Timezone | Próxima tela em 60s | Indicador de slide]
 
-RANKING
-[1º grande][2º][3º]
-[demais: posição | nome | ações | contato | ligação | mensagem | reuniões | vendas]
+DESEMPENHO — branco dentro de moldura azul
+[Contatos][Receita][Ligações e mensagens] | [Contatos][Reuniões]
+[Fluxo de atividade de hoje]             | [Movimento da equipe]
+[Distribuição circular][Série diária]    | [Pódio 2/1/3]
+                                        | [Meta semanal]
 ```
 
 ## Direção visual
 
-Fundo grafite, superfícies escuras de alto contraste, tipografia grande e acentos verde/azul da marca. A referência clara contribui com modularidade e respiro; a escura contribui com presença de placar. Nenhuma marca, medalha, avatar ou texto de terceiros é copiado.
+O pedido de refatoração de 22/10/2026 substitui a direção inicial: reproduzir as duas composições das imagens fornecidas pelo proprietário (as duas referências escuras são idênticas). Ranking com fundo carvão, superfícies cinza, acento menta e medalha dourada; desempenho com moldura azul, cards brancos, fluxo azul, anel multicolorido e pódio cilíndrico. Conteúdo, nomes e números vêm do CRM; avatares usam iniciais reais quando não há foto disponível no contrato.
 
 ## Layout
 
 - Alvo 1920×1080; mínimo 1366×768.
 - Métricas essenciais sem scroll manual.
-- Top 3 + tabela compacta; muitos vendedores usam densidade responsiva e paginação visual futura somente se exceder o limite testado.
+- Top 3 + tabela com quatro linhas por página. Páginas avançam a cada 12 segundos e a posição é preservada entre os ciclos para incluir toda a equipe.
+- Shell próprio nas rotas exatas privada e pública; autenticação e autorização da rota privada permanecem no servidor.
 - Desktop/tablet reorganiza colunas sem esconder valores.
 - Fullscreen via Web API, com fallback informativo.
 
 ## Timers
 
-- Exatamente Geral e Ranking.
+- Exatamente Ranking e Desempenho.
 - 60 s por slide; manual reinicia o contador.
-- Progresso textual/visual e `aria-live` discreto.
+- Contador textual e indicador de slide; pausa e atalhos de setas/espaço.
+- Abrir o diálogo de compartilhamento suspende a apresentação; o polling continua separado.
 - `prefers-reduced-motion`: sem transições; troca instantânea.
 - Timers cancelados no unmount; polling separado do timer de slide.
 
 ## Estados e acessibilidade
 
-- Skeleton só antes da primeira leitura; depois, preservar snapshot.
+- Carregamento só antes da primeira leitura; falhas transitórias preservam o snapshot. Um 404 público remove o snapshot revogado na próxima leitura, sem exigir reload.
 - `Ao vivo`, `Parcial`, `Atrasado` e `Offline` não dependem só de cor.
 - Nomes longos truncam visualmente com texto acessível.
 - Botões têm foco visível e labels; nenhuma ação depende de hover.
@@ -49,4 +53,4 @@ Fundo grafite, superfícies escuras de alto contraste, tipografia grande e acent
 
 ## Gestão autenticada
 
-Faixa discreta fora do placar principal: gerar/rotacionar, copiar link recém-gerado, revogar e abrir preview. Rotação exige texto claro de invalidação; segredo anterior nunca reaparece.
+Botão de compartilhamento no rail abre diálogo nativo com foco contido e fechamento por Escape: gerar/rotacionar, copiar link recém-gerado e revogar. Rotação informa a invalidação; segredo anterior nunca reaparece.
