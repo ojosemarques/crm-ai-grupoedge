@@ -30,6 +30,7 @@ export function proxy(request: NextRequest): NextResponse {
     development: process.env.NODE_ENV === "development",
     https: request.nextUrl.protocol === "https:",
     imageSources: marketingFormAssetOrigins(process.env.MARKETING_FORM_ASSET_ORIGINS),
+    metaPixel: request.nextUrl.pathname.startsWith("/f/"),
   });
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { META_CONVERSION_EVENT_TYPE, META_CONVERSION_PURPOSE_CODE } from "@/modules/conversion-feedback/domain/conversion-feedback-contracts";
-import { buildMinimizedMetaConversion, metaConversionDeduplicationKey } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
+import { buildMinimizedMetaConversion, metaConversionDeduplicationKey, metaConversionEventId } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
 import { createOutboxEventInTransaction } from "@/modules/integrations/application/integration-platform-service";
 import { canonicalJson } from "@/modules/integrations/domain/integration-policy";
 import { getLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
@@ -109,16 +109,19 @@ async function queueMetaConversionForReceipt(
     receiptPublicId: string;
     actorId: string;
     now: Date;
+    allowServerSide: boolean;
   }>,
 ): Promise<string | null> {
   const tracking = input.form.definition.tracking.meta;
-  if (!tracking?.enabled || !tracking.connectionId || !tracking.secretReferenceKey) return null;
+  if (!tracking?.enabled || !tracking.pixelId) return null;
   const submission = await tx.leadFormSubmission.findFirst({
     where: { workspaceId: input.form.workspaceId, marketingFormReceiptId: input.receiptId },
     select: { attributionConversionId: true, contactId: true },
   });
   if (!submission?.attributionConversionId || !submission.contactId) return null;
   const semanticKey = metaConversionDeduplicationKey({ workspaceId: input.form.workspaceId, conversionId: submission.attributionConversionId, eventName: "Lead" });
+  const browserEventId = metaConversionEventId({ workspaceId: input.form.workspaceId, conversionId: submission.attributionConversionId, eventName: "Lead" });
+  if (!input.allowServerSide || !tracking.connectionId || !tracking.secretReferenceKey) return browserEventId;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${semanticKey}, 0))`;
   const existing = await tx.outboxEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: input.form.workspaceId, idempotencyKey: semanticKey } }, select: { payload: true } });
   if (existing?.payload && typeof existing.payload === "object" && !Array.isArray(existing.payload) && typeof existing.payload.eventId === "string") return existing.payload.eventId;
@@ -160,13 +163,13 @@ async function queueMetaConversionForReceipt(
     }),
   ]);
   const purposeVersion = purpose?.versions[0] ?? null;
-  if (!connection || !conversion || !purpose || !purposeVersion || purposeVersion.status !== "ACTIVE" || purposeVersion.legalBasis?.status !== "ACTIVE" || !purposeVersion.allowedChannels.includes("OTHER")) return null;
-  if ((purposeVersion.validFrom && purposeVersion.validFrom > input.now) || (purposeVersion.validTo && purposeVersion.validTo <= input.now) || (purposeVersion.legalBasis.validFrom && purposeVersion.legalBasis.validFrom > input.now) || (purposeVersion.legalBasis.validTo && purposeVersion.legalBasis.validTo <= input.now)) return null;
+  if (!connection || !conversion || !purpose || !purposeVersion || purposeVersion.status !== "ACTIVE" || purposeVersion.legalBasis?.status !== "ACTIVE" || !purposeVersion.allowedChannels.includes("OTHER")) return browserEventId;
+  if ((purposeVersion.validFrom && purposeVersion.validFrom > input.now) || (purposeVersion.validTo && purposeVersion.validTo <= input.now) || (purposeVersion.legalBasis.validFrom && purposeVersion.legalBasis.validFrom > input.now) || (purposeVersion.legalBasis.validTo && purposeVersion.legalBasis.validTo <= input.now)) return browserEventId;
   const consent = await tx.consentState.findFirst({ where: { workspaceId: input.form.workspaceId, contactId: submission.contactId, purposeId: purpose.id, channel: "OTHER", state: "GRANTED", effectiveFrom: { lte: input.now } }, orderBy: [{ effectiveFrom: "desc" }, { updatedAt: "desc" }] });
-  if (!consent) return null;
+  if (!consent) return browserEventId;
   const emails = points.filter((point) => point.type === "EMAIL").map((point) => point.normalizedValue);
   const phones = points.filter((point) => point.type === "PHONE").map((point) => point.normalizedValue);
-  if (emails.length + phones.length === 0) return null;
+  if (emails.length + phones.length === 0) return browserEventId;
   const payload = buildMinimizedMetaConversion({ workspaceId: input.form.workspaceId, conversionId: conversion.id, contactId: submission.contactId, eventName: "Lead", occurredAt: conversion.occurredAt, valueCents: conversion.valueCents, emails, phones, purposeVersionId: purposeVersion.id, consentState: "GRANTED", evaluatedAt: input.now });
   const outbox = await createOutboxEventInTransaction(tx, {
     workspaceId: input.form.workspaceId,
@@ -343,12 +346,10 @@ export function createMarketingFormSubmissionService(options: Options) {
 
     if (!transactionResult.ok) fail("Não foi possível processar esta resposta.", "MARKETING_FORM_INTAKE_REJECTED", 422);
     let metaEventId: string | null = null;
-    if (mapped.contactPreference === true) {
-      try {
-        metaEventId = await options.database.$transaction((tx) => queueMetaConversionForReceipt(tx, { form, receiptId: transactionResult.receiptId, receiptPublicId: transactionResult.result.receiptPublicId, actorId: transactionResult.actorId, now }));
-      } catch {
-        // O provider é best-effort e nunca altera um receipt já aceito.
-      }
+    try {
+      metaEventId = await options.database.$transaction((tx) => queueMetaConversionForReceipt(tx, { form, receiptId: transactionResult.receiptId, receiptPublicId: transactionResult.result.receiptPublicId, actorId: transactionResult.actorId, now, allowServerSide: mapped.contactPreference === true }));
+    } catch {
+      // O provider é best-effort e nunca altera um receipt já aceito.
     }
     return metaEventId ? { ...transactionResult.result, providerEventIds: { meta: metaEventId } } : transactionResult.result;
   }

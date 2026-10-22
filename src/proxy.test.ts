@@ -52,7 +52,10 @@ describe("proteção otimista de rotas", () => {
 
     expect(publicForm.status).toBe(200);
     expect(publicForm.headers.get("x-middleware-next")).toBe("1");
+    expect(publicForm.headers.get("content-security-policy")).toContain("https://connect.facebook.net");
+    expect(publicForm.headers.get("content-security-policy")).toContain("https://www.facebook.com");
     expect(similarProtectedPath.status).toBe(307);
+    expect(similarProtectedPath.headers.get("content-security-policy")).not.toContain("facebook.com");
   });
 
   it("libera somente a rota exata do placar público sem cookie", () => {

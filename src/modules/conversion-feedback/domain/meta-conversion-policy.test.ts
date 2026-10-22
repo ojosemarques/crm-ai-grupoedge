@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMinimizedMetaConversion, metaConversionDeduplicationKey } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
+import { buildMinimizedMetaConversion, metaConversionDeduplicationKey, metaConversionEventId } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
 import { googleConversionCommandSchema, metaConversionCommandSchema } from "@/modules/conversion-feedback/domain/conversion-feedback-contracts";
 
 describe("política de feedback de conversão", () => {
@@ -7,6 +7,7 @@ describe("política de feedback de conversão", () => {
     const input = { workspaceId: "w", conversionId: "c", contactId: "contact", eventName: "Purchase" as const, occurredAt: new Date("2046-04-20T15:00:00Z"), valueCents: 1299n, emails: [" Lead@Example.COM ", "second@example.com", "ignored@example.com"], phones: ["+55 (11) 99999-0000"], purposeVersionId: "purpose-v1", consentState: "GRANTED" as const, evaluatedAt: new Date("2046-04-20T15:01:00Z") };
     const first = buildMinimizedMetaConversion(input);
     expect(first.eventId).toBe(buildMinimizedMetaConversion(input).eventId);
+    expect(first.eventId).toBe(metaConversionEventId(input));
     expect(metaConversionDeduplicationKey(input)).toBe("meta-capi:w:c:Purchase");
     expect(first.userData.em).toHaveLength(2);
     expect(first.userData.em[0]).toMatch(/^[a-f0-9]{64}$/);

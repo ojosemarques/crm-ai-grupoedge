@@ -29,4 +29,14 @@ describe("headers seguros PROD-03", () => {
     const policy = buildContentSecurityPolicy({ imageSources: ["https://cdn.example", "https://assets.example:8443"] });
     expect(policy).toContain("img-src 'self' data: blob: https://cdn.example https://assets.example:8443");
   });
+
+  it("libera os endpoints Meta somente quando o formulário público habilita o Pixel", () => {
+    const defaultPolicy = buildContentSecurityPolicy();
+    const metaPolicy = buildContentSecurityPolicy({ nonce: "nonce-seguro", metaPixel: true });
+    expect(defaultPolicy).not.toContain("facebook.net");
+    expect(defaultPolicy).not.toContain("facebook.com");
+    expect(metaPolicy).toContain("script-src 'self' 'nonce-nonce-seguro' 'strict-dynamic' https://connect.facebook.net");
+    expect(metaPolicy).toContain("img-src 'self' data: blob: https://www.facebook.com");
+    expect(metaPolicy).toContain("connect-src 'self' https://connect.facebook.net https://www.facebook.com");
+  });
 });

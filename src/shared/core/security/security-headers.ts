@@ -3,6 +3,7 @@ export type SecurityHeaderOptions = Readonly<{
   development?: boolean;
   https?: boolean;
   imageSources?: readonly string[];
+  metaPixel?: boolean;
 }>;
 
 export function buildContentSecurityPolicy({
@@ -10,19 +11,23 @@ export function buildContentSecurityPolicy({
   development = false,
   https = false,
   imageSources = [],
+  metaPixel = false,
 }: SecurityHeaderOptions = {}): string {
   const scriptSources = ["'self'"];
   if (nonce) scriptSources.push(`'nonce-${nonce}'`, "'strict-dynamic'");
   if (development) scriptSources.push("'unsafe-eval'");
+  if (metaPixel) scriptSources.push("https://connect.facebook.net");
   const styleSources = ["'self'", ...(nonce ? [`'nonce-${nonce}'`] : [])];
+  const allowedImageSources = [...imageSources, ...(metaPixel ? ["https://www.facebook.com"] : [])];
+  const connectSources = ["'self'", ...(metaPixel ? ["https://connect.facebook.net", "https://www.facebook.com"] : [])];
   const directives = [
     "default-src 'self'",
     `script-src ${scriptSources.join(" ")}`,
     `style-src ${styleSources.join(" ")}`,
     "style-src-attr 'none'",
-    `img-src 'self' data: blob:${imageSources.length ? ` ${imageSources.join(" ")}` : ""}`,
+    `img-src 'self' data: blob:${allowedImageSources.length ? ` ${allowedImageSources.join(" ")}` : ""}`,
     "font-src 'self' data:",
-    "connect-src 'self'",
+    `connect-src ${connectSources.join(" ")}`,
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",

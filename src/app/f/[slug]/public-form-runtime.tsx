@@ -2,7 +2,9 @@
 /* eslint-disable @next/next/no-img-element -- branding uses a validated, workspace-configured HTTPS URL with no fixed Next.js remote host. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Script from "next/script";
 
+import { initializeMetaPixel, trackMetaLead } from "@/app/f/[slug]/meta-pixel";
 import type { MarketingFormDefinition, MarketingFormQuestion } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import { publicFormAnswerError } from "@/modules/marketing-forms/domain/public-form-validation";
 import { shouldAutoAdvanceSingleChoice } from "@/app/f/[slug]/public-form-navigation";
@@ -16,6 +18,7 @@ type PublicForm = Readonly<{
   questions: readonly MarketingFormQuestion[];
   thankYou: MarketingFormDefinition["thankYou"];
   style: MarketingFormDefinition["style"];
+  tracking: Readonly<{ meta?: Readonly<{ pixelId: string }> }>;
 }>;
 type SubmitResult = Readonly<{
   receiptPublicId: string;
@@ -113,9 +116,9 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
       if (!response.ok || !body.result) throw new Error(body.error?.message ?? "Não foi possível enviar agora. Tente novamente.");
       setDone(body.result);
       const metaEventId = body.result.providerEventIds?.meta;
-      const fbq = (window as Window & { fbq?: (...args: unknown[]) => void }).fbq;
-      if (metaEventId && typeof fbq === "function") {
-        try { fbq("track", "Lead", {}, { eventID: metaEventId }); } catch { /* O pixel opcional nunca bloqueia o lead. */ }
+      const pixelId = form.tracking.meta?.pixelId;
+      if (pixelId && metaEventId) {
+        try { trackMetaLead(window, pixelId, metaEventId); } catch { /* O pixel opcional nunca bloqueia o lead. */ }
       }
       if (body.result.redirect?.url) window.setTimeout(() => { void sendEvents([{ kind: "REDIRECT_OPENED" }]); window.location.assign(body.result!.redirect!.url); }, 900);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Não foi possível enviar agora. Tente novamente."); }
@@ -124,6 +127,7 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
   function onKeyDown(event: React.KeyboardEvent) { if (event.key !== "Enter") return; if (event.target instanceof HTMLTextAreaElement && !(event.ctrlKey || event.metaKey)) return; event.preventDefault(); void advance(); }
 
   return <main className={styles.shell} data-marketing-form={form.versionPublicId} onKeyDown={onKeyDown}>
+    {form.tracking.meta?.pixelId ? <MetaPixel nonce={nonce} pixelId={form.tracking.meta.pixelId} /> : null}
     <style nonce={nonce ?? undefined}>{dynamicCss}</style>
     <div aria-hidden="true" className={styles.progress}><span /></div>
     {form.style.logoUrl ? <img alt={form.title} className={styles.logo} height={72} src={form.style.logoUrl} width={240} /> : null}
@@ -132,6 +136,11 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
     {!done ? <nav aria-label="Navegação entre perguntas" className={styles.arrows}><button aria-label="Pergunta anterior" disabled={index === 0 || submitting} onClick={() => { setIndex((current) => Math.max(0, current - 1)); setError(null); }} type="button">↑</button><button aria-label="Próxima pergunta" disabled={index === form.questions.length - 1 || submitting} onClick={() => void advance()} type="button">↓</button></nav> : null}
     <input aria-hidden="true" autoComplete="off" className={styles.honeypot} name="website" onChange={(event) => setHoneypot(event.target.value)} tabIndex={-1} value={honeypot} />
   </main>;
+}
+
+function MetaPixel({ nonce, pixelId }: Readonly<{ nonce: string | null; pixelId: string }>) {
+  useEffect(() => { initializeMetaPixel(window, pixelId); }, [pixelId]);
+  return <Script id={`meta-pixel-${pixelId}`} nonce={nonce ?? undefined} src="https://connect.facebook.net/en_US/fbevents.js" strategy="afterInteractive" />;
 }
 
 function QuestionInput({ question, answer, autoAdvanceSingleChoice, error, setAnswer }: Readonly<{ question: MarketingFormQuestion; answer: Answer | undefined; autoAdvanceSingleChoice: boolean; error: string | null; setAnswer: (value: Answer, autoAdvance?: boolean) => void }>) {

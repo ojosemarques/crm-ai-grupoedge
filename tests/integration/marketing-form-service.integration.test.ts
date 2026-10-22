@@ -187,7 +187,7 @@ describe("serviço administrativo de formulários", () => {
       ],
     };
     const first = await submissionService.submit(slug, payload);
-    expect(first.providerEventIds).toBeUndefined();
+    expect(first.providerEventIds?.meta).toMatch(/^[a-f0-9]{64}$/);
     const receipt = await database.marketingFormReceipt.findFirstOrThrow({ where: { publicId: first.receiptPublicId, workspaceId: tenantA.context.workspaceId } });
     const submission = await database.leadFormSubmission.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, marketingFormReceiptId: receipt.id } });
     expect(submission.contactId).toBeTruthy();
@@ -198,7 +198,7 @@ describe("serviço administrativo de formulários", () => {
     await database.consentState.create({ data: { workspaceId: tenantA.context.workspaceId, contactId: submission.contactId!, purposeId: purpose.id, channel: "OTHER", state: "GRANTED", effectiveFrom: new Date(now.getTime() - 1_000), policyVersion: "test-v1", reasonCode: "TEST_EXPLICIT_CONSENT" } });
     const replay = await submissionService.submit(slug, payload);
     expect(replay).toMatchObject({ receiptPublicId: first.receiptPublicId, outcome: "ACCEPTED" });
-    expect(replay.providerEventIds?.meta).toMatch(/^[a-f0-9]{64}$/);
+    expect(replay.providerEventIds?.meta).toBe(first.providerEventIds?.meta);
     const events = await database.outboxEvent.findMany({ where: { workspaceId: tenantA.context.workspaceId, eventType: "marketing.meta_conversion.v1", correlationId: receipt.publicId } });
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ aggregateType: "AttributionConversion", aggregateId: submission.attributionConversionId });
