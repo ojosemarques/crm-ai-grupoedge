@@ -80,7 +80,7 @@ describe("schema do dashboard tempo real", () => {
 
   it("consolida fatos e perfis do tenant, exclui meta mensal e usa somente a semana publicada", async () => {
     const tenant = await createTenant("goals");
-    const email = `realtime-${randomUUID()}@local.test`;
+    const email = "ederafael@politizai.com";
     const user = await database.user.create({ data: { email, normalizedEmail: email, displayName: "Vendedora de teste" } });
     const role = await database.role.create({ data: { workspaceId: tenant.workspaceId, key: "closer", name: "Closer", createdByActorId: tenant.actorId, updatedByActorId: tenant.actorId } });
     const member = await database.workspaceMember.create({ data: { workspaceId: tenant.workspaceId, userId: user.id, roleId: role.id, status: "ACTIVE", createdByActorId: tenant.actorId, updatedByActorId: tenant.actorId } });

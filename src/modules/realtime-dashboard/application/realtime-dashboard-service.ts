@@ -25,6 +25,12 @@ import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const realtimeTokenPattern = /^[A-Za-z0-9_-]{43}$/;
+// The TV ranking has an explicit roster; account identity avoids display-name collisions.
+const rankingAccounts = new Set([
+  "carloshenrique@politizai.com",
+  "ederafael@politizai.com",
+  "jhoncunha@politizai.com",
+]);
 
 type AuthorizationPort = Pick<
   ReturnType<typeof createAuthorizationService>,
@@ -141,7 +147,7 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
       options.database.workspaceMember.findMany({
         where: commercialMemberWhere({ workspaceId, functions: ["SDR", "CLOSER"] }),
         orderBy: [{ user: { displayName: "asc" } }, { id: "asc" }],
-        select: { id: true, user: { select: { displayName: true } }, role: { select: { key: true } }, teamMemberships: { where: { deletedAt: null, team: { deletedAt: null } }, select: { teamId: true, function: true } } },
+        select: { id: true, user: { select: { displayName: true, normalizedEmail: true } }, role: { select: { key: true } }, teamMemberships: { where: { deletedAt: null, team: { deletedAt: null } }, select: { teamId: true, function: true } } },
       }),
       options.database.commercialMetricBackfillRun.findFirst({
         where: { workspaceId, mode: "APPLY" },
@@ -188,12 +194,12 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     const historicalMembers = historicalMemberIds.size === 0 ? [] : await options.database.workspaceMember.findMany({
       where: { workspaceId, id: { in: [...historicalMemberIds] } },
       orderBy: [{ user: { displayName: "asc" } }, { id: "asc" }],
-      select: { id: true, user: { select: { displayName: true } } },
+      select: { id: true, user: { select: { displayName: true, normalizedEmail: true } } },
     });
 
     const sellers = [
-      ...activeMembers.map((member) => ({ id: member.id, name: member.user.displayName, active: true, functions: [...new Set([commercialFunctionForRole(member.role.key), ...member.teamMemberships.map((team) => team.function)].filter((value): value is NonNullable<typeof value> => value !== null))], teamIds: member.teamMemberships.map((team) => team.teamId) })),
-      ...historicalMembers.map((member) => ({ id: member.id, name: member.user.displayName, active: false, functions: [], teamIds: [] })),
+      ...activeMembers.map((member) => ({ id: member.id, name: member.user.displayName, active: true, rankingVisible: rankingAccounts.has(member.user.normalizedEmail), functions: [...new Set([commercialFunctionForRole(member.role.key), ...member.teamMemberships.map((team) => team.function)].filter((value): value is NonNullable<typeof value> => value !== null))], teamIds: member.teamMemberships.map((team) => team.teamId) })),
+      ...historicalMembers.map((member) => ({ id: member.id, name: member.user.displayName, active: false, rankingVisible: rankingAccounts.has(member.user.normalizedEmail), functions: [], teamIds: [] })),
     ];
     const facts = factRows.map(asActivityFact);
     const aggregation = aggregateRealtimeDashboard(facts, sellers, periods, { profiles, quotas: goalPlan?.quotas ?? [], ...(goalPlan ? { planName: goalPlan.name } : {}) });

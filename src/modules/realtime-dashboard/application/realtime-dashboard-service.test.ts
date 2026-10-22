@@ -73,7 +73,7 @@ describe("serviço do dashboard tempo real", () => {
       }]) },
       workspaceMember: { findMany: vi.fn().mockResolvedValue([{
         id: "member-sentinel",
-        user: { displayName: "Ana Exemplo" },
+        user: { displayName: "Ana Exemplo", normalizedEmail: "carloshenrique@politizai.com" },
         role: { key: "closer" },
         teamMemberships: [],
       }]) },
@@ -106,6 +106,38 @@ describe("serviço do dashboard tempo real", () => {
     expect(serialized).not.toContain(validToken);
     expect(serialized).not.toContain("email");
     expect(serialized).not.toContain("phone");
+    expect(serialized).not.toContain("@politizai.com");
+  });
+
+  it("mostra somente as três contas comerciais no ranking público e autenticado, inclusive com histórico de outros membros", async () => {
+    const members = [
+      { id: "carlos", user: { displayName: "Carlos Henrique", normalizedEmail: "carloshenrique@politizai.com" }, role: { key: "closer" }, teamMemberships: [] },
+      { id: "ede", user: { displayName: "Ede Rafael", normalizedEmail: "ederafael@politizai.com" }, role: { key: "sdr" }, teamMemberships: [] },
+      { id: "jhon", user: { displayName: "Jhon Cunha", normalizedEmail: "jhoncunha@politizai.com" }, role: { key: "sdr" }, teamMemberships: [] },
+      { id: "admin", user: { displayName: "Administrador", normalizedEmail: "admin@example.test" }, role: { key: "administrator" }, teamMemberships: [{ teamId: "team", function: "SDR" }] },
+      { id: "namesake", user: { displayName: "Carlos Henrique", normalizedEmail: "other@example.test" }, role: { key: "sdr" }, teamMemberships: [] },
+    ];
+    const database = {
+      workspace: { findFirst: vi.fn().mockResolvedValue({ name: "Workspace", timeZone: "America/Sao_Paulo" }) },
+      workspaceMember: { findMany: vi.fn().mockImplementation(({ where }) => Promise.resolve(where.id ? [{ id: "matheus", user: { displayName: "Matheus Mendon", normalizedEmail: "matheus@example.test" } }] : members)) },
+      commercialMetricFact: { findMany: vi.fn().mockResolvedValue(["admin", "matheus", "jhon"].map((id) => ({ id: `fact-${id}`, eventType: "CALL_ATTEMPTED", sourceEntityType: "Task", occurredAt: new Date("2026-10-22T14:00:00Z"), recordedAt: now, leadId: null, creditedMemberId: id, performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, quantity: 1, valueCents: null }))) },
+      realtimeDashboardShare: { findUnique: vi.fn().mockResolvedValue({ workspaceId: "workspace", revokedAt: null, createdAt: now, rotatedAt: null, revision: 1 }) },
+      commercialMetricBackfillRun: { findFirst: vi.fn().mockResolvedValue(null) },
+      commercialMetricReconciliationRun: { findFirst: vi.fn().mockResolvedValue(null) },
+      goalPlan: { findFirst: vi.fn().mockResolvedValue(null) },
+      dailyGoalProfile: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    const service = createRealtimeDashboardService({ database: database as never, authorization: authorization() as never, now: () => now });
+    const publicSnapshot = await service.publicSnapshot(validToken);
+    const screen = await service.screen({ workspaceId: "workspace" } as never);
+    expect(screen.snapshot).toEqual(publicSnapshot);
+    expect(publicSnapshot.week.ranking.map((row) => [row.name, row.position, row.calls])).toEqual([
+      ["Jhon Cunha", 1, 1], ["Carlos Henrique", 2, 0], ["Ede Rafael", 3, 0],
+    ]);
+    expect(publicSnapshot.today.totals.calls).toBe(3);
+    expect(publicSnapshot.week.totals.calls).toBe(3);
+    expect(JSON.stringify(publicSnapshot)).not.toMatch(/Matheus|Administrador|@|namesake|rankingVisible/);
+    expect(database.workspaceMember.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: "workspace", id: { in: ["matheus"] } } }));
   });
 
   it("persiste somente o hash e não coloca segredo no audit durante rotação", async () => {

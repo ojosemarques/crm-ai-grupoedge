@@ -170,9 +170,11 @@ export function aggregateRealtimeDashboard(
   const todayFacts = factsWithin(facts, periods.today);
   const weekFacts = factsWithin(facts, periods.week);
   const goals = buildRealtimeDashboardGoals({ sellers, todayFacts, weekFacts, weekFromDate: periods.week.fromDate, timeZone: periods.week.timeZone, configuration });
-  const dailyRows = new Map(rankedSellerActivity(todayFacts, sellers).map((row) => [row.id, Object.freeze({ calls: row.calls, messages: row.messages, effectiveContacts: row.effectiveContacts, meetingsScheduled: row.meetingsBooked, meetingsCompleted: row.meetingsCompleted, sales: row.sales, salesValueCents: row.salesValueCents, tasksCompleted: row.tasksCompleted })]));
-  const orderedMembers = rankedSellerActivity(weekFacts, sellers);
-  const weeklyRows = buildRealtimeDashboardRanking(weekFacts, sellers);
+  // Visibility only affects individual rows, never the team's facts or targets.
+  const rankingSellers = sellers.filter((seller) => seller.rankingVisible !== false);
+  const dailyRows = new Map(rankedSellerActivity(todayFacts, rankingSellers).map((row) => [row.id, Object.freeze({ calls: row.calls, messages: row.messages, effectiveContacts: row.effectiveContacts, meetingsScheduled: row.meetingsBooked, meetingsCompleted: row.meetingsCompleted, sales: row.sales, salesValueCents: row.salesValueCents, tasksCompleted: row.tasksCompleted })]));
+  const orderedMembers = rankedSellerActivity(weekFacts, rankingSellers);
+  const weeklyRows = buildRealtimeDashboardRanking(weekFacts, rankingSellers);
   return Object.freeze({
     today: Object.freeze({
       period: periods.today,

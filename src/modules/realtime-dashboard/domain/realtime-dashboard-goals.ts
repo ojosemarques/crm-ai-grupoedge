@@ -3,7 +3,7 @@ import type { IntegratedActivityFact } from "@/modules/metrics/domain/metrics-co
 import type { RealtimeDashboardGoals, RealtimeGoalMetric, RealtimeGoalProgress } from "./realtime-dashboard-contracts";
 import { addLocalDays, workspaceDayRange } from "@/shared/core/time/workspace-time";
 
-export type RealtimeSeller = Readonly<{ id: string; name: string; active?: boolean; functions?: readonly string[]; teamIds?: readonly string[] }>;
+export type RealtimeSeller = Readonly<{ id: string; name: string; active?: boolean; rankingVisible?: boolean; functions?: readonly string[]; teamIds?: readonly string[] }>;
 export type RealtimeDailyProfile = Readonly<{ memberId: string; callsTarget: number; messagesTarget: number; effectiveContactsTarget: number; meetingsScheduledTarget: number; salesValueTargetCents: bigint }>;
 export type RealtimeWeeklyQuota = Readonly<{ targetType: string; memberId: string | null; teamId: string | null; function: string | null; metricKey: string; targetValue: bigint }>;
 export type RealtimeGoalConfiguration = Readonly<{ profiles: readonly RealtimeDailyProfile[]; quotas: readonly RealtimeWeeklyQuota[]; planName?: string }>;

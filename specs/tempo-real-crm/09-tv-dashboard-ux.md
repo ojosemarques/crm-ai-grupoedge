@@ -27,6 +27,7 @@ O pedido corretivo de 22/10/2026 unifica as composições: mesmo rail, cabeçalh
 - Alvo 1920×1080; mínimo 1366×768.
 - Métricas essenciais sem scroll manual.
 - Top 3 + tabela com quatro linhas por página. Páginas avançam a cada 12 segundos e a posição é preservada entre os ciclos para incluir toda a equipe.
+- Ranking restrito às contas de Carlos Henrique, Ede Rafael e Jhon Cunha, identificadas no servidor pelo e-mail normalizado. Matheus Mendon, Administrador e demais contas não aparecem nas linhas nem no pódio; os totais e as metas gerais continuam considerando a base completa. A mesma regra vale para o painel privado e o público.
 - Shell próprio nas rotas exatas privada e pública; autenticação e autorização da rota privada permanecem no servidor.
 - TV mantém métricas sem scroll; celular empilha os painéis e usa scroll interno na tabela individual.
 - Fullscreen via Web API, com fallback informativo.

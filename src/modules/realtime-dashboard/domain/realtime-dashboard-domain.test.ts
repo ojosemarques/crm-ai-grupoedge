@@ -75,6 +75,33 @@ describe("dashboard tempo real", () => {
     ]);
   });
 
+  it("oculta membros somente do ranking, preservando fatos, totais e metas gerais", () => {
+    const periods = resolveRealtimeDashboardPeriods(new Date("2026-10-22T15:00:00Z"), "America/Sao_Paulo");
+    const sellers = [
+      { id: "carlos", name: "Carlos Henrique" },
+      { id: "ede", name: "Ede Rafael" },
+      { id: "jhon", name: "Jhon Cunha" },
+      { id: "matheus", name: "Matheus Mendon" },
+      { id: "admin", name: "Administrador" },
+    ];
+    const facts = sellers.map((seller, index) => fact({ id: seller.id, eventType: "CALL_ATTEMPTED", occurredAt: "2026-10-22T12:00:00Z", creditedMemberId: seller.id, quantity: index + 1 }));
+    const configuration = { profiles: sellers.map((seller) => ({ memberId: seller.id, callsTarget: 50, messagesTarget: 40, effectiveContactsTarget: 10, meetingsScheduledTarget: 3, salesValueTargetCents: 0n })), quotas: [] };
+    const original = aggregateRealtimeDashboard(facts, sellers, periods, configuration);
+    const filtered = aggregateRealtimeDashboard(facts, sellers.map((seller) => ({ ...seller, rankingVisible: ["carlos", "ede", "jhon"].includes(seller.id) })), periods, configuration);
+
+    expect(filtered.today).toEqual(original.today);
+    expect(filtered.week.totals).toEqual(original.week.totals);
+    expect(filtered.week.goals).toEqual(original.week.goals);
+    expect(filtered.week.daily).toEqual(original.week.daily);
+    expect(filtered.week.ranking.map((row) => [row.name, row.position, row.calls])).toEqual([
+      ["Jhon Cunha", 1, 3], ["Ede Rafael", 2, 2], ["Carlos Henrique", 3, 1],
+    ]);
+    for (const row of filtered.week.ranking) {
+      expect(row.today.calls).toBe(row.calls);
+      expect(row.goals.week.calls.targetValue).toBe("250");
+    }
+  });
+
   it("distribui fatos por dia local sem inventar valores futuros nem incluir o sábado", () => {
     const periods = resolveRealtimeDashboardPeriods(new Date("2026-10-22T15:00:00Z"), "America/Sao_Paulo");
     const summary = aggregateRealtimeDashboard([
