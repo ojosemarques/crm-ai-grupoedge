@@ -13,3 +13,5 @@
 | 2026-10-22 | Uma linha por workspace | tabela histórica de tokens ativos | rotação simples e atômica; histórico fica em AuditLog | múltiplas TVs com lifecycle próprio |
 | 2026-10-22 | Iniciais sem avatar | URL externa | schema não possui avatar; evita fetch/PII | avatar corporativo existir |
 | 2026-10-22 | Publicar software sem declarar go-live de dados reais | contornar checklist | docs históricas mantêm NO-GO para operação real | gates humanos fecharem |
+| 2026-10-22 | Aplicar produção pela trilha Supabase versionada | forçar `prisma migrate deploy` | 36 migrations antigas constavam pendentes no Prisma apesar dos objetos existentes; forçar a cadeia recriaria schema | trilhas Prisma/Supabase forem reconciliadas |
+| 2026-10-22 | Fixar Vite transitivo em `8.2.4` | ignorar CI ou ampliar Vitest | remove GHSA-587h-7wmj-h5pm com uma única resolução, sem mudar API/runtime da aplicação | Vitest resolver versão segura sem override |

@@ -54,3 +54,15 @@ Falha de migration/cadeia, lint/type/test/build, RBAC/tenant, DTO público, toke
 - token temporário revogado, salvo pedido expresso para preservar.
 
 Publicar o software não remove o NO-GO histórico para dados reais/domínio/go-live; esses gates exigem responsáveis e aprovações externas registrados em `GO_LIVE_CHECKLIST.md`.
+
+## Rollout executado em 2026-10-22
+
+- commit técnico: `909635cf97a7d28694cd6381fc5a9e4110a1fd85`;
+- CI: `39720622753`, sucesso;
+- backup físico anterior: `2026-10-21T06:36:39.171Z`, `COMPLETED`; PITR desabilitado;
+- migration Supabase: `20261022035416_realtime_dashboard_share`;
+- deployment: `dpl_6F6wtXjWQo2EFfJPhKNCpMtuZSTM`, `READY` em `https://crm-ai-grupoedge.vercel.app`;
+- smoke: privado 200/`LIVE`, público 200, inválido/revogado 404, headers seguros, hash-only, auditoria, oito pollings sem overlap e dois ciclos completos;
+- cleanup: share temporário revogado; nenhum bearer persistido em spec, log ou Git.
+
+A trilha Prisma remota já tinha drift preexistente de 36 migrations. O rollout não forçou `prisma migrate deploy`; aplicou a migration equivalente versionada em `supabase/migrations` pela conexão administrativa do provider. Reconciliar as duas trilhas é trabalho operacional separado e não deve ser feito retroativamente sem backup e ensaio.

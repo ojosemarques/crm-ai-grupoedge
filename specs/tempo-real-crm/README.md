@@ -31,7 +31,7 @@ T0 baseline → T1 domínio → T2 permissões/menu → T3 serviço autenticado 
 ## Dependências e bloqueios conhecidos
 
 - A árvore começou suja em `main` no HEAD `df7dd55657b53b7d2f224ce0572924ebb3269828`, com trabalho alheio de formulários/marketing, inclusive em `prisma/schema.prisma`, `app-shell.tsx` e `proxy.ts`. Commits desta iniciativa devem usar staging seletivo.
-- Produção oficial: GitHub `ojosemarques/crm-ai-grupoedge`, Supabase `zbzztpzviyjxpprqcegs`, Vercel `crm-ai-grupoedge`, conforme `docs/SUPABASE_VERCEL_DEPLOYMENT.md`; deve ser revalidada pelas CLIs antes de qualquer efeito remoto.
+- Produção revalidada: GitHub `ojosemarques/crm-ai-grupoedge`, Supabase `zbzztpzviyjxpprqcegs`, Vercel `grupo-edge-crm`, alias `https://crm-ai-grupoedge.vercel.app`. O nome antigo no documento geral não foi usado como fonte operacional.
 - O documento histórico `docs/PRODUCTION_READINESS.md` registra blockers de go-live com dados reais. Esta entrega pode publicar o software, mas não autoriza importar dados reais, abrir domínio ou contornar gates externos.
 
 ## Gate entre specs e implementação
