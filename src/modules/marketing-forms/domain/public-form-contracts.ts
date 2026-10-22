@@ -3,7 +3,7 @@ import { z } from "zod";
 const optionalTrackingText = (maximum: number) =>
   z.string().trim().max(maximum).optional();
 
-const answerValueSchema = z.union([
+export const publicFormAnswerValueSchema = z.union([
   z.string().max(10_000),
   z.number().finite(),
   z.boolean(),
@@ -30,7 +30,7 @@ export const publicFormSubmitSchema = z.object({
   idempotencyToken: z.string().uuid(),
   answers: z.array(z.object({
     questionKey: z.string().trim().toLowerCase().min(3).max(80),
-    value: answerValueSchema,
+    value: publicFormAnswerValueSchema,
   }).strict()).max(200),
   honeypot: z.string().max(200).default(""),
   startedAt: z.iso.datetime({ offset: true }),
@@ -48,8 +48,16 @@ export const publicFormEventSchema = z.object({
     ]),
     questionKey: z.string().trim().toLowerCase().min(3).max(80).optional(),
     optionKey: z.string().trim().toLowerCase().min(3).max(80).optional(),
+    answer: publicFormAnswerValueSchema.optional(),
     occurredAt: z.iso.datetime({ offset: true }),
-  }).strict()).min(1).max(25),
+  }).strict().superRefine((event, context) => {
+    if (event.kind === "QUESTION_ANSWERED") {
+      if (!event.questionKey) context.addIssue({ code: "custom", message: "Pergunta obrigatória para resposta.", path: ["questionKey"] });
+      if (event.answer === undefined) context.addIssue({ code: "custom", message: "Valor obrigatório para resposta.", path: ["answer"] });
+      return;
+    }
+    if (event.answer !== undefined) context.addIssue({ code: "custom", message: "Valor permitido somente em resposta de pergunta.", path: ["answer"] });
+  })).min(1).max(25),
 }).strict();
 
 export type PublicFormSubmitInput = z.infer<typeof publicFormSubmitSchema>;

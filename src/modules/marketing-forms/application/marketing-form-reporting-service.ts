@@ -15,7 +15,7 @@ type Options = Readonly<{ database: PrismaClient; authorization: Authorization; 
 const baseQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
-  status: z.enum(["RECEIVED", "PROCESSING", "ACCEPTED", "FAILED"]).optional(),
+  status: z.enum(["RECEIVED", "PROCESSING", "ACCEPTED", "FAILED", "INCOMPLETO"]).optional(),
   version: z.coerce.number().int().positive().optional(),
   search: z.string().trim().max(120).optional(),
   utmSource: z.string().trim().max(200).optional(),
@@ -83,7 +83,7 @@ export function createMarketingFormReportingService(options: Options) {
       workspaceId: context.workspaceId,
       marketingFormId: formId,
       deletedAt: null,
-      ...(query.status ? { status: query.status } : {}),
+      ...(query.status && query.status !== "INCOMPLETO" ? { status: query.status } : {}),
       ...(query.utmSource ? { utmSource: { equals: query.utmSource, mode: "insensitive" } } : {}),
       ...((query.from || query.to) ? { submittedAt: { ...(query.from ? { gte: query.from } : {}), ...(query.to ? { lt: query.to } : {}) } } : {}),
       ...(versionId ? { marketingFormVersionId: versionId } : {}),
@@ -96,7 +96,7 @@ export function createMarketingFormReportingService(options: Options) {
       Prisma.sql`r."marketingFormId" = ${formId}::uuid`,
       Prisma.sql`r."deletedAt" IS NULL`,
     ];
-    if (query.status) clauses.push(Prisma.sql`r.status::text = ${query.status}`);
+    if (query.status && query.status !== "INCOMPLETO") clauses.push(Prisma.sql`r.status::text = ${query.status}`);
     if (query.utmSource) clauses.push(Prisma.sql`LOWER(COALESCE(r."utmSource", '')) = LOWER(${query.utmSource})`);
     if (query.from) clauses.push(Prisma.sql`r."submittedAt" >= ${query.from}`);
     if (query.to) clauses.push(Prisma.sql`r."submittedAt" < ${query.to}`);
@@ -144,38 +144,85 @@ export function createMarketingFormReportingService(options: Options) {
   async function list(context: AuthenticatedContext, formId: string, raw: unknown) {
     await assertForm(context, formId);
     const query = querySchema.parse(raw);
-    const [selectedVersion, deleteDecision] = await Promise.all([
-      query.version ? options.database.marketingFormVersion.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, version: query.version }, select: { id: true } }) : null,
-      options.authorization.authorize(context, PermissionKeys.MARKETING_DEFINITIONS_MANAGE, resource(context, formId)),
-    ]);
-    if (query.version && !selectedVersion) return { total: 0, page: query.page, pageSize: query.pageSize, versions: [], permissions: { delete: deleteDecision.allowed }, items: [] };
-    const filter = where(context, formId, query, selectedVersion?.id);
-    const versionsPromise = options.database.marketingFormVersion.findMany({ where: { workspaceId: context.workspaceId, marketingFormId: formId }, select: { id: true, version: true }, orderBy: { version: "desc" } });
-    let total: number;
-    let receipts: Array<{ id: string; publicId: string; marketingFormVersionId: string; status: string; utmSource: string | null; utmMedium: string | null; utmCampaign: string | null; submittedAt: Date; acceptedAt: Date | null }>;
+    const clauses: Prisma.Sql[] = [];
+    if (query.status) clauses.push(Prisma.sql`response.status = ${query.status}`);
+    if (query.version) clauses.push(Prisma.sql`response.version = ${query.version}`);
+    if (query.utmSource) clauses.push(Prisma.sql`LOWER(COALESCE(response."utmSource", '')) = LOWER(${query.utmSource})`);
+    if (query.from) clauses.push(Prisma.sql`response."submittedAt" >= ${query.from}`);
+    if (query.to) clauses.push(Prisma.sql`response."submittedAt" < ${query.to}`);
     if (query.search) {
-      const searched = await searchedReceiptPage(context, formId, query, selectedVersion?.id, query.pageSize, (query.page - 1) * query.pageSize);
-      total = searched.total;
-      const unordered = await options.database.marketingFormReceipt.findMany({ where: { ...filter, id: { in: searched.ids } }, select: { id: true, publicId: true, marketingFormVersionId: true, status: true, utmSource: true, utmMedium: true, utmCampaign: true, submittedAt: true, acceptedAt: true } });
-      const byId = new Map(unordered.map((receipt) => [receipt.id, receipt]));
-      receipts = searched.ids.flatMap((id) => byId.get(id) ?? []);
-    } else {
-      [total, receipts] = await Promise.all([
-        options.database.marketingFormReceipt.count({ where: filter }),
-        options.database.marketingFormReceipt.findMany({ where: filter, orderBy: [{ submittedAt: "desc" }, { id: "desc" }], skip: (query.page - 1) * query.pageSize, take: query.pageSize, select: { id: true, publicId: true, marketingFormVersionId: true, status: true, utmSource: true, utmMedium: true, utmCampaign: true, submittedAt: true, acceptedAt: true } }),
-      ]);
+      const matches: Prisma.Sql[] = [Prisma.sql`POSITION(LOWER(${query.search}) IN LOWER(COALESCE(response."submittedFullName", ''))) > 0`];
+      const phoneDigits = query.search.replace(/\D/g, "");
+      if (phoneDigits) matches.push(Prisma.sql`POSITION(${phoneDigits} IN regexp_replace(COALESCE(response."submittedPhone", ''), '[^0-9]', '', 'g')) > 0`);
+      clauses.push(Prisma.sql`(${Prisma.join(matches, " OR ")})`);
     }
-    const versions = await versionsPromise;
-    const submissions = await options.database.leadFormSubmission.findMany({ where: { workspaceId: context.workspaceId, marketingFormReceiptId: { in: receipts.map((receipt) => receipt.id) } }, select: { marketingFormReceiptId: true, leadId: true, submittedFullName: true, submittedEmail: true, submittedPhone: true, intakeOutcome: true } });
-    const byReceipt = new Map(submissions.map((submission) => [submission.marketingFormReceiptId, submission]));
-    const versionById = new Map(versions.map((version) => [version.id, version.version]));
-    return { total, page: query.page, pageSize: query.pageSize, versions: versions.map((version) => version.version), permissions: { delete: deleteDecision.allowed }, items: receipts.map((receipt) => ({ ...receipt, version: versionById.get(receipt.marketingFormVersionId) ?? null, submission: byReceipt.get(receipt.id) ?? null })) };
+    const filters = clauses.length ? Prisma.sql`WHERE ${Prisma.join(clauses, " AND ")}` : Prisma.empty;
+    const responseRows = Prisma.sql`
+      SELECT 'RECEIPT'::text AS source, r.id, r."publicId", r."marketingFormVersionId", v.version,
+        r.status::text AS status, r."utmSource", r."utmMedium", r."utmCampaign", r."submittedAt", r."acceptedAt",
+        s."submittedFullName", s."submittedEmail", s."submittedPhone", s."leadId", s."intakeOutcome"::text AS "intakeOutcome"
+      FROM "marketing_form_receipts" r
+      JOIN "marketing_form_versions" v ON v."workspaceId" = r."workspaceId" AND v.id = r."marketingFormVersionId"
+      LEFT JOIN "lead_form_submissions" s ON s."workspaceId" = r."workspaceId" AND s."marketingFormReceiptId" = r.id
+      WHERE r."workspaceId" = ${context.workspaceId}::uuid AND r."marketingFormId" = ${formId}::uuid AND r."deletedAt" IS NULL
+      UNION ALL
+      SELECT 'PARTIAL'::text AS source, p.id, p."publicId", p."marketingFormVersionId", v.version,
+        'INCOMPLETO'::text AS status, p."utmSource", p."utmMedium", p."utmCampaign", p."lastAnsweredAt" AS "submittedAt", NULL::timestamptz AS "acceptedAt",
+        p."respondentName" AS "submittedFullName", p."respondentEmail" AS "submittedEmail", p."respondentPhone" AS "submittedPhone", NULL::uuid AS "leadId", NULL::text AS "intakeOutcome"
+      FROM "marketing_form_partial_responses" p
+      JOIN "marketing_form_versions" v ON v."workspaceId" = p."workspaceId" AND v.id = p."marketingFormVersionId"
+      WHERE p."workspaceId" = ${context.workspaceId}::uuid AND p."marketingFormId" = ${formId}::uuid AND p."completedAt" IS NULL AND p."deletedAt" IS NULL
+    `;
+    type UnifiedRow = { source: "RECEIPT" | "PARTIAL"; id: string; publicId: string; marketingFormVersionId: string; version: number; status: string; utmSource: string | null; utmMedium: string | null; utmCampaign: string | null; submittedAt: Date; acceptedAt: Date | null; submittedFullName: string | null; submittedEmail: string | null; submittedPhone: string | null; leadId: string | null; intakeOutcome: string | null };
+    const [deleteDecision, versions, counts, rows] = await Promise.all([
+      options.authorization.authorize(context, PermissionKeys.MARKETING_DEFINITIONS_MANAGE, resource(context, formId)),
+      options.database.marketingFormVersion.findMany({ where: { workspaceId: context.workspaceId, marketingFormId: formId }, select: { version: true }, orderBy: { version: "desc" } }),
+      options.database.$queryRaw<Array<{ total: bigint }>>(Prisma.sql`SELECT COUNT(*)::bigint AS total FROM (${responseRows}) response ${filters}`),
+      options.database.$queryRaw<UnifiedRow[]>(Prisma.sql`SELECT * FROM (${responseRows}) response ${filters} ORDER BY response."submittedAt" DESC, response.id DESC LIMIT ${query.pageSize} OFFSET ${(query.page - 1) * query.pageSize}`),
+    ]);
+    return {
+      total: Number(counts[0]?.total ?? 0n),
+      page: query.page,
+      pageSize: query.pageSize,
+      versions: versions.map((version) => version.version),
+      permissions: { delete: deleteDecision.allowed },
+      items: rows.map((row) => ({
+        id: row.id,
+        publicId: row.publicId,
+        marketingFormVersionId: row.marketingFormVersionId,
+        status: row.status,
+        version: row.version,
+        utmSource: row.utmSource,
+        utmMedium: row.utmMedium,
+        utmCampaign: row.utmCampaign,
+        submittedAt: row.submittedAt,
+        acceptedAt: row.acceptedAt,
+        submission: { submittedFullName: row.submittedFullName, submittedEmail: row.submittedEmail, submittedPhone: row.submittedPhone, leadId: row.leadId, intakeOutcome: row.intakeOutcome },
+      })),
+    };
   }
 
   async function detail(context: AuthenticatedContext, formId: string, receiptId: string) {
     await assertForm(context, formId);
     const receipt = await options.database.marketingFormReceipt.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, publicId: receiptId, deletedAt: null } });
-    if (!receipt) fail("Resposta não encontrada.", "MARKETING_FORM_RESPONSE_NOT_FOUND", 404);
+    if (!receipt) {
+      const partial = await options.database.marketingFormPartialResponse.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, publicId: receiptId, completedAt: null, deletedAt: null } });
+      if (!partial) fail("Resposta não encontrada.", "MARKETING_FORM_RESPONSE_NOT_FOUND", 404);
+      const version = await options.database.marketingFormVersion.findFirst({ where: { id: partial.marketingFormVersionId, workspaceId: context.workspaceId, marketingFormId: formId } });
+      if (!version) fail("Versão histórica não encontrada.", "MARKETING_FORM_VERSION_NOT_FOUND", 500);
+      const definition = parsedDefinition(version.definition);
+      const rawAnswers = storedAnswers(partial.answers);
+      const answers = definition.questions.map((question) => {
+        const rawAnswer = rawAnswers.find((item) => item.questionKey === question.stableKey);
+        return { questionKey: question.stableKey, question: question.title, value: rawAnswer?.value ?? null, displayValue: rawAnswer ? answerLabel(definition, question.stableKey, rawAnswer.value) : "—" };
+      });
+      return {
+        receipt: { publicId: partial.publicId, status: "INCOMPLETO", submittedAt: partial.lastAnsweredAt, acceptedAt: null, utmSource: partial.utmSource, utmMedium: partial.utmMedium, utmCampaign: partial.utmCampaign, utmContent: partial.utmContent, utmTerm: partial.utmTerm, referrerHost: partial.referrerHost, redirectKind: null },
+        version: version.version,
+        submission: { leadId: null, contactId: null, intakeOutcome: null, submittedFullName: partial.respondentName, submittedEmail: partial.respondentEmail, submittedPhone: partial.respondentPhone },
+        answers,
+      };
+    }
     const [version, submission] = await Promise.all([
       options.database.marketingFormVersion.findFirst({ where: { id: receipt.marketingFormVersionId, workspaceId: context.workspaceId, marketingFormId: formId } }),
       options.database.leadFormSubmission.findFirst({ where: { workspaceId: context.workspaceId, marketingFormReceiptId: receipt.id }, select: { leadId: true, contactId: true, intakeOutcome: true, submittedFullName: true, submittedEmail: true, submittedPhone: true } }),
@@ -200,8 +247,15 @@ export function createMarketingFormReportingService(options: Options) {
         where: { workspaceId: context.workspaceId, marketingFormId: formId, publicId: receiptId, deletedAt: null },
         select: { id: true, publicId: true, status: true },
       });
-      if (!receipt) fail("Resposta não encontrada.", "MARKETING_FORM_RESPONSE_NOT_FOUND", 404);
       const deletedAt = options.now();
+      if (!receipt) {
+        const partial = await transaction.marketingFormPartialResponse.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, publicId: receiptId, completedAt: null, deletedAt: null }, select: { id: true, publicId: true } });
+        if (!partial) fail("Resposta não encontrada.", "MARKETING_FORM_RESPONSE_NOT_FOUND", 404);
+        const removed = await transaction.marketingFormPartialResponse.updateMany({ where: { id: partial.id, workspaceId: context.workspaceId, marketingFormId: formId, completedAt: null, deletedAt: null }, data: { deletedAt } });
+        if (removed.count !== 1) fail("Resposta não encontrada.", "MARKETING_FORM_RESPONSE_NOT_FOUND", 404);
+        await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "marketing.form.response_deleted", entityType: "MarketingFormPartialResponse", entityId: partial.id, changes: { formId, receiptPublicId: partial.publicId, previousStatus: "INCOMPLETO", leadPreserved: false } } });
+        return { publicId: partial.publicId, deletedAt, leadPreserved: false };
+      }
       const removed = await transaction.marketingFormReceipt.updateMany({
         where: { id: receipt.id, workspaceId: context.workspaceId, marketingFormId: formId, deletedAt: null },
         data: { deletedAt },

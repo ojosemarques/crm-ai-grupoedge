@@ -136,6 +136,19 @@ describe("schema de formulários de marketing", () => {
     await database.marketingFormEvent.create({ data: eventData });
     await expect(database.marketingFormEvent.create({ data: eventData })).rejects.toThrow();
 
+    const partialData = {
+      workspaceId: tenantA.workspaceId,
+      marketingFormId: form.id,
+      marketingFormVersionId: version.id,
+      sessionPublicId: randomUUID(),
+      answers: [{ questionKey: "nome-completo", value: "Pessoa", answeredAt: now.toISOString() }],
+      firstAnsweredAt: now,
+      lastAnsweredAt: now,
+      createdByActorId: tenantA.actorId,
+    } as const;
+    await database.marketingFormPartialResponse.create({ data: partialData });
+    await expect(database.marketingFormPartialResponse.create({ data: partialData })).rejects.toThrow();
+
     const rotationData = {
       workspaceId: tenantA.workspaceId,
       marketingFormId: form.id,

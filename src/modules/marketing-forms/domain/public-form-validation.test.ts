@@ -35,6 +35,22 @@ describe("validação pública de respostas", () => {
     expect(publicFormEventSchema.safeParse(input).success).toBe(false);
   });
 
+  it("exige o valor validável em eventos de resposta", () => {
+    const base = {
+      versionPublicId: crypto.randomUUID(),
+      sessionPublicId: crypto.randomUUID(),
+      tracking: {},
+    };
+    expect(publicFormEventSchema.safeParse({
+      ...base,
+      events: [{ eventId: crypto.randomUUID(), kind: "QUESTION_ANSWERED", questionKey: "nome-completo", occurredAt: new Date().toISOString() }],
+    }).success).toBe(false);
+    expect(publicFormEventSchema.safeParse({
+      ...base,
+      events: [{ eventId: crypto.randomUUID(), kind: "QUESTION_ANSWERED", questionKey: "nome-completo", answer: "Pessoa Teste", occurredAt: new Date().toISOString() }],
+    }).success).toBe(true);
+  });
+
   it("ordena pelo snapshot e mapeia apenas campos canônicos", () => {
     const current = definition();
     const answers = validatePublicFormAnswers(current, [

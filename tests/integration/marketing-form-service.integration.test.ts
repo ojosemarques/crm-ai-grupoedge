@@ -213,6 +213,75 @@ describe("serviço administrativo de formulários", () => {
     expect(await database.privacyDecision.count({ where: { workspaceId: tenantA.context.workspaceId, correlationId: receipt.publicId, outcome: "ALLOW" } })).toBe(1);
   });
 
+  it("lista respostas incompletas com os valores já informados sem criar lead", async () => {
+    const slug = `incompleto-${randomUUID().slice(0, 8)}`;
+    const form = await service.create(tenantA.context, { name: "Formulário incompleto", publicSlug: slug });
+    const saved = await service.updateDraft(tenantA.context, form.id, { name: form.name, expectedRevision: form.revision, definition: publishableDefinition(tenantA) });
+    const published = await service.publish(tenantA.context, form.id, saved.revision);
+    const sessionPublicId = randomUUID();
+    const name = `Pessoa incompleta ${randomUUID().slice(0, 8)}`;
+    const phone = `(62)9${Math.floor(10_000_000 + Math.random() * 89_999_999).toString().slice(0, 4)}-${Math.floor(1_000 + Math.random() * 8_999)}`;
+
+    await submissionService.recordEvents(slug, {
+      versionPublicId: published.version.publicId,
+      sessionPublicId,
+      tracking: { utmSource: "abandono-teste" },
+      events: [
+        { eventId: randomUUID(), kind: "QUESTION_ANSWERED", questionKey: "nome-completo", answer: name, occurredAt: new Date(now.getTime() - 1_500).toISOString() },
+        { eventId: randomUUID(), kind: "QUESTION_ANSWERED", questionKey: "telefone", answer: phone, occurredAt: new Date(now.getTime() - 1_000).toISOString() },
+      ],
+    });
+
+    const partial = await database.marketingFormPartialResponse.findUniqueOrThrow({ where: { workspaceId_marketingFormVersionId_sessionPublicId: { workspaceId: tenantA.context.workspaceId, marketingFormVersionId: published.version.id, sessionPublicId } } });
+    expect(partial).toMatchObject({ respondentName: name, respondentPhone: phone, completedAt: null, deletedAt: null });
+    expect(await database.marketingFormReceipt.count({ where: { workspaceId: tenantA.context.workspaceId, marketingFormId: form.id } })).toBe(0);
+    expect(await database.lead.count({ where: { workspaceId: tenantA.context.workspaceId, fullName: name } })).toBe(0);
+
+    await expect(reportingService.list(tenantA.context, form.id, { status: "INCOMPLETO" })).resolves.toMatchObject({
+      total: 1,
+      items: [expect.objectContaining({ publicId: partial.publicId, status: "INCOMPLETO", submission: expect.objectContaining({ submittedFullName: name, submittedPhone: phone, leadId: null }) })],
+    });
+    await expect(reportingService.list(tenantA.context, form.id, { search: name.toLowerCase() })).resolves.toMatchObject({ total: 1 });
+    await expect(reportingService.list(tenantA.context, form.id, { search: phone.replace(/\D/g, "") })).resolves.toMatchObject({ total: 1 });
+    const detail = await reportingService.detail(tenantA.context, form.id, partial.publicId);
+    expect(detail).toMatchObject({ receipt: { status: "INCOMPLETO" }, submission: { leadId: null } });
+    expect(detail.answers).toEqual([
+      expect.objectContaining({ questionKey: "nome-completo", displayValue: name }),
+      expect.objectContaining({ questionKey: "telefone", displayValue: phone }),
+    ]);
+    await expect(reportingService.detail(tenantB.context, form.id, partial.publicId)).rejects.toMatchObject({ code: "MARKETING_FORM_NOT_FOUND", statusCode: 404 });
+
+    const accepted = await submissionService.submit(slug, {
+      versionPublicId: published.version.publicId,
+      sessionPublicId,
+      idempotencyToken: randomUUID(),
+      startedAt: new Date(now.getTime() - 2_000).toISOString(),
+      honeypot: "",
+      tracking: { utmSource: "abandono-teste" },
+      answers: [{ questionKey: "nome-completo", value: name }, { questionKey: "telefone", value: phone }],
+    });
+    expect(accepted.outcome).toBe("ACCEPTED");
+    await submissionService.recordEvents(slug, {
+      versionPublicId: published.version.publicId,
+      sessionPublicId,
+      tracking: {},
+      events: [{ eventId: randomUUID(), kind: "QUESTION_ANSWERED", questionKey: "nome-completo", answer: name, occurredAt: now.toISOString() }],
+    });
+    await expect(database.marketingFormPartialResponse.findUniqueOrThrow({ where: { id: partial.id }, select: { completedAt: true, receiptId: true, answers: true, respondentName: true, respondentPhone: true } })).resolves.toMatchObject({ completedAt: now, receiptId: expect.any(String), answers: [], respondentName: null, respondentPhone: null });
+    await expect(reportingService.list(tenantA.context, form.id, { status: "INCOMPLETO" })).resolves.toMatchObject({ total: 0, items: [] });
+
+    const deletionSession = randomUUID();
+    await submissionService.recordEvents(slug, {
+      versionPublicId: published.version.publicId,
+      sessionPublicId: deletionSession,
+      tracking: {},
+      events: [{ eventId: randomUUID(), kind: "QUESTION_ANSWERED", questionKey: "nome-completo", answer: `${name} apagar`, occurredAt: now.toISOString() }],
+    });
+    const deletable = await database.marketingFormPartialResponse.findUniqueOrThrow({ where: { workspaceId_marketingFormVersionId_sessionPublicId: { workspaceId: tenantA.context.workspaceId, marketingFormVersionId: published.version.id, sessionPublicId: deletionSession } } });
+    await expect(reportingService.remove(tenantA.context, form.id, deletable.publicId)).resolves.toMatchObject({ publicId: deletable.publicId, leadPreserved: false });
+    await expect(reportingService.detail(tenantA.context, form.id, deletable.publicId)).rejects.toMatchObject({ code: "MARKETING_FORM_RESPONSE_NOT_FOUND", statusCode: 404 });
+  });
+
   it("materializa uma resposta uma vez, preserva a etapa e não avança a rotação no replay", async () => {
     const slug = `submit-${randomUUID().slice(0, 8)}`;
     const form = await service.create(tenantA.context, { name: "Captação", publicSlug: slug });

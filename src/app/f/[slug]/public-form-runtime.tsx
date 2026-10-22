@@ -41,7 +41,6 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
   const [honeypot, setHoneypot] = useState("");
   const startedAt = useRef(new Date().toISOString());
   const started = useRef(false);
-  const answered = useRef(new Set<string>());
   const eventIds = useRef(new Map<string, string>());
   const headingRef = useRef<HTMLHeadingElement>(null);
   const question = form.questions[index];
@@ -71,14 +70,14 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
     };
   }, []);
 
-  const sendEvents = useCallback(async (events: ReadonlyArray<{ kind: "FORM_VIEW" | "FORM_START" | "QUESTION_VIEWED" | "QUESTION_ANSWERED" | "REDIRECT_OPENED"; questionKey?: string; optionKey?: string }>) => {
+  const sendEvents = useCallback(async (events: ReadonlyArray<{ kind: "FORM_VIEW" | "FORM_START" | "QUESTION_VIEWED" | "QUESTION_ANSWERED" | "REDIRECT_OPENED"; questionKey?: string; optionKey?: string; answer?: Answer }>) => {
     if (!sessionPublicId) return;
     try {
       await fetch(`/api/public/forms/${form.slug}/events`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         keepalive: true,
-        body: JSON.stringify({ versionPublicId: form.versionPublicId, sessionPublicId, tracking: tracking(), events: events.map((event) => { const key = `${event.kind}:${event.questionKey ?? ""}:${event.optionKey ?? ""}`; const eventId = eventIds.current.get(key) ?? crypto.randomUUID(); eventIds.current.set(key, eventId); return { ...event, eventId, occurredAt: new Date().toISOString() }; }) }),
+        body: JSON.stringify({ versionPublicId: form.versionPublicId, sessionPublicId, tracking: tracking(), events: events.map((event) => { const key = `${event.kind}:${event.questionKey ?? ""}:${event.optionKey ?? ""}:${JSON.stringify(event.answer)}`; const eventId = eventIds.current.get(key) ?? crypto.randomUUID(); eventIds.current.set(key, eventId); return { ...event, eventId, occurredAt: new Date().toISOString() }; }) }),
       });
     } catch { /* Telemetria nunca bloqueia a experiência pública. */ }
   }, [form.slug, form.versionPublicId, sessionPublicId, tracking]);
@@ -91,6 +90,17 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
     if (!sessionPublicId) return;
     void sendEvents([{ kind: "FORM_VIEW" }]);
   }, [sendEvents, sessionPublicId]);
+  useEffect(() => {
+    if (!sessionPublicId || done || !question || answer === undefined || publicFormAnswerError(question, answer)) return;
+    const timeout = window.setTimeout(() => {
+      const telemetry: Array<{ kind: "FORM_START" | "QUESTION_ANSWERED"; questionKey?: string; optionKey?: string; answer?: Answer }> = [];
+      if (!started.current) { started.current = true; telemetry.push({ kind: "FORM_START" }); }
+      const optionKey = typeof answer === "string" && ["SINGLE_CHOICE", "DROPDOWN"].includes(question.type) ? answer : undefined;
+      telemetry.push({ kind: "QUESTION_ANSWERED", questionKey: question.stableKey, answer, ...(optionKey ? { optionKey } : {}) });
+      void sendEvents(telemetry);
+    }, 500);
+    return () => window.clearTimeout(timeout);
+  }, [answer, done, question, sendEvents, sessionPublicId]);
 
   function setAnswer(value: Answer, autoAdvance = false) {
     if (!question) return;
@@ -101,13 +111,10 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
   async function advance(selectedAnswer: Answer | undefined = answer) {
     if (!question) return;
     const validation = publicFormAnswerError(question, selectedAnswer); if (validation) { setError(validation); return; }
-    const telemetry: Array<{ kind: "FORM_START" | "QUESTION_ANSWERED"; questionKey?: string; optionKey?: string }> = [];
+    const telemetry: Array<{ kind: "FORM_START" | "QUESTION_ANSWERED"; questionKey?: string; optionKey?: string; answer?: Answer }> = [];
     if (!started.current) { started.current = true; telemetry.push({ kind: "FORM_START" }); }
-    if (!answered.current.has(question.stableKey)) {
-      answered.current.add(question.stableKey);
-      const optionKey = typeof selectedAnswer === "string" && ["SINGLE_CHOICE", "DROPDOWN"].includes(question.type) ? selectedAnswer : undefined;
-      telemetry.push({ kind: "QUESTION_ANSWERED", questionKey: question.stableKey, ...(optionKey ? { optionKey } : {}) });
-    }
+    const optionKey = typeof selectedAnswer === "string" && ["SINGLE_CHOICE", "DROPDOWN"].includes(question.type) ? selectedAnswer : undefined;
+    telemetry.push({ kind: "QUESTION_ANSWERED", questionKey: question.stableKey, answer: selectedAnswer as Answer, ...(optionKey ? { optionKey } : {}) });
     void sendEvents(telemetry);
     if (index < form.questions.length - 1) { setIndex((current) => current + 1); setError(null); return; }
     setSubmitting(true); setError(null);

@@ -8,7 +8,7 @@ import { canonicalJson } from "@/modules/integrations/domain/integration-policy"
 import { getLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { marketingFormDefinitionSchema, marketingFormSlugSchema, type MarketingFormDefinition } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import { publicFormEventSchema, publicFormSubmitSchema } from "@/modules/marketing-forms/domain/public-form-contracts";
-import { mapAnswersToLead, validatePublicFormAnswers } from "@/modules/marketing-forms/domain/public-form-validation";
+import { mapAnswersToLead, publicFormAnswerError, validatePublicFormAnswers } from "@/modules/marketing-forms/domain/public-form-validation";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
@@ -29,6 +29,7 @@ type ResolvedForm = Readonly<{
 
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+type PartialAnswer = Readonly<{ questionKey: string; value: Prisma.JsonValue; answeredAt: string }>;
 
 function fail(message: string, code: string, statusCode: number): never {
   throw new ApplicationError(message, { code, statusCode, expose: true });
@@ -37,6 +38,60 @@ function fail(message: string, code: string, statusCode: number): never {
 function referrerHost(value: string | undefined): string | null {
   if (!value) return null;
   try { return new URL(value).hostname.toLowerCase().slice(0, 253); } catch { return null; }
+}
+
+function partialAnswers(value: Prisma.JsonValue): PartialAnswer[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item) || typeof item.questionKey !== "string" || typeof item.answeredAt !== "string" || !("value" in item) || item.value === undefined) return [];
+    return [{ questionKey: item.questionKey, value: item.value, answeredAt: item.answeredAt }];
+  });
+}
+
+function partialIdentity(definition: MarketingFormDefinition, answers: readonly PartialAnswer[]) {
+  const values = new Map(answers.map((answer) => [answer.questionKey, answer.value]));
+  const mapped = new Map<string, string>();
+  for (const question of definition.questions) {
+    const value = values.get(question.stableKey);
+    if (!question.mapping || typeof value !== "string") continue;
+    const displayValue = (question.type === "SINGLE_CHOICE" || question.type === "DROPDOWN")
+      ? question.config.options.find((option) => option.stableKey === value)?.label ?? value
+      : value;
+    mapped.set(question.mapping, displayValue.trim());
+  }
+  return {
+    respondentName: mapped.get("fullName") || null,
+    respondentEmail: mapped.get("email") || null,
+    respondentPhone: mapped.get("phone") || null,
+  };
+}
+
+async function closePartialResponse(
+  tx: Prisma.TransactionClient,
+  input: Readonly<{
+    form: ResolvedForm;
+    sessionPublicId: string;
+    receiptId: string;
+    actorId: string;
+    now: Date;
+  }>,
+) {
+  await tx.marketingFormPartialResponse.upsert({
+    where: { workspaceId_marketingFormVersionId_sessionPublicId: { workspaceId: input.form.workspaceId, marketingFormVersionId: input.form.versionId, sessionPublicId: input.sessionPublicId } },
+    create: {
+      workspaceId: input.form.workspaceId,
+      marketingFormId: input.form.id,
+      marketingFormVersionId: input.form.versionId,
+      sessionPublicId: input.sessionPublicId,
+      receiptId: input.receiptId,
+      answers: [],
+      firstAnsweredAt: input.now,
+      lastAnsweredAt: input.now,
+      completedAt: input.now,
+      createdByActorId: input.actorId,
+    },
+    update: { receiptId: input.receiptId, completedAt: input.now, answers: [], respondentName: null, respondentEmail: null, respondentPhone: null },
+  });
 }
 
 function whatsappUrl(phone: string, message?: string): string {
@@ -220,6 +275,7 @@ export function createMarketingFormSubmissionService(options: Options) {
     const idempotencyHash = sha256(`${form.workspaceId}:${form.versionId}:${input.idempotencyToken}`);
 
     const transactionResult = await options.database.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`marketing-form-partial:${form.workspaceId}:${form.versionId}:${input.sessionPublicId}`}, 0))`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`marketing-form-submit:${form.workspaceId}:${form.versionId}:${idempotencyHash}`}, 0))`;
       const active = await tx.marketingForm.findFirst({ where: { id: form.id, workspaceId: form.workspaceId, status: "ACTIVE", archivedAt: null, deletedAt: null, publishedVersionId: form.versionId }, select: { id: true } });
       if (!active) fail("A versão publicada mudou. Recarregue o formulário.", "MARKETING_FORM_VERSION_STALE", 409);
@@ -233,7 +289,10 @@ export function createMarketingFormSubmissionService(options: Options) {
       if (prior && canonicalJson(prior.answers) !== canonicalJson(answers)) {
         fail("A chave de reenvio pertence a outra resposta.", "MARKETING_FORM_IDEMPOTENCY_CONFLICT", 409);
       }
-      if (prior?.status === "ACCEPTED") return { ok: true as const, receiptId: prior.id, actorId: actor.id, result: publicResult(prior) };
+      if (prior?.status === "ACCEPTED") {
+        await closePartialResponse(tx, { form, sessionPublicId: input.sessionPublicId, receiptId: prior.id, actorId: actor.id, now });
+        return { ok: true as const, receiptId: prior.id, actorId: actor.id, result: publicResult(prior) };
+      }
 
       const receipt = prior
         ? await tx.marketingFormReceipt.update({ where: { id: prior.id }, data: { status: "PROCESSING", safeErrorCode: null }, select: { id: true, publicId: true } })
@@ -295,6 +354,7 @@ export function createMarketingFormSubmissionService(options: Options) {
 
       if (intake.outcome === "REJECTED") {
         await tx.marketingFormReceipt.update({ where: { id: receipt.id }, data: { status: "FAILED", safeErrorCode: intake.code } });
+        await closePartialResponse(tx, { form, sessionPublicId: input.sessionPublicId, receiptId: receipt.id, actorId: actor.id, now });
         return { ok: false as const, code: intake.code };
       }
 
@@ -341,6 +401,7 @@ export function createMarketingFormSubmissionService(options: Options) {
         })),
         skipDuplicates: true,
       });
+      await closePartialResponse(tx, { form, sessionPublicId: input.sessionPublicId, receiptId: receipt.id, actorId: actor.id, now });
       return { ok: true as const, receiptId: receipt.id, actorId: actor.id, result: publicResult(accepted) };
     }, { isolationLevel: "Serializable" });
 
@@ -370,6 +431,10 @@ export function createMarketingFormSubmissionService(options: Options) {
           fail("Opção inválida.", "MARKETING_FORM_EVENT_OPTION_INVALID", 422);
         }
       }
+      if (event.kind === "QUESTION_ANSWERED" && question) {
+        const error = publicFormAnswerError(question, event.answer);
+        if (error) fail(error, "MARKETING_FORM_EVENT_ANSWER_INVALID", 422);
+      }
     }
     return options.database.$transaction(async (tx) => {
       const actor = await tx.actor.findFirst({ where: { workspaceId: form.workspaceId, type: "SYSTEM", key: "system", userId: null }, select: { id: true } });
@@ -380,6 +445,32 @@ export function createMarketingFormSubmissionService(options: Options) {
         create: { workspaceId: form.workspaceId, publicId: input.sessionPublicId, identityState: "ANONYMOUS", startedAt: new Date(earliest), lastSeenAt: now },
         update: { lastSeenAt: now },
       });
+      const answeredEvents = input.events.filter((event) => event.kind === "QUESTION_ANSWERED" && event.questionKey && event.answer !== undefined);
+      if (answeredEvents.length) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`marketing-form-partial:${form.workspaceId}:${form.versionId}:${input.sessionPublicId}`}, 0))`;
+        const existing = await tx.marketingFormPartialResponse.findUnique({
+          where: { workspaceId_marketingFormVersionId_sessionPublicId: { workspaceId: form.workspaceId, marketingFormVersionId: form.versionId, sessionPublicId: input.sessionPublicId } },
+        });
+        if (!existing?.completedAt) {
+          const byQuestion = new Map(partialAnswers(existing?.answers ?? []).map((answer) => [answer.questionKey, answer]));
+          for (const event of answeredEvents.sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))) {
+            const current = byQuestion.get(event.questionKey!);
+            if (!current || current.answeredAt <= event.occurredAt) {
+              byQuestion.set(event.questionKey!, { questionKey: event.questionKey!, value: event.answer as Prisma.JsonValue, answeredAt: event.occurredAt });
+            }
+          }
+          const merged = form.definition.questions.flatMap((question) => byQuestion.get(question.stableKey) ?? []);
+          const eventTimes = answeredEvents.map((event) => new Date(event.occurredAt).getTime());
+          const firstAnsweredAt = new Date(Math.min(existing?.firstAnsweredAt.getTime() ?? Number.POSITIVE_INFINITY, ...eventTimes));
+          const lastAnsweredAt = new Date(Math.max(existing?.lastAnsweredAt.getTime() ?? Number.NEGATIVE_INFINITY, ...eventTimes));
+          const identity = partialIdentity(form.definition, merged);
+          if (existing) {
+            await tx.marketingFormPartialResponse.update({ where: { id: existing.id }, data: { answers: json(merged), ...identity, lastAnsweredAt, utmSource: input.tracking.utmSource ?? existing.utmSource, utmMedium: input.tracking.utmMedium ?? existing.utmMedium, utmCampaign: input.tracking.utmCampaign ?? existing.utmCampaign, utmContent: input.tracking.utmContent ?? existing.utmContent, utmTerm: input.tracking.utmTerm ?? existing.utmTerm, referrerHost: referrerHost(input.tracking.referrerUrl) ?? existing.referrerHost } });
+          } else {
+            await tx.marketingFormPartialResponse.create({ data: { workspaceId: form.workspaceId, marketingFormId: form.id, marketingFormVersionId: form.versionId, sessionPublicId: input.sessionPublicId, answers: json(merged), ...identity, utmSource: input.tracking.utmSource ?? null, utmMedium: input.tracking.utmMedium ?? null, utmCampaign: input.tracking.utmCampaign ?? null, utmContent: input.tracking.utmContent ?? null, utmTerm: input.tracking.utmTerm ?? null, referrerHost: referrerHost(input.tracking.referrerUrl), firstAnsweredAt, lastAnsweredAt, createdByActorId: actor.id } });
+          }
+        }
+      }
       const result = await tx.marketingFormEvent.createMany({
         data: input.events.map((event) => ({
           workspaceId: form.workspaceId,

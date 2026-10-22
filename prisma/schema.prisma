@@ -11593,6 +11593,41 @@ model MarketingFormReceipt {
   @@map("marketing_form_receipts")
 }
 
+model MarketingFormPartialResponse {
+  id                     String    @id @default(uuid()) @db.Uuid
+  publicId               String    @default(uuid()) @db.Uuid
+  workspaceId            String    @db.Uuid
+  marketingFormId        String    @db.Uuid
+  marketingFormVersionId String    @db.Uuid
+  sessionPublicId        String    @db.Uuid
+  receiptId              String?   @db.Uuid
+  answers                Json
+  respondentName         String?
+  respondentEmail        String?
+  respondentPhone        String?
+  utmSource              String?
+  utmMedium              String?
+  utmCampaign            String?
+  utmContent             String?
+  utmTerm                String?
+  referrerHost           String?
+  firstAnsweredAt        DateTime  @db.Timestamptz(3)
+  lastAnsweredAt         DateTime  @db.Timestamptz(3)
+  completedAt            DateTime? @db.Timestamptz(3)
+  createdByActorId       String    @db.Uuid
+  createdAt              DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt              DateTime? @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, publicId])
+  @@unique([workspaceId, marketingFormVersionId, sessionPublicId])
+  @@index([workspaceId, marketingFormId, completedAt, deletedAt, lastAnsweredAt])
+  @@index([workspaceId, marketingFormVersionId, lastAnsweredAt])
+  @@index([workspaceId, receiptId])
+  @@map("marketing_form_partial_responses")
+}
+
 model MarketingFormEvent {
   id                     String                 @id @default(uuid()) @db.Uuid
   workspaceId            String                 @db.Uuid
