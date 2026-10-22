@@ -4,21 +4,33 @@ import { completeLeadSaleSchema, directSaleInstallmentCount, executeSaleCompleti
 const input = { opportunityId: "00000000-0000-4000-8000-000000000001", sellerMemberId: "00000000-0000-4000-8000-000000000002", templateVersionId: "00000000-0000-4000-8000-000000000003", expectedRevision: 1, totalCents: "2500000", monthlyCents: "300000", upfrontCents: "700000", receivedCents: "0", paymentMethod: "PIX", paymentCondition: "Entrada e seis parcelas mensais", durationMonths: 6, startsAt: "2026-01-31T12:00:00.000Z", acceptance: { acceptedByName: "Cliente", acceptedByRole: "Diretor", evidenceText: "Aceite documentado." } } as const;
 
 describe("fechamento integrado", () => {
-  it("calcula parcelas a partir dos seis campos e não aceita baixa de recebimento", () => {
+  it("exige quantidade explícita de parcelas coerente com os valores e não aceita baixa de recebimento", () => {
     const command = { leadId: input.opportunityId, sellerMemberId: input.sellerMemberId,
-      totalCents: "765432", upfrontCents: "65432", installmentCents: "100000",
+      totalCents: "765432", upfrontCents: "65432", installmentCents: "100000", installmentCount: 7,
       paymentPlan: "UPFRONT_INSTALLMENTS" as const, paymentCondition: "Entrada e sete parcelas", confirmed: true,
       idempotencyKey: input.opportunityId };
     expect(completeLeadSaleSchema.safeParse(command).success).toBe(true);
     expect(directSaleInstallmentCount(command)).toBe(7);
     expect(directSaleInstallmentCount({ ...command, paymentPlan: "CARD_INSTALLMENTS" })).toBe(7);
-    expect(directSaleInstallmentCount({ ...command, paymentPlan: "CASH", upfrontCents: command.totalCents, installmentCents: "0" })).toBe(1);
+    expect(directSaleInstallmentCount({ ...command, paymentPlan: "CASH", upfrontCents: command.totalCents, installmentCents: "0", installmentCount: 1 })).toBe(1);
     for (const changes of [
       { totalCents: "0" }, { installmentCents: "99999" }, { upfrontCents: "999999" },
       { installmentCents: "0" }, { installmentCents: "1" }, { totalCents: "abc" },
       { totalCents: "-1" }, { totalCents: "1.50" }, { receivedCents: "765432" },
       { financialAccountId: input.opportunityId }, { confirmed: false }, { opportunityId: input.opportunityId },
+      { installmentCount: undefined }, { installmentCount: 0 }, { installmentCount: 61 },
+      { installmentCount: 6 }, { installmentCount: 7.5 }, { installmentCount: "7" },
     ]) expect(completeLeadSaleSchema.safeParse({ ...command, ...changes }).success).toBe(false);
+  });
+  it("valida R$ 3.000 de entrada mais 10 parcelas de R$ 1.500, totalizando R$ 18.000", () => {
+    for (const paymentPlan of ["UPFRONT_INSTALLMENTS", "CARD_INSTALLMENTS"] as const) {
+      const command = { leadId: input.opportunityId, sellerMemberId: input.sellerMemberId,
+        totalCents: "1800000", upfrontCents: "300000", installmentCents: "150000", installmentCount: 10,
+        paymentPlan, paymentCondition: "Entrada e dez parcelas", confirmed: true, idempotencyKey: input.opportunityId };
+      expect(completeLeadSaleSchema.safeParse(command).success).toBe(true);
+      expect(directSaleInstallmentCount(command)).toBe(10);
+      expect(completeLeadSaleSchema.safeParse({ ...command, installmentCount: 9 }).success).toBe(false);
+    }
   });
   it("exige explicação explícita da diferença entre total e parcelas", () => {
     expect(saleCompletionSchema.safeParse({ ...input, upfrontCents: "0" }).success).toBe(false);

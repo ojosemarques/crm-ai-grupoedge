@@ -6,17 +6,17 @@ export const salePaymentPlans = ["CASH", "INSTALLMENTS", "UPFRONT_INSTALLMENTS"]
 const cents = z.string().regex(/^\d{1,15}$/).refine((value) => /^\d{1,15}$/.test(value) && BigInt(value) <= BigInt(Number.MAX_SAFE_INTEGER), "Valor fora do limite seguro.");
 export const directSalePaymentPlans = ["UPFRONT_INSTALLMENTS", "CASH", "CARD_INSTALLMENTS"] as const;
 
-export function directSaleInstallmentCount(input: { totalCents: string; upfrontCents: string; installmentCents: string; paymentPlan: (typeof directSalePaymentPlans)[number] }): number | null {
+export function directSaleInstallmentCount(input: { totalCents: string; upfrontCents: string; installmentCents: string; installmentCount: number; paymentPlan: (typeof directSalePaymentPlans)[number] }): number | null {
   if (![input.totalCents, input.upfrontCents, input.installmentCents].every((value) => /^\d{1,15}$/.test(value))) return null;
+  if (!Number.isInteger(input.installmentCount) || input.installmentCount < 1 || input.installmentCount > 60) return null;
   const total = BigInt(input.totalCents);
   const upfront = BigInt(input.upfrontCents);
   const installment = BigInt(input.installmentCents);
   if (total <= 0n || upfront > total) return null;
-  if (input.paymentPlan === "CASH") return upfront === total && installment === 0n ? 1 : null;
+  if (input.paymentPlan === "CASH") return upfront === total && installment === 0n && input.installmentCount === 1 ? 1 : null;
   const balance = total - upfront;
-  if (installment <= 0n || balance <= 0n || balance % installment !== 0n) return null;
-  const count = balance / installment;
-  return count >= 1n && count <= 60n ? Number(count) : null;
+  if (installment <= 0n || balance <= 0n || balance !== installment * BigInt(input.installmentCount)) return null;
+  return input.installmentCount;
 }
 
 export const completeLeadSaleSchema = z.object({
@@ -27,6 +27,7 @@ export const completeLeadSaleSchema = z.object({
   totalCents: cents,
   paymentPlan: z.enum(directSalePaymentPlans),
   installmentCents: cents,
+  installmentCount: z.number({ error: "Informe a quantidade de parcelas." }).int().min(1).max(60),
   upfrontCents: cents,
   paymentCondition: z.string().trim().min(2).max(500),
   confirmed: z.literal(true),
@@ -35,7 +36,7 @@ export const completeLeadSaleSchema = z.object({
   if (Boolean(input.opportunityId) !== Boolean(input.expectedRevision)) ctx.addIssue({ code: "custom", path: ["opportunityId"], message: "Recarregue os dados do negócio antes de fechar." });
   if (directSaleInstallmentCount(input) === null) ctx.addIssue({ code: "custom", path: ["totalCents"], message: input.paymentPlan === "CASH"
     ? "À vista exige entrada igual ao total e parcela zero."
-    : "O saldo após a entrada deve corresponder a 1 até 60 parcelas inteiras do valor informado." });
+    : "O valor total deve ser igual à entrada mais a quantidade de parcelas × valor de cada parcela." });
 });
 export const completeLeadSaleResultSchema = z.object({
   opportunityId: z.string().uuid(), accountId: z.string().uuid(), contractId: z.string().uuid(),

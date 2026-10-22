@@ -52,7 +52,12 @@ test("venda confirmada atualiza OTE aberto: 18 mil, entrada de 3 mil e 10 parcel
   await form.getByRole("combobox", { name: "Condição de pagamento", exact: true }).selectOption("UPFRONT_INSTALLMENTS");
   await form.getByLabel("Entrada (R$)", { exact: true }).fill("3.000,00");
   await form.getByLabel("Valor de cada parcela (R$)").fill("1.500,00");
+  await form.getByLabel("Número de parcelas", { exact: true }).fill("9");
+  await expect(form.getByRole("button", { name: "Confirmar e marcar vendido" })).toBeDisabled();
+  await expect(form).toContainText(/Total calculado: R\$\s*16\.500,00/);
+  await form.getByLabel("Número de parcelas", { exact: true }).fill("10");
   await form.getByLabel("Condição de pagamento detalhada").fill("Entrada de R$ 3.000 e 10 parcelas de R$ 1.500 no PIX.");
+  await form.screenshot({ path: testInfo.outputPath("venda-entrada-10-parcelas.png") });
   const response = page.waitForResponse((res) => res.url().endsWith("/api/opportunities/close-sale") && res.request().postDataJSON()?.action === "COMPLETE_LEAD");
   await form.getByRole("button", { name: "Confirmar e marcar vendido" }).click();
   const saved = await response;

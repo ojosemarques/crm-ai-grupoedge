@@ -65,13 +65,19 @@ test(`marca vendido no card em um envio (${role}, negócio ${existing ? "prepara
   await expect(sell).toBeEnabled();
   await sell.click();
   const completion = page.getByRole("tabpanel", { name: "Marcar vendido" });
-  await expect(completion.locator("form input, form select, form textarea")).toHaveCount(6);
+  await expect(completion.locator("form input, form select, form textarea")).toHaveCount(7);
   if (existing) await expect(completion.getByLabel("Valor total (R$)", { exact: true })).toHaveValue("7654,32");
   await completion.getByRole("combobox", { name: "Vendedor", exact: true }).selectOption({ index: 1 });
   await completion.getByLabel("Valor total (R$)", { exact: true }).fill("7.654,32");
   await completion.getByRole("combobox", { name: "Condição de pagamento", exact: true }).selectOption(role === "closer" ? "CARD_INSTALLMENTS" : "UPFRONT_INSTALLMENTS");
   await completion.getByLabel("Entrada (R$)", { exact: true }).fill("654,32");
   await completion.getByLabel("Valor de cada parcela (R$)").fill("1.000,00");
+  const confirm = completion.getByRole("button", { name: "Confirmar e marcar vendido" });
+  await expect(confirm).toBeDisabled();
+  await completion.getByLabel("Número de parcelas", { exact: true }).fill("6");
+  await expect(confirm).toBeDisabled();
+  await expect(completion).toContainText(/Total calculado: R\$\s*6\.654,32/);
+  await completion.getByLabel("Número de parcelas", { exact: true }).fill("7");
   await completion.getByLabel("Condição de pagamento detalhada").fill("Entrada de R$ 654,32 e 7 parcelas de R$ 1.000,00, negociadas pelo vendedor.");
   await expect(completion.getByText(/7 parcelas/).first()).toBeVisible();
   await expect(completion.getByLabel("Valor já recebido (R$)")).toHaveCount(0);
@@ -79,6 +85,7 @@ test(`marca vendido no card em um envio (${role}, negócio ${existing ? "prepara
   const response = page.waitForResponse((res) => res.url().endsWith("/api/opportunities/close-sale") && res.request().postDataJSON()?.action === "COMPLETE_LEAD");
   await completion.getByRole("button", { name: "Confirmar e marcar vendido" }).click();
   const closed = await response;
+  expect(closed.request().postDataJSON().payload.installmentCount).toBe(7);
   expect(await closed.json()).toMatchObject({ result: { receivedCents: "0", outstandingCents: "765432" } });
   expect(closed.ok()).toBe(true);
   await expect(page.getByRole("status").filter({ hasText: "Venda registrada" })).toBeVisible();

@@ -46,12 +46,16 @@ export function LeadSalePanel({ screen, opportunity, onCommitted, onBusyChange }
   const [total, setTotal] = useState(opportunity ? reais(opportunity.tcvCents) : "");
   const [upfront, setUpfront] = useState("0,00");
   const [installmentValue, setInstallmentValue] = useState(opportunity ? reais(opportunity.mrrCents) : "0,00");
+  const [installments, setInstallments] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [completed, setCompleted] = useState<CompleteLeadSaleResult | null>(null);
   const idempotency = useRef<{ fingerprint: string; key: string } | null>(null);
-  const amounts = { totalCents: cents(total) ?? "", upfrontCents: cents(upfront) ?? "", installmentCents: cents(installmentValue) ?? "", paymentPlan };
+  const amounts = { totalCents: cents(total) ?? "", upfrontCents: cents(upfront) ?? "", installmentCents: cents(installmentValue) ?? "", installmentCount: paymentPlan === "CASH" ? 1 : Number(installments), paymentPlan };
   const installmentCount = directSaleInstallmentCount(amounts);
+  const calculatedTotal = /^\d{1,15}$/.test(amounts.upfrontCents) && /^\d{1,15}$/.test(amounts.installmentCents)
+    && Number.isInteger(amounts.installmentCount) && amounts.installmentCount >= 1 && amounts.installmentCount <= 60
+    ? (BigInt(amounts.upfrontCents) + BigInt(amounts.installmentCents) * BigInt(amounts.installmentCount)).toString() : null;
 
   function changePlan(next: PaymentPlan) {
     setPaymentPlan(next);
@@ -112,9 +116,10 @@ export function LeadSalePanel({ screen, opportunity, onCommitted, onBusyChange }
         <label className="text-sm">Condição de pagamento<select className={inputClass} onChange={(event) => changePlan(event.target.value as PaymentPlan)} value={paymentPlan}><option value="UPFRONT_INSTALLMENTS">Entrada + parcelas</option><option value="CASH">Valor total à vista</option><option value="CARD_INSTALLMENTS">Cartão: entrada + parcelas</option></select></label>
         <label className="text-sm">Valor de cada parcela (R$)<input className={inputClass} inputMode="decimal" onChange={(event) => setInstallmentValue(event.target.value)} readOnly={paymentPlan === "CASH"} required value={installmentValue} /></label>
         <label className="text-sm">Entrada (R$)<input className={inputClass} inputMode="decimal" onChange={(event) => setUpfront(event.target.value)} readOnly={paymentPlan === "CASH"} required value={upfront} /></label>
+        {paymentPlan !== "CASH" ? <label className="text-sm">Número de parcelas<input className={inputClass} inputMode="numeric" min={1} max={60} name="installmentCount" onChange={(event) => setInstallments(event.target.value)} required step={1} type="number" value={installments} /></label> : null}
         <label className="text-sm sm:col-span-2">Condição de pagamento detalhada<textarea className={inputClass} minLength={2} maxLength={500} name="paymentCondition" required /></label>
       </fieldset>
-      {installmentCount !== null ? <p className="rounded-md border p-3 text-sm sm:col-span-2" role="status">{paymentPlan === "CASH" ? `À vista: ${money(amounts.totalCents)}.` : `Entrada de ${money(amounts.upfrontCents)} + ${installmentCount} parcelas de ${money(amounts.installmentCents)}. Total: ${money(amounts.totalCents)}.`}</p> : <p className="text-sm text-muted-foreground sm:col-span-2">O saldo após a entrada dividido pelo valor da parcela deve resultar em 1 a 60 parcelas inteiras, sem diferença no total.</p>}
+      {installmentCount !== null ? <p className="rounded-md border p-3 text-sm sm:col-span-2" role="status">{paymentPlan === "CASH" ? `À vista: ${money(amounts.totalCents)}.` : `Entrada de ${money(amounts.upfrontCents)} + ${installmentCount} parcelas de ${money(amounts.installmentCents)}. Total: ${money(amounts.totalCents)}.`}</p> : <p className="text-sm text-muted-foreground sm:col-span-2" role="status">Informe de 1 a 60 parcelas. O total deve ser igual à entrada + número de parcelas × valor de cada parcela.{calculatedTotal !== null ? ` Total calculado: ${money(calculatedTotal)}. Revise os valores antes de confirmar.` : ""}</p>}
       <Button className="sm:col-span-2" disabled={pending || installmentCount === null} type="submit">{pending ? "Registrando…" : "Confirmar e marcar vendido"}</Button>
     </form>
   </section>;

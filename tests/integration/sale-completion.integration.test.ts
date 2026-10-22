@@ -54,7 +54,7 @@ async function fixture(pipelineId?: string) {
 
 describe("venda integrada atômica", () => {
   for (const profile of ["administrator", "closer"] as const) {
-    it(`fecha em um envio com seis campos, sem baixa ou gravação parcial (${profile})`, async () => {
+    it(`fecha em um envio com parcelas explícitas, sem baixa ou gravação parcial (${profile})`, async () => {
       await database.$executeRawUnsafe(readFileSync("scripts/sql/configure-politizai-sales.sql", "utf8"));
       const seller = await context("closer1@demo.politizai.local");
       const actor = profile === "administrator" ? admin : seller;
@@ -63,10 +63,12 @@ describe("venda integrada atômica", () => {
       const customerName = `Cliente venda única ${randomUUID()}`;
       await database.lead.update({ where: { id: original.leadId }, data: { ownerMemberId: seller.memberId, accountId: null, fullName: customerName, organizationName: null } });
       const command = { leadId: original.leadId, sellerMemberId: seller.memberId,
-        totalCents: "765432", upfrontCents: "65432", installmentCents: "100000", paymentPlan: "CARD_INSTALLMENTS",
+        totalCents: "765432", upfrontCents: "65432", installmentCents: "100000", installmentCount: 7, paymentPlan: "CARD_INSTALLMENTS",
         paymentCondition: "Entrada de R$ 654,32 e sete parcelas de R$ 1.000,00 no cartão.", confirmed: true, idempotencyKey: randomUUID() };
       await expect(service.completeLeadSale(viewer, command)).rejects.toMatchObject({ code: "ACCESS_DENIED" });
       await expect(service.completeLeadSale(actor, { ...command, receivedCents: command.totalCents })).rejects.toThrow();
+      await expect(service.completeLeadSale(actor, { ...command, installmentCount: 6 })).rejects.toThrow("O valor total deve ser igual à entrada mais a quantidade de parcelas");
+      expect(await database.opportunity.count({ where: { leadId: original.leadId, deletedAt: null } })).toBe(0);
       const result = await service.completeLeadSale(actor, command);
       expect(result).toMatchObject({ receivedCents: "0", outstandingCents: "765432", invoiceIds: expect.any(Array), replayed: false });
       expect(result.invoiceIds).toHaveLength(7);
@@ -92,7 +94,7 @@ describe("venda integrada atômica", () => {
     const opportunity = await database.opportunity.update({ where: { id: previous.opportunityId }, data: { productId: product.id, ownerMemberId: seller.memberId } });
     await database.offer.updateMany({ where: { opportunityId: opportunity.id }, data: { createdAt: new Date(now.getTime() - 1000) } });
     const result = await service.completeLeadSale(admin, { leadId: opportunity.leadId, opportunityId: opportunity.id, expectedRevision: opportunity.revision,
-      sellerMemberId: seller.memberId, totalCents: "1800000", upfrontCents: "300000", installmentCents: "150000", paymentPlan: "UPFRONT_INSTALLMENTS",
+      sellerMemberId: seller.memberId, totalCents: "1800000", upfrontCents: "300000", installmentCents: "150000", installmentCount: 10, paymentPlan: "UPFRONT_INSTALLMENTS",
       paymentCondition: "Entrada de R$ 3.000 e dez parcelas de R$ 1.500.", confirmed: true, idempotencyKey: randomUUID() });
     expect(result.opportunityId).toBe(opportunity.id);
     expect(result.invoiceIds).toHaveLength(10);
@@ -108,7 +110,7 @@ describe("venda integrada atômica", () => {
     const name = `Cliente repetido ${randomUUID()}`;
     await database.account.update({ where: { id: original.accountId! }, data: { name, normalizedName: name.toLowerCase() } });
     await database.lead.update({ where: { id: original.leadId }, data: { fullName: name, ownerMemberId: seller.memberId, accountId: null, organizationName: null } });
-    const command = { leadId: original.leadId, sellerMemberId: seller.memberId, totalCents: "10000", upfrontCents: "10000", installmentCents: "0",
+    const command = { leadId: original.leadId, sellerMemberId: seller.memberId, totalCents: "10000", upfrontCents: "10000", installmentCents: "0", installmentCount: 1,
       paymentPlan: "CASH", paymentCondition: "Valor total à vista, conforme combinado.", confirmed: true, idempotencyKey: randomUUID() };
     await expect(service.completeLeadSale(seller, command)).rejects.toMatchObject({ code: "SALE_CUSTOMER_EXISTS" });
     expect(await database.opportunity.count({ where: { leadId: original.leadId, deletedAt: null } })).toBe(0);
