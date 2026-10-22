@@ -13,6 +13,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import type { AgendaScreen, LeadOption } from "@/modules/meetings/domain/meeting-contracts";
 import { MeetingActions } from "@/modules/meetings/ui/meeting-actions";
+import { MeetingParticipantField } from "@/modules/meetings/ui/meeting-participant-field";
 
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
 const statusLabels = {
@@ -304,7 +305,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
         <label className={styles.fullWidth}>Título<input className={inputClass} name="title" required /></label>
         <label>Data e horário<input className={inputClass} defaultValue={`${screen.selectedDate}T09:00`} name="startsAtLocal" required type="datetime-local" /></label>
         <label>Duração<select className={inputClass} defaultValue={screen.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
-        <label className={styles.fullWidth}>E-mail do participante (opcional)<input autoComplete="email" className={inputClass} maxLength={320} name="participantEmail" placeholder="participante@exemplo.com" type="email" /><span>Receberá o convite pelo MillionSend e Google Agenda, além de avisos 3h, 1h, 30 min e na hora.</span></label>
+        <MeetingParticipantField className={styles.fullWidth} inputClassName={inputClass} />
         <label className={styles.fullWidth}>Observação<textarea className={inputClass} name="observation" rows={3} /></label>
         <p className={styles.fullWidth}>Horários em {screen.timeZone}.</p><Button className={styles.fullWidth} disabled={pending} type="submit">{pending ? "Agendando…" : "Confirmar agendamento"}</Button>
       </form> : <EmptyState compact description="Cadastre um lead ou configure um closer disponível." title="Nenhum lead disponível para agendar" />}{notice ? <p className={styles.notice} role="status">{notice}</p> : null}</AccessibleDialog> : null}

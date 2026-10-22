@@ -75,6 +75,7 @@ export async function POST(
               durationMinutes: "durationMinutes" in data ? data.durationMinutes : undefined,
               observation: "description" in data ? data.description : undefined,
               taskPriority: "priority" in data ? data.priority : undefined,
+              participantEmail: "participantEmail" in data ? data.participantEmail : undefined,
             })
           : await service.createTask(context, { ...data, leadId });
         break;

@@ -17,6 +17,7 @@ import { SaleCompletionPanel } from "@/components/opportunities/sale-completion-
 import { LeadSalePreparationPanel, type PreparedSaleTerms } from "@/components/opportunities/lead-sale-preparation-panel";
 import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
 import type { LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
+import { MeetingParticipantField } from "@/modules/meetings/ui/meeting-participant-field";
 import type { LeadOpportunityScreen } from "@/modules/opportunities/domain/opportunity-contracts";
 import type { FreeQualificationScreen } from "@/modules/qualification/domain/free-qualification-contracts";
 import type { LeadScoreView } from "@/modules/qualification/domain/scoring-contracts";
@@ -829,11 +830,14 @@ export function OperationalHistoryWorkspace({
             closerId: formText(form, "closerId"),
             startsAtLocal: formText(form, "dueAt"),
             durationMinutes: Number(form.get("durationMinutes")),
+            participantEmail: formText(form, "participantEmail") ?? null,
           }
         : { dueAt: isoDate(formText(form, "dueAt")) }),
     };
     const saved = await mutate("CREATE_TASK", task, undefined, kind === "MEETING"
-      ? "Reunião criada na Agenda. O Google Agenda será sincronizado se o closer tiver uma conta conectada."
+      ? formText(form, "participantEmail")
+        ? "Reunião criada na Agenda. Convite e lembretes do participante foram enfileirados."
+        : "Reunião criada na Agenda. O Google Agenda será sincronizado se o closer tiver uma conta conectada."
       : "Tarefa criada com sucesso.");
     if (saved) {
       element.reset();
@@ -1410,6 +1414,7 @@ export function OperationalHistoryWorkspace({
                   {taskKind === "MEETING" ? <>
                     <label className="text-sm">Closer<select className={inputClass} defaultValue={initialMeetings.closerOptions.find((closer) => closer.id === operations.lead.ownerMemberId)?.id ?? (initialMeetings.closerOptions.length === 1 ? initialMeetings.closerOptions[0]!.id : "")} name="closerId" required><option value="">Selecione o responsável</option>{initialMeetings.closerOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
                     <label className="text-sm">Duração<select className={inputClass} defaultValue={initialMeetings.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
+                    <MeetingParticipantField className="text-sm sm:col-span-2" inputClassName={inputClass} />
                     <p className="text-sm text-muted-foreground sm:col-span-2">A reunião será criada na Agenda com tarefa vinculada. Cada closer precisa <Link className="underline" href="/integracoes/calendario">conectar a própria conta Google</Link> para sincronizá-la.</p>
                     {!initialMeetings.canSchedule ? <p className="text-sm text-destructive sm:col-span-2">Este lead já tem reunião ativa, não há closer disponível ou seu perfil não pode agendar reuniões.</p> : null}
                   </> : null}

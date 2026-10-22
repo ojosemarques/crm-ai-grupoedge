@@ -45,6 +45,7 @@ describe("criação de tarefa no card do lead", () => {
       startsAtLocal: "2035-02-11T15:00",
       durationMinutes: 30,
       closerId,
+      participantEmail: "convidado@example.test",
     }), { params: Promise.resolve({ leadId }) });
 
     expect(response.status).toBe(200);
@@ -56,6 +57,7 @@ describe("criação de tarefa no card do lead", () => {
       durationMinutes: 30,
       observation: "Preparar proposta",
       taskPriority: "MEDIUM",
+      participantEmail: "convidado@example.test",
     });
     expect(createTask).not.toHaveBeenCalled();
   });
@@ -66,6 +68,13 @@ describe("criação de tarefa no card do lead", () => {
     expect(response.status).toBe(200);
     expect(createTask).toHaveBeenCalledWith(context, expect.objectContaining({ leadId, kind: "CALL" }));
     expect(schedule).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, null])("permite agendar sem participante (%s)", async (participantEmail) => {
+    const { POST } = await import("./route");
+    const response = await POST(request({ kind: "MEETING", title: "Diagnóstico", closerId, startsAtLocal: "2035-02-11T15:00", durationMinutes: 30, participantEmail }), { params: Promise.resolve({ leadId }) });
+    expect(response.status).toBe(200);
+    expect(schedule).toHaveBeenCalledWith(context, expect.objectContaining({ leadId, participantEmail }));
   });
 
   it("encaminha a edição de tarefa concluída pelo serviço operacional", async () => {

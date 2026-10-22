@@ -95,9 +95,11 @@ test("agenda, ciclo da reunião e briefing funcionam sobre dados persistidos", a
   await panel.getByLabel("Título").fill("Diagnóstico comercial E2E");
   await panel.getByLabel("Data e horário").fill("2035-02-11T09:30");
   await panel.getByLabel("Duração").selectOption("40");
+  await panel.getByLabel("E-mail do participante (opcional)").fill("convidado-aba-lead@example.test");
   await panel.getByLabel("Observação").fill("Revisar PACTO antes da reunião.");
   await panel.getByRole("button", { name: "Agendar reunião" }).click();
-  await expect(panel.getByText("Reunião agendada e contexto encaminhado ao closer.")).toBeVisible();
+  await expect(panel.getByText("Reunião agendada. Convite e lembretes do participante foram enfileirados.")).toBeVisible();
+  await expect(panel.getByText("Participante: convidado-aba-lead@example.test")).toBeVisible();
   await expect(panel.getByText("Diagnóstico comercial E2E")).toBeVisible();
   await expect(panel.getByText("Agendada", { exact: true })).toBeVisible();
 
@@ -108,6 +110,7 @@ test("agenda, ciclo da reunião e briefing funcionam sobre dados persistidos", a
   await expect(meetingCard).toHaveCSS("background-color", "rgb(23, 23, 23)");
   await meetingCard.click();
   const meetingDialog = page.getByRole("dialog", { name: "Diagnóstico comercial E2E" });
+  await expect(meetingDialog.getByText(/Participante: convidado-aba-lead@example.test/)).toBeVisible();
   await meetingDialog.getByRole("button", { name: "Confirmar", exact: true }).click();
   await expect(meetingDialog.getByText("Confirmada", { exact: true })).toBeVisible();
   const confirmedCard = page.locator('button[data-status="CONFIRMED"]').filter({ hasText: "Diagnóstico comercial E2E" });
@@ -165,4 +168,48 @@ test("agenda, ciclo da reunião e briefing funcionam sobre dados persistidos", a
   await expect(page.getByText("Dor nas palavras do lead")).toBeVisible();
   await expect(page.getByText("Evidência E2E para AFFLICTION").first()).toBeVisible();
   await expect(page.getByText("Perguntas sem resposta")).toBeVisible();
+});
+
+test("cria tarefa de reunião no card com participante persistido na Agenda", async ({ page }) => {
+  await login(page);
+  const leadName = `Lead tarefa reunião ${randomUUID().slice(0, 8)}`;
+  await page.goto("/leads/entrada");
+  await page.getByLabel("Nome", { exact: true }).fill(leadName);
+  await page.getByLabel("Telefone", { exact: true }).fill(uniquePhone(leadName));
+  await page.getByRole("button", { name: "Cadastrar lead" }).click();
+  await page.getByRole("link", { name: "Abrir histórico operacional do lead" }).click();
+  await expect(page).toHaveURL(/\/leads\/[0-9a-f-]+\/historico$/);
+  const leadId = new URL(page.url()).pathname.split("/")[2]!;
+
+  const task = page.locator("#criar-tarefa");
+  await task.locator("summary").click();
+  await task.getByRole("combobox", { name: "Tipo", exact: true }).selectOption("MEETING");
+  await task.getByLabel("Título", { exact: true }).fill("Reunião com convidado pelo card");
+  await task.getByRole("combobox", { name: "Closer", exact: true }).selectOption({ index: 1 });
+  await task.getByLabel("Data e horário da reunião").fill("2035-02-12T14:00");
+  await task.getByLabel("E-mail do participante (opcional)").fill("convidado-tarefa@example.test");
+
+  const saved = page.waitForResponse((response) =>
+    response.url().endsWith(`/api/leads/${leadId}/operations`) && response.request().method() === "POST");
+  await task.getByRole("button", { name: "Criar tarefa e agendar reunião" }).click();
+  const response = await saved;
+  expect(response.ok()).toBe(true);
+  expect(response.request().postDataJSON()).toMatchObject({
+    action: "CREATE_TASK",
+    data: { kind: "MEETING", participantEmail: "convidado-tarefa@example.test" },
+  });
+  const body = await response.json() as { result: { meetingId: string; taskId: string } };
+  await expect(page.getByRole("status")).toContainText("Reunião criada na Agenda. Convite e lembretes do participante foram enfileirados.");
+
+  const persisted = await browserRequest(page).get(`/api/leads/${leadId}/meetings`);
+  expect(persisted.ok()).toBe(true);
+  expect(await persisted.json()).toMatchObject({ result: { meetings: expect.arrayContaining([
+    expect.objectContaining({ id: body.result.meetingId, participantEmail: "convidado-tarefa@example.test" }),
+  ]) } });
+
+  await page.goto(`/agenda?view=day&date=2035-02-12&meetingId=${body.result.meetingId}`);
+  await page.locator('button[data-status="SCHEDULED"]').filter({ hasText: "Reunião com convidado pelo card" }).click();
+  const meetingDialog = page.getByRole("dialog", { name: "Reunião com convidado pelo card" });
+  await expect(meetingDialog).toBeVisible();
+  await expect(meetingDialog.getByText(/Participante: convidado-tarefa@example.test/)).toBeVisible();
 });
