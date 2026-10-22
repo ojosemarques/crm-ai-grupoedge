@@ -48,7 +48,7 @@ async function expectPanelLayout(page: Page, desktop: boolean) {
   }
 }
 
-test("gestor opera modos unificados, tema independente e bearer público revogável", async ({ browser, page }, testInfo) => {
+test("gestor opera modos unificados e TV sem login em /tempo com revogação e reativação", async ({ browser, page }, testInfo) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1920, height: 1080 });
   const errors: string[] = [];
@@ -96,14 +96,22 @@ test("gestor opera modos unificados, tema independente e bearer público revogá
   const field = page.getByLabel("Link público");
   await expect(field).toBeVisible();
   const generated = new URL(await field.inputValue());
-  expect(generated.hash).toMatch(/^#[A-Za-z0-9_-]{43}$/);
-  expect(generated.searchParams.get("theme")).toBe("dark");
+  expect(generated.pathname).toBe("/tempo");
+  expect(generated.hash).toBe("");
+  expect(generated.search).toBe("");
   await page.getByRole("button", { name: "Fechar compartilhamento" }).click();
   await expect(page.getByText("Próxima tela em 60s", { exact: true })).toBeVisible();
   const anonymous = await browser.newContext({ baseURL: new URL(page.url()).origin, viewport: { width: 1366, height: 768 } });
   const publicPage = await anonymous.newPage();
   await publicPage.clock.install();
   try {
+    expect((await anonymous.request.get("/api/tempo-real")).status()).toBe(401);
+    expect((await anonymous.request.post("/api/tempo-real", { headers: { Origin: new URL(page.url()).origin }, data: { action: "REVOKE" } })).status()).toBe(401);
+    const publicSnapshot = await anonymous.request.get("/api/public/tempo?workspaceId=outro-workspace");
+    expect(publicSnapshot.status()).toBe(200);
+    expect(publicSnapshot.headers()["cache-control"]).toContain("no-store");
+    expect(publicSnapshot.headers()["x-robots-tag"]).toContain("noindex");
+    expect(Object.keys(await publicSnapshot.json())).toEqual(["result"]);
     await publicPage.goto(`${generated.pathname}${generated.search}${generated.hash}`);
     await expect(board(publicPage)).toHaveAttribute("data-appearance", "dark");
     await expect(publicPage.getByRole("button", { name: "Compartilhar painel" })).toHaveCount(0);
@@ -114,11 +122,20 @@ test("gestor opera modos unificados, tema independente e bearer público revogá
     await expect(slide(publicPage, 2)).toBeVisible();
     await expect(board(publicPage)).toHaveAttribute("data-appearance", "dark");
     await publicPage.getByRole("button", { name: "Tema claro" }).click();
-    expect(await publicPage.evaluate(() => window.location.hash)).toBe(generated.hash);
+    expect(new URL(publicPage.url()).pathname).toBe("/tempo");
+    expect(new URL(publicPage.url()).search).toBe("");
+    expect(new URL(publicPage.url()).hash).toBe("");
     const revoke = await browserRequest(page).post("/api/tempo-real", { data: { action: "REVOKE" } });
     expect(revoke.ok()).toBe(true);
     await publicPage.clock.fastForward(16_000);
     await expect(publicPage.getByRole("heading", { name: "Placar indisponível" })).toBeVisible();
+    expect((await anonymous.request.get("/api/public/tempo")).status()).toBe(404);
+    const activate = await browserRequest(page).post("/api/tempo-real", { data: { action: "ROTATE" } });
+    expect(activate.status()).toBe(200);
+    expect((await activate.json() as { result: { shareUrl: string } }).result.shareUrl).toBe(`${generated.origin}/tempo`);
+    await publicPage.reload();
+    await expect(board(publicPage)).toBeVisible();
+    await expect(board(publicPage)).toHaveAttribute("data-appearance", "light");
   } finally { await anonymous.close(); }
   expect(errors).toEqual([]);
 });

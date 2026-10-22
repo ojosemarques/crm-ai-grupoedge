@@ -3,6 +3,7 @@ export function isPublicShellRoute(pathname: string): boolean {
     || pathname === "/acesso-negado"
     || pathname === "/sessao-expirada"
     || pathname === "/hub"
+    || pathname === "/tempo"
     || pathname === "/tempo-real-publico"
     || pathname === "/f"
     || pathname.startsWith("/f/");

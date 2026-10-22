@@ -42,6 +42,7 @@ type RealtimeDashboardServiceOptions = Readonly<{
   authorization: AuthorizationPort;
   now: () => Date;
   randomToken?: () => string;
+  publicWorkspaceSlug?: string | undefined;
 }>;
 
 function resource(workspaceId: string): ResourceScope {
@@ -269,6 +270,21 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     return snapshotForWorkspace(share.workspaceId);
   }
 
+  async function publicTvSnapshot(): Promise<RealtimeDashboardSnapshot> {
+    if (!options.publicWorkspaceSlug) publicNotFound();
+    const workspace = await options.database.workspace.findFirst({
+      where: { slug: options.publicWorkspaceSlug, status: "ACTIVE", deletedAt: null },
+      select: { id: true },
+    });
+    if (!workspace) publicNotFound();
+    const share = await options.database.realtimeDashboardShare.findUnique({
+      where: { workspaceId: workspace.id },
+      select: { revokedAt: true },
+    });
+    if (!share || share.revokedAt) publicNotFound();
+    return snapshotForWorkspace(workspace.id);
+  }
+
   async function rotate(context: AuthenticatedContext, origin: string) {
     await options.authorization.assertAuthorized(
       context,
@@ -327,9 +343,15 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
       return updated;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
+    const publicWorkspace = options.publicWorkspaceSlug
+      ? await options.database.workspace.findFirst({
+        where: { id: context.workspaceId, slug: options.publicWorkspaceSlug, status: "ACTIVE", deletedAt: null },
+        select: { id: true },
+      })
+      : null;
     return Object.freeze({
       sharing: shareState(share),
-      shareUrl: publicShareUrl(origin, token),
+      shareUrl: publicWorkspace ? new URL("/tempo", origin).toString() : publicShareUrl(origin, token),
     });
   }
 
@@ -372,7 +394,7 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     return Object.freeze({ sharing: shareState(share) });
   }
 
-  return Object.freeze({ publicSnapshot, revoke, rotate, screen });
+  return Object.freeze({ publicSnapshot, publicTvSnapshot, revoke, rotate, screen });
 }
 
 export const getRealtimeDashboardService = () => {
@@ -381,5 +403,6 @@ export const getRealtimeDashboardService = () => {
     database,
     authorization: createAuthorizationService({ database }),
     now: () => new Date(),
+    publicWorkspaceSlug: process.env.REALTIME_PUBLIC_WORKSPACE_SLUG?.trim() || undefined,
   });
 };

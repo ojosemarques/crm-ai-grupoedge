@@ -17,6 +17,7 @@ const PUBLIC_ROUTES = new Set([
 
 function isPublicPage(pathname: string): boolean {
   return PUBLIC_ROUTES.has(pathname)
+    || pathname === "/tempo"
     || pathname === "/tempo-real-publico"
     || pathname === "/f"
     || pathname.startsWith("/f/");

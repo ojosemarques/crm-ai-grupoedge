@@ -15,8 +15,8 @@ export function subscribeRealtimeTheme(callback: () => void) {
 }
 export function setRealtimeTheme(theme: RealtimeTheme) {
   const url = new URL(window.location.href);
-  url.searchParams.set("theme", theme);
+  if (url.pathname !== "/tempo") url.searchParams.set("theme", theme);
   window.history.replaceState(window.history.state, "", url.href);
-  try { window.localStorage.setItem(key, theme); } catch { /* The URL retains the preference when local storage is unavailable. */ }
+  try { window.localStorage.setItem(key, theme); } catch { /* Storage may be unavailable on TV browsers. */ }
   window.dispatchEvent(new Event(event));
 }

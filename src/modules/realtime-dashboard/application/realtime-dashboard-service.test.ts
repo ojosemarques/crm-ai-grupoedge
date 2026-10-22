@@ -51,10 +51,29 @@ describe("serviço do dashboard tempo real", () => {
     }));
   });
 
+  it("nega TV sem configuração, workspace inexistente, compartilhamento ausente ou revogado", async () => {
+    const findFirst = vi.fn().mockResolvedValue({ id: "workspace-configurado" });
+    const findUnique = vi.fn();
+    const database = { workspace: { findFirst }, realtimeDashboardShare: { findUnique } };
+    const create = (publicWorkspaceSlug?: string) => createRealtimeDashboardService({
+      database: database as never, authorization: authorization() as never, now: () => now, publicWorkspaceSlug,
+    });
+    await expect(create().publicTvSnapshot()).rejects.toMatchObject({ statusCode: 404, code: "REALTIME_SHARE_NOT_FOUND" });
+    expect(findFirst).not.toHaveBeenCalled();
+    findFirst.mockResolvedValueOnce(null);
+    await expect(create("empresa").publicTvSnapshot()).rejects.toMatchObject({ statusCode: 404 });
+    expect(findUnique).not.toHaveBeenCalled();
+    findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ revokedAt: now });
+    await expect(create("empresa").publicTvSnapshot()).rejects.toMatchObject({ statusCode: 404 });
+    await expect(create("empresa").publicTvSnapshot()).rejects.toMatchObject({ statusCode: 404 });
+    expect(findFirst).toHaveBeenCalledWith({ where: { slug: "empresa", status: "ACTIVE", deletedAt: null }, select: { id: true } });
+    expect(findUnique).toHaveBeenCalledWith({ where: { workspaceId: "workspace-configurado" }, select: { revokedAt: true } });
+  });
+
   it("retorna snapshot público agregado sem IDs internos, token ou PII de contato", async () => {
     const database = {
       realtimeDashboardShare: { findUnique: vi.fn().mockResolvedValue({ workspaceId: "workspace-sentinel", revokedAt: null }) },
-      workspace: { findFirst: vi.fn().mockResolvedValue({ name: "Empresa Exemplo", timeZone: "America/Sao_Paulo" }) },
+      workspace: { findFirst: vi.fn().mockResolvedValue({ id: "workspace-sentinel", name: "Empresa Exemplo", timeZone: "America/Sao_Paulo" }) },
       commercialMetricFact: { findMany: vi.fn().mockResolvedValue([{
         id: "fact-sentinel",
         eventType: "SALE_WON",
@@ -86,9 +105,11 @@ describe("serviço do dashboard tempo real", () => {
       database: database as never,
       authorization: authorization() as never,
       now: () => now,
+      publicWorkspaceSlug: "empresa",
     });
 
     const snapshot = await service.publicSnapshot(validToken);
+    expect(await service.publicTvSnapshot()).toEqual(snapshot);
     const serialized = JSON.stringify(snapshot);
     expect(snapshot.week.totals).toMatchObject({ sales: 1, salesValueCents: "10000" });
     expect(snapshot.week.ranking[0]).toMatchObject({ name: "Ana Exemplo", initials: "AE", sales: 1 });
@@ -156,6 +177,7 @@ describe("serviço do dashboard tempo real", () => {
     };
     const database = {
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)),
+      workspace: { findFirst: vi.fn().mockResolvedValue({ id: "workspace" }) },
     };
     const service = createRealtimeDashboardService({
       database: database as never,
@@ -172,5 +194,12 @@ describe("serviço do dashboard tempo real", () => {
     expect(JSON.stringify(create.mock.calls)).not.toContain(validToken);
     expect(JSON.stringify(auditCreate.mock.calls)).not.toContain(validToken);
     expect(JSON.stringify(auditCreate.mock.calls)).not.toContain(realtimeTokenHash(validToken));
+    const tv = createRealtimeDashboardService({ database: database as never, authorization: authorization() as never, now: () => now, randomToken: () => validToken, publicWorkspaceSlug: "empresa" });
+    const short = await tv.rotate({ workspaceId: "workspace", actorId: "actor" } as never, "https://crm.example/base?theme=light#ignored");
+    expect(short.shareUrl).toBe("https://crm.example/tempo");
+    expect(database.workspace.findFirst).toHaveBeenCalledWith({ where: { id: "workspace", slug: "empresa", status: "ACTIVE", deletedAt: null }, select: { id: true } });
+    database.workspace.findFirst.mockResolvedValueOnce(null);
+    const other = await tv.rotate({ workspaceId: "outro-workspace", actorId: "actor" } as never, "https://crm.example");
+    expect(other.shareUrl).toBe(`https://crm.example/tempo-real-publico#${validToken}`);
   });
 });

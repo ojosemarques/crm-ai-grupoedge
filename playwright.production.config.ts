@@ -21,6 +21,7 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
+    env: { REALTIME_PUBLIC_WORKSPACE_SLUG: "politizai" },
     command: "pnpm start --hostname 127.0.0.1 --port 3100",
     url: baseURL,
     reuseExistingServer: false,

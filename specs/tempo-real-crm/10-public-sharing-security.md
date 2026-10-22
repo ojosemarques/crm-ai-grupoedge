@@ -3,12 +3,22 @@
 ## Boundary
 
 - Ator autenticado: admin/gestor com `realtime.share.manage` WORKSPACE.
-- Ator público: qualquer pessoa com bearer válido.
+- Ator público: qualquer pessoa em `/tempo` enquanto o acesso estiver ativo no workspace configurado; links antigos de outros workspaces continuam exigindo bearer válido.
 - Ativo: métricas agregadas e nomes corporativos do workspace.
 - Entrada não confiável: token do fragmento, header Authorization e client IP headers.
 - Efeito privilegiado: gerar/rotacionar/revogar; sempre sessão + same-origin + capability.
 
 ## Lifecycle
+
+### Endereço fixo da TV
+
+- `REALTIME_PUBLIC_WORKSPACE_SLUG` seleciona um único workspace no servidor. Vazio, workspace inativo ou inexistente negam acesso; query/header/cookie do visitante não escolhem tenant.
+- `/tempo` abre sem login, query ou fragmento e consulta `/api/public/tempo`. O tema fica no navegador sem aumentar o link.
+- Toda consulta verifica o compartilhamento ativo existente. Revogar interrompe a API imediatamente e remove o placar na próxima atualização; reativar libera o mesmo endereço.
+- Gestão permanece autenticada, autorizada e same-origin, com auditoria existente. A API pública não retorna estado de gestão, IDs ou dados de contatos e mantém no-store, noindex, no-referrer e limite de 120 consultas/minuto por cliente.
+- No workspace configurado, a geração retorna somente `domínio/tempo`. Outros workspaces conservam o fluxo de bearer abaixo, sem publicar seus dados nesse endereço.
+
+### Compatibilidade com bearer
 
 1. `randomBytes(32).toString("base64url")` gera 256 bits.
 2. Browser recebe `https://.../tempo-real-publico#<token>` uma vez.
@@ -43,4 +53,4 @@ Workspace name, timezone, períodos, timestamps, quality, totais, meta agregada,
 
 ## Risco residual
 
-Qualquer pessoa que receba ou fotografe o link pode ler o placar até revogação. A UI autenticada deve exibir essa advertência; não existe restrição por IP/dispositivo nesta versão.
+O caminho `/tempo` é previsível: qualquer pessoa pode ler métricas e nomes corporativos enquanto o compartilhamento estiver ativo. Essa exposição foi autorizada explicitamente pelo usuário. Revogar bloqueia novas leituras, mas não recupera dados já vistos/copiados. Não existe restrição por IP/dispositivo. Um novo acesso público reabre o mesmo endereço, sem invalidar quem já o conhece.

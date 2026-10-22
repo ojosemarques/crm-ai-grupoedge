@@ -69,6 +69,9 @@ describe("proteção otimista de rotas", () => {
     expect(publicBoard.status).toBe(200);
     expect(similarPath.status).toBe(307);
     expect(privateBoard.status).toBe(307);
+    expect(proxy(new NextRequest("http://localhost:3000/tempo")).status).toBe(200);
+    expect(proxy(new NextRequest("http://localhost:3000/tempo/configuracao")).status).toBe(307);
+    expect(proxy(new NextRequest("http://localhost:3000/tempo-interno")).status).toBe(307);
   });
 
   it("não redireciona API sem sessão e mantém correlation ID seguro", () => {

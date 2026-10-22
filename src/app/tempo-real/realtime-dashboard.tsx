@@ -27,8 +27,9 @@ function relativeFreshness(value: number | null, now: number) {
   return seconds < 5 ? "Atualizado agora" : seconds < 60 ? `Atualizado há ${seconds}s` : `Atualizado há ${Math.floor(seconds / 60)} min`;
 }
 
-export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public" }>) {
-  const publicMode = mode === "public";
+export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public" | "tv" }>) {
+  const publicMode = mode !== "private";
+  const tvMode = mode === "tv";
   const theme = useSyncExternalStore(subscribeRealtimeTheme, readRealtimeTheme, () => "dark" as const);
   const [snapshot, setSnapshot] = useState<RealtimeDashboardSnapshot | null>(null);
   const [sharing, setSharing] = useState<RealtimeShareState>(initialSharing);
@@ -61,16 +62,16 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
   }, [publicMode]);
 
   const load = useCallback(async () => {
-    if (inFlight.current || (publicMode && !publicToken)) {
-      if (publicMode && !publicToken) setLoadState("ERROR");
+    if (inFlight.current || (publicMode && !tvMode && !publicToken)) {
+      if (publicMode && !tvMode && !publicToken) setLoadState("ERROR");
       return false;
     }
     const controller = new AbortController();
     inFlight.current = controller;
     try {
-      const response = await fetch(publicMode ? "/api/public/tempo-real" : "/api/tempo-real", {
+      const response = await fetch(tvMode ? "/api/public/tempo" : publicMode ? "/api/public/tempo-real" : "/api/tempo-real", {
         cache: "no-store",
-        ...(publicMode ? { headers: { Authorization: `Bearer ${publicToken}` } } : {}),
+        ...(publicMode && !tvMode ? { headers: { Authorization: `Bearer ${publicToken}` } } : {}),
         signal: controller.signal,
       });
       if (!response.ok) {
@@ -103,7 +104,7 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
     } finally {
       if (inFlight.current === controller) inFlight.current = null;
     }
-  }, [publicMode, publicToken]);
+  }, [publicMode, publicToken, tvMode]);
 
   useEffect(() => {
     let active = true;
@@ -195,10 +196,10 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
       const payload = await response.json() as { result: { sharing: RealtimeShareState; shareUrl?: string } };
       setSharing(payload.result.sharing);
       const url = payload.result.shareUrl ? new URL(payload.result.shareUrl) : null;
-      url?.searchParams.set("theme", theme);
+      if (url && url.pathname !== "/tempo") url.searchParams.set("theme", theme);
       setShareUrl(url?.href ?? null);
       setCopied(false);
-      setMessage(action === "ROTATE" ? "Novo link gerado. O link anterior deixou de funcionar." : "Link público revogado imediatamente.");
+      setMessage(action === "ROTATE" ? url?.pathname === "/tempo" ? "Acesso público habilitado. O endereço da TV permanece o mesmo." : "Novo link gerado. O link anterior deixou de funcionar." : "Link público revogado imediatamente.");
     } catch { setMessage("Não foi possível alterar o link público. Tente novamente."); }
     finally { setShareBusy(false); }
   }
@@ -245,8 +246,8 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
     {loadState === "STALE" || loadState === "ERROR" ? <div className={styles.connectionNotice} role="status">Conexão interrompida. Exibindo a última atualização enquanto reconectamos.</div> : null}
     {message && !dialogOpen ? <div className={styles.connectionNotice} role="status">{message}<button aria-label="Fechar aviso" onClick={() => setMessage(null)}><Icon name="close" /></button></div> : null}
     <dialog ref={dialogRef} className={styles.shareDialog} aria-labelledby="share-title" onCancel={closeDialog} onClick={(event) => { if (event.target === event.currentTarget) closeDialog(); }}>
-      <div className={styles.dialogContent}><button className={styles.dialogClose} type="button" aria-label="Fechar compartilhamento" onClick={closeDialog}><Icon name="close" /></button><span className={styles.dialogEyebrow}>PAINEL NA TV</span><h2 id="share-title">{shareUrl ? "Seu link está pronto" : "Compartilhar painel"}</h2><p>Abra este link no navegador da TV. Quem tiver o link poderá acompanhar o painel até você revogar o acesso.</p>
-        {shareUrl ? <label className={styles.shareField}>Link público<input aria-label="Link público" readOnly value={shareUrl} onFocus={(event) => event.currentTarget.select()} /><small>Copie agora. Por segurança, este link só é exibido uma vez.</small></label> : <div className={styles.shareState}><i data-active={sharing.active} />{sharing.active ? `Acesso público ativo · revisão ${sharing.revision}` : "Acesso público desativado"}</div>}
+      <div className={styles.dialogContent}><button className={styles.dialogClose} type="button" aria-label="Fechar compartilhamento" onClick={closeDialog}><Icon name="close" /></button><span className={styles.dialogEyebrow}>PAINEL NA TV</span><h2 id="share-title">{shareUrl ? "Seu link está pronto" : "Compartilhar painel"}</h2><p>Abra este link no navegador da TV. Qualquer pessoa que acessar o endereço poderá acompanhar o painel até você revogar o acesso.</p>
+        {shareUrl ? <label className={styles.shareField}>Link público<input aria-label="Link público" readOnly value={shareUrl} onFocus={(event) => event.currentTarget.select()} /><small>{new URL(shareUrl).pathname === "/tempo" ? "Endereço fixo, sem login. Revogar acesso desativa o painel público." : "Copie agora. Por segurança, este link só é exibido uma vez."}</small></label> : <div className={styles.shareState}><i data-active={sharing.active} />{sharing.active ? `Acesso público ativo · revisão ${sharing.revision}` : "Acesso público desativado"}</div>}
         {message ? <p className={styles.dialogMessage} role="status">{message}</p> : null}
         <div className={styles.dialogActions}>{sharing.active ? <button disabled={shareBusy} type="button" onClick={() => void manageShare("REVOKE")}>Revogar acesso</button> : null}{shareUrl ? <button type="button" className={styles.primaryButton} onClick={() => void copyShare()}><Icon name={copied ? "check" : "copy"} />{copied ? "Link copiado" : "Copiar link"}</button> : <button disabled={shareBusy} type="button" className={styles.primaryButton} onClick={() => void manageShare("ROTATE")}><Icon name="link" />{shareBusy ? "Gerando…" : sharing.active ? "Gerar novo link" : "Gerar link público"}</button>}</div>
       </div>
