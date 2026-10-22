@@ -25,6 +25,11 @@ describe("headers seguros PROD-03", () => {
     expect(headers).toContainEqual(expect.objectContaining({ key: "Permissions-Policy" }));
   });
 
+  it("permite delegar a proteção de framing para rotas com políticas diferentes", () => {
+    const headers = createStaticSecurityHeaders({ https: true, includeFrameProtection: false });
+    expect(headers).not.toContainEqual(expect.objectContaining({ key: "X-Frame-Options" }));
+  });
+
   it("libera somente origins de imagem já validadas pelo chamador", () => {
     const policy = buildContentSecurityPolicy({ imageSources: ["https://cdn.example", "https://assets.example:8443"] });
     expect(policy).toContain("img-src 'self' data: blob: https://cdn.example https://assets.example:8443");

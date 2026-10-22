@@ -86,3 +86,36 @@ test("liveness e readiness têm responsabilidades separadas", async ({ request }
   expect(response.headers()["x-frame-options"]).toBe("DENY");
   expect(response.headers()["referrer-policy"]).toBe("same-origin");
 });
+
+test("permite iframe somente no formulário público", async ({ page, request }) => {
+  const publicForm = await request.get("/f/formulario-publico-para-iframe");
+  expect(publicForm.headers()["x-frame-options"]).toBeUndefined();
+  expect(publicForm.headers()["content-security-policy"]).toContain("frame-ancestors *");
+
+  await page.route("http://site-externo.example/", async (route) => {
+    await route.fulfill({
+      body: '<iframe title="Formulário incorporado" src="http://formularios-crm.example/f/formulario-publico-para-iframe"></iframe>',
+      contentType: "text/html; charset=utf-8",
+      status: 200,
+    });
+  });
+  await page.route("http://formularios-crm.example/f/formulario-publico-para-iframe", async (route) => {
+    await route.fulfill({
+      body: "<main>Formulário incorporado</main>",
+      headers: {
+        "Content-Security-Policy": publicForm.headers()["content-security-policy"]!,
+        "Cross-Origin-Opener-Policy": publicForm.headers()["cross-origin-opener-policy"]!,
+        "Cross-Origin-Resource-Policy": publicForm.headers()["cross-origin-resource-policy"]!,
+      },
+      contentType: "text/html; charset=utf-8",
+      status: 200,
+    });
+  });
+  await page.goto("http://site-externo.example/");
+  await expect(page.getByTitle("Formulário incorporado")).toBeVisible();
+  await expect(page.getByTitle("Formulário incorporado").contentFrame().getByText("Formulário incorporado")).toBeVisible();
+
+  const login = await request.get("/login");
+  expect(login.headers()["x-frame-options"]).toBe("DENY");
+  expect(login.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
+});

@@ -22,15 +22,21 @@ function isPublicPage(pathname: string): boolean {
     || pathname.startsWith("/f/");
 }
 
+function isEmbeddablePublicForm(pathname: string): boolean {
+  return pathname.startsWith("/f/");
+}
+
 export function proxy(request: NextRequest): NextResponse {
   const correlationId = resolveCorrelationId(request.headers);
   const nonce = crypto.randomUUID().replaceAll("-", "");
+  const embeddablePublicForm = isEmbeddablePublicForm(request.nextUrl.pathname);
   const policy = buildContentSecurityPolicy({
     nonce,
     development: process.env.NODE_ENV === "development",
     https: request.nextUrl.protocol === "https:",
     imageSources: marketingFormAssetOrigins(process.env.MARKETING_FORM_ASSET_ORIGINS),
     metaPixel: request.nextUrl.pathname.startsWith("/f/"),
+    allowEmbedding: embeddablePublicForm,
   });
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
@@ -56,6 +62,9 @@ export function proxy(request: NextRequest): NextResponse {
 
   response.headers.set("Content-Security-Policy", policy);
   response.headers.set("X-Correlation-Id", correlationId);
+  if (!embeddablePublicForm) {
+    response.headers.set("X-Frame-Options", "DENY");
+  }
   if (request.nextUrl.pathname === "/politizai-analytics.js" && response.status === 200) {
     response.headers.set("Cross-Origin-Resource-Policy", "cross-origin");
   }

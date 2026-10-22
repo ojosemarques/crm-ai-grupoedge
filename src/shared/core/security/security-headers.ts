@@ -4,6 +4,7 @@ export type SecurityHeaderOptions = Readonly<{
   https?: boolean;
   imageSources?: readonly string[];
   metaPixel?: boolean;
+  allowEmbedding?: boolean;
 }>;
 
 export function buildContentSecurityPolicy({
@@ -12,6 +13,7 @@ export function buildContentSecurityPolicy({
   https = false,
   imageSources = [],
   metaPixel = false,
+  allowEmbedding = false,
 }: SecurityHeaderOptions = {}): string {
   const scriptSources = ["'self'"];
   if (nonce) scriptSources.push(`'nonce-${nonce}'`, "'strict-dynamic'");
@@ -32,16 +34,19 @@ export function buildContentSecurityPolicy({
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    `frame-ancestors ${allowEmbedding ? "*" : "'none'"}`,
     ...(https ? ["upgrade-insecure-requests"] : []),
   ];
   return directives.join("; ");
 }
 
-export function createStaticSecurityHeaders({ https = false }: Pick<SecurityHeaderOptions, "https"> = {}) {
+export function createStaticSecurityHeaders({
+  https = false,
+  includeFrameProtection = true,
+}: Readonly<{ https?: boolean; includeFrameProtection?: boolean }> = {}) {
   return [
     { key: "X-Content-Type-Options", value: "nosniff" },
-    { key: "X-Frame-Options", value: "DENY" },
+    ...(includeFrameProtection ? [{ key: "X-Frame-Options", value: "DENY" }] : []),
     { key: "Referrer-Policy", value: "same-origin" },
     { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
     { key: "Cross-Origin-Resource-Policy", value: "same-origin" },

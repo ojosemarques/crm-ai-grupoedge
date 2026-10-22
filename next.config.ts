@@ -16,7 +16,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/:path*",
-        headers: [...createStaticSecurityHeaders({ https: useHsts })],
+        headers: [...createStaticSecurityHeaders({ https: useHsts, includeFrameProtection: false })],
       },
       {
         source: "/api/oauth/authorize",

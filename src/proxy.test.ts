@@ -44,6 +44,7 @@ describe("proteção otimista de rotas", () => {
     const response = proxy(new NextRequest("http://localhost:3000/login"));
     expect(response.status).toBe(200);
     expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(response.headers.get("x-frame-options")).toBe("DENY");
   });
 
   it("permite somente o namespace público de formulários sem cookie", () => {
@@ -52,6 +53,8 @@ describe("proteção otimista de rotas", () => {
 
     expect(publicForm.status).toBe(200);
     expect(publicForm.headers.get("x-middleware-next")).toBe("1");
+    expect(publicForm.headers.get("x-frame-options")).toBeNull();
+    expect(publicForm.headers.get("content-security-policy")).toContain("frame-ancestors *");
     expect(publicForm.headers.get("content-security-policy")).toContain("https://connect.facebook.net");
     expect(publicForm.headers.get("content-security-policy")).toContain("https://www.facebook.com");
     expect(similarProtectedPath.status).toBe(307);
