@@ -1,6 +1,17 @@
 # 04 — Estado de execução
 
-## Checkpoint de rollout — 2026-10-22
+## Checkpoint atual — correção unificada — 2026-10-22
+
+- Spec 14 concluída: Geral e Ranking no mesmo design, ambos escuros por padrão, tema claro independente e persistente; métricas, execuções e metas individuais/gerais verificadas.
+- Main técnica: `551cbee` e `32fc20a`; sem migrations ou alterações nos dados comerciais.
+- Validação: lint/typecheck, 916 unitários, 3 integrações do módulo e 2 E2E com build otimizado; QA dos dois modos/temas em Full HD, 1366×768 e celular.
+- CI final `39803578759`: sucesso no SHA `32fc20a`, relatório/SBOM publicados.
+- Produção: deployment `dpl_8ADVaALeSfJaHKSYKyGaMTbRrXSn` READY, alias `https://crm-ai-grupoedge.vercel.app`; smoke autenticado e anônimo aprovado, API comparada com 10.073 fatos e quatro perfis ativos, zero erros no navegador/rotas Tempo Real.
+- Link público deixado ativo e entregue ao proprietário; segredo não versionado. Rotação/revogação permanece no painel.
+- Não há meta semanal de vendas publicada para a semana atual; ausência indicada corretamente. O valor depende de configuração comercial em Metas, não foi inventado.
+- Nenhuma task técnica pendente; preservar alterações paralelas de formulários. Evidência detalhada em `14-unified-command-center.md`.
+
+## Histórico de rollout inicial — 2026-10-22
 
 - Status: T0–T12 concluídas e verificadas em produção.
 - Branch: `main`; commits da iniciativa `f542e65`, `5c883ba` e `909635c`, todos enviados a `origin/main`.

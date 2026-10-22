@@ -26,7 +26,7 @@ Sem novas dependências ou migrations. Não alterar produtores nem reprocessar d
 
 ## Estado
 
-Implementação e validação local concluídas; rollout e smoke produtivo pendentes.
+Concluída na main e em produção, com validação local, CI e smoke produtivo aprovados.
 
 ## Evidências locais — 22/10/2026
 
@@ -37,3 +37,15 @@ Implementação e validação local concluídas; rollout e smoke produtivo pende
 - QA: 12 capturas (2 modos × 2 temas × 3 resoluções), sem sobreposição ou corte vertical; sem overflow do documento no build de produção. Inspeção visual em Full HD e 1366×768.
 - `pnpm security:scan`: política aprovada. Mantidos bearer estrito, hash-only, RBAC, escopo de workspace e DTO público sem IDs de pessoas/leads.
 - Sem mudanças de dependências, migrations, produtores ou dados comerciais.
+
+## Produção — 22/10/2026
+
+- Main: implementação `551cbee9b322e14343ee96cf0b66d2a0c23f6781`; ajuste de rótulos e E2E `32fc20abc0c637d5d5da5d003622b57f90da04f8`.
+- Build e ambos os E2E repetidos no SHA técnico final: aprovados.
+- Vercel: projeto `grupo-edge-crm`, deployment `dpl_8ADVaALeSfJaHKSYKyGaMTbRrXSn`, `READY`, alias `https://crm-ai-grupoedge.vercel.app` confirmado.
+- Smoke final: login/API privada 200; público anônimo 200; rota privada sem sessão 401; token inválido 404; quatro pollings, concorrência máxima 1; ciclo 0/60/120 s sem mudar o tema; claro/escuro e persistência após reload; ambos os modos sem overflow; zero erros no navegador.
+- Comparação somente leitura: totais da API iguais ao agregador canônico aplicado a 10.073 fatos persistidos; metas de ligações iguais aos quatro perfis ativos e à recorrência ×5. Qualidade `LIVE`.
+- Não existe meta semanal de vendas publicada para a semana corrente. A ausência é exibida, sem usar plano mensal ou fabricar valor; cadastrar/publicar em Metas é uma decisão comercial fora desta alteração.
+- Compartilhamento público deixado **ativo**, conforme solicitado. URL bearer entregue somente ao proprietário, não versionada; hash permanece no banco, rotação/revogação pelo painel.
+- Logs do deployment final: zero registros de erro nas quatro rotas do Tempo Real; um erro em outra rota não foi alterado por esta iniciativa.
+- CI técnico final: run `39803578759`, `completed/success` no SHA `32fc20a`; 27 etapas concluídas com sucesso, relatório e SBOM no artefato `release-evidence-39803578759-1` (`12438075825`). Rollback sem migration: restaurar o deployment anterior; o token público continua sujeito a rotação/revogação independente.
