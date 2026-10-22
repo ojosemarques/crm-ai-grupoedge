@@ -6,8 +6,8 @@ import { DEMO_SEED_PASSWORD, DEMO_USERS } from "@/modules/settings/application/d
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { enterDemoCompany } from "./helpers/company-hub";
 
-for (const role of ["administrator", "closer"] as const) {
-test(`marca vendido no card com SISTEMA POLITIZAI e valores negociados (${role})`, async ({ page }) => {
+for (const { role, existing } of [{ role: "administrator", existing: false }, { role: "closer", existing: false }, { role: "administrator", existing: true }] as const) {
+test(`marca vendido no card em um envio (${role}, negócio ${existing ? "preparado" : "novo"})`, async ({ page }) => {
   test.setTimeout(120_000);
   if (!/^politizai_test_/.test(new URL(process.env.DATABASE_URL!).searchParams.get("schema") ?? "")) {
     throw new Error("Este cenário exige banco temporário de testes.");
@@ -34,6 +34,16 @@ test(`marca vendido no card com SISTEMA POLITIZAI e valores negociados (${role})
   await page.getByLabel("Dor ou interesse").fill("Contratar sistema Politizai");
   await page.getByRole("button", { name: "Cadastrar lead" }).click();
   await expect(page.getByText("Entrada processada", { exact: true })).toBeVisible();
+  if (existing) {
+    const seller = await database.workspaceMember.findFirstOrThrow({ where: { workspaceId: workspace.id, user: { normalizedEmail: "closer1@demo.politizai.local" } } });
+    const lead = await database.lead.findFirstOrThrow({ where: { workspaceId: workspace.id, fullName: name } });
+    const prepared = await page.request.post("/api/opportunities/prepare-sale", { headers: { Origin: new URL(page.url()).origin }, data: {
+      leadId: lead.id, sellerMemberId: seller.id, productId: product.id,
+      description: "Venda preparada antes da simplificação", totalCents: "765432", upfrontCents: "65432", installmentCents: "100000", installmentCount: 7,
+      paymentPlan: "UPFRONT_INSTALLMENTS", paymentMethod: "PIX", idempotencyKey: randomUUID(),
+    } });
+    expect(prepared.ok()).toBe(true);
+  }
   if (role === "closer") {
     const seller = await database.workspaceMember.findFirstOrThrow({ where: { workspaceId: workspace.id, user: { normalizedEmail: "closer1@demo.politizai.local" } } });
     const lead = await database.lead.findFirstOrThrow({ where: { workspaceId: workspace.id, fullName: name } });
@@ -54,35 +64,25 @@ test(`marca vendido no card com SISTEMA POLITIZAI e valores negociados (${role})
   const sell = page.locator('[aria-label="Ações comerciais do lead"]').getByRole("button", { name: "Marcar vendido", exact: true });
   await expect(sell).toBeEnabled();
   await sell.click();
-  const preparation = page.getByRole("region", { name: "Preparar venda do lead" });
-  await expect(preparation.getByRole("combobox", { name: "Produto", exact: true })).toHaveValue(product.id);
-  await preparation.getByRole("combobox", { name: "Vendedor", exact: true }).selectOption({ index: 1 });
-  await preparation.getByLabel("Descrição da venda").fill("Licença do SISTEMA POLITIZAI nas condições combinadas.");
-  await preparation.getByLabel("Valor total (R$)", { exact: true }).fill("7.654,32");
-  await preparation.getByLabel("Entrada (R$)", { exact: true }).fill("654,32");
-  await preparation.getByLabel("Número de parcelas").fill("7");
-  await preparation.getByLabel("Valor de cada parcela (R$)").fill("1.000,00");
-  await preparation.getByRole("button", { name: "Continuar fechamento" }).click();
   const completion = page.getByRole("tabpanel", { name: "Marcar vendido" });
-  await completion.getByRole("combobox", { name: "Cadastro do cliente" }).selectOption("CREATE");
-  await completion.getByLabel("Nome confirmado do cliente").fill(name);
-  await completion.getByRole("combobox", { name: "Modelo de contrato" }).selectOption({ index: 1 });
-  if (role === "closer") {
-    await expect(completion.getByLabel("Valor já recebido (R$)")).toHaveAttribute("readonly", "");
-    await expect(completion.getByRole("combobox", { name: "Vendedor", exact: true }).locator("option")).toHaveCount(1);
-  }
-  await expect(completion.getByLabel("Valor total (R$)", { exact: true })).toHaveValue("7654,32");
-  await completion.getByLabel("Condição de pagamento detalhada").fill("Entrada de R$ 654,32 e 7 parcelas de R$ 1.000,00 via PIX, negociadas pelo vendedor.");
-  await completion.getByLabel("Início de vigência").fill(new Date().toISOString().slice(0, 10));
-  await completion.getByLabel("Quem confirmou a venda").fill(name);
-  await completion.getByLabel("Cargo ou papel").fill("Diretor");
-  await completion.getByRole("button", { name: "Revisar fechamento" }).click();
-  await completion.getByRole("checkbox", { name: "Revisei os dados e confirmo a venda e os lançamentos financeiros." }).check();
-  const response = page.waitForResponse((res) => res.url().endsWith("/api/opportunities/close-sale") && res.request().postDataJSON()?.action === "EXECUTE");
+  await expect(completion.locator("form input, form select, form textarea")).toHaveCount(6);
+  if (existing) await expect(completion.getByLabel("Valor total (R$)", { exact: true })).toHaveValue("7654,32");
+  await completion.getByRole("combobox", { name: "Vendedor", exact: true }).selectOption({ index: 1 });
+  await completion.getByLabel("Valor total (R$)", { exact: true }).fill("7.654,32");
+  await completion.getByRole("combobox", { name: "Condição de pagamento", exact: true }).selectOption(role === "closer" ? "CARD_INSTALLMENTS" : "UPFRONT_INSTALLMENTS");
+  await completion.getByLabel("Entrada (R$)", { exact: true }).fill("654,32");
+  await completion.getByLabel("Valor de cada parcela (R$)").fill("1.000,00");
+  await completion.getByLabel("Condição de pagamento detalhada").fill("Entrada de R$ 654,32 e 7 parcelas de R$ 1.000,00, negociadas pelo vendedor.");
+  await expect(completion.getByText(/7 parcelas/).first()).toBeVisible();
+  await expect(completion.getByLabel("Valor já recebido (R$)")).toHaveCount(0);
+  await expect(completion.getByRole("button", { name: "Continuar fechamento" })).toHaveCount(0);
+  const response = page.waitForResponse((res) => res.url().endsWith("/api/opportunities/close-sale") && res.request().postDataJSON()?.action === "COMPLETE_LEAD");
   await completion.getByRole("button", { name: "Confirmar e marcar vendido" }).click();
   const closed = await response;
   expect(await closed.json()).toMatchObject({ result: { receivedCents: "0", outstandingCents: "765432" } });
   expect(closed.ok()).toBe(true);
+  await expect(page.getByRole("status").filter({ hasText: "Venda registrada" })).toBeVisible();
+  await expect(completion.locator("form")).toHaveCount(0);
   const opportunity = await database.opportunity.findFirstOrThrow({ where: { workspaceId: workspace.id, leadId, deletedAt: null } });
   expect(opportunity).toMatchObject({ productId: product.id, status: "WON", tcvCents: 765432n });
   const contracts = await database.commercialContract.findMany({ where: { opportunityId: opportunity.id } });

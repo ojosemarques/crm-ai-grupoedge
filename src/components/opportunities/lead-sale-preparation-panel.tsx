@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
-import { prepareLeadSaleSchema, salePaymentMethods, type PrepareLeadSaleInput } from "@/modules/opportunities/domain/sale-completion-contracts";
-import type { LeadOpportunityScreen } from "@/modules/opportunities/domain/opportunity-contracts";
+import { completeLeadSaleSchema, directSaleInstallmentCount, type CompleteLeadSaleResult, type directSalePaymentPlans, type salePaymentMethods } from "@/modules/opportunities/domain/sale-completion-contracts";
+import type { LeadOpportunityScreen, OpportunityListItem } from "@/modules/opportunities/domain/opportunity-contracts";
 
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
-type PaymentMethod = (typeof salePaymentMethods)[number];
+type PaymentPlan = (typeof directSalePaymentPlans)[number];
 
 export type PreparedSaleTerms = Readonly<{
   description: string;
@@ -15,7 +15,7 @@ export type PreparedSaleTerms = Readonly<{
   upfrontCents: string;
   monthlyCents: string;
   durationMonths: number;
-  paymentMethod: PaymentMethod;
+  paymentMethod: (typeof salePaymentMethods)[number];
   paymentCondition: string;
 }>;
 
@@ -24,126 +24,98 @@ function cents(value: string) {
   const normalized = raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw;
   if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
   const [whole = "0", fraction = ""] = normalized.split(".");
-  return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
+  return (BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"))).toString();
 }
 
-function money(value: bigint) {
+function reais(value: string) {
+  const amount = BigInt(value);
+  return `${amount / 100n},${(amount % 100n).toString().padStart(2, "0")}`;
+}
+
+function money(value: string) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value) / 100);
 }
 
-async function result<T>(response: Response): Promise<T> {
-  const body = await response.json().catch(() => null) as { result?: T; error?: { message?: string } } | null;
-  if (!response.ok || !body?.result) throw new Error(body?.error?.message ?? "Não foi possível preparar o fechamento.");
-  return body.result;
-}
-
-function condition(input: Pick<PrepareLeadSaleInput, "paymentPlan" | "paymentMethod" | "upfrontCents" | "installmentCents" | "installmentCount">) {
-  const method = { PIX: "PIX", BANK_TRANSFER: "transferência bancária", CARD: "cartão", CASH: "dinheiro", OTHER: "outro meio" }[input.paymentMethod];
-  if (input.paymentPlan === "CASH") return `À vista, ${money(BigInt(input.upfrontCents))}, via ${method}.`;
-  if (input.paymentPlan === "INSTALLMENTS") return `${input.installmentCount} parcela(s) de ${money(BigInt(input.installmentCents))}, sem entrada, via ${method}.`;
-  return `Entrada de ${money(BigInt(input.upfrontCents))} + ${input.installmentCount} parcela(s) de ${money(BigInt(input.installmentCents))}, via ${method}.`;
-}
-
-export function LeadSalePreparationPanel({ screen, onPrepared }: Readonly<{
+export function LeadSalePanel({ screen, opportunity, onCommitted, onBusyChange }: Readonly<{
   screen: LeadOpportunityScreen;
-  onPrepared: (opportunityId: string, terms: PreparedSaleTerms) => Promise<void>;
+  opportunity: OpportunityListItem | null;
+  onCommitted: () => void;
+  onBusyChange: (busy: boolean) => void;
 }>) {
-  const [paymentPlan, setPaymentPlan] = useState<PrepareLeadSaleInput["paymentPlan"]>("UPFRONT_INSTALLMENTS");
-  const [total, setTotal] = useState("");
+  const [paymentPlan, setPaymentPlan] = useState<PaymentPlan>("UPFRONT_INSTALLMENTS");
+  const [total, setTotal] = useState(opportunity ? reais(opportunity.tcvCents) : "");
   const [upfront, setUpfront] = useState("0,00");
-  const [installments, setInstallments] = useState("1");
-  const [installmentValue, setInstallmentValue] = useState("0,00");
+  const [installmentValue, setInstallmentValue] = useState(opportunity ? reais(opportunity.mrrCents) : "0,00");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [completed, setCompleted] = useState<CompleteLeadSaleResult | null>(null);
   const idempotency = useRef<{ fingerprint: string; key: string } | null>(null);
-  const reconciliation = useMemo(() => {
-    const totalCents = cents(total);
-    const upfrontCents = cents(upfront);
-    const installmentCents = cents(installmentValue);
-    const count = Number(installments);
-    if (totalCents === null || upfrontCents === null || installmentCents === null || !Number.isInteger(count) || count < 1) return null;
-    const composed = upfrontCents + installmentCents * BigInt(count);
-    return { totalCents, composed, difference: totalCents - composed };
-  }, [installmentValue, installments, total, upfront]);
+  const amounts = { totalCents: cents(total) ?? "", upfrontCents: cents(upfront) ?? "", installmentCents: cents(installmentValue) ?? "", paymentPlan };
+  const installmentCount = directSaleInstallmentCount(amounts);
 
-  function changePlan(next: PrepareLeadSaleInput["paymentPlan"]) {
+  function changePlan(next: PaymentPlan) {
     setPaymentPlan(next);
     if (next === "CASH") {
       setUpfront(total || "0,00");
-      setInstallments("1");
       setInstallmentValue("0,00");
-    } else if (next === "INSTALLMENTS") {
-      setUpfront("0,00");
-    }
+    } else if (paymentPlan === "CASH") setUpfront("0,00");
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     const form = new FormData(event.currentTarget);
-    setError(null);
     const command = {
       leadId: screen.leadId,
+      ...(opportunity ? { opportunityId: opportunity.id, expectedRevision: opportunity.revision } : {}),
       sellerMemberId: form.get("sellerMemberId"),
-      productId: form.get("productId"),
-      description: form.get("description"),
-      paymentPlan,
-      paymentMethod: form.get("paymentMethod"),
-      totalCents: cents(total)?.toString(),
-      upfrontCents: cents(upfront)?.toString(),
-      installmentCents: cents(installmentValue)?.toString(),
-      installmentCount: Number(installments),
+      ...amounts,
+      paymentCondition: form.get("paymentCondition"),
+      confirmed: true,
     };
     const fingerprint = JSON.stringify(command);
-    if (idempotency.current?.fingerprint !== fingerprint) {
-      idempotency.current = { fingerprint, key: crypto.randomUUID() };
-    }
-    const payload = prepareLeadSaleSchema.safeParse({ ...command, idempotencyKey: idempotency.current.key });
+    if (idempotency.current?.fingerprint !== fingerprint) idempotency.current = { fingerprint, key: crypto.randomUUID() };
+    setError(null);
+    const payload = completeLeadSaleSchema.safeParse({ ...command, idempotencyKey: idempotency.current.key });
     if (!payload.success) {
-      setError(payload.error.issues[0]?.message ?? "Revise os valores da venda.");
+      setError(payload.error.issues[0]?.message ?? "Revise os dados da venda.");
       return;
     }
-    setPending(true);
+    setPending(true); onBusyChange(true);
     try {
-      const prepared = await result<{ opportunityId: string }>(await fetch("/api/opportunities/prepare-sale", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload.data),
-      }));
-      await onPrepared(prepared.opportunityId, {
-        description: payload.data.description,
-        totalCents: payload.data.totalCents,
-        upfrontCents: payload.data.upfrontCents,
-        monthlyCents: payload.data.installmentCents,
-        durationMonths: payload.data.installmentCount,
-        paymentMethod: payload.data.paymentMethod,
-        paymentCondition: condition(payload.data),
+      const response = await fetch("/api/opportunities/close-sale", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "COMPLETE_LEAD", payload: payload.data }),
       });
+      const body = await response.json() as { result?: CompleteLeadSaleResult; error?: { message?: string } };
+      if (!response.ok || !body.result) throw new Error(body.error?.message ?? "Não foi possível registrar a venda.");
+      setCompleted(body.result);
+      onCommitted();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Falha ao preparar o fechamento.");
+      setError(cause instanceof Error ? cause.message : "Não foi possível registrar a venda.");
     } finally {
-      setPending(false);
+      setPending(false); onBusyChange(false);
     }
   }
 
-  const defaultSellerId = screen.suggestedSaleSellerId ?? "";
-  const defaultProductId = screen.productOptions.find((product) => product.name === "SISTEMA POLITIZAI")?.id
-    ?? screen.productOptions[0]?.id ?? "";
+  if (completed) return <section className="rounded-md border border-emerald-300 bg-emerald-50 p-4" aria-label="Resultado da venda">
+    <p className="font-semibold" role="status">Venda registrada. Condições comerciais salvas.</p>
+  </section>;
 
-  return <section className="space-y-4 rounded-md border p-4" aria-label="Preparar venda do lead">
-    <header><h3 className="font-semibold">Dados da venda</h3><p className="mt-1 text-sm text-muted-foreground">Você define o preço e as condições de pagamento desta venda. Confira a entrada e as parcelas antes da confirmação final.</p></header>
-    {error ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
+  return <section className="space-y-4 rounded-md border p-4" aria-label="Registrar venda do lead">
+    <p className="text-sm text-muted-foreground">SISTEMA POLITIZAI. Preencha uma única vez e confirme a venda.</p>
+    {error ? <p className="rounded-md border border-destructive/30 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
     <form className="grid gap-3 sm:grid-cols-2" onSubmit={submit}>
-      <label className="text-sm">Vendedor<select className={inputClass} defaultValue={defaultSellerId} name="sellerMemberId" required><option value="">Selecione</option>{screen.saleSellerOptions.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
-      <label className="text-sm">Produto<select className={inputClass} defaultValue={defaultProductId} name="productId" required><option value="">Selecione</option>{screen.productOptions.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
-      <label className="text-sm sm:col-span-2">Descrição da venda<textarea className={inputClass} minLength={3} maxLength={2_000} name="description" required placeholder="Descreva o que foi vendido e os detalhes combinados." /></label>
-      <label className="text-sm">Condição de pagamento<select className={inputClass} onChange={(event) => changePlan(event.target.value as PrepareLeadSaleInput["paymentPlan"])} value={paymentPlan}><option value="UPFRONT_INSTALLMENTS">Entrada + parcelas</option><option value="INSTALLMENTS">Somente parcelas</option><option value="CASH">À vista</option></select></label>
-      <label className="text-sm">Forma de pagamento<select className={inputClass} defaultValue="PIX" name="paymentMethod" required><option value="PIX">PIX</option><option value="BANK_TRANSFER">Transferência bancária</option><option value="CARD">Cartão</option><option value="CASH">Dinheiro</option><option value="OTHER">Outro</option></select></label>
-      <label className="text-sm">Valor total (R$)<input className={inputClass} inputMode="decimal" onChange={(event) => { setTotal(event.target.value); if (paymentPlan === "CASH") setUpfront(event.target.value); }} required value={total} placeholder="18.000,00" /></label>
-      <label className="text-sm">Entrada (R$)<input className={inputClass} disabled={paymentPlan === "INSTALLMENTS"} inputMode="decimal" onChange={(event) => setUpfront(event.target.value)} required value={upfront} /></label>
-      <label className="text-sm">Número de parcelas<input className={inputClass} disabled={paymentPlan === "CASH"} max="60" min="1" onChange={(event) => setInstallments(event.target.value)} required type="number" value={installments} /></label>
-      <label className="text-sm">Valor de cada parcela (R$)<input className={inputClass} disabled={paymentPlan === "CASH"} inputMode="decimal" onChange={(event) => setInstallmentValue(event.target.value)} required value={installmentValue} /></label>
-      {reconciliation ? <p className={`rounded-md border p-3 text-sm sm:col-span-2 ${reconciliation.difference === 0n ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-950"}`} role="status">Conferência: entrada + parcelas = <strong>{money(reconciliation.composed)}</strong> de <strong>{money(reconciliation.totalCents)}</strong>{reconciliation.difference === 0n ? " — valores conferem." : ` — diferença de ${money(reconciliation.difference < 0n ? -reconciliation.difference : reconciliation.difference)}.`}</p> : null}
-      <Button className="sm:col-span-2" disabled={pending || !reconciliation || reconciliation.difference !== 0n} type="submit">{pending ? "Preparando…" : "Continuar fechamento"}</Button>
+      <fieldset className="contents" disabled={pending}>
+        <label className="text-sm">Vendedor<select className={inputClass} defaultValue={opportunity?.ownerMemberId ?? screen.suggestedSaleSellerId ?? ""} name="sellerMemberId" required><option value="">Selecione</option>{screen.saleSellerOptions.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
+        <label className="text-sm">Valor total (R$)<input className={inputClass} inputMode="decimal" onChange={(event) => { setTotal(event.target.value); if (paymentPlan === "CASH") setUpfront(event.target.value); }} required value={total} /></label>
+        <label className="text-sm">Condição de pagamento<select className={inputClass} onChange={(event) => changePlan(event.target.value as PaymentPlan)} value={paymentPlan}><option value="UPFRONT_INSTALLMENTS">Entrada + parcelas</option><option value="CASH">Valor total à vista</option><option value="CARD_INSTALLMENTS">Cartão: entrada + parcelas</option></select></label>
+        <label className="text-sm">Valor de cada parcela (R$)<input className={inputClass} inputMode="decimal" onChange={(event) => setInstallmentValue(event.target.value)} readOnly={paymentPlan === "CASH"} required value={installmentValue} /></label>
+        <label className="text-sm">Entrada (R$)<input className={inputClass} inputMode="decimal" onChange={(event) => setUpfront(event.target.value)} readOnly={paymentPlan === "CASH"} required value={upfront} /></label>
+        <label className="text-sm sm:col-span-2">Condição de pagamento detalhada<textarea className={inputClass} minLength={2} maxLength={500} name="paymentCondition" required /></label>
+      </fieldset>
+      {installmentCount !== null ? <p className="rounded-md border p-3 text-sm sm:col-span-2" role="status">{paymentPlan === "CASH" ? `À vista: ${money(amounts.totalCents)}.` : `Entrada de ${money(amounts.upfrontCents)} + ${installmentCount} parcelas de ${money(amounts.installmentCents)}. Total: ${money(amounts.totalCents)}.`}</p> : <p className="text-sm text-muted-foreground sm:col-span-2">O saldo após a entrada dividido pelo valor da parcela deve resultar em 1 a 60 parcelas inteiras, sem diferença no total.</p>}
+      <Button className="sm:col-span-2" disabled={pending || installmentCount === null} type="submit">{pending ? "Registrando…" : "Confirmar e marcar vendido"}</Button>
     </form>
   </section>;
 }

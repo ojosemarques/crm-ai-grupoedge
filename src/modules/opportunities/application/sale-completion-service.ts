@@ -12,7 +12,7 @@ import { createOnboardingService } from "@/modules/onboarding/application/onboar
 import { assertOriginCapability, createOpportunityService } from "@/modules/opportunities/application/opportunity-service";
 import { assertConsultativeSalesGates, assertRequiredStageActivitiesComplete } from "@/modules/opportunities/application/sales-gate-service";
 import { assertPipelineRequiredFields } from "@/modules/pipeline-templates/application/opportunity-required-fields";
-import { executeSaleCompletionSchema, prepareLeadSaleSchema, saleCompletionSchema, saleMonth, salePaymentMethods, saleSchedule, type SaleCompletionInput } from "@/modules/opportunities/domain/sale-completion-contracts";
+import { completeLeadSaleSchema, completeLeadSaleResultSchema, directSaleInstallmentCount, executeSaleCompletionSchema, prepareLeadSaleSchema, saleCompletionSchema, saleMonth, salePaymentMethods, saleSchedule, type CompleteLeadSaleResult, type SaleCompletionInput } from "@/modules/opportunities/domain/sale-completion-contracts";
 import { createPaymentService } from "@/modules/payments/application/payment-service";
 import { syncActiveProspectingCommercialStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createRevenueService } from "@/modules/revenue/application/revenue-service";
@@ -381,7 +381,86 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
       return result;
     }, { isolationLevel: "Serializable", timeout: 60_000 });
   }
-  return { preview, execute, authorize, getOptions, prepareLeadSale };
+  async function completeLeadSale(context: AuthenticatedContext, raw: unknown): Promise<CompleteLeadSaleResult> {
+    const command = completeLeadSaleSchema.parse(raw);
+    const { confirmed: _confirmed, idempotencyKey, ...input } = command;
+    void _confirmed;
+    const fingerprint = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    const now = options.now();
+    return options.database.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`direct-sale:${context.workspaceId}:${idempotencyKey}`}, 0))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`direct-lead-sale:${context.workspaceId}:${input.leadId}`}, 0))`;
+      const database = transactionDatabase(tx);
+      const service = createSaleCompletionService({ database, now: () => now });
+      const authorization = createAuthorizationService({ database });
+      const lead = await tx.lead.findFirst({ where: { id: input.leadId, workspaceId: context.workspaceId, deletedAt: null }, include: { routingQueue: true, queue: true } });
+      if (!lead) fail("Lead não encontrado.", "NOT_FOUND", 404);
+      await authorization.assertAuthorized(context, PermissionKeys.LEADS_READ, {
+        workspaceId: context.workspaceId, resourceType: "Lead", resourceId: lead.id,
+        ownerMemberId: lead.ownerMemberId, queueId: lead.queueId, sourceId: lead.sourceId,
+        teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null,
+      });
+      const restricted = await ownSalesOnly(authorization, context);
+      if (restricted && (lead.ownerMemberId !== context.memberId || input.sellerMemberId !== context.memberId)) {
+        fail("Seu perfil pode concluir apenas vendas próprias.", "ACCESS_DENIED", 403);
+      }
+      const replay = await tx.auditLog.findFirst({ where: { workspaceId: context.workspaceId, action: "lead.sale.completed", metadata: { path: ["idempotencyKey"], equals: idempotencyKey } } });
+      if (replay) {
+        const metadata = replay.metadata as { fingerprint?: string; salePayload?: Prisma.JsonValue; result?: Prisma.JsonValue };
+        if (metadata.fingerprint !== fingerprint) fail("A mesma confirmação foi reutilizada com dados diferentes.", "SALE_IDEMPOTENCY_CONFLICT");
+        await service.authorize(context, metadata.salePayload);
+        return completeLeadSaleResultSchema.parse({ ...completeLeadSaleResultSchema.parse(metadata.result), replayed: true });
+      }
+      const seller = await tx.workspaceMember.findFirst({ where: commercialMemberWhere({ workspaceId: context.workspaceId, functions: ["SDR", "CLOSER"], memberId: input.sellerMemberId }) });
+      if (!seller) fail("Vendedor inexistente ou inativo neste workspace.", "NOT_FOUND", 404);
+      const product = await tx.product.findFirst({ where: { workspaceId: context.workspaceId, sku: "SISTEMA-POLITIZAI", active: true, deletedAt: null }, orderBy: { version: "desc" } });
+      if (!product || !isCatalogItemSellable(product, now)) fail("SISTEMA POLITIZAI indisponível para venda.", "CATALOG_ITEM_NOT_SELLABLE");
+      const template = await tx.contractTemplate.findFirst({ where: { workspaceId: context.workspaceId, key: "politizai-commercial-record", status: "ACTIVE", deletedAt: null } });
+      const version = template && await tx.contractTemplateVersion.findFirst({ where: { workspaceId: context.workspaceId, templateId: template.id, version: template.currentVersion } });
+      if (!version) fail("O registro comercial do SISTEMA POLITIZAI não está disponível.");
+      const durationMonths = directSaleInstallmentCount(input)!;
+      const paymentMethod = input.paymentPlan === "CARD_INSTALLMENTS" ? "CARD" as const : "OTHER" as const;
+      let opportunityId = input.opportunityId;
+      if (!opportunityId) {
+        opportunityId = (await service.prepareLeadSale(context, {
+          leadId: lead.id, sellerMemberId: input.sellerMemberId, productId: product.id,
+          description: input.paymentCondition, totalCents: input.totalCents,
+          upfrontCents: input.upfrontCents, installmentCents: input.installmentCents, installmentCount: durationMonths,
+          paymentPlan: input.paymentPlan === "CASH" ? "CASH" : BigInt(input.upfrontCents) === 0n ? "INSTALLMENTS" : "UPFRONT_INSTALLMENTS",
+          paymentMethod, idempotencyKey,
+        })).opportunityId;
+      }
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`opportunity:${context.workspaceId}:${opportunityId}`}, 0))`;
+      const opportunity = await tx.opportunity.findFirst({ where: { id: opportunityId, workspaceId: context.workspaceId, leadId: lead.id, deletedAt: null }, include: { offers: { where: { deletedAt: null }, orderBy: { createdAt: "desc" }, take: 1 } } });
+      if (!opportunity) fail("Negócio não encontrado neste lead.", "NOT_FOUND", 404);
+      const resource = { workspaceId: context.workspaceId, resourceType: "Opportunity", resourceId: opportunity.id, opportunityId: opportunity.id, ownerMemberId: opportunity.ownerMemberId, sourceId: lead.sourceId };
+      await authorization.assertAuthorized(context, PermissionKeys.OPPORTUNITIES_WRITE, resource);
+      await assertOriginCapability(database, context, await authorization.authorize(context, PermissionKeys.OPPORTUNITIES_WRITE, resource), lead.sourceId, "canTransition");
+      if (restricted && opportunity.ownerMemberId !== context.memberId) fail("Seu perfil pode concluir apenas vendas próprias.", "ACCESS_DENIED", 403);
+      if (opportunity.status !== "OPEN" || (input.expectedRevision && opportunity.revision !== input.expectedRevision)) fail("O negócio mudou. Recarregue o card antes de confirmar.", "SALE_STALE");
+      if (opportunity.productId !== product.id) fail("Este negócio não está vinculado ao SISTEMA POLITIZAI. Revise o produto no negócio.");
+      if (opportunity.offers[0]?.totalCents !== BigInt(input.totalCents) || opportunity.offers[0]?.productId !== product.id) {
+        await tx.offer.create({ data: { workspaceId: context.workspaceId, opportunityId, productId: product.id,
+          name: "Condições confirmadas no fechamento", quantity: 1, unitPriceCents: BigInt(input.totalCents), totalCents: BigInt(input.totalCents),
+          createdByActorId: context.actorId, updatedByActorId: context.actorId, createdAt: now, updatedAt: now } });
+      }
+      const salePayload = saleCompletionSchema.parse({
+        opportunityId, expectedRevision: opportunity.revision, sellerMemberId: input.sellerMemberId,
+        totalCents: input.totalCents, monthlyCents: input.installmentCents, upfrontCents: input.upfrontCents,
+        receivedCents: "0", paymentMethod, paymentCondition: input.paymentCondition, durationMonths,
+        startsAt: now.toISOString(), templateVersionId: version.id,
+        ...(!opportunity.accountId && !lead.accountId ? { customer: { mode: "CREATE", name: lead.organizationName?.trim() || lead.fullName } } : {}),
+        acceptance: { acceptedByName: context.displayName, acceptedByRole: "Vendedor — confirmação comercial interna", evidenceText: `Venda registrada pelo vendedor no CRM. ${input.paymentCondition}` },
+      });
+      const result = completeLeadSaleResultSchema.parse(await service.execute(context, { ...salePayload, confirmed: true, idempotencyKey }));
+      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "lead.sale.completed", entityType: "Opportunity", entityId: opportunityId, occurredAt: now,
+        changes: { leadId: lead.id, totalCents: input.totalCents, paymentPlan: input.paymentPlan, durationMonths, receivedCents: "0" },
+        metadata: JSON.parse(JSON.stringify({ idempotencyKey, fingerprint, salePayload, result })) as Prisma.InputJsonValue,
+      } });
+      return result;
+    }, { isolationLevel: "Serializable", timeout: 60_000 });
+  }
+  return { preview, execute, authorize, getOptions, prepareLeadSale, completeLeadSale };
 }
 
 export function getSaleCompletionService() {

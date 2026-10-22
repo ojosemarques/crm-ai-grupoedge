@@ -13,8 +13,7 @@ import { ScoringWorkspace } from "@/app/leads/[leadId]/historico/scoring-workspa
 import { LeadStageWorkspace } from "@/app/leads/[leadId]/historico/lead-stage-workspace";
 import { LeadMeetingsWorkspace } from "@/app/leads/[leadId]/historico/lead-meetings-workspace";
 import { LeadOpportunitiesWorkspace } from "@/app/leads/[leadId]/historico/lead-opportunities-workspace";
-import { SaleCompletionPanel } from "@/components/opportunities/sale-completion-panel";
-import { LeadSalePreparationPanel, type PreparedSaleTerms } from "@/components/opportunities/lead-sale-preparation-panel";
+import { LeadSalePanel } from "@/components/opportunities/lead-sale-preparation-panel";
 import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
 import type { LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
 import { MeetingParticipantField } from "@/modules/meetings/ui/meeting-participant-field";
@@ -371,7 +370,6 @@ export function OperationalHistoryWorkspace({
   const [sellerTargetsLoading, setSellerTargetsLoading] = useState(false);
   const [opportunities, setOpportunities] = useState(initialOpportunities);
   const [saleOpportunityId, setSaleOpportunityId] = useState<string | null>(null);
-  const [preparedSaleTerms, setPreparedSaleTerms] = useState<PreparedSaleTerms | undefined>();
   const hasWhatsapp = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "WHATSAPP"));
   const hasInstagram = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "INSTAGRAM"));
   const instagramPoint = contactIdentity?.contact?.points.find((point) => point.type === "INSTAGRAM" && point.isPrimary)
@@ -1544,7 +1542,7 @@ export function OperationalHistoryWorkspace({
         <div aria-labelledby="lead-sale-title" className="grid gap-4" id="panel-sale" role="tabpanel">
           <div>
             <h2 id="lead-sale-title">Marcar vendido</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Confirme a venda para atualizar cliente, financeiro e indicadores no mesmo fluxo.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Informe as condições comerciais e finalize em um único envio.</p>
           </div>
           {saleOpportunities.length > 1 ? (
             <label className="text-sm">Negócio
@@ -1553,10 +1551,11 @@ export function OperationalHistoryWorkspace({
               </select>
             </label>
           ) : null}
-          {saleOpportunity ? (
-            <SaleCompletionPanel
-              initiallyExpanded
-              key={saleOpportunity.id}
+          {saleOpportunity || opportunities.canPrepareSale ? (
+            <LeadSalePanel
+              key={`${operations.lead.id}:${saleOpportunityId ?? "new"}`}
+              screen={opportunities}
+              opportunity={saleOpportunity}
               onBusyChange={setPending}
               onCommitted={() => {
                 void refresh().catch((error: unknown) => setNotice({
@@ -1564,20 +1563,6 @@ export function OperationalHistoryWorkspace({
                   message: error instanceof Error ? error.message : "Venda registrada, mas os dados do card não foram atualizados.",
                 }));
                 router.refresh();
-              }}
-              opportunity={saleOpportunity}
-              sellers={opportunities.saleSellerOptions}
-              initialTerms={preparedSaleTerms}
-            />
-          ) : opportunities.canPrepareSale ? (
-            <LeadSalePreparationPanel
-              screen={opportunities}
-              onPrepared={async (opportunityId, terms) => {
-                const response = await fetch(`/api/leads/${operations.lead.id}/opportunities`, { cache: "no-store" });
-                const next = (await readResponse(response)) as LeadOpportunityScreen;
-                setOpportunities(next);
-                setPreparedSaleTerms(terms);
-                setSaleOpportunityId(opportunityId);
               }}
             />
           ) : <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">{saleActionHint}</p>}

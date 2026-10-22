@@ -3,7 +3,45 @@ import { z } from "zod";
 export const salePaymentMethods = ["PIX", "BANK_TRANSFER", "CARD", "CASH", "OTHER"] as const;
 export const salePaymentPlans = ["CASH", "INSTALLMENTS", "UPFRONT_INSTALLMENTS"] as const;
 
-const cents = z.string().regex(/^\d{1,15}$/).refine((value) => BigInt(value) <= BigInt(Number.MAX_SAFE_INTEGER), "Valor fora do limite seguro.");
+const cents = z.string().regex(/^\d{1,15}$/).refine((value) => /^\d{1,15}$/.test(value) && BigInt(value) <= BigInt(Number.MAX_SAFE_INTEGER), "Valor fora do limite seguro.");
+export const directSalePaymentPlans = ["UPFRONT_INSTALLMENTS", "CASH", "CARD_INSTALLMENTS"] as const;
+
+export function directSaleInstallmentCount(input: { totalCents: string; upfrontCents: string; installmentCents: string; paymentPlan: (typeof directSalePaymentPlans)[number] }): number | null {
+  if (![input.totalCents, input.upfrontCents, input.installmentCents].every((value) => /^\d{1,15}$/.test(value))) return null;
+  const total = BigInt(input.totalCents);
+  const upfront = BigInt(input.upfrontCents);
+  const installment = BigInt(input.installmentCents);
+  if (total <= 0n || upfront > total) return null;
+  if (input.paymentPlan === "CASH") return upfront === total && installment === 0n ? 1 : null;
+  const balance = total - upfront;
+  if (installment <= 0n || balance <= 0n || balance % installment !== 0n) return null;
+  const count = balance / installment;
+  return count >= 1n && count <= 60n ? Number(count) : null;
+}
+
+export const completeLeadSaleSchema = z.object({
+  leadId: z.string().uuid(),
+  opportunityId: z.string().uuid().optional(),
+  expectedRevision: z.number().int().positive().optional(),
+  sellerMemberId: z.string().uuid(),
+  totalCents: cents,
+  paymentPlan: z.enum(directSalePaymentPlans),
+  installmentCents: cents,
+  upfrontCents: cents,
+  paymentCondition: z.string().trim().min(2).max(500),
+  confirmed: z.literal(true),
+  idempotencyKey: z.string().uuid(),
+}).strict().superRefine((input, ctx) => {
+  if (Boolean(input.opportunityId) !== Boolean(input.expectedRevision)) ctx.addIssue({ code: "custom", path: ["opportunityId"], message: "Recarregue os dados do negócio antes de fechar." });
+  if (directSaleInstallmentCount(input) === null) ctx.addIssue({ code: "custom", path: ["totalCents"], message: input.paymentPlan === "CASH"
+    ? "À vista exige entrada igual ao total e parcela zero."
+    : "O saldo após a entrada deve corresponder a 1 até 60 parcelas inteiras do valor informado." });
+});
+export const completeLeadSaleResultSchema = z.object({
+  opportunityId: z.string().uuid(), accountId: z.string().uuid(), contractId: z.string().uuid(),
+  invoiceIds: z.array(z.string().uuid()), receivedCents: z.literal("0"), outstandingCents: cents, replayed: z.boolean(),
+});
+export type CompleteLeadSaleResult = z.infer<typeof completeLeadSaleResultSchema>;
 const terms = z.object({
   opportunityId: z.string().uuid(),
   expectedRevision: z.number().int().positive(),

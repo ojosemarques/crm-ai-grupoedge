@@ -53,6 +53,72 @@ async function fixture(pipelineId?: string) {
 }
 
 describe("venda integrada atômica", () => {
+  for (const profile of ["administrator", "closer"] as const) {
+    it(`fecha em um envio com seis campos, sem baixa ou gravação parcial (${profile})`, async () => {
+      await database.$executeRawUnsafe(readFileSync("scripts/sql/configure-politizai-sales.sql", "utf8"));
+      const seller = await context("closer1@demo.politizai.local");
+      const actor = profile === "administrator" ? admin : seller;
+      const previous = await fixture();
+      const original = await database.opportunity.update({ where: { id: previous.opportunityId }, data: { deletedAt: now } });
+      const customerName = `Cliente venda única ${randomUUID()}`;
+      await database.lead.update({ where: { id: original.leadId }, data: { ownerMemberId: seller.memberId, accountId: null, fullName: customerName, organizationName: null } });
+      const command = { leadId: original.leadId, sellerMemberId: seller.memberId,
+        totalCents: "765432", upfrontCents: "65432", installmentCents: "100000", paymentPlan: "CARD_INSTALLMENTS",
+        paymentCondition: "Entrada de R$ 654,32 e sete parcelas de R$ 1.000,00 no cartão.", confirmed: true, idempotencyKey: randomUUID() };
+      await expect(service.completeLeadSale(viewer, command)).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+      await expect(service.completeLeadSale(actor, { ...command, receivedCents: command.totalCents })).rejects.toThrow();
+      const result = await service.completeLeadSale(actor, command);
+      expect(result).toMatchObject({ receivedCents: "0", outstandingCents: "765432", invoiceIds: expect.any(Array), replayed: false });
+      expect(result.invoiceIds).toHaveLength(7);
+      const opportunity = await database.opportunity.findUniqueOrThrow({ where: { id: result.opportunityId }, include: { product: true } });
+      expect(opportunity).toMatchObject({ status: "WON", ownerMemberId: seller.memberId, tcvCents: 765432n, mrrCents: 100000n, product: { name: "SISTEMA POLITIZAI" } });
+      expect(await database.account.findUniqueOrThrow({ where: { id: result.accountId } })).toMatchObject({ name: customerName });
+      const invoices = await database.invoice.findMany({ where: { contractId: result.contractId } });
+      expect(invoices.reduce((sum, invoice) => sum + invoice.totalCents, 0n)).toBe(765432n);
+      expect(invoices.every((invoice) => invoice.paidCents === 0n)).toBe(true);
+      expect(await database.payment.count({ where: { invoiceId: { in: result.invoiceIds } } })).toBe(0);
+      expect(await service.completeLeadSale(actor, command)).toEqual({ ...result, replayed: true });
+      await expect(service.completeLeadSale(actor, { ...command, paymentCondition: "Outra condição" })).rejects.toMatchObject({ code: "SALE_IDEMPOTENCY_CONFLICT" });
+      expect(await database.commercialContract.count({ where: { opportunityId: result.opportunityId } })).toBe(1);
+      expect(await database.opportunity.count({ where: { leadId: original.leadId, deletedAt: null } })).toBe(1);
+    });
+  }
+
+  it("fecha negócio já preparado com os novos valores, sem criar outro negócio", async () => {
+    await database.$executeRawUnsafe(readFileSync("scripts/sql/configure-politizai-sales.sql", "utf8"));
+    const seller = await context("closer1@demo.politizai.local");
+    const previous = await fixture();
+    const product = await database.product.findFirstOrThrow({ where: { workspaceId, sku: "SISTEMA-POLITIZAI" } });
+    const opportunity = await database.opportunity.update({ where: { id: previous.opportunityId }, data: { productId: product.id, ownerMemberId: seller.memberId } });
+    await database.offer.updateMany({ where: { opportunityId: opportunity.id }, data: { createdAt: new Date(now.getTime() - 1000) } });
+    const result = await service.completeLeadSale(admin, { leadId: opportunity.leadId, opportunityId: opportunity.id, expectedRevision: opportunity.revision,
+      sellerMemberId: seller.memberId, totalCents: "1800000", upfrontCents: "300000", installmentCents: "150000", paymentPlan: "UPFRONT_INSTALLMENTS",
+      paymentCondition: "Entrada de R$ 3.000 e dez parcelas de R$ 1.500.", confirmed: true, idempotencyKey: randomUUID() });
+    expect(result.opportunityId).toBe(opportunity.id);
+    expect(result.invoiceIds).toHaveLength(10);
+    expect(await database.opportunity.count({ where: { leadId: opportunity.leadId, deletedAt: null } })).toBe(1);
+    expect(await database.opportunity.findUniqueOrThrow({ where: { id: opportunity.id } })).toMatchObject({ status: "WON", tcvCents: 1800000n });
+  });
+
+  it("à vista não registra recebimento e desfaz a preparação se o fechamento falhar", async () => {
+    await database.$executeRawUnsafe(readFileSync("scripts/sql/configure-politizai-sales.sql", "utf8"));
+    const seller = await context("closer1@demo.politizai.local");
+    const previous = await fixture();
+    const original = await database.opportunity.update({ where: { id: previous.opportunityId }, data: { deletedAt: now } });
+    const name = `Cliente repetido ${randomUUID()}`;
+    await database.account.update({ where: { id: original.accountId! }, data: { name, normalizedName: name.toLowerCase() } });
+    await database.lead.update({ where: { id: original.leadId }, data: { fullName: name, ownerMemberId: seller.memberId, accountId: null, organizationName: null } });
+    const command = { leadId: original.leadId, sellerMemberId: seller.memberId, totalCents: "10000", upfrontCents: "10000", installmentCents: "0",
+      paymentPlan: "CASH", paymentCondition: "Valor total à vista, conforme combinado.", confirmed: true, idempotencyKey: randomUUID() };
+    await expect(service.completeLeadSale(seller, command)).rejects.toMatchObject({ code: "SALE_CUSTOMER_EXISTS" });
+    expect(await database.opportunity.count({ where: { leadId: original.leadId, deletedAt: null } })).toBe(0);
+    expect(await database.auditLog.count({ where: { action: "sale.preparation.created", metadata: { path: ["idempotencyKey"], equals: command.idempotencyKey } } })).toBe(0);
+    await database.lead.update({ where: { id: original.leadId }, data: { accountId: original.accountId } });
+    const result = await service.completeLeadSale(seller, command);
+    expect(result).toMatchObject({ receivedCents: "0", outstandingCents: "10000", accountId: original.accountId });
+    expect(result.invoiceIds).toHaveLength(1);
+    expect(await database.subscription.findFirstOrThrow({ where: { contractId: result.contractId } })).toMatchObject({ currentMrrCents: 0n });
+  });
   it("disponibiliza SISTEMA POLITIZAI sem tabela fixa e fecha com preço e condições do vendedor", async () => {
     const setup = readFileSync("scripts/sql/configure-politizai-sales.sql", "utf8");
     await database.$executeRawUnsafe(setup);
