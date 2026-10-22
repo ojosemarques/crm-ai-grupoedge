@@ -1,4 +1,6 @@
+import Image from "next/image";
 import type { ReactNode } from "react";
+import politizaiLogo from "../../../public/brand/politizai-logo-vector.svg";
 import styles from "./realtime-dashboard.module.css";
 
 type IconName = "grid" | "trophy" | "chart" | "expand" | "exit" | "play" | "pause" | "link" | "close" | "copy" | "phone" | "message" | "people" | "calendar" | "check" | "sale" | "arrow" | "clock" | "sun" | "moon";
@@ -30,7 +32,7 @@ export function Icon({ name, className }: Readonly<{ name: IconName; className?:
 }
 
 export function BrandMark() {
-  return <svg aria-hidden="true" className={styles.brandMark} fill="currentColor" viewBox="0 0 40 40"><path d="M4 33 20 3a1.5 1.5 0 0 1 2.6 1.5L7 34.5A1.7 1.7 0 0 1 4 33Zm7 0L25 7a1.5 1.5 0 0 1 2.6 1.5l-13.6 26A1.7 1.7 0 0 1 11 33Zm7 0L29 13a1.5 1.5 0 0 1 2.6 1.5l-10.6 20A1.7 1.7 0 0 1 18 33Zm8-2 7-12 7 14a1 1 0 0 1-1 1H28a2 2 0 0 1-2-3Z" /></svg>;
+  return <Image alt="Logo Politizai" className={styles.brandMark} src={politizaiLogo} width={40} height={40} unoptimized />;
 }
 
 export function Avatar({ initials, position = 1 }: Readonly<{ initials: string; position?: number }>) {

@@ -20,7 +20,7 @@ RANKING
 
 ## Direção visual
 
-O pedido corretivo de 22/10/2026 unifica as composições: mesmo rail, cabeçalho, resumo, tipografia e superfícies nas duas visões. Escuro carvão/menta padrão, claro opcional por tokens, sem associar aparência ao slide. Tema persistido por navegador e query `theme`, preservando o token no fragmento. Avatares usam iniciais reais; valores e metas vêm do CRM.
+O pedido corretivo de 22/10/2026 unifica as composições: mesmo rail, cabeçalho, resumo, tipografia e superfícies nas duas visões. Escuro carvão/azul padrão, claro opcional por tokens, sem associar aparência ao slide. A marca usa o SVG original Politizai (`public/brand/politizai-logo-vector.svg`) e seu azul `#1F35FD`, com tons mais claros para legibilidade no tema escuro; destaques verdes foram substituídos por azuis. Tema persistido por navegador e query `theme`, preservando o token no fragmento. Avatares usam iniciais reais; valores e metas vêm do CRM.
 
 ## Layout
 

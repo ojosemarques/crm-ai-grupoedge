@@ -10,6 +10,13 @@ const board = (page: Page) => page.locator('main[aria-label="TEMPO REAL"]');
 const slide = (page: Page, index: number) => page.getByRole("region", { name: `Slide ${index} de 2` });
 
 async function expectPanelLayout(page: Page, desktop: boolean) {
+  const logo = page.getByRole("img", { name: "Logo Politizai", exact: true });
+  await expect(logo).toBeVisible();
+  await expect(logo).toHaveAttribute("src", /^\/_next\/static\/media\/politizai-logo-vector\.[\w-]+\.svg$/);
+  await expect.poll(() => logo.evaluate((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0)).toBe(true);
+  expect(await board(page).evaluate((element) => getComputedStyle(element).getPropertyValue("--brand-blue").trim())).toBe("#1f35fd");
+  const theme = await board(page).getAttribute("data-appearance");
+  expect(await board(page).evaluate((element) => getComputedStyle(element).getPropertyValue("--accent").trim())).toBe(theme === "light" ? "#1f35fd" : "#8c9aff");
   const panels = await page.locator('[class*="summaryStrip"] > article, [class*="periodPanel"], [class*="salesGoalCard"], [class*="chartCard"], [class*="leaderCard"], [class*="rankingPanel"]').evaluateAll((elements) => elements.map((element) => {
     const rect = element.getBoundingClientRect();
     return { label: element.textContent?.slice(0, 40), left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
