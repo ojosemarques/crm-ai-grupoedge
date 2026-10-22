@@ -11625,6 +11625,7 @@ model MarketingFormPartialResponse {
   @@index([workspaceId, marketingFormId, completedAt, deletedAt, lastAnsweredAt])
   @@index([workspaceId, marketingFormVersionId, lastAnsweredAt])
   @@index([workspaceId, receiptId])
+  @@index([workspaceId, createdByActorId])
   @@map("marketing_form_partial_responses")
 }
 
