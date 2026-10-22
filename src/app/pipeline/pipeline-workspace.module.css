@@ -57,6 +57,7 @@
 .cardTitle button:hover { color: var(--primary); }
 .cardTitle > span { flex: 0 0 auto; font-size: 9px; font-weight: 650; }
 .subtitle { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; color: var(--text-muted); }
+.phone { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 9px; color: var(--text-muted); }
 .cardFooter { display: flex; align-items: center; gap: 7px; min-height: 33px; padding: 5px 9px; border-top: 1px solid var(--border); color: var(--text-muted); }
 .cardFooter > button:not(.moveButton):not(.mobileMoveButton) { display: inline-flex; border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; }
 .cardFooter > button:not(.moveButton):not(.mobileMoveButton):hover { color: var(--primary); }

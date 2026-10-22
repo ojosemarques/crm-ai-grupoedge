@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import styles from "@/app/email-agente/prospecting-workspace.module.css";
+import { LeadFormResponseDetails } from "@/components/leads/lead-form-response-details";
 import type { getAdvertisingWorkspaceService } from "@/modules/advertising/application/advertising-workspace-service";
 
 export const advertisingViews = ["pipeline", "stock", "activities", "metrics"] as const;
@@ -59,8 +60,8 @@ export function AdvertisingStock({ screen }: Readonly<{ screen: Screen }>) {
       <section className={styles.section}>
         <div className={styles.sectionHeader}><div><h2>Estoque de Anúncios</h2><p>{screen.stock.total} lead(s) · página {screen.stock.page} de {pages}</p></div></div>
         <div className={styles.tableWrap}>
-          <table className={styles.table}><thead><tr><th>Lead</th><th>Etapa</th><th>Responsável</th><th>Prioridade</th><th>Entrada</th></tr></thead><tbody>
-            {screen.stock.items.map((lead) => <tr key={lead.id}><td><Link className={styles.link} href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link><br />{lead.jobTitle ?? lead.organizationName ?? "—"}</td><td>{lead.currentStage.name}</td><td>{lead.owner?.name ?? "Sem responsável"}</td><td>{lead.priority}</td><td>{formatDate(lead.createdAt, screen.timeZone)}</td></tr>)}
+          <table className={styles.table}><thead><tr><th>Lead</th><th>Telefone</th><th>Respostas</th><th>Etapa</th><th>Responsável</th><th>Prioridade</th><th>Entrada</th></tr></thead><tbody>
+            {screen.stock.items.map((lead) => <tr key={lead.id}><td><Link className={styles.link} href={`/leads/${lead.id}/historico`}>{lead.fullName}</Link><br />{lead.jobTitle ?? lead.organizationName ?? "—"}</td><td>{lead.phone ?? "—"}</td><td><LeadFormResponseDetails responses={lead.formResponses} timeZone={screen.timeZone} /></td><td>{lead.currentStage.name}</td><td>{lead.owner?.name ?? "Sem responsável"}</td><td>{lead.priority}</td><td>{formatDate(lead.createdAt, screen.timeZone)}</td></tr>)}
           </tbody></table>
           {screen.stock.items.length === 0 ? <p className={styles.empty}>O pipeline de Anúncios está vazio.</p> : null}
         </div>

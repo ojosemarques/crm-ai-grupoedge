@@ -15,6 +15,7 @@ import {
   leadVisibilityWhere,
   resolveLeadVisibilityScope,
 } from "@/modules/leads/application/lead-list-service";
+import { responsesByLead } from "@/modules/marketing-forms/application/marketing-form-response-summary-service";
 import {
   statusForLeadStage,
 } from "@/modules/pipelines/domain/lead-stage-transition-policy";
@@ -31,7 +32,7 @@ import {
   type PreSalesPipelineScreen,
   type StageTransitionOption,
 } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
-import { isProspectingOperationPipelineName } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
+import { ADVERTISING_PIPELINE_NAME, isProspectingOperationPipelineName } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import type { ResourceScope } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -348,12 +349,18 @@ async function orderedStageCardRows(
   return histories.flatMap((history) => history.lead ? [history.lead] : []);
 }
 
-function toPipelineCard(lead: PipelineCardRow, stageName: string): LeadPipelineCard {
+function toPipelineCard(
+  lead: PipelineCardRow,
+  stageName: string,
+  formResponses: LeadPipelineCard["formResponses"] = [],
+): LeadPipelineCard {
   const task = lead.tasks[0] ?? null;
   return {
     id: lead.id,
     fullName: lead.fullName,
+    phone: formResponses[0]?.phone ?? lead.normalizedPhone,
     jobTitle: lead.jobTitle,
+    formResponses,
     priorityCode: lead.currentScore?.leadScore.priorityBandCode ?? null,
     score: lead.currentScore?.leadScore.score ?? null,
     responsibleName: lead.owner?.user.displayName ?? lead.queue?.name ?? "Responsável não identificado",
@@ -941,7 +948,8 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         select: { leadId: true, stageId: true, enteredAt: true, exitedAt: true },
       }),
     ]);
-    const [members, queues] = await Promise.all([
+    const cardRows = stageRows.flat();
+    const [members, queues, formResponses] = await Promise.all([
       options.database.workspaceMember.findMany({
         where: { workspaceId: context.workspaceId, id: { in: ownerRefs.flatMap((item) => item.ownerMemberId ? [item.ownerMemberId] : []) }, deletedAt: null },
         orderBy: { user: { displayName: "asc" } },
@@ -952,6 +960,9 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         orderBy: { name: "asc" },
         select: { id: true, name: true },
       }),
+      pipeline.name === ADVERTISING_PIPELINE_NAME
+        ? responsesByLead(options.database, context.workspaceId, cardRows.map((lead) => lead.id))
+        : Promise.resolve(new Map()),
     ]);
     const counts = new Map(groupedCounts.map((item) => [item.currentStageId, item._count._all]));
     const rowsByStage = new Map(pipeline.stages.map((stage, index) => [stage.id, stageRows[index] ?? []]));
@@ -959,7 +970,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       if (!isLeadStageCode(stage.leadStageCode)) return [];
       const stageCode = stage.leadStageCode;
       const rows = rowsByStage.get(stage.id) ?? [];
-      const leads: LeadPipelineCard[] = rows.map((lead) => toPipelineCard(lead, stage.name));
+      const leads: LeadPipelineCard[] = rows.map((lead) => toPipelineCard(lead, stage.name, formResponses.get(lead.id) ?? []));
       const stageHealthRows = healthRows.filter((lead) => lead.currentStageId === stage.id);
       const expectedLimit = expectedStageHours[stageCode] ?? null;
       const today = workspaceDayRange(workspaceDateAt(now, workspace.timeZone), workspace.timeZone);
@@ -1068,13 +1079,16 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         take: parsed.data.limit,
       }),
     ]);
+    const formResponses = pipeline.name === ADVERTISING_PIPELINE_NAME
+      ? await responsesByLead(options.database, context.workspaceId, rows.map((lead) => lead.id))
+      : new Map();
     return Object.freeze({
       stageId: stage.id,
       offset: parsed.data.offset,
       limit: parsed.data.limit,
       total,
       hasMore: parsed.data.offset + rows.length < total,
-      leads: rows.map((lead) => toPipelineCard(lead, stage.name)),
+      leads: rows.map((lead) => toPipelineCard(lead, stage.name, formResponses.get(lead.id) ?? [])),
     });
   }
 

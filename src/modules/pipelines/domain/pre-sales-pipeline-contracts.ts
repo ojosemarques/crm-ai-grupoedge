@@ -55,7 +55,19 @@ export type StageTransitionOption = Readonly<{
 export type LeadPipelineCard = Readonly<{
   id: string;
   fullName: string;
+  phone: string | null;
   jobTitle: string | null;
+  formResponses: readonly Readonly<{
+    receiptId: string;
+    formName: string;
+    submittedAt: string;
+    phone: string | null;
+    answers: readonly Readonly<{
+      questionKey: string;
+      question: string;
+      displayValue: string;
+    }>[];
+  }>[];
   priorityCode: "P1" | "P2" | "P3" | null;
   score: number | null;
   responsibleName: string;

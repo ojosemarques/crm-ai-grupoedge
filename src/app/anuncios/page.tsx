@@ -83,7 +83,7 @@ export default async function AdvertisingPage({ searchParams }: Readonly<{ searc
     <main className="page-canvas">
       <PageHeader description="Pipeline exclusivo para leads de anúncios, com atividades e indicadores separados da Prospecção Ativa." eyebrow="Trabalho" title={ADVERTISING_PIPELINE_NAME} />
       <AdvertisingNav active={view} />
-      {view === "pipeline" && pipelineScreen ? <PreSalesPipelineWorkspace basePath="/anuncios" fixedQuery={{ view: "pipeline" }} initialView="board" key={pipelineScreen.pipelineId} screen={pipelineScreen} showGenderFilter showPhoneTypeFilter showStateFilter /> : null}
+      {view === "pipeline" && pipelineScreen ? <PreSalesPipelineWorkspace basePath="/anuncios" fixedQuery={{ view: "pipeline" }} initialView="board" key={pipelineScreen.pipelineId} screen={pipelineScreen} showGenderFilter showPhoneTypeFilter showStateFilter showSubmissionDetails /> : null}
       {view === "stock" && workspaceScreen ? <AdvertisingStock screen={workspaceScreen} /> : null}
       {view === "activities" && workspaceScreen ? <AdvertisingActivities screen={workspaceScreen} /> : null}
       {view === "metrics" && workspaceScreen ? <AdvertisingMetrics screen={workspaceScreen} /> : null}

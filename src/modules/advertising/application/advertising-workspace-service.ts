@@ -4,6 +4,7 @@ import {
   leadVisibilityWhere,
   resolveLeadVisibilityScope,
 } from "@/modules/leads/application/lead-list-service";
+import { responsesByLead } from "@/modules/marketing-forms/application/marketing-form-response-summary-service";
 import {
   prospectingMetricsPeriodPresets,
   resolveProspectingMetricsPeriod,
@@ -116,6 +117,7 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
         select: {
           id: true,
           fullName: true,
+          normalizedPhone: true,
           jobTitle: true,
           organizationName: true,
           stateCode: true,
@@ -148,6 +150,7 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
       }),
       options.database.lead.findMany({ where: leadWhere, select: { id: true } }),
     ]);
+    const formResponses = await responsesByLead(options.database, context.workspaceId, leads.map((lead) => lead.id));
 
     const metricWhere = {
       workspaceId: context.workspaceId,
@@ -207,6 +210,8 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
         pageSize,
         items: leads.map((lead) => ({
           ...lead,
+          phone: formResponses.get(lead.id)?.[0]?.phone ?? lead.normalizedPhone,
+          formResponses: formResponses.get(lead.id) ?? [],
           createdAt: lead.createdAt.toISOString(),
           owner: lead.owner ? { id: lead.owner.id, name: lead.owner.user.displayName } : null,
         })),

@@ -5,10 +5,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { createMarketingFormAdvertisingSyncService } from "@/modules/marketing-forms/application/marketing-form-advertising-sync-service";
 import { createMarketingFormService } from "@/modules/marketing-forms/application/marketing-form-service";
 import { createMarketingFormReportingService } from "@/modules/marketing-forms/application/marketing-form-reporting-service";
 import { createMarketingFormSubmissionService } from "@/modules/marketing-forms/application/marketing-form-submission-service";
 import { createEmptyMarketingFormDefinition } from "@/modules/marketing-forms/domain/marketing-form-contracts";
+import { ensureAdvertisingPipeline } from "@/modules/settings/application/production-foundation-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -24,6 +26,7 @@ const now = new Date("2033-03-15T14:30:00.000Z");
 const service = createMarketingFormService({ database, authorization, now: () => now });
 const submissionService = createMarketingFormSubmissionService({ database, now: () => now, leadIntake: createLeadIntakeService({ database, authorization, now: () => now }) });
 const reportingService = createMarketingFormReportingService({ database, authorization, now: () => now });
+const advertisingSyncService = createMarketingFormAdvertisingSyncService({ database, authorization, marketingForms: service, now: () => now, ensurePipeline: ensureAdvertisingPipeline });
 
 type Fixture = Readonly<{
   context: AuthenticatedContext;
@@ -59,6 +62,9 @@ async function createFixture(label: string): Promise<Fixture> {
     PermissionKeys.EXPORTS_EXECUTE,
     PermissionKeys.INTEGRATIONS_MANAGE,
     PermissionKeys.INTEGRATIONS_SECRETS_MANAGE,
+    PermissionKeys.BULK_ACTIONS_EXECUTE,
+    PermissionKeys.LEADS_WRITE,
+    PermissionKeys.LEADS_ASSIGN,
   ]) {
     const permission = await database.permission.upsert({ where: { key }, update: {}, create: { key, description: key } });
     await database.rolePermission.create({ data: { workspaceId: workspace.id, roleId: managerRole.id, permissionId: permission.id, scope: "WORKSPACE", createdByActorId: system.id } });
@@ -308,5 +314,82 @@ describe("serviço administrativo de formulários", () => {
     await expect(service.list(tenantA.context)).resolves.toContainEqual(expect.objectContaining({ id: form.id, responseCount: 0 }));
     await expect(database.auditLog.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, action: "marketing.form.response_deleted", entityId: receipt.id } })).resolves.toMatchObject({ actorId: tenantA.context.actorId, changes: expect.objectContaining({ leadPreserved: true }) });
     await expect(reportingService.remove(tenantA.context, form.id, first.receiptPublicId)).rejects.toMatchObject({ code: "MARKETING_FORM_RESPONSE_NOT_FOUND", statusCode: 404 });
+  });
+
+  it("publica o destino Anúncios e move respostas existentes sem criar atividades, tarefas ou metas", async () => {
+    const slug = `ads-sync-${randomUUID().slice(0, 8)}`;
+    const form = await service.create(tenantA.context, { name: "Forms Mandato", publicSlug: slug });
+    const saved = await service.updateDraft(tenantA.context, form.id, {
+      name: form.name,
+      expectedRevision: form.revision,
+      definition: publishableDefinition(tenantA),
+    });
+    const published = await service.publish(tenantA.context, form.id, saved.revision);
+    const phoneSuffix = Math.floor(10_000_000 + Math.random() * 89_999_999).toString();
+    const accepted = await submissionService.submit(slug, {
+      versionPublicId: published.version.publicId,
+      sessionPublicId: randomUUID(),
+      idempotencyToken: randomUUID(),
+      startedAt: new Date(now.getTime() - 2_000).toISOString(),
+      honeypot: "",
+      tracking: {},
+      answers: [
+        { questionKey: "nome-completo", value: "Lead do formulário" },
+        { questionKey: "telefone", value: `(62)9${phoneSuffix.slice(0, 4)}-${phoneSuffix.slice(4)}` },
+      ],
+    });
+    const receipt = await database.marketingFormReceipt.findFirstOrThrow({ where: { publicId: accepted.receiptPublicId, workspaceId: tenantA.context.workspaceId } });
+    const submission = await database.leadFormSubmission.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, marketingFormReceiptId: receipt.id } });
+    const leadId = submission.leadId!;
+    const initialHistory = await database.stageHistory.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, leadId, exitedAt: null } });
+    const progressedAt = new Date(initialHistory.enteredAt.getTime() + 1);
+    await database.stageHistory.update({
+      where: { id: initialHistory.id },
+      data: { exitedAt: progressedAt, exitedByActorId: tenantA.context.actorId },
+    });
+    await database.stageHistory.create({
+      data: {
+        workspaceId: tenantA.context.workspaceId,
+        pipelineId: initialHistory.pipelineId,
+        stageId: initialHistory.stageId,
+        leadId,
+        enteredAt: progressedAt,
+        enteredByActorId: tenantA.context.actorId,
+        transitionOrigin: "SYSTEM",
+        transitionReason: "Continuidade operacional antes da sincronização.",
+      },
+    });
+    const before = {
+      tasks: await database.task.count({ where: { workspaceId: tenantA.context.workspaceId, leadId } }),
+      activities: await database.activity.count({ where: { workspaceId: tenantA.context.workspaceId, leadId } }),
+      goals: await database.goalQuota.count({ where: { workspaceId: tenantA.context.workspaceId } }),
+    };
+    await ensureAdvertisingPipeline(database, tenantA.context.workspaceId, tenantA.context.actorId);
+
+    await expect(advertisingSyncService.run(tenantA.context, form.id, { mode: "PREVIEW" })).resolves.toMatchObject({
+      mode: "PREVIEW",
+      acceptedResponses: 1,
+      linkedResponses: 1,
+      distinctLeads: 1,
+      toMove: 1,
+      leadsWithClosedStageHistory: 1,
+      futureResponsesConfigured: false,
+    });
+    const applied = await advertisingSyncService.run(tenantA.context, form.id, { mode: "APPLY", expectedRevision: published.form.revision });
+    expect(applied).toMatchObject({ mode: "APPLY", movedLeads: 1, toMove: 0, alreadyRouted: 1, futureResponsesConfigured: true });
+
+    const routed = await database.lead.findUniqueOrThrow({ where: { id: leadId }, include: { pipeline: true, currentStage: true } });
+    expect(routed.pipeline.name).toBe("Anúncios");
+    expect(routed.currentStage.leadStageCode).toBe("NEW");
+    expect(await database.stageHistory.count({ where: { workspaceId: tenantA.context.workspaceId, leadId } })).toBe(3);
+    expect(await database.stageHistory.count({ where: { workspaceId: tenantA.context.workspaceId, leadId, exitedAt: { not: null }, transitionReason: "Entrada inicial do lead." } })).toBe(1);
+    expect(await database.task.count({ where: { workspaceId: tenantA.context.workspaceId, leadId } })).toBe(before.tasks);
+    expect(await database.activity.count({ where: { workspaceId: tenantA.context.workspaceId, leadId } })).toBe(before.activities);
+    expect(await database.goalQuota.count({ where: { workspaceId: tenantA.context.workspaceId } })).toBe(before.goals);
+
+    const current = await database.marketingForm.findUniqueOrThrow({ where: { id: form.id } });
+    const replay = await advertisingSyncService.run(tenantA.context, form.id, { mode: "APPLY", expectedRevision: current.revision });
+    expect(replay).toMatchObject({ movedLeads: 0, toMove: 0, alreadyRouted: 1, futureResponsesConfigured: true });
+    expect((await database.marketingForm.findUniqueOrThrow({ where: { id: form.id } })).currentVersion).toBe(2);
   });
 });

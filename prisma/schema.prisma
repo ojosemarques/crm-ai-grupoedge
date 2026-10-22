@@ -5370,7 +5370,7 @@ model StageHistory {
   workspace         Workspace                          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   pipeline          Pipeline                           @relation(fields: [workspaceId, pipelineId], references: [workspaceId, id], onDelete: Restrict)
   stage             PipelineStage                      @relation(fields: [workspaceId, pipelineId, stageId], references: [workspaceId, pipelineId, id], onDelete: Restrict)
-  lead              Lead?                              @relation(fields: [workspaceId, pipelineId, leadId], references: [workspaceId, pipelineId, id], onDelete: Restrict)
+  lead              Lead?                              @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
   opportunity       Opportunity?                       @relation(fields: [workspaceId, pipelineId, opportunityId], references: [workspaceId, pipelineId, id], onDelete: Restrict)
   enteredBy         Actor                              @relation("StageHistoryEnteredBy", fields: [workspaceId, enteredByActorId], references: [workspaceId, id], onDelete: Restrict)
   exitedBy          Actor?                             @relation("StageHistoryExitedBy", fields: [workspaceId, exitedByActorId], references: [workspaceId, id], onDelete: Restrict)

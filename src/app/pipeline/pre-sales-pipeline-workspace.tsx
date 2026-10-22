@@ -12,6 +12,7 @@ import { DataTableShell } from "@/components/ui/surface";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import { InstantPipelineFilterForm } from "@/components/pipelines/instant-pipeline-filter-form";
 import { useTouchPipelineControls } from "@/components/pipelines/use-touch-pipeline-controls";
+import { LeadFormResponseDetails } from "@/components/leads/lead-form-response-details";
 import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
 import type {
   LeadPipelineCard,
@@ -186,6 +187,7 @@ export function PreSalesPipelineWorkspace({
   showGenderFilter = false,
   showPhoneTypeFilter = false,
   showStateFilter = false,
+  showSubmissionDetails = false,
 }: Readonly<{
   screen: PreSalesPipelineScreen;
   initialView: "board" | "list";
@@ -194,6 +196,7 @@ export function PreSalesPipelineWorkspace({
   showGenderFilter?: boolean;
   showPhoneTypeFilter?: boolean;
   showStateFilter?: boolean;
+  showSubmissionDetails?: boolean;
 }>) {
   const router = useRouter();
   const [stages, setStages] = useState<readonly LeadPipelineStageColumn[]>(screen.stages);
@@ -534,6 +537,8 @@ export function PreSalesPipelineWorkspace({
                       <div className={styles.cardTop}><div className={styles.tags}><span className={styles.tag} data-tone={lead.priorityCode === "P1" ? "orange" : lead.priorityCode === "P2" ? "blue" : "purple"}>{lead.priorityCode ?? "Sem prioridade"}</span>{lead.pactoReady ? <span className={styles.tag} data-tone="green">PACTO pronto</span> : null}</div><div className={styles.cardTopActions}><button aria-label={`Arrastar ${lead.fullName}`} className={styles.dragHandle} disabled={!screen.canWrite || pending || touchControls} draggable={!touchControls && screen.canWrite && !pending} onClick={(event) => event.stopPropagation()} onFocus={() => prefetchLeadState(lead)} onMouseEnter={() => prefetchLeadState(lead)} onTouchStart={() => prefetchLeadState(lead)} title="Arrastar para outra etapa" type="button">⠿</button><span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatarSquare} title={lead.responsibleName}>{lead.responsibleName.slice(0, 2).toUpperCase()}</span></div></div>
                       <div className={styles.cardTitle}><button aria-label={`Abrir ficha completa de ${lead.fullName}`} disabled={pending} draggable={false} onClick={(event) => { event.stopPropagation(); openLeadCard(lead); }} type="button">{lead.fullName}</button><span title="Pontuação de qualificação">{lead.score === null ? "—" : `${lead.score}/100`}</span></div>
                       {lead.jobTitle ? <p className={styles.subtitle}>{lead.jobTitle}</p> : null}
+                      {showSubmissionDetails && lead.phone ? <p className={styles.phone}>{lead.phone}</p> : null}
+                      {showSubmissionDetails ? <LeadFormResponseDetails compact responses={lead.formResponses} timeZone={screen.timeZone} /> : null}
                     </div>
                     <footer className={styles.cardFooter}>
                       <span aria-label={`Responsável: ${lead.responsibleName}`} className={styles.avatar} title={lead.responsibleName}>{lead.responsibleName.slice(0, 1).toUpperCase()}</span>
@@ -564,7 +569,7 @@ export function PreSalesPipelineWorkspace({
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="sticky top-0 z-10 border-b bg-muted"><tr><th className="p-3">Lead</th><th className="p-3">Etapa</th><th className="p-3">Prioridade</th><th className="p-3">Responsável</th><th className="p-3">Próxima ação</th><th className="p-3">Ação</th></tr></thead>
               <tbody>{visibleStages.flatMap((stage) => stage.leads).map((lead) => (
-                <tr className="border-b last:border-0" key={lead.id}><td className="p-3"><button className="font-medium underline" disabled={pending} onClick={() => openLeadCard(lead)} type="button">{lead.fullName}</button></td><td className="p-3"><span className="stage-badge">{lead.currentStageName}</span></td><td className="p-3">{lead.score === null ? "Ausente" : <span className="priority-badge" data-priority={lead.priorityCode}>{lead.priorityCode} · {lead.score}</span>}</td><td className="p-3">{lead.responsibleName}</td><td className="p-3">{lead.nextActionDescription ?? "Ausente"}</td><td className="p-3"><Button disabled={pending} onClick={() => openLeadCard(lead)} size="sm" type="button" variant="secondary">Abrir lead</Button></td></tr>
+                <tr className="border-b last:border-0" key={lead.id}><td className="p-3"><button className="font-medium underline" disabled={pending} onClick={() => openLeadCard(lead)} type="button">{lead.fullName}</button>{showSubmissionDetails ? <><div className="mt-1 text-xs text-muted-foreground">{[lead.jobTitle, lead.phone].filter(Boolean).join(" · ") || "Dados de contato não informados"}</div><LeadFormResponseDetails responses={lead.formResponses} timeZone={screen.timeZone} /></> : null}</td><td className="p-3"><span className="stage-badge">{lead.currentStageName}</span></td><td className="p-3">{lead.score === null ? "Ausente" : <span className="priority-badge" data-priority={lead.priorityCode}>{lead.priorityCode} · {lead.score}</span>}</td><td className="p-3">{lead.responsibleName}</td><td className="p-3">{lead.nextActionDescription ?? "Ausente"}</td><td className="p-3"><Button disabled={pending} onClick={() => openLeadCard(lead)} size="sm" type="button" variant="secondary">Abrir lead</Button></td></tr>
               ))}</tbody>
             </table>
           </DataTableShell>
