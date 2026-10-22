@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
@@ -50,6 +51,39 @@ async function fixture(pipelineId?: string) {
 }
 
 describe("venda integrada atômica", () => {
+  it("disponibiliza SISTEMA POLITIZAI sem tabela fixa e fecha com preço e condições do vendedor", async () => {
+    const setup = readFileSync("scripts/sql/configure-politizai-sales.sql", "utf8");
+    await database.$executeRawUnsafe(setup);
+    await database.$executeRawUnsafe(setup);
+    const product = await database.product.findFirstOrThrow({ where: { workspaceId, sku: "SISTEMA-POLITIZAI" } });
+    expect(product).toMatchObject({ name: "SISTEMA POLITIZAI", listPriceCents: 0n, active: true, availability: "AVAILABLE", salesGateProfile: "STANDARD" });
+    expect(await database.product.count({ where: { workspaceId, sku: product.sku } })).toBe(1);
+    expect(await database.auditLog.count({ where: { workspaceId, action: "sales.foundation.configured" } })).toBe(1);
+    const template = await database.contractTemplate.findFirstOrThrow({ where: { workspaceId, key: "politizai-commercial-record" } });
+    const version = await database.contractTemplateVersion.findFirstOrThrow({ where: { workspaceId, templateId: template.id } });
+    const seller = await context("closer1@demo.politizai.local");
+    const previous = await fixture();
+    const previousOpportunity = await database.opportunity.update({ where: { id: previous.opportunityId }, data: { deletedAt: now } });
+    const screen = await createOpportunityService({ database, authorization: createAuthorizationService({ database }), now: () => now }).getLeadScreen(admin, { leadId: previousOpportunity.leadId });
+    expect(screen.canPrepareSale).toBe(true);
+    expect(screen.productOptions).toContainEqual(expect.objectContaining({ id: product.id, name: "SISTEMA POLITIZAI", listPriceCents: "0" }));
+    const prepared = await service.prepareLeadSale(admin, {
+      leadId: previousOpportunity.leadId, sellerMemberId: seller.memberId, productId: product.id,
+      description: "SISTEMA POLITIZAI nas condições negociadas pelo vendedor",
+      paymentPlan: "UPFRONT_INSTALLMENTS", paymentMethod: "PIX",
+      totalCents: "123450", upfrontCents: "23450", installmentCents: "20000", installmentCount: 5,
+      idempotencyKey: randomUUID(),
+    });
+    const result = await service.execute(admin, {
+      ...previous, opportunityId: prepared.opportunityId, sellerMemberId: seller.memberId, templateVersionId: version.id,
+      totalCents: "123450", upfrontCents: "23450", monthlyCents: "20000", durationMonths: 5,
+      paymentCondition: "Entrada de R$ 234,50 e cinco parcelas de R$ 200,00, negociadas pelo vendedor.",
+      confirmed: true, idempotencyKey: randomUUID(),
+    });
+    expect(result).toMatchObject({ outstandingCents: "123450", receivedCents: "0", invoiceIds: expect.any(Array) });
+    expect(await database.opportunity.findUniqueOrThrow({ where: { id: prepared.opportunityId } })).toMatchObject({ status: "WON", productId: product.id, tcvCents: 123450n });
+  });
+
   it("prepara o fechamento direto do lead com vendedor e valores conciliados, sem registrar a venda antes da confirmação", async () => {
     const actor = await database.actor.findFirstOrThrow({ where: { workspaceId, type: "SYSTEM" } });
     const intake = await createLeadIntakeService({ database, authorization: createAuthorizationService({ database }), now: () => now }).intake({
