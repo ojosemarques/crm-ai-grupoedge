@@ -224,6 +224,7 @@ describe("serviço administrativo de formulários", () => {
     const published = await service.publish(tenantA.context, form.id, saved.revision);
     const idempotencyToken = randomUUID();
     const sessionPublicId = randomUUID();
+    const phoneSuffix = Math.floor(10_000_000 + Math.random() * 89_999_999).toString();
     const payload = {
       versionPublicId: published.version.publicId,
       sessionPublicId,
@@ -233,7 +234,7 @@ describe("serviço administrativo de formulários", () => {
       tracking: { utmSource: "integration-test", landingUrl: `https://example.test/f/${slug}` },
       answers: [
         { questionKey: "nome-completo", value: "Pessoa de Teste" },
-        { questionKey: "telefone", value: `+55119${Math.floor(10_000_000 + Math.random() * 89_999_999)}` },
+        { questionKey: "telefone", value: `(62)9${phoneSuffix.slice(0, 4)}-${phoneSuffix.slice(4)}` },
       ],
     };
     await submissionService.recordEvents(slug, {
@@ -252,6 +253,8 @@ describe("serviço administrativo de formulários", () => {
     expect(first).toMatchObject({ outcome: "ACCEPTED", redirect: { kind: "WHATSAPP" } });
     const receipt = await database.marketingFormReceipt.findFirstOrThrow({ where: { publicId: first.receiptPublicId, workspaceId: tenantA.context.workspaceId } });
     const submission = await database.leadFormSubmission.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, marketingFormReceiptId: receipt.id }, include: { lead: true } });
+    expect(submission.submittedPhone).toBe(payload.answers[1]!.value);
+    expect(submission.lead?.normalizedPhone).toBe(`+55629${phoneSuffix}`);
     expect(submission.lead?.currentStageId).toBe(tenantA.stageId);
     expect(await database.leadTag.count({ where: { workspaceId: tenantA.context.workspaceId, leadId: submission.leadId!, tagId: tenantA.tagId, removedAt: null } })).toBe(1);
     const rotation = await database.marketingFormRotationState.findUniqueOrThrow({ where: { workspaceId_marketingFormVersionId: { workspaceId: tenantA.context.workspaceId, marketingFormVersionId: published.version.id } } });

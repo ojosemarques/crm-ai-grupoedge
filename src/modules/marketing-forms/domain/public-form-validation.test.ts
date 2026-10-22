@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createEmptyMarketingFormDefinition, marketingFormDefinitionSchema } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import { publicFormEventSchema } from "@/modules/marketing-forms/domain/public-form-contracts";
+import { formatBrazilianMobilePhone } from "@/modules/marketing-forms/domain/brazilian-mobile-phone";
 import { mapAnswersToLead, validatePublicFormAnswers } from "@/modules/marketing-forms/domain/public-form-validation";
 
 function definition() {
@@ -17,6 +18,13 @@ function definition() {
 }
 
 describe("validação pública de respostas", () => {
+  it("formata e limita WhatsApp brasileiro a DDD mais celular", () => {
+    expect(formatBrazilianMobilePhone("62")).toBe("(62");
+    expect(formatBrazilianMobilePhone("62985796723")).toBe("(62)98579-6723");
+    expect(formatBrazilianMobilePhone("+55 62 98579-6723")).toBe("(62)98579-6723");
+    expect(formatBrazilianMobilePhone("629857967231234")).toBe("(62)98579-6723");
+  });
+
   it("reserva eventos de conclusão para o servidor", () => {
     const input = {
       versionPublicId: crypto.randomUUID(),
@@ -54,7 +62,25 @@ describe("validação pública de respostas", () => {
       { questionKey: "nome-completo", value: "Pessoa Teste" },
       { questionKey: "telefone", value: "98765-4321" },
       ...baseAnswers,
-    ])).toThrowError("O telefone brasileiro precisa incluir DDD");
+    ])).toThrowError("Informe um WhatsApp com DDD e 11 dígitos");
+
+    expect(() => validatePublicFormAnswers(current, [
+      { questionKey: "nome-completo", value: "Pessoa Teste" },
+      { questionKey: "telefone", value: "(62)3579-6723" },
+      ...baseAnswers,
+    ])).toThrowError("Informe um WhatsApp com DDD e 11 dígitos");
+
+    expect(() => validatePublicFormAnswers(current, [
+      { questionKey: "nome-completo", value: "Pessoa Teste" },
+      { questionKey: "telefone", value: "629857967231234" },
+      ...baseAnswers,
+    ])).toThrowError("Informe um WhatsApp com DDD e 11 dígitos");
+
+    expect(() => validatePublicFormAnswers(current, [
+      { questionKey: "nome-completo", value: "Pessoa Teste" },
+      { questionKey: "telefone", value: "telefone (62)98579-6723" },
+      ...baseAnswers,
+    ])).toThrowError("Informe um WhatsApp com DDD e 11 dígitos");
   });
 
   it("rejeita pergunta, opção e duplicata não pertencentes à versão", () => {

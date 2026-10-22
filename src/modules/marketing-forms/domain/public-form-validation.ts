@@ -3,6 +3,7 @@ import type {
   MarketingFormQuestion,
 } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import type { PublicFormSubmitInput } from "@/modules/marketing-forms/domain/public-form-contracts";
+import { brazilianMobilePhoneError } from "@/modules/marketing-forms/domain/brazilian-mobile-phone";
 import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
@@ -42,6 +43,7 @@ function mappedAnswerError(question: MarketingFormQuestion, value: AnswerValue):
   }
   if (question.mapping === "phone") {
     if (trimmed.length > 80) return "Use no máximo 80 caracteres.";
+    if (question.type === "PHONE" && question.config.defaultCountry === "BR") return brazilianMobilePhoneError(trimmed);
     const normalized = normalizePhone(trimmed);
     if (!normalized.success) return normalized.message;
   }
@@ -79,6 +81,7 @@ export function publicFormAnswerError(question: MarketingFormQuestion, value: An
   if (typeof value !== "string") return "Resposta inválida.";
   if (question.type === "EMAIL" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return "Informe um e-mail válido.";
   if (question.type === "PHONE") {
+    if (question.config.defaultCountry === "BR") return brazilianMobilePhoneError(value);
     const normalized = normalizePhone(value);
     if (!normalized.success) return normalized.message;
   }

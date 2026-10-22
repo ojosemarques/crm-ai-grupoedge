@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Script from "next/script";
 
 import { initializeMetaPixel, trackMetaLead } from "@/app/f/[slug]/meta-pixel";
+import { formatBrazilianMobilePhone } from "@/modules/marketing-forms/domain/brazilian-mobile-phone";
 import type { MarketingFormDefinition, MarketingFormQuestion } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import { publicFormAnswerError } from "@/modules/marketing-forms/domain/public-form-validation";
 import { shouldAutoAdvanceSingleChoice } from "@/app/f/[slug]/public-form-navigation";
@@ -147,6 +148,7 @@ function QuestionInput({ question, answer, autoAdvanceSingleChoice, error, setAn
   const describedBy = [question.description ? "question-description" : null, error ? "question-error" : null].filter(Boolean).join(" ") || undefined;
   const accessibility = { "aria-describedby": describedBy, "aria-invalid": Boolean(error), "aria-labelledby": "question-title" } as const;
   if (question.type === "LONG_TEXT") return <textarea {...accessibility} autoFocus maxLength={question.config.maxLength} onChange={(event) => setAnswer(event.target.value)} placeholder={question.config.placeholder ?? "Digite sua resposta…"} rows={3} value={typeof answer === "string" ? answer : ""} />;
+  if (question.type === "PHONE" && question.config.defaultCountry === "BR") return <input {...accessibility} autoComplete="tel-national" autoFocus inputMode="numeric" maxLength={14} onChange={(event) => setAnswer(formatBrazilianMobilePhone(event.target.value))} placeholder={question.config.placeholder ?? "(62)98579-6723"} type="tel" value={typeof answer === "string" ? answer : ""} />;
   if (["SHORT_TEXT", "EMAIL", "PHONE", "NUMBER", "DATE"].includes(question.type)) { const type = question.type === "EMAIL" ? "email" : question.type === "PHONE" ? "tel" : question.type === "NUMBER" ? "number" : question.type === "DATE" ? "date" : "text"; const bounds = question.type === "NUMBER" || question.type === "DATE" ? { min: question.config.min, max: question.config.max } : {}; const step = question.type === "NUMBER" ? question.config.step : undefined; return <input {...accessibility} {...bounds} autoFocus onChange={(event) => setAnswer(type === "number" ? event.target.valueAsNumber : event.target.value)} placeholder={("placeholder" in question.config ? question.config.placeholder : undefined) ?? "Digite sua resposta…"} step={step} type={type} value={typeof answer === "string" || typeof answer === "number" ? answer : ""} />; }
   if (question.type === "CHECKBOX") return <label className={styles.checkbox}><input {...accessibility} checked={answer === true} onChange={(event) => setAnswer(event.target.checked)} type="checkbox" /><span>{question.config.label}</span></label>;
   if (question.type === "DROPDOWN") return <select {...accessibility} autoFocus onChange={(event) => setAnswer(event.target.value)} value={typeof answer === "string" ? answer : ""}><option value="">{question.config.placeholder ?? "Selecione"}</option>{question.config.options.map((option) => <option key={option.stableKey} value={option.stableKey}>{option.label}</option>)}</select>;
