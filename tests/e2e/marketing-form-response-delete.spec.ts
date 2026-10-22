@@ -12,7 +12,7 @@ async function login(page: Page) {
   await enterDemoCompany(page);
 }
 
-test("gestor exclui uma resposta pela lixeira sem excluir dados vinculados", async ({ page }) => {
+test("gestor pesquisa por nome ou telefone e exclui a resposta sem apagar dados vinculados", async ({ page }) => {
   test.setTimeout(120_000);
   await login(page);
   await page.goto("/formularios");
@@ -20,6 +20,7 @@ test("gestor exclui uma resposta pela lixeira sem excluir dados vinculados", asy
   const suffix = Date.now().toString(36);
   const formName = `QA Exclusão ${suffix}`;
   const respondent = `Pessoa Exclusão ${suffix}`;
+  const phone = "(62) 98579-6723";
   const slug = `qa-exclusao-${suffix}`;
   await page.getByRole("button", { name: "Novo formulário" }).click();
   const createDialog = page.getByRole("dialog", { name: "Comece pelo nome e endereço" });
@@ -54,6 +55,8 @@ test("gestor exclui uma resposta pela lixeira sem excluir dados vinculados", asy
     status: "RECEIVED",
     idempotencyKey: `e2e-delete-${suffix}`,
     submittedFullName: respondent,
+    submittedPhone: phone,
+    normalizedPhone: "+5562985796723",
     submittedAt: new Date(),
     rawPayload: {},
     createdByActorId: form.createdByActorId,
@@ -61,6 +64,18 @@ test("gestor exclui uma resposta pela lixeira sem excluir dados vinculados", asy
 
   await page.getByRole("button", { name: "Respostas" }).click();
   await expect(page.getByText("1 resposta", { exact: true })).toBeVisible();
+  const search = page.getByRole("searchbox", { name: "Pesquisar" });
+  await search.fill(respondent.toLocaleLowerCase("pt-BR"));
+  await page.getByRole("button", { name: "Filtrar" }).click();
+  await expect(page.getByRole("cell", { name: respondent, exact: true })).toBeVisible();
+  await search.fill(phone.replace(/\D/g, ""));
+  await page.getByRole("button", { name: "Filtrar" }).click();
+  await expect(page.getByRole("cell", { name: respondent, exact: true })).toBeVisible();
+  await search.fill(`inexistente-${suffix}`);
+  await page.getByRole("button", { name: "Filtrar" }).click();
+  await expect(page.getByText("Nenhuma resposta recebida.")).toBeVisible();
+  await search.fill(phone.replace(/\D/g, ""));
+  await page.getByRole("button", { name: "Filtrar" }).click();
   const deleteButton = page.getByRole("button", { name: `Excluir resposta de ${respondent}` });
   await deleteButton.click();
   const deleteDialog = page.getByRole("dialog", { name: "Excluir esta resposta?" });

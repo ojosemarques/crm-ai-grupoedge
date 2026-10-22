@@ -264,6 +264,11 @@ describe("serviço administrativo de formulários", () => {
 
     const listed = await reportingService.list(tenantA.context, form.id, {});
     expect(listed.items.some((item) => item.publicId === first.receiptPublicId)).toBe(true);
+    await expect(reportingService.list(tenantA.context, form.id, { search: "pessoa de teste" })).resolves.toMatchObject({ total: 1, items: [expect.objectContaining({ publicId: first.receiptPublicId })] });
+    await expect(reportingService.list(tenantA.context, form.id, { search: payload.answers[1]!.value.replace(/\D/g, "") })).resolves.toMatchObject({ total: 1, items: [expect.objectContaining({ publicId: first.receiptPublicId })] });
+    await expect(reportingService.list(tenantA.context, form.id, { search: "nome inexistente" })).resolves.toMatchObject({ total: 0, items: [] });
+    await expect(reportingService.list(tenantA.context, form.id, { search: "' OR 1=1 --" })).resolves.toMatchObject({ total: 0, items: [] });
+    await expect(reportingService.list(tenantA.context, form.id, { search: "x".repeat(121) })).rejects.toMatchObject({ name: "ZodError" });
     const detail = await reportingService.detail(tenantA.context, form.id, first.receiptPublicId);
     expect(detail.answers.map((answer) => answer.questionKey)).toEqual(["nome-completo", "telefone"]);
     const stats = await reportingService.statistics(tenantA.context, form.id, {});
@@ -274,6 +279,8 @@ describe("serviço administrativo de formulários", () => {
     const exported = await reportingService.csv(tenantA.context, form.id, {});
     expect(exported.csv).toContain("nome-completo");
     expect(exported.total).toBe(1);
+    await expect(reportingService.csv(tenantA.context, form.id, { search: "pessoa de teste" })).resolves.toMatchObject({ total: 1 });
+    await expect(reportingService.csv(tenantA.context, form.id, { search: "nome inexistente" })).resolves.toMatchObject({ total: 0 });
     await expect(reportingService.detail(tenantB.context, form.id, first.receiptPublicId)).rejects.toMatchObject({ code: "MARKETING_FORM_NOT_FOUND", statusCode: 404 });
 
     await expect(submissionService.submit(slug, { ...payload, idempotencyToken: randomUUID(), answers: [{ questionKey: "nome-completo", value: "Sem telefone" }] })).rejects.toMatchObject({ code: "MARKETING_FORM_ANSWER_INVALID", statusCode: 422 });

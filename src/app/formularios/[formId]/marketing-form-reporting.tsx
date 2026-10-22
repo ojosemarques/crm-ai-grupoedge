@@ -38,11 +38,12 @@ export function ResponsesPanel({ formId }: Readonly<{ formId: string }>) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const [filters, setFilters] = useState({ status: "", version: "", utmSource: "", from: "", to: "" });
+  const [filters, setFilters] = useState({ search: "", status: "", version: "", utmSource: "", from: "", to: "" });
   const [applied, setApplied] = useState(filters);
   useEffect(() => {
     let active = true;
     const query = new URLSearchParams({ page: String(page), pageSize: "25" });
+    if (applied.search) query.set("search", applied.search);
     if (applied.status) query.set("status", applied.status);
     if (applied.version) query.set("version", applied.version);
     if (applied.utmSource) query.set("utmSource", applied.utmSource);
@@ -53,7 +54,7 @@ export function ResponsesPanel({ formId }: Readonly<{ formId: string }>) {
       .catch((caught) => { if (active) setError(caught instanceof Error ? caught.message : "Falha ao carregar."); });
     return () => { active = false; };
   }, [applied, formId, page]);
-  function applyFilters(event: FormEvent) { event.preventDefault(); setError(null); setPage(1); setApplied(filters); }
+  function applyFilters(event: FormEvent) { event.preventDefault(); setError(null); setPage(1); setApplied({ ...filters, search: filters.search.trim() }); }
   async function open(publicId: string) { setError(null); try { setDetail(await getJson<ResponseDetail>(`/api/marketing/forms/${formId}/responses/${publicId}`)); } catch (caught) { setError(caught instanceof Error ? caught.message : "Falha ao carregar."); } }
   async function remove() {
     if (!deleteTarget) return;
@@ -74,13 +75,15 @@ export function ResponsesPanel({ formId }: Readonly<{ formId: string }>) {
     }
   }
   const exportQuery = new URLSearchParams();
+  if (applied.search) exportQuery.set("search", applied.search);
   if (applied.status) exportQuery.set("status", applied.status);
   if (applied.version) exportQuery.set("version", applied.version);
   if (applied.utmSource) exportQuery.set("utmSource", applied.utmSource);
   if (applied.from) exportQuery.set("from", new Date(`${applied.from}T00:00:00`).toISOString());
   if (applied.to) exportQuery.set("to", new Date(`${applied.to}T23:59:59.999`).toISOString());
   return <>
-    <form className={styles.reportToolbar} onSubmit={applyFilters}>
+    <form className={`${styles.reportToolbar} ${styles.reportFilters}`} onSubmit={applyFilters}>
+      <label className={styles.searchField}>Pesquisar<input maxLength={120} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Nome ou telefone" type="search" value={filters.search} /></label>
       <label>Status<select onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))} value={filters.status}><option value="">Todos</option><option value="ACCEPTED">Aceita</option><option value="FAILED">Falhou</option><option value="PROCESSING">Processando</option><option value="RECEIVED">Recebida</option></select></label>
       <label>Versão<select onChange={(event) => setFilters((current) => ({ ...current, version: event.target.value }))} value={filters.version}><option value="">Todas</option>{data?.versions.map((version) => <option key={version} value={version}>v{version}</option>)}</select></label>
       <label>Origem UTM<input maxLength={200} onChange={(event) => setFilters((current) => ({ ...current, utmSource: event.target.value }))} value={filters.utmSource} /></label>

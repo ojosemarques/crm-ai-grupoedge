@@ -17,6 +17,7 @@ const baseQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
   status: z.enum(["RECEIVED", "PROCESSING", "ACCEPTED", "FAILED"]).optional(),
   version: z.coerce.number().int().positive().optional(),
+  search: z.string().trim().max(120).optional(),
   utmSource: z.string().trim().max(200).optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
@@ -25,6 +26,7 @@ const validPeriod = (value: { from?: Date | undefined; to?: Date | undefined }) 
 const querySchema = baseQuerySchema.refine(validPeriod, { message: "Período inválido." });
 const exportQuerySchema = baseQuerySchema.omit({ page: true, pageSize: true }).refine(validPeriod, { message: "Período inválido." });
 const statisticsQuerySchema = baseQuerySchema.pick({ version: true, from: true, to: true }).refine(validPeriod, { message: "Período inválido." });
+type ReportingQuery = z.infer<typeof querySchema>;
 
 function fail(message: string, code: string, statusCode: number): never {
   throw new ApplicationError(message, { code, statusCode, expose: true });
@@ -76,7 +78,7 @@ export function createMarketingFormReportingService(options: Options) {
     return form;
   }
 
-  function where(context: AuthenticatedContext, formId: string, query: z.infer<typeof querySchema>, versionId?: string): Prisma.MarketingFormReceiptWhereInput {
+  function where(context: AuthenticatedContext, formId: string, query: ReportingQuery, versionId?: string): Prisma.MarketingFormReceiptWhereInput {
     return {
       workspaceId: context.workspaceId,
       marketingFormId: formId,
@@ -88,6 +90,57 @@ export function createMarketingFormReportingService(options: Options) {
     };
   }
 
+  function searchFilters(context: AuthenticatedContext, formId: string, query: ReportingQuery, versionId?: string): Prisma.Sql {
+    const clauses: Prisma.Sql[] = [
+      Prisma.sql`r."workspaceId" = ${context.workspaceId}::uuid`,
+      Prisma.sql`r."marketingFormId" = ${formId}::uuid`,
+      Prisma.sql`r."deletedAt" IS NULL`,
+    ];
+    if (query.status) clauses.push(Prisma.sql`r.status::text = ${query.status}`);
+    if (query.utmSource) clauses.push(Prisma.sql`LOWER(COALESCE(r."utmSource", '')) = LOWER(${query.utmSource})`);
+    if (query.from) clauses.push(Prisma.sql`r."submittedAt" >= ${query.from}`);
+    if (query.to) clauses.push(Prisma.sql`r."submittedAt" < ${query.to}`);
+    if (versionId) clauses.push(Prisma.sql`r."marketingFormVersionId" = ${versionId}::uuid`);
+
+    const search = query.search?.trim();
+    if (search) {
+      const matches: Prisma.Sql[] = [
+        Prisma.sql`POSITION(LOWER(${search}) IN LOWER(COALESCE(s."submittedFullName", ''))) > 0`,
+      ];
+      const phoneDigits = search.replace(/\D/g, "");
+      if (phoneDigits) {
+        matches.push(Prisma.sql`POSITION(${phoneDigits} IN regexp_replace(COALESCE(s."normalizedPhone", s."submittedPhone", ''), '[^0-9]', '', 'g')) > 0`);
+      }
+      clauses.push(Prisma.sql`(${Prisma.join(matches, " OR ")})`);
+    }
+    return Prisma.sql`${Prisma.join(clauses, " AND ")}`;
+  }
+
+  async function searchedReceiptPage(context: AuthenticatedContext, formId: string, query: ReportingQuery, versionId: string | undefined, limit: number, offset: number) {
+    const filters = searchFilters(context, formId, query, versionId);
+    const [counts, rows] = await Promise.all([
+      options.database.$queryRaw<Array<{ total: bigint }>>(Prisma.sql`
+        SELECT COUNT(*)::bigint AS total
+        FROM "marketing_form_receipts" r
+        LEFT JOIN "lead_form_submissions" s
+          ON s."workspaceId" = r."workspaceId"
+          AND s."marketingFormReceiptId" = r.id
+        WHERE ${filters}
+      `),
+      options.database.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT r.id
+        FROM "marketing_form_receipts" r
+        LEFT JOIN "lead_form_submissions" s
+          ON s."workspaceId" = r."workspaceId"
+          AND s."marketingFormReceiptId" = r.id
+        WHERE ${filters}
+        ORDER BY r."submittedAt" DESC, r.id DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `),
+    ]);
+    return { total: Number(counts[0]?.total ?? 0n), ids: rows.map((row) => row.id) };
+  }
+
   async function list(context: AuthenticatedContext, formId: string, raw: unknown) {
     await assertForm(context, formId);
     const query = querySchema.parse(raw);
@@ -95,13 +148,24 @@ export function createMarketingFormReportingService(options: Options) {
       query.version ? options.database.marketingFormVersion.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, version: query.version }, select: { id: true } }) : null,
       options.authorization.authorize(context, PermissionKeys.MARKETING_DEFINITIONS_MANAGE, resource(context, formId)),
     ]);
-    const filter = where(context, formId, query, selectedVersion?.id);
     if (query.version && !selectedVersion) return { total: 0, page: query.page, pageSize: query.pageSize, versions: [], permissions: { delete: deleteDecision.allowed }, items: [] };
-    const [total, receipts, versions] = await Promise.all([
-      options.database.marketingFormReceipt.count({ where: filter }),
-      options.database.marketingFormReceipt.findMany({ where: filter, orderBy: [{ submittedAt: "desc" }, { id: "desc" }], skip: (query.page - 1) * query.pageSize, take: query.pageSize, select: { id: true, publicId: true, marketingFormVersionId: true, status: true, utmSource: true, utmMedium: true, utmCampaign: true, submittedAt: true, acceptedAt: true } }),
-      options.database.marketingFormVersion.findMany({ where: { workspaceId: context.workspaceId, marketingFormId: formId }, select: { id: true, version: true }, orderBy: { version: "desc" } }),
-    ]);
+    const filter = where(context, formId, query, selectedVersion?.id);
+    const versionsPromise = options.database.marketingFormVersion.findMany({ where: { workspaceId: context.workspaceId, marketingFormId: formId }, select: { id: true, version: true }, orderBy: { version: "desc" } });
+    let total: number;
+    let receipts: Array<{ id: string; publicId: string; marketingFormVersionId: string; status: string; utmSource: string | null; utmMedium: string | null; utmCampaign: string | null; submittedAt: Date; acceptedAt: Date | null }>;
+    if (query.search) {
+      const searched = await searchedReceiptPage(context, formId, query, selectedVersion?.id, query.pageSize, (query.page - 1) * query.pageSize);
+      total = searched.total;
+      const unordered = await options.database.marketingFormReceipt.findMany({ where: { ...filter, id: { in: searched.ids } }, select: { id: true, publicId: true, marketingFormVersionId: true, status: true, utmSource: true, utmMedium: true, utmCampaign: true, submittedAt: true, acceptedAt: true } });
+      const byId = new Map(unordered.map((receipt) => [receipt.id, receipt]));
+      receipts = searched.ids.flatMap((id) => byId.get(id) ?? []);
+    } else {
+      [total, receipts] = await Promise.all([
+        options.database.marketingFormReceipt.count({ where: filter }),
+        options.database.marketingFormReceipt.findMany({ where: filter, orderBy: [{ submittedAt: "desc" }, { id: "desc" }], skip: (query.page - 1) * query.pageSize, take: query.pageSize, select: { id: true, publicId: true, marketingFormVersionId: true, status: true, utmSource: true, utmMedium: true, utmCampaign: true, submittedAt: true, acceptedAt: true } }),
+      ]);
+    }
+    const versions = await versionsPromise;
     const submissions = await options.database.leadFormSubmission.findMany({ where: { workspaceId: context.workspaceId, marketingFormReceiptId: { in: receipts.map((receipt) => receipt.id) } }, select: { marketingFormReceiptId: true, leadId: true, submittedFullName: true, submittedEmail: true, submittedPhone: true, intakeOutcome: true } });
     const byReceipt = new Map(submissions.map((submission) => [submission.marketingFormReceiptId, submission]));
     const versionById = new Map(versions.map((version) => [version.id, version.version]));
@@ -161,10 +225,15 @@ export function createMarketingFormReportingService(options: Options) {
     const selectedVersion = query.version ? await options.database.marketingFormVersion.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, version: query.version }, select: { id: true } }) : null;
     const fixedColumns = ["recibo", "status", "versao", "enviado_em", "nome", "email", "telefone", "lead_id", "utm_source", "utm_medium", "utm_campaign"] as const;
     if (query.version && !selectedVersion) return { filename: "formulario-respostas.csv", csv: marketingCsv([], fixedColumns), total: 0 };
-    const filter = where(context, formId, { ...query, page: 1, pageSize: 100 }, selectedVersion?.id);
-    const count = await options.database.marketingFormReceipt.count({ where: filter });
+    const listQuery = { ...query, page: 1, pageSize: 100 };
+    const filter = where(context, formId, listQuery, selectedVersion?.id);
+    const searched = query.search ? await searchedReceiptPage(context, formId, listQuery, selectedVersion?.id, 10_000, 0) : null;
+    const count = searched?.total ?? await options.database.marketingFormReceipt.count({ where: filter });
     if (count > 10_000) fail("A exportação síncrona está limitada a 10.000 respostas.", "MARKETING_FORM_EXPORT_TOO_LARGE", 422);
-    const receipts = await options.database.marketingFormReceipt.findMany({ where: filter, orderBy: [{ submittedAt: "desc" }, { id: "desc" }], take: 10_000 });
+    const unorderedReceipts = searched
+      ? await options.database.marketingFormReceipt.findMany({ where: { ...filter, id: { in: searched.ids } }, take: 10_000 })
+      : await options.database.marketingFormReceipt.findMany({ where: filter, orderBy: [{ submittedAt: "desc" }, { id: "desc" }], take: 10_000 });
+    const receipts = searched ? (() => { const byId = new Map(unorderedReceipts.map((receipt) => [receipt.id, receipt])); return searched.ids.flatMap((id) => byId.get(id) ?? []); })() : unorderedReceipts;
     const versions = await options.database.marketingFormVersion.findMany({ where: { workspaceId: context.workspaceId, marketingFormId: formId, id: { in: [...new Set(receipts.map((receipt) => receipt.marketingFormVersionId))] } }, select: { id: true, version: true, definition: true } });
     const submissions = await options.database.leadFormSubmission.findMany({ where: { workspaceId: context.workspaceId, marketingFormReceiptId: { in: receipts.map((receipt) => receipt.id) } }, select: { marketingFormReceiptId: true, leadId: true, submittedFullName: true, submittedEmail: true, submittedPhone: true, intakeOutcome: true } });
     const versionById = new Map(versions.map((version) => [version.id, { version: version.version, definition: parsedDefinition(version.definition) }]));
