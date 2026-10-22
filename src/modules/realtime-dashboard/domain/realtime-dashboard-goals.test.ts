@@ -24,11 +24,12 @@ describe("metas reais do painel unificado", () => {
     expect(result.today.goals.messages).toMatchObject({ actualValue: "2", targetValue: "5", progressBasisPoints: 4000, coveredMembers: 1, totalMembers: 2 });
   });
 
-  it("mantém contato único no período e acumula contatos-dia individuais para metas recorrentes", () => {
+  it("deduplica contatos entre vendedores no consolidado e acumula contatos-dia para a meta semanal", () => {
     const result = aggregateRealtimeDashboard([fact({ id: "mon", eventType: "CALL_CONNECTED", occurredAt: "2026-10-19T14:00:00Z" }), fact({ id: "today", eventType: "CALL_CONNECTED" }), fact({ id: "other", eventType: "CALL_CONNECTED", creditedMemberId: "b" })], sellers, periods, { profiles: [profile("a"), profile("b")], quotas: [] });
     expect(result.week.totals.effectiveContacts).toBe(1);
-    expect(result.week.goals.effectiveContacts).toMatchObject({ actualValue: "3", targetValue: "20" });
-    expect(result.today.goals.effectiveContacts.actualValue).toBe("2");
+    expect(result.week.goals.effectiveContacts).toMatchObject({ actualValue: "2", targetValue: "20" });
+    expect(result.today.goals.effectiveContacts.actualValue).toBe("1");
+    expect(result.week.ranking.map(row => row.goals.today.effectiveContacts.actualValue)).toEqual(["1", "1"]);
   });
 
   it("não duplica quota coletiva com quota individual e não divide a coletiva artificialmente", () => {

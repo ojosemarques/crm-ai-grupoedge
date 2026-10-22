@@ -29,6 +29,26 @@ function rankingSnapshot(): RealtimeDashboardSnapshot {
   return { ...result, workspaceName: "Politizai", timeZone: "America/Sao_Paulo", generatedAt: now.toISOString(), freshnessAt: now.toISOString(), quality: { state: "LIVE", reason: "Fixture de ranking" }, week: { ...result.week, salesGoal: weeklySalesGoal(0, null, null) } };
 }
 
+test("resumo usa o consolidado da API sem perder atividade fora do ranking nem duplicar contatos", async ({ page }) => {
+  const original = rankingSnapshot();
+  const snapshot = {
+    ...original,
+    today: { ...original.today, totals: { ...original.today.totals, effectiveContacts: 1, calls: 103 } },
+    week: { ...original.week, totals: { ...original.week.totals, effectiveContacts: 2, calls: 105 } },
+  };
+  await page.route("**/api/public/tempo-real", route => route.fulfill({ json: { result: snapshot } }));
+  await page.goto(`/tempo-real-publico#${"v".repeat(43)}`);
+  await page.getByRole("button", { name: "Pausar apresentação", exact: true }).click();
+  await expect(page.getByRole("article", { name: "Contatos de hoje", exact: true }).locator(":scope > strong")).toHaveText("1");
+  await expect(page.getByRole("article", { name: "Contatos da semana", exact: true }).locator(":scope > strong")).toHaveText("2");
+  const calls = page.getByRole("article", { name: "Ligações feitas hoje", exact: true });
+  await expect(calls.locator(":scope > strong")).toHaveText("103");
+  await expect(calls).toContainText("105 na semana");
+  const today = page.getByRole("region", { name: "Métricas de hoje", exact: true });
+  await expect(today.locator('[data-metric="effectiveContacts"] > strong')).toHaveText("1");
+  await expect(today.locator('[data-metric="calls"] > strong')).toHaveText("103");
+});
+
 test("ranking destaca agendamentos de hoje, respeita metas individuais e não mostra execuções", async ({ page }, testInfo) => {
   const snapshot = rankingSnapshot();
   const errors: string[] = [];

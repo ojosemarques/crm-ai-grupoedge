@@ -7,6 +7,7 @@ import { createSdrQueueService } from "@/modules/leads/application/sdr-queue-ser
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { createMetricsService } from "@/modules/metrics/application/metrics-service";
 import { createProspectingWorkspaceService } from "@/modules/prospecting/application/prospecting-workspace-service";
+import { createRealtimeDashboardService } from "@/modules/realtime-dashboard/application/realtime-dashboard-service";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -64,6 +65,7 @@ describe("metas diárias configuráveis", () => {
     await recordCommercialMetricFactInTransaction(database, { workspaceId: sdr.workspaceId, eventKey: `daily-goal:held:${randomUUID()}`, eventType: "MEETING_COMPLETED", occurredAt: new Date("2033-05-10T14:00:00Z"), sourceEntityType: "Meeting", sourceEntityId: randomUUID(), creditedMemberId: sdr.memberId, quantity: 2 });
     const screen = await createSdrQueueService({ database, authorization, now: () => now }).getScreen(sdr, {});
     expect(screen.dailyProduction.dailyGoal.metrics.find((metric) => metric.key === "MEETINGS_COMPLETED")).toMatchObject({ actualValue: "2", targetValue: "3" });
+    expect(screen.dailyProduction.meetingsCompleted).toBe(2);
   });
 
   it("bloqueia vendedor sem permissão de gestão", async () => {
@@ -106,6 +108,8 @@ describe("metas diárias configuráveis", () => {
     const metricService = createMetricsService({ database, authorization, now: () => now });
     const queueService = createSdrQueueService({ database, authorization, now: () => now });
     const prospectingService = createProspectingWorkspaceService({ database, authorization, now: () => now });
+    const realtimeService = createRealtimeDashboardService({ database, authorization, now: () => new Date(now.getTime() + 1) });
+    const beforeRealtime = (await realtimeService.screen(manager)).snapshot;
     const beforeDay = await queueService.getScreen(sdr, {});
     const beforeProspecting = await prospectingService.getScreen(manager, {});
     const beforeMetrics = await metricService.getIntegratedOverview(manager, period);
@@ -179,6 +183,7 @@ describe("metas diárias configuráveis", () => {
     const afterDay = await queueService.getScreen(sdr, {});
     const afterProspecting = await prospectingService.getScreen(manager, {});
     const afterMetrics = await metricService.getIntegratedOverview(manager, period);
+    const afterRealtime = (await realtimeService.screen(manager)).snapshot;
     const value = (overview: typeof afterMetrics, metricId: string) => Number(overview.values.find((metric) => metric.metricId === metricId)?.value ?? 0);
     expect(afterDay.dailyProduction.calls - beforeDay.dailyProduction.calls).toBe(value(afterMetrics, "outreach.calls_attempted") - value(beforeMetrics, "outreach.calls_attempted"));
     expect(afterDay.dailyProduction.callsNoAnswer - beforeDay.dailyProduction.callsNoAnswer).toBe(value(afterMetrics, "outreach.calls_no_answer") - value(beforeMetrics, "outreach.calls_no_answer"));
@@ -201,5 +206,8 @@ describe("metas diárias configuráveis", () => {
     expect(meetingDelta).toBe(2);
     expect(afterDay.dailyProduction.meetingsScheduled - beforeDay.dailyProduction.meetingsScheduled).toBe(meetingDelta);
     expect(sellerMeetings(afterProspecting) - sellerMeetings(beforeProspecting)).toBe(meetingDelta);
+    expect(afterRealtime.today.totals.meetingsScheduled - beforeRealtime.today.totals.meetingsScheduled).toBe(meetingDelta);
+    expect(afterRealtime.today.totals.effectiveContacts - beforeRealtime.today.totals.effectiveContacts).toBe(contactDelta);
+    expect(afterRealtime.today.totals.meetingsCompleted).toBe(afterDay.dailyProduction.meetingsCompleted);
   }, 60_000);
 });

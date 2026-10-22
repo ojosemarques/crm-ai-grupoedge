@@ -2,6 +2,7 @@ import { summarizeDashboardSellerActivity } from "@/modules/metrics/domain/dashb
 import type { IntegratedActivityFact } from "@/modules/metrics/domain/metrics-contracts";
 import type { RealtimeDashboardGoals, RealtimeGoalMetric, RealtimeGoalProgress } from "./realtime-dashboard-contracts";
 import { addLocalDays, workspaceDayRange } from "@/shared/core/time/workspace-time";
+import { summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
 
 export type RealtimeSeller = Readonly<{ id: string; name: string; active?: boolean; rankingVisible?: boolean; functions?: readonly string[]; teamIds?: readonly string[] }>;
 export type RealtimeDailyProfile = Readonly<{ memberId: string; callsTarget: number; messagesTarget: number; effectiveContactsTarget: number; meetingsScheduledTarget: number; meetingsCompletedTarget?: number | null; weeklySalesTarget?: number | null; salesValueTargetCents: bigint }>;
@@ -36,21 +37,25 @@ export function buildRealtimeDashboardGoals(input: Readonly<{
   const profiles = new Map(input.configuration.profiles.map((profile) => [profile.memberId, profile]));
   const day = actuals(input.todayFacts, input.sellers);
   const week = actuals(input.weekFacts, input.sellers);
-  const contactDays = new Map(input.sellers.map((seller) => [seller.id, 0n]));
-  for (let index = 0; index < 5; index += 1) {
+  const contactDays = Array.from({ length: 5 }, (_, index) => {
     const range = workspaceDayRange(addLocalDays(input.weekFromDate, index), input.timeZone);
-    const rows = actuals(input.weekFacts.filter((fact) => {
+    return input.weekFacts.filter((fact) => {
       const at = Date.parse(fact.occurredAt);
       return at >= range.start.getTime() && at < range.end.getTime();
-    }), input.sellers);
-    for (const seller of input.sellers) contactDays.set(seller.id, contactDays.get(seller.id)! + (rows.get(seller.id)?.effectiveContacts ?? 0n));
-  }
+    });
+  });
 
   function profileGoal(metric: RealtimeGoalMetric, members: readonly RealtimeSeller[], weekly: boolean): RealtimeGoalProgress {
     const field = profileFields[metric as keyof typeof profileFields];
     const eligible = field ? members.filter((member) => member.active !== false && profiles.has(member.id) && BigInt(profiles.get(member.id)![field] ?? 0) > 0n) : [];
     const target = eligible.length ? eligible.reduce((sum, seller) => sum + BigInt(profiles.get(seller.id)![field!] ?? 0) * (weekly ? 5n : 1n), 0n) : null;
-    const achieved = eligible.reduce((sum, seller) => sum + (weekly && metric === "effectiveContacts" ? contactDays.get(seller.id) ?? 0n : (weekly ? week : day).get(seller.id)?.[metric] ?? 0n), 0n);
+    const eligibleIds = new Set(eligible.map((member) => member.id));
+    const contacts = (facts: readonly IntegratedActivityFact[]) => BigInt(summarizeEffectiveContacts(facts.filter((fact) => fact.creditedMemberId !== null && eligibleIds.has(fact.creditedMemberId))).total);
+    // O consolidado conta a mesma pessoa uma vez por dia, como o Meu Dia;
+    // os cartões individuais continuam usando somente os fatos de cada vendedor.
+    const achieved = metric === "effectiveContacts"
+      ? weekly ? contactDays.reduce((sum, facts) => sum + contacts(facts), 0n) : contacts(input.todayFacts)
+      : eligible.reduce((sum, seller) => sum + ((weekly ? week : day).get(seller.id)?.[metric] ?? 0n), 0n);
     const label = metric === "messages" ? weekly ? "Meta WA/IG · diária × 5" : "Meta WA/IG" : metric === "effectiveContacts" && weekly ? "Meta de contatos-dia · diária × 5" : weekly ? "Meta diária × 5" : "Meta diária";
     const expectedMembers = members.filter((member) => member.active !== false && (!field || profiles.get(member.id)?.[field] == null || BigInt(profiles.get(member.id)![field]!) > 0n)).length;
     return progress(achieved, target, eligible.length, expectedMembers, target === null ? null : weekly ? "DAILY_PROFILE_X5" : "DAILY_PROFILE", target === null ? "Sem meta cadastrada" : label);

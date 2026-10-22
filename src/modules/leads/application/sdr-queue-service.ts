@@ -471,7 +471,6 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
     const [
       taskCounts,
       meetingsToday,
-      meetingsCompleted,
       effectiveContactFacts,
       qualifications,
       meetingsScheduledFacts,
@@ -547,18 +546,6 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           ],
           startsAt: { gte: today.start, lt: today.end },
           status: { not: "CANCELLED" },
-          deletedAt: null,
-        },
-      }),
-      options.database.meeting.count({
-        where: {
-          workspaceId: context.workspaceId,
-          OR: [
-            { ownerMemberId: { in: productivityMemberIds } },
-            { lead: { ownerMemberId: { in: productivityMemberIds } } },
-          ],
-          completedAt: { gte: today.start, lt: today.end },
-          status: "COMPLETED",
           deletedAt: null,
         },
       }),
@@ -1004,7 +991,7 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
         overdueFollowUps: sections.find((section) => section.key === "OVERDUE")?.total ?? 0,
         meetingsScheduled: meetingsScheduledFacts._sum.quantity ?? 0,
         meetingsToday,
-        meetingsCompleted,
+        meetingsCompleted: metricCount("MEETING_COMPLETED"),
         staleLeads: sections.find((section) => section.key === "STALE_CONTACT")?.total ?? 0,
         dailyGoal: {
           configured: productivityDailyGoalProfiles.length > 0,

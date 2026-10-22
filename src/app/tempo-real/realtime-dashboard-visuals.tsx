@@ -30,13 +30,13 @@ export function GoalMeter({ goal, metric, compact = false }: Readonly<{ goal: Re
 
 export function DashboardSummary({ snapshot }: Readonly<{ snapshot: RealtimeDashboardSnapshot }>) {
   const goal = snapshot.week.goals.sales;
-  const contactsToday = snapshot.week.ranking.reduce((total, row) => total + row.today.effectiveContacts, 0);
-  const contactsWeek = snapshot.week.ranking.reduce((total, row) => total + row.effectiveContacts, 0);
-  const callsToday = snapshot.week.ranking.reduce((total, row) => total + row.today.calls, 0);
-  const callsWeek = snapshot.week.ranking.reduce((total, row) => total + row.calls, 0);
+  const contactsToday = snapshot.today.totals.effectiveContacts;
+  const contactsWeek = snapshot.week.totals.effectiveContacts;
+  const callsToday = snapshot.today.totals.calls;
+  const callsWeek = snapshot.week.totals.calls;
   return <div className={styles.summaryStrip}>
-    <article aria-label="Contatos de hoje"><span>Contatos de hoje</span><strong>{number.format(contactsToday)}<Icon name="people" /></strong><small>Contatos efetivos · soma por vendedor</small></article>
-    <article aria-label="Contatos da semana"><span>Contatos da semana</span><strong>{number.format(contactsWeek)}<Icon name="people" /></strong><small>Soma por vendedor · segunda a sexta</small></article>
+    <article aria-label="Contatos de hoje"><span>Contatos de hoje</span><strong>{number.format(contactsToday)}<Icon name="people" /></strong><small>Pessoas únicas contatadas hoje</small></article>
+    <article aria-label="Contatos da semana"><span>Contatos da semana</span><strong>{number.format(contactsWeek)}<Icon name="people" /></strong><small>Pessoas únicas · segunda a sexta</small></article>
     <article aria-label="Ligações feitas hoje"><span>Ligações feitas hoje</span><strong>{number.format(callsToday)}<Icon name="phone" /></strong><small>{number.format(callsWeek)} na semana · ligações registradas</small></article>
     <article className={styles.summaryGoal}><span>Meta semanal de vendas</span><strong>{goal.targetValue === null ? number.format(snapshot.week.totals.sales) : goalValue(goal.actualValue)}<small>/ {goal.targetValue === null ? "não definida" : goalValue(goal.targetValue)}</small><Icon name="sale" /></strong><small>{goal.targetValue === null ? "Cadastre uma meta semanal em Metas" : goal.label}</small></article>
   </div>;
