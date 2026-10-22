@@ -1,4 +1,5 @@
 export type RealtimeDashboardTotals = Readonly<{
+  tasksCompleted: number;
   calls: number;
   effectiveContacts: number;
   messages: number;
@@ -7,6 +8,18 @@ export type RealtimeDashboardTotals = Readonly<{
   sales: number;
   salesValueCents: string;
 }>;
+
+export type RealtimeGoalMetric = Exclude<keyof RealtimeDashboardTotals, "tasksCompleted">;
+export type RealtimeGoalProgress = Readonly<{
+  actualValue: string;
+  targetValue: string | null;
+  progressBasisPoints: number | null;
+  coveredMembers: number;
+  totalMembers: number;
+  source: "DAILY_PROFILE" | "DAILY_PROFILE_X5" | "WEEKLY_PLAN" | null;
+  label: string;
+}>;
+export type RealtimeDashboardGoals = Readonly<Record<RealtimeGoalMetric, RealtimeGoalProgress>>;
 
 export type RealtimeDashboardPeriod = Readonly<{
   from: string;
@@ -29,6 +42,9 @@ export type RealtimeDashboardRankingRow = Readonly<{
   meetingsCompleted: number;
   sales: number;
   salesValueCents: string;
+  tasksCompleted: number;
+  today: RealtimeDashboardTotals;
+  goals: Readonly<{ today: RealtimeDashboardGoals; week: RealtimeDashboardGoals }>;
 }>;
 
 export type RealtimeDashboardSnapshot = Readonly<{
@@ -43,12 +59,14 @@ export type RealtimeDashboardSnapshot = Readonly<{
   today: Readonly<{
     period: RealtimeDashboardPeriod;
     totals: RealtimeDashboardTotals;
+    goals: RealtimeDashboardGoals;
   }>;
   week: Readonly<{
     period: RealtimeDashboardPeriod;
     endsAt: string;
     daily: readonly Readonly<{ date: string; totals: RealtimeDashboardTotals; future: boolean }>[];
     totals: RealtimeDashboardTotals;
+    goals: RealtimeDashboardGoals;
     salesGoal: Readonly<{
       target: string | null;
       achieved: number;

@@ -74,10 +74,13 @@ describe("serviço do dashboard tempo real", () => {
       workspaceMember: { findMany: vi.fn().mockResolvedValue([{
         id: "member-sentinel",
         user: { displayName: "Ana Exemplo" },
+        role: { key: "closer" },
+        teamMemberships: [],
       }]) },
       commercialMetricBackfillRun: { findFirst: vi.fn().mockResolvedValue(null) },
       commercialMetricReconciliationRun: { findFirst: vi.fn().mockResolvedValue(null) },
       goalPlan: { findFirst: vi.fn().mockResolvedValue(null) },
+      dailyGoalProfile: { findMany: vi.fn().mockResolvedValue([{ memberId: "member-sentinel", callsTarget: 10, messagesTarget: 20, effectiveContactsTarget: 5, meetingsScheduledTarget: 2, salesValueTargetCents: 20000n }]) },
     };
     const service = createRealtimeDashboardService({
       database: database as never,
@@ -89,6 +92,14 @@ describe("serviço do dashboard tempo real", () => {
     const serialized = JSON.stringify(snapshot);
     expect(snapshot.week.totals).toMatchObject({ sales: 1, salesValueCents: "10000" });
     expect(snapshot.week.ranking[0]).toMatchObject({ name: "Ana Exemplo", initials: "AE", sales: 1 });
+    expect(snapshot.today.goals.salesValueCents).toMatchObject({ actualValue: "10000", targetValue: "20000", progressBasisPoints: 5000 });
+    expect(snapshot.week.goals.calls.targetValue).toBe("50");
+    expect(database.goalPlan.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      workspaceId: "workspace-sentinel", status: "PUBLISHED", timeZone: "America/Sao_Paulo",
+      periodStart: new Date("2026-10-19T03:00:00Z"),
+      periodEnd: { in: [new Date("2026-10-24T03:00:00Z"), new Date("2026-10-26T03:00:00Z")] },
+    } }));
+    expect(database.dailyGoalProfile.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: "workspace-sentinel" } }));
     expect(serialized).not.toContain("workspace-sentinel");
     expect(serialized).not.toContain("member-sentinel");
     expect(serialized).not.toContain("lead-sentinel");

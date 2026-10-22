@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import type {
   RealtimeDashboardScreen,
@@ -13,7 +13,9 @@ import {
   REALTIME_DASHBOARD_SLIDE_DURATION_MS,
   REALTIME_DASHBOARD_STALE_AFTER_MS,
 } from "@/modules/realtime-dashboard/domain/realtime-dashboard-polling";
-import { Avatar, BrandMark, Icon, Leaderboard, PerformanceDashboard } from "./realtime-dashboard-visuals";
+import { Avatar, BrandMark, Icon } from "./realtime-dashboard-icons";
+import { DashboardSummary, Leaderboard, Overview } from "./realtime-dashboard-visuals";
+import { readRealtimeTheme, setRealtimeTheme, subscribeRealtimeTheme } from "./realtime-dashboard-theme";
 import styles from "./realtime-dashboard.module.css";
 
 type LoadState = "LOADING" | "LIVE" | "STALE" | "ERROR";
@@ -27,6 +29,7 @@ function relativeFreshness(value: number | null, now: number) {
 
 export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public" }>) {
   const publicMode = mode === "public";
+  const theme = useSyncExternalStore(subscribeRealtimeTheme, readRealtimeTheme, () => "dark" as const);
   const [snapshot, setSnapshot] = useState<RealtimeDashboardSnapshot | null>(null);
   const [sharing, setSharing] = useState<RealtimeShareState>(initialSharing);
   const [canManageShare, setCanManageShare] = useState(false);
@@ -140,7 +143,7 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
   }, [paused, dialogOpen, slideStartedAt, hasSnapshot]);
 
   useEffect(() => {
-    if (paused || dialogOpen || !hasSnapshot || slide !== 0) return;
+    if (paused || dialogOpen || !hasSnapshot || slide !== 1) return;
     const timer = window.setInterval(() => setRankingPage((current) => current + 1), 12_000);
     return () => window.clearInterval(timer);
   }, [paused, dialogOpen, hasSnapshot, slide]);
@@ -180,7 +183,9 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
       if (!response.ok) throw new Error(`HTTP_${response.status}`);
       const payload = await response.json() as { result: { sharing: RealtimeShareState; shareUrl?: string } };
       setSharing(payload.result.sharing);
-      setShareUrl(payload.result.shareUrl ?? null);
+      const url = payload.result.shareUrl ? new URL(payload.result.shareUrl) : null;
+      url?.searchParams.set("theme", theme);
+      setShareUrl(url?.href ?? null);
       setCopied(false);
       setMessage(action === "ROTATE" ? "Novo link gerado. O link anterior deixou de funcionar." : "Link público revogado imediatamente.");
     } catch { setMessage("Não foi possível alterar o link público. Tente novamente."); }
@@ -202,27 +207,28 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
     catch { setMessage("Selecione e copie o link no campo acima."); }
   }
 
-  if (!snapshot) return <main className={styles.board} data-appearance="dark" aria-busy={loadState === "LOADING"}><div className={styles.emptyState} role={loadState === "ERROR" ? "alert" : "status"}><BrandMark /><h1>{loadState === "ERROR" ? publicMode ? "Placar indisponível" : "Não foi possível carregar o placar" : "Preparando o painel"}</h1><p>{loadState === "ERROR" ? publicMode ? "O link pode ter sido revogado ou substituído. Solicite um novo link ao responsável." : "Verifique a conexão. Uma nova tentativa será feita automaticamente." : "Conectando a equipe, os resultados e as conquistas."}</p>{!publicMode && loadState === "ERROR" ? <Link href="/">Voltar ao CRM</Link> : null}</div></main>;
+  if (!snapshot) return <main className={styles.board} data-appearance={theme} aria-busy={loadState === "LOADING"}><div className={styles.emptyState} role={loadState === "ERROR" ? "alert" : "status"}><BrandMark /><h1>{loadState === "ERROR" ? publicMode ? "Placar indisponível" : "Não foi possível carregar o placar" : "Preparando o painel"}</h1><p>{loadState === "ERROR" ? publicMode ? "O link pode ter sido revogado ou substituído. Solicite um novo link ao responsável." : "Verifique a conexão. Uma nova tentativa será feita automaticamente." : "Conectando a equipe, os resultados e as conquistas."}</p>{!publicMode && loadState === "ERROR" ? <Link href="/">Voltar ao CRM</Link> : null}</div></main>;
 
-  const isLight = slide === 1;
   const qualityLabel = loadState === "STALE" || loadState === "ERROR" ? "Reconectando" : snapshot.quality.state === "LIVE" ? "Ao vivo" : snapshot.quality.state === "PARTIAL" ? "Cobertura parcial" : "Qualidade indisponível";
   const secondsLeft = Math.min(60, Math.max(0, Math.ceil((REALTIME_DASHBOARD_SLIDE_DURATION_MS - (clock - slideStartedAt)) / 1_000)));
   const statusTone = loadState === "LIVE" ? snapshot.quality.state.toLowerCase() : loadState.toLowerCase();
   const workspaceInitials = snapshot.workspaceName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("");
 
-  return <main ref={boardRef} className={styles.board} data-appearance={isLight ? "light" : "dark"} data-fullscreen={fullscreen || undefined} aria-label="TEMPO REAL">
+  return <main ref={boardRef} className={styles.board} data-appearance={theme} data-fullscreen={fullscreen || undefined} aria-label="TEMPO REAL">
     <div className={styles.frame}>
       <nav className={styles.rail} aria-label="Controles do painel de TV">
         {!publicMode ? <Link className={styles.brandLink} href="/" aria-label="Voltar ao CRM"><BrandMark /></Link> : <span className={styles.brandLink}><BrandMark /></span>}
-        <div className={styles.railViews}><button type="button" aria-label="Mostrar slide 1" title="Ranking da equipe" aria-pressed={slide === 0} onClick={() => selectSlide(0)}><Icon name="grid" /></button><button type="button" aria-label="Mostrar slide 2" title="Desempenho comercial" aria-pressed={slide === 1} onClick={() => selectSlide(1)}><Icon name="chart" /></button><button type="button" aria-label={paused ? "Retomar apresentação" : "Pausar apresentação"} title={paused ? "Retomar apresentação" : "Pausar apresentação"} onClick={() => { setPaused((value) => !value); setSlideStartedAt(Date.now()); }}><Icon name={paused ? "play" : "pause"} /></button><button type="button" aria-label={fullscreen ? "Sair da tela cheia" : "Tela cheia"} title="Tela cheia" onClick={() => void toggleFullscreen()}><Icon name="expand" /></button></div>
+        <div className={styles.railViews}><button type="button" aria-label="Mostrar slide 1" title="Geral · Hoje e semana" aria-pressed={slide === 0} onClick={() => selectSlide(0)}><Icon name="grid" /></button><button type="button" aria-label="Mostrar slide 2" title="Ranking individual" aria-pressed={slide === 1} onClick={() => selectSlide(1)}><Icon name="people" /></button><button type="button" aria-label={paused ? "Retomar apresentação" : "Pausar apresentação"} title={paused ? "Retomar apresentação" : "Pausar apresentação"} onClick={() => { setPaused((value) => !value); setSlideStartedAt(Date.now()); }}><Icon name={paused ? "play" : "pause"} /></button><button type="button" aria-label={fullscreen ? "Sair da tela cheia" : "Tela cheia"} title="Tela cheia" onClick={() => void toggleFullscreen()}><Icon name="expand" /></button></div>
         <div className={styles.railBottom}>{!publicMode && canManageShare ? <button type="button" aria-label="Compartilhar painel" title="Compartilhar painel" onClick={() => setSettingsOpen(true)}><Icon name="link" /></button> : null}{!publicMode ? <Link href="/" aria-label="Sair do painel de TV" title="Voltar ao CRM"><Icon name="exit" /></Link> : null}</div>
       </nav>
       <div className={styles.presentation}>
-        <header className={styles.topbar}><span className={styles.screenName}>TEMPO REAL <span>/</span> {isLight ? "Desempenho" : "Ranking"}</span><div className={styles.topbarRight}><span className={styles.liveStatus} data-state={statusTone} title={snapshot.quality.reason}><i />{qualityLabel}</span><span className={styles.workspaceProfile}><Avatar initials={workspaceInitials} /><strong>{snapshot.workspaceName}</strong></span></div></header>
+        <header className={styles.topbar}><div className={styles.screenName}><span>TRABALHO / PAINEL COMERCIAL</span><h1>TEMPO REAL</h1></div><div className={styles.topbarRight}><span className={styles.liveStatus} data-state={statusTone} title={snapshot.quality.reason}><i />{qualityLabel}</span><div className={styles.themeSwitch} role="group" aria-label="Aparência do painel"><button type="button" aria-label="Tema escuro" aria-pressed={theme === "dark"} onClick={() => setRealtimeTheme("dark")}><Icon name="moon" />Escuro</button><button type="button" aria-label="Tema claro" aria-pressed={theme === "light"} onClick={() => setRealtimeTheme("light")}><Icon name="sun" />Claro</button></div><span className={styles.workspaceProfile}><Avatar initials={workspaceInitials} /><strong>{snapshot.workspaceName}</strong></span></div></header>
+        <div className={styles.viewHeading}><div><h2>{slide === 0 ? "O ritmo da equipe. O resultado de todos." : "Cada vendedor. Cada avanço."}</h2><p>{slide === 0 ? "Hoje e semana lado a lado, com atividade real e metas verificadas." : "Ranking semanal com resultados e metas diárias e semanais por profissional."}</p></div><div className={styles.viewTabs} role="group" aria-label="Visualização"><button type="button" aria-pressed={slide === 0} onClick={() => selectSlide(0)}><Icon name="grid" />Geral</button><button type="button" aria-pressed={slide === 1} onClick={() => selectSlide(1)}><Icon name="people" />Ranking</button></div></div>
+        <DashboardSummary snapshot={snapshot} />
         <section className={styles.stage} key={slide} aria-label={`Slide ${slide + 1} de 2`}>
-          {slide === 0 ? <Leaderboard snapshot={snapshot} now={clock} page={rankingPage} /> : <PerformanceDashboard snapshot={snapshot} />}
+          {slide === 0 ? <Overview snapshot={snapshot} /> : <Leaderboard snapshot={snapshot} page={rankingPage} />}
         </section>
-        <footer className={styles.footer}><div className={styles.footerStatus}><span>{relativeFreshness(receivedAt, clock)}</span><i />{snapshot.timeZone}</div><div className={styles.slideIndicator}><span>{paused ? "Apresentação pausada" : dialogOpen ? "Controles abertos" : `Próxima tela em ${secondsLeft}s`}</span><b data-active={slide === 0} /><b data-active={slide === 1} /><small>0{slide + 1} / 02</small></div></footer>
+        <footer className={styles.footer}><div className={styles.footerStatus}><span>{relativeFreshness(receivedAt, clock)}</span><i />{snapshot.timeZone}<i /><span>Prospecção Ativa · Logs · Indicadores · contatos únicos por período</span></div><div className={styles.slideIndicator}><span>{paused ? "Apresentação pausada" : dialogOpen ? "Controles abertos" : `Próxima tela em ${secondsLeft}s`}</span><b data-active={slide === 0} /><b data-active={slide === 1} /><small>0{slide + 1} / 02</small></div></footer>
       </div>
     </div>
     {loadState === "STALE" || loadState === "ERROR" ? <div className={styles.connectionNotice} role="status">Conexão interrompida. Exibindo a última atualização enquanto reconectamos.</div> : null}

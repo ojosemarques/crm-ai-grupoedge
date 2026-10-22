@@ -15,7 +15,7 @@ import {
   resolveRealtimeDashboardPeriods,
   weeklySalesGoal,
 } from "@/modules/realtime-dashboard/domain/realtime-dashboard-domain";
-import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
+import { commercialFunctionForRole, commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import {
   createAuthorizationService,
   type ResourceScope,
@@ -113,7 +113,7 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     if (!workspace) publicNotFound();
 
     const periods = resolveRealtimeDashboardPeriods(now, workspace.timeZone);
-    const [factRows, activeMembers, latestBackfill, latestReconciliation, goalPlan] = await Promise.all([
+    const [factRows, activeMembers, latestBackfill, latestReconciliation, goalPlan, profiles] = await Promise.all([
       options.database.commercialMetricFact.findMany({
         where: {
           workspaceId,
@@ -141,7 +141,7 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
       options.database.workspaceMember.findMany({
         where: commercialMemberWhere({ workspaceId, functions: ["SDR", "CLOSER"] }),
         orderBy: [{ user: { displayName: "asc" } }, { id: "asc" }],
-        select: { id: true, user: { select: { displayName: true } } },
+        select: { id: true, user: { select: { displayName: true } }, role: { select: { key: true } }, teamMemberships: { where: { deletedAt: null, team: { deletedAt: null } }, select: { teamId: true, function: true } } },
       }),
       options.database.commercialMetricBackfillRun.findFirst({
         where: { workspaceId, mode: "APPLY" },
@@ -155,31 +155,25 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
         where: {
           workspaceId,
           status: "PUBLISHED",
-          periodStart: { lte: periods.queryFrom },
-          periodEnd: { gte: periods.weekGoalEnd },
-          quotas: {
-            some: {
-              targetType: "FUNCTION",
-              function: "CLOSER",
-              metricKey: "OPPORTUNITIES_WON",
-              unit: "COUNT",
-            },
-          },
+          timeZone: workspace.timeZone,
+          periodStart: periods.queryFrom,
+          periodEnd: { in: [periods.weekGoalEnd, periods.weekPlanEnd] },
         },
-        orderBy: [{ periodStart: "desc" }, { version: "desc" }],
+        orderBy: [{ publishedAt: "desc" }, { version: "desc" }, { id: "asc" }],
         select: {
+          name: true,
           quotas: {
             where: {
-              targetType: "FUNCTION",
-              function: "CLOSER",
-              metricKey: "OPPORTUNITIES_WON",
-              unit: "COUNT",
+              metricKey: { in: ["OPPORTUNITIES_WON", "MEETINGS_HELD", "REVENUE_WON_CENTS"] },
             },
             orderBy: { id: "asc" },
-            take: 1,
-            select: { targetValue: true, targetLabel: true },
+            select: { targetType: true, memberId: true, teamId: true, function: true, metricKey: true, targetValue: true },
           },
         },
+      }),
+      options.database.dailyGoalProfile.findMany({
+        where: { workspaceId },
+        select: { memberId: true, callsTarget: true, messagesTarget: true, effectiveContactsTarget: true, meetingsScheduledTarget: true, salesValueTargetCents: true },
       }),
     ]);
 
@@ -197,18 +191,20 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
       select: { id: true, user: { select: { displayName: true } } },
     });
 
-    const sellers = [...activeMembers, ...historicalMembers].map((member) => ({
-      id: member.id,
-      name: member.user.displayName,
-    }));
+    const sellers = [
+      ...activeMembers.map((member) => ({ id: member.id, name: member.user.displayName, active: true, functions: [...new Set([commercialFunctionForRole(member.role.key), ...member.teamMemberships.map((team) => team.function)].filter((value): value is NonNullable<typeof value> => value !== null))], teamIds: member.teamMemberships.map((team) => team.teamId) })),
+      ...historicalMembers.map((member) => ({ id: member.id, name: member.user.displayName, active: false, functions: [], teamIds: [] })),
+    ];
     const facts = factRows.map(asActivityFact);
-    const aggregation = aggregateRealtimeDashboard(facts, sellers, periods);
+    const aggregation = aggregateRealtimeDashboard(facts, sellers, periods, { profiles, quotas: goalPlan?.quotas ?? [], ...(goalPlan ? { planName: goalPlan.name } : {}) });
     const quality = commercialMetricQuality(latestBackfill, latestReconciliation);
+    const knownMembers = new Set(sellers.map((seller) => seller.id));
+    const unattributed = factRows.filter((fact) => !knownMembers.has((fact.eventType === "MEETING_SCHEDULED" ? fact.bookedByMemberId ?? fact.creditedMemberId : fact.creditedMemberId) ?? "")).length;
     const newestRecordedAt = factRows.reduce<Date | null>(
       (latest, fact) => !latest || fact.recordedAt > latest ? fact.recordedAt : latest,
       null,
     );
-    const quota = goalPlan?.quotas[0] ?? null;
+    const salesGoal = aggregation.week.goals.sales;
 
     return Object.freeze({
       workspaceName: workspace.name,
@@ -216,20 +212,20 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
       generatedAt: now.toISOString(),
       freshnessAt: newestRecordedAt?.toISOString() ?? null,
       quality: Object.freeze({
-        state: quality.reconciliationState === "AVAILABLE"
+        state: unattributed > 0 ? "PARTIAL" as const : quality.reconciliationState === "AVAILABLE"
           ? "LIVE" as const
           : quality.reconciliationState === "UNAVAILABLE"
             ? "UNAVAILABLE" as const
             : "PARTIAL" as const,
-        reason: quality.reason,
+        reason: unattributed > 0 ? `${quality.reason} ${unattributed} fatos sem vendedor atribuído aparecem somente nos totais gerais.` : quality.reason,
       }),
       today: aggregation.today,
       week: Object.freeze({
         ...aggregation.week,
         salesGoal: weeklySalesGoal(
-          aggregation.week.totals.sales,
-          quota?.targetValue ?? null,
-          quota?.targetLabel ?? null,
+          salesGoal.targetValue === null ? aggregation.week.totals.sales : Number(salesGoal.actualValue),
+          salesGoal.targetValue === null ? null : BigInt(salesGoal.targetValue),
+          salesGoal.label,
         ),
       }),
     });

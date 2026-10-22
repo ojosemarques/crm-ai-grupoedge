@@ -13,8 +13,10 @@ import {
   workspaceDayRange,
   workspaceWeekRange,
 } from "@/shared/core/time/workspace-time";
+import { buildRealtimeDashboardGoals, type RealtimeGoalConfiguration, type RealtimeSeller } from "./realtime-dashboard-goals";
 
 export const realtimeDashboardEventTypes = Object.freeze([
+  "TASK_COMPLETED",
   "CALL_ATTEMPTED",
   "CALL_CONNECTED",
   "INBOUND_MESSAGE_RECEIVED",
@@ -32,6 +34,7 @@ export type RealtimeDashboardPeriods = Readonly<{
   queryFrom: Date;
   queryTo: Date;
   weekGoalEnd: Date;
+  weekPlanEnd: Date;
 }>;
 
 export function resolveRealtimeDashboardPeriods(
@@ -66,6 +69,7 @@ export function resolveRealtimeDashboardPeriods(
     queryFrom: weekRange.start,
     queryTo: now,
     weekGoalEnd: saturdayStart,
+    weekPlanEnd: weekRange.end,
   });
 }
 
@@ -95,8 +99,14 @@ export function summarizeRealtimeDashboardTotals(
   facts: readonly IntegratedActivityFact[],
   sellers: readonly Readonly<{ id: string; name: string }>[],
 ): RealtimeDashboardTotals {
-  const rows = summarizeDashboardSellerActivity(facts, sellers);
+  const known = new Set(sellers.map((seller) => seller.id));
+  const unattributedId = "realtime-unattributed";
+  const rows = summarizeDashboardSellerActivity(facts.map((fact) => {
+    const memberId = fact.eventType === "MEETING_SCHEDULED" ? fact.bookedByMemberId ?? fact.creditedMemberId : fact.creditedMemberId;
+    return memberId && known.has(memberId) ? fact : { ...fact, creditedMemberId: unattributedId, bookedByMemberId: fact.eventType === "MEETING_SCHEDULED" ? unattributedId : fact.bookedByMemberId };
+  }), [...sellers, { id: unattributedId, name: "Sem atribuição" }]);
   return Object.freeze({
+    tasksCompleted: rows.reduce((total, row) => total + row.tasksCompleted, 0),
     calls: rows.reduce((total, row) => total + row.calls, 0),
     effectiveContacts: summarizeEffectiveContacts(facts).total,
     messages: rows.reduce(
@@ -110,11 +120,11 @@ export function summarizeRealtimeDashboardTotals(
   });
 }
 
-export function buildRealtimeDashboardRanking(
+function rankedSellerActivity(
   facts: readonly IntegratedActivityFact[],
   sellers: readonly Readonly<{ id: string; name: string }>[],
-): readonly RealtimeDashboardRankingRow[] {
-  const rows = summarizeDashboardSellerActivity(facts, sellers)
+) {
+  return summarizeDashboardSellerActivity(facts, sellers)
     .map((row) => ({
       ...row,
       messages: row.whatsappMessages + row.instagramMessages + row.emailsSent,
@@ -125,7 +135,15 @@ export function buildRealtimeDashboardRanking(
       || right.effectiveContacts - left.effectiveContacts
       || right.meetingsCompleted - left.meetingsCompleted
       || right.sales - left.sales
-      || left.name.localeCompare(right.name, "pt-BR"));
+      || left.name.localeCompare(right.name, "pt-BR")
+      || left.id.localeCompare(right.id));
+}
+
+export function buildRealtimeDashboardRanking(
+  facts: readonly IntegratedActivityFact[],
+  sellers: readonly Readonly<{ id: string; name: string }>[],
+): readonly Omit<RealtimeDashboardRankingRow, "today" | "goals">[] {
+  const rows = rankedSellerActivity(facts, sellers);
 
   return Object.freeze(rows.map((row, index) => Object.freeze({
     position: index + 1,
@@ -139,20 +157,27 @@ export function buildRealtimeDashboardRanking(
     meetingsCompleted: row.meetingsCompleted,
     sales: row.sales,
     salesValueCents: row.salesValueCents,
+    tasksCompleted: row.tasksCompleted,
   })));
 }
 
 export function aggregateRealtimeDashboard(
   facts: readonly IntegratedActivityFact[],
-  sellers: readonly Readonly<{ id: string; name: string }>[],
+  sellers: readonly RealtimeSeller[],
   periods: RealtimeDashboardPeriods,
+  configuration: RealtimeGoalConfiguration = { profiles: [], quotas: [] },
 ) {
   const todayFacts = factsWithin(facts, periods.today);
   const weekFacts = factsWithin(facts, periods.week);
+  const goals = buildRealtimeDashboardGoals({ sellers, todayFacts, weekFacts, weekFromDate: periods.week.fromDate, timeZone: periods.week.timeZone, configuration });
+  const dailyRows = new Map(rankedSellerActivity(todayFacts, sellers).map((row) => [row.id, Object.freeze({ calls: row.calls, messages: row.messages, effectiveContacts: row.effectiveContacts, meetingsScheduled: row.meetingsBooked, meetingsCompleted: row.meetingsCompleted, sales: row.sales, salesValueCents: row.salesValueCents, tasksCompleted: row.tasksCompleted })]));
+  const orderedMembers = rankedSellerActivity(weekFacts, sellers);
+  const weeklyRows = buildRealtimeDashboardRanking(weekFacts, sellers);
   return Object.freeze({
     today: Object.freeze({
       period: periods.today,
       totals: summarizeRealtimeDashboardTotals(todayFacts, sellers),
+      goals: goals.today,
     }),
     week: Object.freeze({
       period: periods.week,
@@ -171,7 +196,11 @@ export function aggregateRealtimeDashboard(
         });
       })),
       totals: summarizeRealtimeDashboardTotals(weekFacts, sellers),
-      ranking: buildRealtimeDashboardRanking(weekFacts, sellers),
+      goals: goals.week,
+      ranking: Object.freeze(weeklyRows.map((row, index) => {
+        const memberId = orderedMembers[index]!.id;
+        return Object.freeze({ ...row, today: dailyRows.get(memberId)!, goals: goals.byMember.get(memberId)! });
+      })),
     }),
   });
 }

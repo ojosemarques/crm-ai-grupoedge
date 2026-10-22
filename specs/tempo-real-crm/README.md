@@ -2,7 +2,7 @@
 
 ## Resultado
 
-Área autenticada `Trabalho → TEMPO REAL` e placar público somente leitura para TV. As duas visões, Ranking (carvão/menta) e Desempenho (branco/azul), usam fatos de `CommercialMetricFact`, respeitam o timezone do workspace, alternam a cada 60 segundos e atualizam por polling resiliente a cada 15 segundos. A refatoração visual de 22/10/2026 segue as imagens fornecidas pelo proprietário e está descrita em `13-tv-visual-refactor.md`.
+Área autenticada `Trabalho → TEMPO REAL` e placar público somente leitura para TV. Geral (hoje e semana lado a lado) e Ranking compartilham o mesmo design e alternam a cada 60 segundos. Ambos começam escuros; o tema claro é uma preferência independente, persistida no navegador e no link. Fatos de `CommercialMetricFact`, perfis diários e plano semanal publicado alimentam os resultados/metas sem somar novamente os totais de outras telas. A spec `14-unified-command-center.md` substitui a separação visual da spec 13.
 
 ## Mapa
 
@@ -20,6 +20,7 @@
 - `11-data-api-and-realtime.md`: schema, APIs, polling e concorrência.
 - `12-observability-rollout-production.md`: rollout, produção e rollback.
 - `13-tv-visual-refactor.md`: nova composição, modo TV, série diária e evidências da refatoração visual.
+- `14-unified-command-center.md`: design unificado, temas independentes, execução e metas reais por vendedor/período.
 
 ## Arquitetura recomendada
 
