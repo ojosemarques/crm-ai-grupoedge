@@ -17,7 +17,8 @@ async function authorizeContext(request: NextRequest) {
   await getAuthorizationService().assertAuthorized(context, PermissionKeys.INTEGRATIONS_MANAGE, { workspaceId: context.workspaceId, resourceType: "McpIntegration", resourceId: context.workspaceId });
   return context;
 }
-const browserHeaders = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY", "X-Robots-Tag": "noindex, nofollow" };
+// Keep Origin on the same-origin consent POST so the CSRF guard can validate it.
+const browserHeaders = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "same-origin", "X-Frame-Options": "DENY", "X-Robots-Tag": "noindex, nofollow" };
 export async function GET(request: NextRequest) {
   try {
     await rateLimitOAuth(request, "authorize");
@@ -48,6 +49,6 @@ export async function POST(request: NextRequest) {
     // A 303 after this form is blocked by Chromium's form-action 'self' CSP.
     const destination = redirect.toString();
     const body = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="refresh" content="0;url=${htmlEscape(destination)}"><title>Concluindo conexão</title></head><body><p>Concluindo conexão com o cliente autorizado…</p><a href="${htmlEscape(destination)}" rel="noreferrer">Continuar</a></body></html>`;
-    return new NextResponse(body, { headers: { ...browserHeaders, Pragma: "no-cache", Refresh: `0;url=${destination}` } });
+    return new NextResponse(body, { headers: { ...browserHeaders, "Referrer-Policy": "no-referrer", Pragma: "no-cache", Refresh: `0;url=${destination}` } });
   } catch (error) { return oauthFailure(error); }
 }

@@ -65,6 +65,7 @@ describe("CRM OAuth login, consent and token routes", () => {
     const html = await response.text();
     expect(response.status).toBe(200); expect(html).toContain("&lt;OpenBot&gt;"); expect(html).toContain(authorization.redirect_uri);
     expect(html).toContain("consent_token"); expect(html).toContain("crm:read"); expect(html).not.toContain("private-session");
+    expect(response.headers.get("referrer-policy")).toBe("same-origin");
     expect(mocks.authorize).toHaveBeenCalledWith(expect.anything(), "integrations.manage", expect.objectContaining({ workspaceId: "workspace" }));
   });
   it("requires valid session-bound consent and returns a one-use code, client state and issuer", async () => {
