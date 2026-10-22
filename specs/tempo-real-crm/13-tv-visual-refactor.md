@@ -19,7 +19,7 @@
 
 ## Limites e rollback
 
-Sem dependências ou migrações novas. O DTO acrescenta somente agregados diários já presentes no escopo semanal. Rollback por revert do commit e promoção do deployment anterior.
+Sem dependências ou migrações novas. O DTO acrescenta somente agregados diários já presentes no escopo semanal. Rollback por revert do commit e promoção do deployment anterior; recarregar os navegadores das TVs ao reverter o contrato da API.
 
 ## Evidências
 
@@ -34,4 +34,13 @@ Sem dependências ou migrações novas. O DTO acrescenta somente agregados diár
 - Fluxo autenticado/público verificou criação pela interface, tela cheia, pausa por 61 s, ciclo de 60/120 s, suspensão durante o compartilhamento, reset do contador, proteção da rota privada e revogação refletida sem reload.
 - Falha transitória preserva o placar com aviso; retomada recupera `Ao vivo`. Um 404 público limpa os dados revogados.
 - A primeira rodada integrada encontrou um erro temporário em Formulários, alterado simultaneamente fora deste escopo. A correção entrou em `125f1f8`; o build e E2E finais validaram a base combinada, sem copiar ou descartar alterações alheias.
-- Publicação/CI/smoke de produção: próximos gates, ainda não declarados concluídos.
+
+## Produção
+
+- Commit técnico publicado na `main`: `138f7e5c1f0f42589de104aef7ff7b7ca9b95bc8`.
+- Deployment `dpl_3Sk7Y8o9VLJA3TrwrAGHL3KfokK8`, URL `https://grupo-edge-htkjharpm-ejosemarquess-gmailcoms-projects.vercel.app`, estado `Ready`, com alias canônico `https://crm-ai-grupoedge.vercel.app`. Build 2m46s + 23s pós-build.
+- Smoke autenticado real: rota privada anônima 307; login e API privada 200; série diária com cinco dias; duas telas renderizadas com dados do CRM e sem shell administrativo.
+- TV pública em 1366×768: página 200 com `no-referrer`; ciclo Ranking → Desempenho em 60s; três leituras observadas; máximo de uma requisição simultânea; revogação refletida sem reload; zero erros de navegador; zero compartilhamentos ativos ao final no workspace testado.
+- Capturas locais, sem versionar dados comerciais: `.cache/realtime-tv-production/{ranking,desempenho}-1920x1080.png` e `.cache/realtime-tv-production/publico-{ranking,desempenho}-1366x768.png`.
+- Logs de erro do deployment filtrados por `*tempo-real*`: zero registros na janela de 22/10/2026 14:10–14:25 UTC.
+- CI do commit técnico: `https://github.com/ojosemarques/crm-ai-grupoedge/actions/runs/39794431587`. O próprio run preserva o resultado do Quality gate, o relatório e o SBOM associados ao SHA técnico.
