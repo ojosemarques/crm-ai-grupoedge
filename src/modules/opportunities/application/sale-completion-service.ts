@@ -17,7 +17,7 @@ import { createPaymentService } from "@/modules/payments/application/payment-ser
 import { syncActiveProspectingCommercialStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createRevenueService } from "@/modules/revenue/application/revenue-service";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
-import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
+import { createAuthorizationService, type AuthorizationDecision, type ResourceScope } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys, type PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
@@ -41,16 +41,51 @@ function transactionDatabase(tx: Prisma.TransactionClient): PrismaClient {
 }
 
 export function createSaleCompletionService(options: { database: PrismaClient; now: () => Date }) {
+  async function ownSalesOnly(authorization: ReturnType<typeof createAuthorizationService>, context: AuthenticatedContext) {
+    const decision = await authorization.authorize(context, PermissionKeys.SALES_COMPLETE, {
+      workspaceId: context.workspaceId, resourceType: "Opportunity", ownerMemberId: context.memberId,
+    });
+    return decision.allowed && decision.scope === "OWN";
+  }
+
+  // Capability local ao fechamento já autorizado. Nunca é usada nas APIs gerais
+  // de clientes, contratos, receita ou pagamentos e não concede baixa financeira.
+  function completionAuthorization(base: ReturnType<typeof createAuthorizationService>, context: AuthenticatedContext) {
+    const delegated = new Set<PermissionKey>([
+      PermissionKeys.ACCOUNTS_WRITE, PermissionKeys.CONTRACTS_CREATE,
+      PermissionKeys.CONTRACTS_DRAFT_WRITE, PermissionKeys.CONTRACTS_ISSUE,
+      PermissionKeys.CONTRACTS_ACCEPT_RECORD, PermissionKeys.REVENUE_MANAGE,
+      PermissionKeys.REVENUE_EVENTS_RECORD, PermissionKeys.PAYMENTS_MANAGE,
+    ]);
+    async function authorize(caller: AuthenticatedContext, key: PermissionKey, resource: ResourceScope): Promise<AuthorizationDecision> {
+      if (caller === context && resource.workspaceId === context.workspaceId && delegated.has(key)
+        && (resource.ownerMemberId === context.memberId
+          || (key === PermissionKeys.ACCOUNTS_WRITE && resource.resourceType === "Account" && !resource.resourceId))) {
+        return { allowed: true, scope: "OWN" };
+      }
+      return base.authorize(caller, key, resource);
+    }
+    return { ...base, authorize, async assertAuthorized(caller: AuthenticatedContext, key: PermissionKey, resource: ResourceScope) {
+      if (!(await authorize(caller, key, resource)).allowed) await base.assertAuthorized(caller, key, resource);
+    } };
+  }
+
   async function inspect(database: PrismaClient, context: AuthenticatedContext, input: SaleCompletionInput, allowReplay = false) {
-    const authorization = createAuthorizationService({ database });
+    const baseAuthorization = createAuthorizationService({ database });
     const opportunity = await database.opportunity.findFirst({
       where: { workspaceId: context.workspaceId, id: input.opportunityId, deletedAt: null },
       include: { account: true, lead: { include: { account: true, contact: true, routingQueue: true, queue: true } }, offers: { where: { deletedAt: null }, orderBy: { createdAt: "desc" }, take: 1 } },
     });
     if (!opportunity) fail("Oportunidade não encontrada.", "NOT_FOUND", 404);
     const resource = { workspaceId: context.workspaceId, resourceType: "Opportunity", resourceId: opportunity.id, opportunityId: opportunity.id, ownerMemberId: opportunity.ownerMemberId, sourceId: opportunity.lead.sourceId, teamId: opportunity.lead.routingQueue?.teamId ?? opportunity.lead.queue?.teamId ?? null };
-    await authorization.assertAuthorized(context, PermissionKeys.OPPORTUNITIES_WRITE, resource);
-    await assertOriginCapability(database, context, await authorization.authorize(context, PermissionKeys.OPPORTUNITIES_WRITE, resource), opportunity.lead.sourceId, "canTransition");
+    await baseAuthorization.assertAuthorized(context, PermissionKeys.OPPORTUNITIES_WRITE, resource);
+    await assertOriginCapability(database, context, await baseAuthorization.authorize(context, PermissionKeys.OPPORTUNITIES_WRITE, resource), opportunity.lead.sourceId, "canTransition");
+    const restricted = await ownSalesOnly(baseAuthorization, context);
+    if (restricted && (opportunity.ownerMemberId !== context.memberId || opportunity.lead.ownerMemberId !== context.memberId
+      || input.sellerMemberId !== context.memberId || BigInt(input.receivedCents) > 0n || input.onboardingOwnerMemberId)) {
+      fail("Seu perfil pode concluir apenas vendas próprias, sem baixa de recebimentos ou atribuição de onboarding.", "ACCESS_DENIED", 403);
+    }
+    const authorization = restricted ? completionAuthorization(baseAuthorization, context) : baseAuthorization;
     const required: PermissionKey[] = [PermissionKeys.CONTRACTS_CREATE];
     if (input.sellerMemberId !== opportunity.ownerMemberId) required.push(PermissionKeys.OWNERSHIP_ASSIGN);
     required.push(PermissionKeys.CONTRACTS_DRAFT_WRITE, PermissionKeys.CONTRACTS_ISSUE, PermissionKeys.CONTRACTS_ACCEPT_RECORD, PermissionKeys.REVENUE_MANAGE, PermissionKeys.REVENUE_EVENTS_RECORD, PermissionKeys.PAYMENTS_MANAGE);
@@ -119,6 +154,10 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
     });
     if (!lead) fail("Lead não encontrado.", "NOT_FOUND", 404);
     const authorization = createAuthorizationService({ database: options.database });
+    const restricted = await ownSalesOnly(authorization, context);
+    if (restricted && (lead.ownerMemberId !== context.memberId || input.sellerMemberId !== context.memberId)) {
+      fail("Seu perfil pode preparar apenas vendas dos seus próprios leads e em seu nome.", "ACCESS_DENIED", 403);
+    }
     await authorization.assertAuthorized(context, PermissionKeys.LEADS_READ, {
       workspaceId: context.workspaceId,
       resourceType: "Lead",
@@ -143,6 +182,7 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
         return { opportunityId: metadata.opportunityId, replayed: true };
       }
       const currentLead = await tx.lead.findFirst({ where: { id: input.leadId, workspaceId: context.workspaceId, deletedAt: null }, include: { contact: true } });
+      if (restricted && currentLead?.ownerMemberId !== context.memberId) fail("O responsável pelo lead mudou. Recarregue o card.", "ACCESS_DENIED", 403);
       if (!currentLead?.contact || currentLead.contact.deletedAt) fail("Vincule um contato ativo ao lead antes de marcar a venda.");
       if (await tx.opportunity.findFirst({ where: { workspaceId: context.workspaceId, leadId: input.leadId, status: "OPEN", deletedAt: null } })) {
         fail("Este lead já possui um negócio aberto. Recarregue o card para continuar o fechamento.", "OPEN_OPPORTUNITY_EXISTS");
@@ -205,7 +245,7 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
       select: {
         id: true,
         ownerMemberId: true,
-        lead: { select: { sourceId: true, routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } },
+        lead: { select: { ownerMemberId: true, sourceId: true, routingQueue: { select: { teamId: true } }, queue: { select: { teamId: true } } } },
       },
     });
     if (!opportunity) fail("Oportunidade não encontrada.", "NOT_FOUND", 404);
@@ -218,11 +258,24 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
       authorization.authorize(context, PermissionKeys.PAYMENTS_MANAGE, resource),
       authorization.authorize(context, PermissionKeys.FINANCE_MANAGE, { workspaceId: context.workspaceId, resourceType: "Finance", resourceId: context.workspaceId }),
     ]);
-    const canRecordReceipt = payments.allowed && finance.allowed;
+    const restricted = await ownSalesOnly(authorization, context);
+    if (restricted && (opportunity.ownerMemberId !== context.memberId || opportunity.lead.ownerMemberId !== context.memberId)) {
+      fail("Seu perfil pode concluir apenas vendas próprias.", "ACCESS_DENIED", 403);
+    }
+    const canRecordReceipt = !restricted && payments.allowed && finance.allowed;
     const financialAccounts = canRecordReceipt
       ? await options.database.financialAccount.findMany({ where: { workspaceId: context.workspaceId, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } })
       : [];
-    return { canRecordReceipt, financialAccounts, paymentMethods: salePaymentMethods };
+    const templates = await options.database.contractTemplate.findMany({
+      where: { workspaceId: context.workspaceId, status: "ACTIVE", deletedAt: null },
+      select: { id: true, name: true, currentVersion: true }, orderBy: { name: "asc" },
+    });
+    const versions = await options.database.contractTemplateVersion.findMany({
+      where: { workspaceId: context.workspaceId, OR: templates.map((template) => ({ templateId: template.id, version: template.currentVersion })) },
+      select: { id: true, templateId: true, version: true },
+    });
+    return { canRecordReceipt, ownSalesOnly: restricted, financialAccounts, paymentMethods: salePaymentMethods,
+      templateVersions: versions.map((version) => ({ id: version.id, version: version.version, name: templates.find((template) => template.id === version.templateId)!.name })) };
   }
 
   async function authorize(context: AuthenticatedContext, raw: unknown) {
@@ -286,7 +339,7 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
         const subscription = await revenue.create(context, { contractId: contract.contractId, quantity: 1, recurringPriceCents: input.monthlyCents, billingInterval: "MONTHLY", startsAt: input.startsAt, endsAt });
         subscriptionId = subscription.id;
         await revenue.action(context, subscription.id, { action: "ACTIVATE", effectiveAt: input.startsAt, reason: "Aceite contratual documentado no fechamento.", idempotencyKey: `sale:${idempotencyKey}:activate` });
-        const payments = createPaymentService({ database, now: options.now });
+        const payments = createPaymentService({ database, now: options.now, authorization: state.authorization });
         let remainingReceived = BigInt(input.receivedCents);
         for (const installment of saleSchedule(input)) {
           const invoice = await payments.createInvoice(context, { subscriptionId, billingPeriodStart: installment.dueAt, billingPeriodEnd: installment.periodEnd, dueAt: installment.dueAt, description: `${state.opportunity.name} — parcela ${installment.installment}/${input.durationMonths}`, upfrontCents: installment.installment === 1 ? input.upfrontCents : "0", idempotencyKey: `sale:${idempotencyKey}:invoice:${installment.installment}` });

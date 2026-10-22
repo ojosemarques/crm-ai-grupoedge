@@ -9,7 +9,7 @@ import { saleCompletionSchema, type SaleCompletionInput } from "@/modules/opport
 
 type Template = { id: string; name: string; version: number };
 type Preview = { payload: SaleCompletionInput; customer: { mode: "CREATE" | "LINK" | "EXISTING"; name: string; accountId: string | null }; customerName: string; sellerName: string; contractTemplateName: string; schedule: Array<{ installment: number; amountCents: string; dueAt: string }>; pendingSteps: string[]; summary: string };
-type CloseSaleOptions = { canRecordReceipt: boolean; financialAccounts: Array<{ id: string; name: string }>; paymentMethods: Array<"PIX" | "BANK_TRANSFER" | "CARD" | "CASH" | "OTHER"> };
+type CloseSaleOptions = { canRecordReceipt: boolean; ownSalesOnly: boolean; templateVersions: Template[]; financialAccounts: Array<{ id: string; name: string }>; paymentMethods: Array<"PIX" | "BANK_TRANSFER" | "CARD" | "CASH" | "OTHER"> };
 type Completed = { accountId: string; contractId: string; invoiceIds: string[]; paymentIds: string[]; subscriptionId: string | null; handoffId: string | null; pendingSteps: string[]; receivedCents: string; outstandingCents: string };
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
 
@@ -61,11 +61,8 @@ export function SaleCompletionPanel({ opportunity, sellers, initiallyExpanded = 
     let active = true;
     async function load() {
       try {
-        const [contracts, options] = await Promise.all([
-          result<{ templateVersions: Template[] }>(await fetch("/api/contracts", { cache: "no-store" })),
-          result<CloseSaleOptions>(await fetch(`/api/opportunities/close-sale?opportunityId=${opportunity.id}`, { cache: "no-store" })),
-        ]);
-        if (active) { setTemplates(contracts.templateVersions); setCloseOptions(options); }
+        const options = await result<CloseSaleOptions>(await fetch(`/api/opportunities/close-sale?opportunityId=${opportunity.id}`, { cache: "no-store" }));
+        if (active) { setTemplates(options.templateVersions); setCloseOptions(options); }
       } catch (cause) { if (active) setError(cause instanceof Error ? cause.message : "Falha ao carregar modelos contratuais."); }
       finally { if (active) setLoading(false); }
     }
@@ -148,12 +145,12 @@ export function SaleCompletionPanel({ opportunity, sellers, initiallyExpanded = 
               <label className="text-sm sm:col-span-2">Cliente existente<select className={inputClass} name="accountId" required defaultValue=""><option value="">Selecione após buscar</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
             </> : null}
           </>}
-          <label className="text-sm">Vendedor<select className={inputClass} name="sellerMemberId" defaultValue={opportunity.ownerMemberId} required>{sellers.some((seller) => seller.id === opportunity.ownerMemberId) ? null : <option value={opportunity.ownerMemberId}>{opportunity.ownerName}</option>}{sellers.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
+          <label className="text-sm">Vendedor<select className={inputClass} name="sellerMemberId" defaultValue={opportunity.ownerMemberId} required>{sellers.some((seller) => seller.id === opportunity.ownerMemberId) ? null : <option value={opportunity.ownerMemberId}>{opportunity.ownerName}</option>}{sellers.filter((seller) => !closeOptions?.ownSalesOnly || seller.id === opportunity.ownerMemberId).map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
           <label className="text-sm">Modelo de contrato<select className={inputClass} name="templateVersionId" required defaultValue=""><option value="">Selecione</option>{templates.map((template) => <option key={template.id} value={template.id}>{template.name} · v{template.version}</option>)}</select></label>
           <label className="text-sm">Valor total (R$)<input className={inputClass} name="total" inputMode="decimal" defaultValue={initialTerms ? reais(initialTerms.totalCents) : reais(opportunity.offers[0]?.totalCents ?? opportunity.tcvCents)} required /></label>
           <label className="text-sm">Entrada (R$)<input className={inputClass} name="upfront" inputMode="decimal" defaultValue={initialTerms ? reais(initialTerms.upfrontCents) : "0,00"} required /></label>
           <label className="text-sm">Valor de cada parcela (R$)<input className={inputClass} name="monthly" inputMode="decimal" defaultValue={initialTerms ? reais(initialTerms.monthlyCents) : reais(opportunity.mrrCents)} required /></label>
-          <label className="text-sm">Valor já recebido (R$)<input className={inputClass} name="received" inputMode="decimal" defaultValue="0,00" required /></label>
+          <label className="text-sm">Valor já recebido (R$)<input className={inputClass} name="received" inputMode="decimal" defaultValue="0,00" readOnly={!closeOptions?.canRecordReceipt} required /></label>
           <label className="text-sm">Forma de pagamento<select className={inputClass} name="paymentMethod" required defaultValue={initialTerms?.paymentMethod ?? "PIX"}><option value="PIX">PIX</option><option value="BANK_TRANSFER">Transferência bancária</option><option value="CARD">Cartão</option><option value="CASH">Dinheiro</option><option value="OTHER">Outro</option></select></label>
           <label className="text-sm sm:col-span-2">Condição de pagamento detalhada<textarea className={inputClass} defaultValue={initialTerms?.paymentCondition ?? ""} name="paymentCondition" minLength={2} maxLength={500} required placeholder="Ex.: entrada de R$ 3.000,00 e saldo em 10 parcelas de R$ 1.500,00" /></label>
           <label className="text-sm">Número de parcelas<input className={inputClass} name="months" type="number" min="1" max="60" defaultValue={initialTerms?.durationMonths ?? 1} required /></label>
@@ -163,7 +160,7 @@ export function SaleCompletionPanel({ opportunity, sellers, initiallyExpanded = 
           <label className="text-sm">Quem confirmou a venda<input className={inputClass} name="acceptedByName" minLength={2} maxLength={200} required /></label>
           <label className="text-sm">Cargo ou papel<input className={inputClass} name="acceptedByRole" minLength={2} maxLength={200} required /></label>
           <label className="text-sm sm:col-span-2">Descrição da venda<textarea className={inputClass} defaultValue={initialTerms?.description ?? opportunity.interestDescription ?? ""} name="evidenceText" minLength={5} maxLength={2000} required placeholder="Descreva o que foi vendido e onde a venda foi confirmada." /></label>
-          <label className="text-sm">Responsável pelo onboarding (opcional)<select className={inputClass} name="onboardingOwnerMemberId" defaultValue=""><option value="">Definir depois</option>{sellers.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
+          <label className="text-sm">Responsável pelo onboarding (opcional)<select className={inputClass} name="onboardingOwnerMemberId" defaultValue="" disabled={closeOptions?.ownSalesOnly}><option value="">Definir depois</option>{sellers.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
           <div className="sm:col-span-2"><Button type="submit" disabled={busy || preview !== null}>{busy ? "Processando…" : "Revisar fechamento"}</Button></div>
         </fieldset>
       </form>

@@ -26,7 +26,7 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 
 type Tx = Prisma.TransactionClient;
-type Options = Readonly<{ database: PrismaClient; now: () => Date }>;
+type Options = Readonly<{ database: PrismaClient; now: () => Date; authorization?: ReturnType<typeof createAuthorizationService> }>;
 
 function fail(message: string, code: string, statusCode = 409): never {
   throw new ApplicationError(message, { code, statusCode, expose: true });
@@ -145,7 +145,7 @@ export async function appendPaymentEventInTransaction(
 }
 
 export function createPaymentService(options: Options) {
-  const authorization = createAuthorizationService({ database: options.database });
+  const authorization = options.authorization ?? createAuthorizationService({ database: options.database });
 
   async function receiptResources(context: AuthenticatedContext, input: ReturnType<typeof previewReceiptSchema.parse>, database: Tx | PrismaClient) {
     const invoice = await database.invoice.findFirst({ where: { id: input.invoiceId, workspaceId: context.workspaceId } });

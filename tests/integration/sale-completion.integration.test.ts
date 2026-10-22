@@ -6,6 +6,8 @@ import type { AuthenticatedContext } from "@/modules/auth/application/authentica
 import { createSaleCompletionService } from "@/modules/opportunities/application/sale-completion-service";
 import { createOpportunityService } from "@/modules/opportunities/application/opportunity-service";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { createPaymentService } from "@/modules/payments/application/payment-service";
+import { createRevenueService } from "@/modules/revenue/application/revenue-service";
 import { syncActiveProspectingCommercialStageInTransaction, transitionLeadStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
@@ -132,6 +134,53 @@ describe("venda integrada atômica", () => {
     expect(await database.commercialMetricFact.count({ where: { opportunityId: prepared.opportunityId, eventType: "SALE_WON" } })).toBe(0);
     await expect(service.prepareLeadSale(admin, { ...command, totalCents: "1900000", upfrontCents: "400000" })).rejects.toMatchObject({ code: "SALE_PREPARATION_IDEMPOTENCY_CONFLICT" });
     await expect(service.prepareLeadSale(viewer, { ...command, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+  });
+
+  it("Closer fecha somente a própria venda e cria o cliente, sem acesso geral a finanças ou recebimentos", async () => {
+    const seller = await context("closer1@demo.politizai.local");
+    const input = await fixture();
+    const setup = readFileSync("scripts/sql/configure-politizai-closer-sales.sql", "utf8");
+    await database.$executeRawUnsafe(setup);
+    await database.$executeRawUnsafe(setup);
+    const opportunity = await database.opportunity.update({ where: { id: input.opportunityId }, data: { ownerMemberId: seller.memberId, accountId: null } });
+    await database.lead.update({ where: { id: opportunity.leadId }, data: { ownerMemberId: seller.memberId, accountId: null } });
+    const payload = { ...input, sellerMemberId: seller.memberId, customer: { mode: "CREATE", name: `Cliente Closer ${randomUUID()}` } };
+    const command = { ...payload, confirmed: true, idempotencyKey: randomUUID() };
+    const options = await service.getOptions(seller, opportunity.id);
+    expect(options).toMatchObject({ ownSalesOnly: true, canRecordReceipt: false, financialAccounts: [] });
+    expect(options.templateVersions.length).toBeGreaterThan(0);
+    await expect(service.preview(seller, payload)).resolves.toMatchObject({ customer: { mode: "CREATE" } });
+    await expect(service.execute(seller, { ...command, sellerMemberId: admin.memberId })).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    await expect(service.execute(seller, { ...command, receivedCents: "100", financialAccountId: randomUUID(), receivedAt: now.toISOString(), paymentReference: "Não permitido" })).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    await expect(service.execute(seller, { ...command, onboardingOwnerMemberId: admin.memberId })).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    const other = await fixture();
+    await expect(service.getOptions(seller, other.opportunityId)).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    await expect(service.execute(seller, { ...command, opportunityId: other.opportunityId })).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    await expect(service.execute({ ...seller, workspaceId: randomUUID() }, command)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await database.commercialContract.count({ where: { opportunityId: opportunity.id } })).toBe(0);
+    const completed = await service.execute(seller, command);
+    expect(completed).toMatchObject({ customerCreated: true, receivedCents: "0", outstandingCents: input.totalCents });
+    expect(await service.execute(seller, command)).toMatchObject({ replayed: true });
+    const authorization = createAuthorizationService({ database });
+    for (const key of ["payments.manage", "revenue.manage", "accounts.write", "finance.manage"] as const) {
+      expect(await authorization.authorize(seller, key, { workspaceId, resourceType: "Opportunity", ownerMemberId: seller.memberId })).toMatchObject({ allowed: false });
+    }
+    expect(await database.payment.count({ where: { workspaceId, confirmedByActorId: seller.actorId } })).toBe(0);
+    if (!("subscriptionId" in completed) || !completed.subscriptionId) throw new Error("Assinatura não criada.");
+    await expect(createRevenueService(database, authorization).action(seller, completed.subscriptionId, {
+      action: "SCHEDULE_CANCELLATION", effectiveAt: now.toISOString(), reason: "Tentativa fora do fechamento", idempotencyKey: randomUUID(),
+    })).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    await expect(createPaymentService({ database, now: () => now }).createInvoice(seller, {
+      subscriptionId: completed.subscriptionId, billingPeriodStart: now.toISOString(), billingPeriodEnd: new Date("2026-10-30T15:00:00Z").toISOString(),
+      dueAt: now.toISOString(), description: "Tentativa fora do fechamento", upfrontCents: "0", idempotencyKey: randomUUID(),
+    })).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    const grant = await database.rolePermission.findFirstOrThrow({ where: { workspaceId, roleId: seller.roleId, permission: { key: "sales.complete" } } });
+    await database.rolePermission.delete({ where: { id: grant.id } });
+    try {
+      await expect(service.execute(seller, command)).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    } finally {
+      await database.rolePermission.create({ data: grant });
+    }
   });
 
   it("move o lead da Prospecção Ativa para Cliente e baixa o valor recebido sem perder o saldo", async () => {

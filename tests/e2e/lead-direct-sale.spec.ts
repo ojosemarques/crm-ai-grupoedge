@@ -6,7 +6,8 @@ import { DEMO_SEED_PASSWORD, DEMO_USERS } from "@/modules/settings/application/d
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { enterDemoCompany } from "./helpers/company-hub";
 
-test("marca vendido no card com SISTEMA POLITIZAI e valores negociados", async ({ page }) => {
+for (const role of ["administrator", "closer"] as const) {
+test(`marca vendido no card com SISTEMA POLITIZAI e valores negociados (${role})`, async ({ page }) => {
   test.setTimeout(120_000);
   if (!/^politizai_test_/.test(new URL(process.env.DATABASE_URL!).searchParams.get("schema") ?? "")) {
     throw new Error("Este cenário exige banco temporário de testes.");
@@ -14,9 +15,10 @@ test("marca vendido no card com SISTEMA POLITIZAI e valores negociados", async (
   const database = getDatabaseClient();
   const workspace = await database.workspace.findUniqueOrThrow({ where: { slug: "politizai" } });
   // Reproduz a ausência de catálogo elegível encontrada em produção.
-  await database.product.updateMany({ where: { workspaceId: workspace.id }, data: { active: false } });
-  await database.contractTemplate.updateMany({ where: { workspaceId: workspace.id }, data: { status: "INACTIVE" } });
+  await database.product.updateMany({ where: { workspaceId: workspace.id, name: { not: "SISTEMA POLITIZAI" } }, data: { active: false } });
+  await database.contractTemplate.updateMany({ where: { workspaceId: workspace.id, key: { not: "politizai-commercial-record" } }, data: { status: "INACTIVE" } });
   await database.$executeRawUnsafe(readFileSync("scripts/sql/configure-politizai-sales.sql", "utf8"));
+  await database.$executeRawUnsafe(readFileSync("scripts/sql/configure-politizai-closer-sales.sql", "utf8"));
   const product = await database.product.findFirstOrThrow({ where: { workspaceId: workspace.id, sku: "SISTEMA-POLITIZAI" } });
 
   await page.goto("/login");
@@ -32,6 +34,17 @@ test("marca vendido no card com SISTEMA POLITIZAI e valores negociados", async (
   await page.getByLabel("Dor ou interesse").fill("Contratar sistema Politizai");
   await page.getByRole("button", { name: "Cadastrar lead" }).click();
   await expect(page.getByText("Entrada processada", { exact: true })).toBeVisible();
+  if (role === "closer") {
+    const seller = await database.workspaceMember.findFirstOrThrow({ where: { workspaceId: workspace.id, user: { normalizedEmail: "closer1@demo.politizai.local" } } });
+    const lead = await database.lead.findFirstOrThrow({ where: { workspaceId: workspace.id, fullName: name } });
+    await database.lead.update({ where: { id: lead.id }, data: { ownerMemberId: seller.id } });
+    await page.context().clearCookies();
+    await page.goto("/login");
+    await page.getByLabel("E-mail").fill("closer1@demo.politizai.local");
+    await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
+    await page.getByRole("button", { name: "Entrar" }).click();
+    await enterDemoCompany(page);
+  }
   await page.goto("/leads");
   await page.getByLabel("Busca").fill(name);
   await page.getByRole("button", { name: "Aplicar", exact: true }).click();
@@ -54,6 +67,10 @@ test("marca vendido no card com SISTEMA POLITIZAI e valores negociados", async (
   await completion.getByRole("combobox", { name: "Cadastro do cliente" }).selectOption("CREATE");
   await completion.getByLabel("Nome confirmado do cliente").fill(name);
   await completion.getByRole("combobox", { name: "Modelo de contrato" }).selectOption({ index: 1 });
+  if (role === "closer") {
+    await expect(completion.getByLabel("Valor já recebido (R$)")).toHaveAttribute("readonly", "");
+    await expect(completion.getByRole("combobox", { name: "Vendedor", exact: true }).locator("option")).toHaveCount(1);
+  }
   await expect(completion.getByLabel("Valor total (R$)", { exact: true })).toHaveValue("7654,32");
   await completion.getByLabel("Condição de pagamento detalhada").fill("Entrada de R$ 654,32 e 7 parcelas de R$ 1.000,00 via PIX, negociadas pelo vendedor.");
   await completion.getByLabel("Início de vigência").fill(new Date().toISOString().slice(0, 10));
@@ -73,3 +90,4 @@ test("marca vendido no card com SISTEMA POLITIZAI e valores negociados", async (
   const invoices = await database.invoice.aggregate({ where: { contractId: contracts[0]!.id }, _sum: { totalCents: true } });
   expect(invoices._sum.totalCents).toBe(765432n);
 });
+}

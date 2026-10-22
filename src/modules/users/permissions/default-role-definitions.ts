@@ -244,6 +244,7 @@ export const defaultRoleDefinitions: ReadonlyArray<
       [PermissionKeys.MEETINGS_WRITE, "OWN"],
       [PermissionKeys.OPPORTUNITIES_READ, "OWN"],
       [PermissionKeys.OPPORTUNITIES_WRITE, "OWN"],
+      [PermissionKeys.SALES_COMPLETE, "OWN"],
       [PermissionKeys.CONTRACTS_READ, "OWN"],
       [PermissionKeys.CONTRACTS_CREATE, "OWN"],
       [PermissionKeys.CONTRACTS_DRAFT_WRITE, "OWN"],
