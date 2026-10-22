@@ -2,17 +2,96 @@
 
 Endpoint: `https://crm-ai-grupoedge.vercel.app/api/mcp/crm`.
 
-Transporte: **Streamable HTTP**, stateless, via `POST`, com autenticação
-`Authorization: Bearer <token do bot>`. Suporta clientes MCP atuais e a
+Transporte: **Streamable HTTP**, stateless, via `POST`, com autenticação por
+OAuth ou `Authorization: Bearer <token de máquina do bot>`. Suporta clientes MCP atuais e a
 compatibilidade de protocolo do SDK instalado no projeto. Respostas podem ser
-JSON ou eventos SSE conforme a revisão do protocolo. `GET` e `DELETE` retornam
-405 porque não há sessão ou stream independente para encerrar/assinar.
+JSON ou eventos SSE conforme a revisão do protocolo. `GET` e `DELETE` exigem
+autenticação; sem credencial respondem 401 com descoberta OAuth. Após
+autenticar, retornam 405 porque não há stream ou sessão independente.
 
 O endpoint é separado do MCP de pesquisa política em `/api/mcp/politizai`.
-As credenciais dos dois serviços não são intercambiáveis. Este serviço utiliza
-token de máquina, não OAuth interativo. O bot precisa aceitar headers HTTP
-personalizados. Em produtos que exigem exclusivamente OAuth, este conector
-precisa de um adaptador de autenticação; não reutilize cookies do CRM.
+As credenciais dos dois serviços não são intercambiáveis. Clientes como
+OpenBot podem selecionar OAuth e informar somente a URL do MCP. O fluxo atual
+de token de máquina permanece disponível para clientes que aceitam headers.
+Não copie cookies de sessão nem o token de máquina para parâmetros OAuth.
+
+## Conectar o OpenBot usando OAuth
+
+Selecione OAuth e use `https://crm-ai-grupoedge.vercel.app/api/mcp/crm`.
+Não preencha um token de máquina nem um client secret nesse modo. Se a
+conexão antiga ficou em erro, remova-a/reconecte-a para refazer a descoberta.
+O cliente registra seus callbacks por DCR, abre o login do CRM e exibe o
+consentimento. Um membro com `integrations.manage` autoriza o workspace ativo
+e os escopos solicitados; cada consulta continua limitada pelo RBAC atual.
+
+Descoberta pública, separada do MCP de prospecção:
+
+- Recurso: `/.well-known/oauth-protected-resource/api/mcp/crm`.
+- Issuer: `https://crm-ai-grupoedge.vercel.app/api/oauth/crm`.
+- Metadados do issuer: `/.well-known/oauth-authorization-server/api/oauth/crm`.
+- DCR: `POST /api/oauth/crm/register`, JSON, até 8 KiB.
+- Autorização: `/api/oauth/crm/authorize`.
+- Token: `POST /api/oauth/crm/token`, form-urlencoded, até 16 KiB.
+- Revogação: `POST /api/oauth/crm/revoke`, form-urlencoded com `client_id`
+  e `token` (access ou refresh token).
+
+O desafio `WWW-Authenticate` de uma resposta 401 informa o `resource_metadata`
+correto. O cliente deve seguir esse documento até os metadados do issuer,
+onde encontrará `registration_endpoint`. O documento raiz de descoberta
+existente da prospecção mantém sua configuração anterior.
+
+O fluxo é Authorization Code com PKCE **S256** obrigatório e cliente público
+(`token_endpoint_auth_method=none`). Não há implicit flow, password grant ou
+client credentials grant. `resource` deve ser a URL exata do MCP do CRM tanto
+na autorização quanto no token endpoint. `redirect_uri` deve coincidir
+exatamente com um callback registrado, sem curingas. Aceitamos HTTPS e HTTP
+apenas em loopback (`localhost`, `127.0.0.1`, `::1`) para clientes desktop.
+
+O DCR aceita até três callbacks de 350 caracteres e nome de 80 caracteres.
+Campos opcionais desconhecidos são ignorados; nenhum `logo_uri`, `jwks_uri`
+ou `client_uri` é buscado no servidor. O registro retorna metadados públicos
+assinados em `client_id` (até 1.800 caracteres, validade de 90 dias), sem criar
+client secret nem registro persistente de cliente. O nome declarado pelo
+cliente não comprova sua identidade. O consentimento sempre mostra o callback
+e o workspace e exige aprovação explícita, com proteção contra CSRF vinculada
+à sessão e ao pedido por cinco minutos.
+
+Authorization codes duram **cinco minutos**, são armazenados somente como
+hash e consumidos atomicamente uma vez. Access tokens duram **10 minutos**,
+têm issuer, audience, membro, usuário, workspace, ator, escopos e grant
+validados a cada chamada. Refresh tokens, quando solicitados no DCR, duram
+**30 dias** e são armazenados somente como hash, com rotação obrigatória.
+Renovar revoga o grant anterior e seu access token; o cliente deve substituir
+o par inteiro. Reutilizar código ou refresh token consumido falha. Replay de
+refresh já rotacionado revoga os grants ativos do mesmo cliente, membro e
+workspace; o cliente precisa refazer a conexão.
+
+Revogar a conexão bloqueia imediatamente os access/refresh tokens ativos do
+mesmo cliente, membro e workspace, incluindo os emitidos por rotação. Suspender
+usuário, membro ou workspace também impede acesso e renovação. Alterações de
+papel e permissões são aplicadas pelo RBAC canônico em cada contexto novo.
+Tokens inválidos/expirados são recusados com 401; ferramenta sem escopo recebe
+403 e `WWW-Authenticate: Bearer error="insufficient_scope"`. Escopos não
+registrados/concedidos não podem ser acrescentados no refresh.
+
+As concessões usam as tabelas OAuth já existentes, com `resource` distinto.
+Não há migration. A chave `CRM_MCP_OAUTH_SIGNING_SECRET` deve ser gerada com
+entropia criptográfica (pelo menos 32 caracteres) e salva como Secret
+server-side na Vercel. É independente da chave da prospecção e dos tokens de
+máquina. Rotacioná-la invalida registros e tokens OAuth antigos, exigindo nova
+conexão; os tokens de máquina permanecem válidos conforme sua configuração.
+Logs e auditoria guardam somente fingerprint do cliente, nunca tokens, códigos,
+verificadores PKCE ou cookies. Apenas o token endpoint devolve credenciais,
+com `Cache-Control: no-store`; os metadados públicos e ferramentas MCP não.
+
+Limites OAuth por origem de rede: 20 registros/minuto; 60 requisições/minuto
+em cada endpoint de autorização, token e revogação. O rate limit existente
+do MCP também continua ativo. A concessão expira no máximo com seu refresh;
+se o registro de cliente expirar, é preciso refazer a conexão para renovar.
+
+Referências: [autorização MCP](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization),
+[DCR RFC 7591](https://www.rfc-editor.org/rfc/rfc7591),
+[metadados de recurso RFC 9728](https://www.rfc-editor.org/rfc/rfc9728).
 
 ## Configuração do bot
 

@@ -12,7 +12,7 @@ vi.mock("@/modules/crm-mcp/application/crm-mcp-server", () => ({ createCrmMcpSer
 } }));
 vi.mock("@/shared/core/config/application-config", () => ({ getApplicationConfig: () => ({ environment: { canonicalUrl: new URL("https://crm.example") } }) }));
 vi.mock("@/shared/core/database/client", () => ({ getDatabaseClient: () => ({}) }));
-vi.mock("@/shared/core/http/request-hardening", () => ({ enforceRateLimit: mocks.rateLimit, requestClientKey: () => "test-ip" }));
+vi.mock("@/shared/core/http/request-hardening", async (original) => ({ ...await original<typeof import("@/shared/core/http/request-hardening")>(), enforceRateLimit: mocks.rateLimit, requestClientKey: () => "test-ip" }));
 
 function request(headers: Record<string, string> = {}, body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })) {
   return new Request("https://crm.example/api/mcp/crm", { method: "POST", headers: { host: "crm.example", "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26", ...headers }, body });
@@ -24,7 +24,7 @@ describe("CRM MCP HTTP boundary", () => {
     mocks.authenticate.mockRejectedValueOnce(new ApplicationError("Credencial inválida", { code: "CRM_MCP_UNAUTHORIZED", statusCode: 401, expose: true }));
     const response = await POST(request());
     expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toBe('Bearer realm="crm-mcp"');
+    expect(response.headers.get("www-authenticate")).toContain('resource_metadata="https://crm.example/.well-known/oauth-protected-resource/api/mcp/crm"');
     expect(response.headers.get("cache-control")).toContain("no-store");
   });
   it("rejects unknown Host and untrusted browser Origin before authentication", async () => {
@@ -57,8 +57,22 @@ describe("CRM MCP HTTP boundary", () => {
     allow();
     expect((await POST(request({}, "{"))).status).toBe(400);
   });
-  it("does not expose a GET event stream or DELETE session endpoint", () => {
-    expect(GET().status).toBe(405);
-    expect(DELETE().headers.get("allow")).toBe("POST");
+  it("challenges unauthenticated GET probes for OAuth discovery", async () => {
+    mocks.authenticate.mockRejectedValueOnce(new ApplicationError("Credencial inválida", { code: "CRM_MCP_UNAUTHORIZED", statusCode: 401, expose: true }));
+    const response = await GET(new Request("https://crm.example/api/mcp/crm", { headers: { host: "crm.example" } }));
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toContain("resource_metadata=");
+  });
+  it("does not expose an authenticated GET event stream or DELETE session endpoint", async () => {
+    allow();
+    expect((await GET(new Request("https://crm.example/api/mcp/crm", { headers: { host: "crm.example" } }))).status).toBe(405);
+    expect((await DELETE(new Request("https://crm.example/api/mcp/crm", { method: "DELETE", headers: { host: "crm.example" } }))).headers.get("allow")).toBe("POST");
+  });
+  it("rejects a tool call with insufficient scopes using HTTP 403 and a scope challenge", async () => {
+    allow();
+    const response = await POST(request({}, JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "consultar_auditoria", arguments: {} } })));
+    expect(response.status).toBe(403);
+    expect(response.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
+    expect(response.headers.get("www-authenticate")).toContain('scope="audit:read"');
   });
 });

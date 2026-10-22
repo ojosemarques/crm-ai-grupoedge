@@ -42,22 +42,38 @@ export async function authenticateCrmMcp(
   now = new Date(),
 ): Promise<CrmMcpIdentity> {
   const header = request.headers.get("authorization");
-  if (!header || !/^Bearer [A-Za-z0-9_-]{43,200}$/.test(header)) unauthorized();
-  const digest = createHash("sha256").update(header.slice(7)).digest();
+  const match = header?.match(/^Bearer ([A-Za-z0-9._~-]{43,8192})$/i);
+  if (!match) unauthorized();
+  const token = match[1]!;
+  if (token.includes(".")) {
+    const { getCrmMcpOAuthService } = await import("@/modules/crm-mcp/application/crm-mcp-oauth-service");
+    try { return await getCrmMcpOAuthService().verifyAccessToken(token); }
+    catch (error) { if (error instanceof ApplicationError && error.statusCode >= 500) throw error; unauthorized(); }
+  }
+  if (token.length > 200) unauthorized();
+  const digest = createHash("sha256").update(token).digest();
   const client = parseCrmMcpClients(rawClients).find((candidate) => timingSafeEqual(digest, Buffer.from(candidate.tokenHash, "hex")));
   if (!client || new Date(client.expiresAt) <= now) unauthorized();
+  return resolveCrmMcpIdentity(database, client);
+}
+
+export async function resolveCrmMcpIdentity(
+  database: Pick<PrismaClient, "workspaceMember" | "actor">,
+  client: Pick<CrmMcpClient, "clientId" | "workspaceId" | "memberId" | "scopes"> & { userId?: string; actorId?: string },
+): Promise<CrmMcpIdentity> {
   // Rebuild the context for every request so disabled users, roles and members
   // immediately lose access. The bot never supplies its workspace or actor.
   const member = await database.workspaceMember.findFirst({
     where: {
       id: client.memberId, workspaceId: client.workspaceId, status: "ACTIVE", deletedAt: null,
+      ...(client.userId ? { userId: client.userId } : {}),
       user: { status: "ACTIVE", deletedAt: null }, role: { deletedAt: null },
       workspace: { status: "ACTIVE", deletedAt: null },
     },
     select: { id: true, userId: true, roleId: true, role: { select: { key: true, name: true } }, workspace: { select: { slug: true } }, user: { select: { displayName: true } } },
   });
   if (!member) unauthorized();
-  const actor = await database.actor.findFirst({ where: { workspaceId: client.workspaceId, userId: member.userId, type: "HUMAN" }, select: { id: true } });
+  const actor = await database.actor.findFirst({ where: { workspaceId: client.workspaceId, userId: member.userId, type: "HUMAN", ...(client.actorId ? { id: client.actorId } : {}) }, select: { id: true } });
   if (!actor) unauthorized();
   return {
     clientId: client.clientId, scopes: client.scopes,

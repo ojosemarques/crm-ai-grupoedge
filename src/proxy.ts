@@ -13,6 +13,8 @@ const PUBLIC_ROUTES = new Set([
   "/.well-known/oauth-authorization-server",
   "/.well-known/oauth-protected-resource",
   "/.well-known/oauth-protected-resource/api/mcp/politizai",
+  "/.well-known/oauth-protected-resource/api/mcp/crm",
+  "/.well-known/oauth-authorization-server/api/oauth/crm",
 ]);
 
 function isPublicPage(pathname: string): boolean {

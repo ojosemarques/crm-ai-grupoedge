@@ -5,6 +5,7 @@ import { getOperationalHistoryService } from "@/modules/activities/application/o
 import { auditOrigins, actorTypes, processViolationSeverities, processViolationStatuses, processViolationTypes } from "@/modules/audit/domain/audit-contracts";
 import type { CrmMcpIdentity } from "@/modules/crm-mcp/application/crm-mcp-authentication";
 import { readCrmMcpAudit } from "@/modules/crm-mcp/application/crm-mcp-audit";
+import { crmMcpToolScopes } from "@/modules/crm-mcp/domain/crm-mcp-tool-scopes";
 import { getForecastService } from "@/modules/forecast/application/forecast-service";
 import { getGoalService } from "@/modules/goals/application/goal-service";
 import { getIntegrationPlatformService } from "@/modules/integrations/application/integration-platform-service";
@@ -88,6 +89,7 @@ export function createCrmMcpServer(identity: CrmMcpIdentity) {
   });
 
   function add<S extends z.ZodRawShape>(name: string, scope: CrmMcpIdentity["scopes"][number], description: string, schema: z.ZodObject<S>, operation: (input: z.output<z.ZodObject<S>>) => Promise<unknown>) {
+    if (crmMcpToolScopes[name] !== scope) throw new Error("CRM_MCP_TOOL_SCOPE_MISMATCH");
     if (!identity.scopes.includes(scope)) return;
     server.registerTool(name, {
       description, inputSchema: schema,
