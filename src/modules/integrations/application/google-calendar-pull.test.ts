@@ -16,6 +16,7 @@ describe("normaliza eventos recebidos do Google Calendar", () => {
       start: { dateTime: "2035-02-20T09:00:00-03:00", timeZone: "America/Sao_Paulo" },
       end: { dateTime: "2035-02-20T10:00:00-03:00", timeZone: "America/Sao_Paulo" },
       creator: { email: "vendedor@example.com", displayName: "Vendedor" },
+      attendees: [{ email: " Convidado@Example.com ", responseStatus: "accepted" }],
       updated: "2035-02-19T12:00:00.000Z",
     }, "America/Sao_Paulo");
 
@@ -31,6 +32,7 @@ describe("normaliza eventos recebidos do Google Calendar", () => {
       creatorEmail: "vendedor@example.com",
       htmlLink: "https://calendar.google.com/calendar/event?eid=abc",
       conferenceUrl: "https://meet.google.com/abc-defg-hij",
+      attendees: [{ email: "convidado@example.com", responseStatus: "accepted" }],
     });
     if (event.kind !== "ACTIVE") throw new Error("Evento deveria estar ativo.");
     expect(event.startsAt.toISOString()).toBe("2035-02-20T12:00:00.000Z");

@@ -1213,6 +1213,14 @@ enum MeetingStatus {
   NO_SHOW
 }
 
+enum MeetingParticipantResponseStatus {
+  NEEDS_ACTION
+  ACCEPTED
+  TENTATIVE
+  DECLINED
+  UNKNOWN
+}
+
 enum MeetingHistoryAction {
   SCHEDULED
   CONFIRMED
@@ -6529,6 +6537,9 @@ model Meeting {
   location         String?
   observation      String?
   outcome          String?
+  participantEmail             String?
+  participantResponseStatus    MeetingParticipantResponseStatus?
+  participantResponseUpdatedAt DateTime? @db.Timestamptz(3)
   confirmedAt      DateTime?     @db.Timestamptz(3)
   cancelledAt      DateTime?     @db.Timestamptz(3)
   completedAt      DateTime?     @db.Timestamptz(3)
@@ -6564,6 +6575,7 @@ model Meeting {
   @@index([workspaceId, ownerMemberId, status, startsAt])
   @@index([workspaceId, leadId, startsAt])
   @@index([workspaceId, opportunityId, startsAt])
+  @@index([workspaceId, participantEmail, startsAt])
   @@index([workspaceId, createdAt])
   @@map("meetings")
 }

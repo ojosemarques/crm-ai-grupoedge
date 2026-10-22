@@ -34,6 +34,10 @@ import {
 import { stopColdCadenceInTransaction } from "@/modules/prospecting/application/prospecting-cadence-service";
 import { enqueueGoogleCalendarSyncInTransaction } from "@/modules/integrations/application/google-calendar-service";
 import {
+  cancelMeetingParticipantEmailsInTransaction,
+  scheduleMeetingParticipantEmailsInTransaction,
+} from "@/modules/meetings/application/meeting-participant-email-service";
+import {
   transitionLeadStageInTransaction,
 } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { prospectingOperationPipelineNames } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
@@ -93,6 +97,7 @@ const leadMeetingsQuerySchema = z.object({ leadId: z.string().uuid() }).strict()
 const meetingQuerySchema = z.object({ meetingId: z.string().uuid() }).strict();
 const leadOptionSearchSchema = z.object({ query: z.string().trim().min(2).max(80) }).strict();
 const WORKSPACE_MEETING_SCHEDULER_EMAILS = new Set(["carloshenrique@politizai.com"]);
+const participantEmailSchema = z.string().trim().email().max(320).transform((value) => value.toLowerCase());
 
 const scheduleSchema = z.object({
   leadId: z.string().uuid(),
@@ -102,6 +107,7 @@ const scheduleSchema = z.object({
   startsAtLocal: localDateTimeSchema,
   durationMinutes: z.union([z.literal(30), z.literal(40)]),
   observation: z.string().trim().max(5_000).nullable().optional(),
+  participantEmail: participantEmailSchema.nullable().optional(),
   taskPriority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
 }).strict();
 
@@ -149,6 +155,7 @@ const actionSchema = z.discriminatedUnion("action", [
     durationMinutes: z.union([z.literal(30), z.literal(40)]),
     status: z.enum(["SCHEDULED", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]),
     observation: z.string().trim().max(5_000).nullable(),
+    participantEmail: participantEmailSchema.nullable().optional(),
     outcome: z.string().trim().max(5_000).nullable(),
     reason: z.string().trim().min(3).max(2_000),
   }).strict(),
@@ -293,6 +300,9 @@ function serializeMeeting(row: MeetingRow, now: Date, canWrite: boolean): Meetin
     timeZone: row.timeZone,
     observation: row.observation,
     outcome: row.outcome,
+    participantEmail: row.participantEmail,
+    participantResponseStatus: row.participantResponseStatus,
+    participantResponseUpdatedAt: row.participantResponseUpdatedAt?.toISOString() ?? null,
     revision: row.revision,
     canWrite,
     calendarSync: row.googleCalendarLink
@@ -826,6 +836,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
           durationMinutes: parsed.data.durationMinutes,
           timeZone: workspaceRow.timeZone,
           observation: parsed.data.observation || null,
+          participantEmail: parsed.data.participantEmail ?? null,
+          participantResponseStatus: parsed.data.participantEmail ? "NEEDS_ACTION" : null,
           createdByActorId: context.actorId,
           updatedByActorId: context.actorId,
           createdAt: occurredAt,
@@ -942,6 +954,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
             durationMinutes: parsed.data.durationMinutes,
             taskId: task.id,
             activityId: activity.id,
+            participantConfigured: Boolean(parsed.data.participantEmail),
           },
           metadata: { timeZone: workspaceRow.timeZone },
         },
@@ -1002,6 +1015,16 @@ export function createMeetingService(options: MeetingServiceOptions) {
           },
         );
       }
+      await scheduleMeetingParticipantEmailsInTransaction(transaction, {
+        workspaceId: context.workspaceId,
+        meetingId: meeting.id,
+        meetingRevision: meeting.revision,
+        participantEmail: meeting.participantEmail,
+        startsAt,
+        occurredAt,
+        actorId: context.actorId,
+        includeInvitation: true,
+      });
       await enqueueGoogleCalendarSyncInTransaction(transaction, {
         workspaceId: context.workspaceId,
         meetingId: meeting.id,
@@ -1052,11 +1075,13 @@ export function createMeetingService(options: MeetingServiceOptions) {
       let endsAt = meeting.endsAt;
       let title = meeting.title;
       let observation = meeting.observation;
+      let participantEmail = meeting.participantEmail;
       let reason: string | null = null;
       let outcome: string | null = null;
       if (parsed.data.action === "EDIT") {
         title = parsed.data.title;
         observation = parsed.data.observation;
+        participantEmail = parsed.data.participantEmail === undefined ? meeting.participantEmail : parsed.data.participantEmail;
         startsAt = parseWorkspaceLocalDateTime(parsed.data.startsAtLocal, meeting.timeZone);
         endsAt = new Date(startsAt.getTime() + parsed.data.durationMinutes * 60_000);
         newStatus = parsed.data.status;
@@ -1096,6 +1121,13 @@ export function createMeetingService(options: MeetingServiceOptions) {
           durationMinutes: Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000),
           observation,
           outcome,
+          participantEmail,
+          participantResponseStatus: participantEmail
+            ? participantEmail !== meeting.participantEmail
+              ? "NEEDS_ACTION"
+              : meeting.participantResponseStatus ?? "NEEDS_ACTION"
+            : null,
+          participantResponseUpdatedAt: participantEmail === meeting.participantEmail ? meeting.participantResponseUpdatedAt : null,
           confirmedAt: newStatus === "CONFIRMED" ? meeting.confirmedAt ?? now : newStatus === "SCHEDULED" ? null : meeting.confirmedAt,
           cancelledAt: newStatus === "CANCELLED" ? meeting.cancelledAt ?? now : null,
           completedAt: newStatus === "COMPLETED" ? meeting.completedAt ?? now : null,
@@ -1444,6 +1476,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
             newTitle: title,
             previousObservation: meeting.observation,
             newObservation: observation,
+            participantChanged: participantEmail !== meeting.participantEmail,
             reason,
             outcome,
             activityId: activity.id,
@@ -1499,6 +1532,29 @@ export function createMeetingService(options: MeetingServiceOptions) {
           actorId: context.actorId,
           reasonCode: "MEETING_CLOSED",
           reason: "Lembretes cancelados porque a reunião foi encerrada.",
+        });
+      }
+      if (
+        (newStatus === "SCHEDULED" || newStatus === "CONFIRMED") &&
+        (parsed.data.action === "RESCHEDULE" || parsed.data.action === "EDIT")
+      ) {
+        await scheduleMeetingParticipantEmailsInTransaction(transaction, {
+          workspaceId: context.workspaceId,
+          meetingId: meeting.id,
+          meetingRevision: updated.revision,
+          participantEmail,
+          startsAt,
+          occurredAt: now,
+          actorId: context.actorId,
+          includeInvitation: true,
+        });
+      } else if (newStatus !== "SCHEDULED" && newStatus !== "CONFIRMED") {
+        await cancelMeetingParticipantEmailsInTransaction(transaction, {
+          workspaceId: context.workspaceId,
+          meetingId: meeting.id,
+          actorId: context.actorId,
+          occurredAt: now,
+          reasonCode: "MEETING_CLOSED",
         });
       }
       if (parsed.data.action === "EDIT" && meeting.status === "CANCELLED" && newStatus !== "CANCELLED") {

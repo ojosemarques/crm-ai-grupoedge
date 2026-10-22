@@ -19,6 +19,7 @@ import { getProspectingCadenceService } from "@/modules/prospecting/application/
 import { getProspectingPlannerService } from "@/modules/prospecting/application/prospecting-planner-service";
 import { getProspectingReconciliationService } from "@/modules/prospecting/application/prospecting-reconciliation-service";
 import { createMillionSendProspectingWorker } from "@/modules/prospecting/application/millionsend-prospecting-worker";
+import { createMeetingParticipantEmailWorker } from "@/modules/meetings/application/meeting-participant-email-service";
 import type { ApplicationConfig } from "@/shared/core/config/application-config";
 import { getDatabaseClient } from "@/shared/core/database/client";
 
@@ -52,6 +53,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
   const prospectingPlannerWorker = getProspectingPlannerService();
   const prospectingReconciliationWorker = getProspectingReconciliationService();
   const millionSendProspectingWorker = createMillionSendProspectingWorker();
+  const meetingParticipantEmailWorker = createMeetingParticipantEmailWorker(common);
 
   return Object.freeze({
     database,
@@ -69,6 +71,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
         { key: "payments", processNext: paymentWorker.processNext },
         { key: "calendar", processNext: calendarWorker.processNext },
         { key: "google-calendar", processNext: googleCalendarWorker.processNext },
+        { key: "meeting-participant-email", processNext: meetingParticipantEmailWorker.processNext },
         { key: "telephony", processNext: telephonyWorker.processNext },
         { key: "email", processNext: emailWorker.processNext },
         { key: "whatsapp", processNext: whatsappWorker.processNext },

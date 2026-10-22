@@ -1,5 +1,6 @@
 export const meetingStatuses = ["SCHEDULED", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"] as const;
 export type MeetingStatusValue = (typeof meetingStatuses)[number];
+export type MeetingParticipantResponseStatusValue = "NEEDS_ACTION" | "ACCEPTED" | "TENTATIVE" | "DECLINED" | "UNKNOWN";
 
 export type MeetingListItem = Readonly<{
   id: string;
@@ -18,6 +19,9 @@ export type MeetingListItem = Readonly<{
   timeZone: string;
   observation: string | null;
   outcome: string | null;
+  participantEmail: string | null;
+  participantResponseStatus: MeetingParticipantResponseStatusValue | null;
+  participantResponseUpdatedAt: string | null;
   revision: number;
   canWrite: boolean;
   calendarSync: Readonly<{

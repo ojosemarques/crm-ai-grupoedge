@@ -77,6 +77,7 @@ export function MeetingActions({
         durationMinutes: Number(data.get("durationMinutes")),
         status: data.get("status"),
         observation: data.get("observation") || null,
+        participantEmail: data.get("participantEmail") || null,
         outcome: data.get("outcome") || null,
         reason: data.get("reason"),
       });
@@ -130,6 +131,7 @@ export function MeetingActions({
               <label className="text-sm">Status{active ? <input name="status" type="hidden" value={editStatus} /> : null}<select className={inputClass} disabled={active} name={active ? undefined : "status"} onChange={(event) => setEditStatus(event.target.value as typeof meeting.status)} value={editStatus}><option value="SCHEDULED">Agendada</option><option value="CONFIRMED">Confirmada</option><option value="COMPLETED">Realizada</option><option value="CANCELLED">Cancelada</option><option value="NO_SHOW">No-show</option></select></label>
               <label className="text-sm">Data e hora<input className={inputClass} defaultValue={localDateTimeInput(meeting.startsAt, meeting.timeZone)} name="startsAtLocal" required type="datetime-local" /></label>
               <label className="text-sm">Duração<select className={inputClass} defaultValue={meeting.durationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
+              <label className="text-sm">E-mail do participante<input autoComplete="email" className={inputClass} defaultValue={meeting.participantEmail ?? ""} maxLength={320} name="participantEmail" type="email" /></label>
               <label className="text-sm">Resultado ou motivo final<textarea className={inputClass} defaultValue={meeting.outcome ?? ""} minLength={3} name="outcome" required={editStatus === "COMPLETED" || editStatus === "NO_SHOW"} /></label>
               <label className="text-sm sm:col-span-2">Observação<textarea className={inputClass} defaultValue={meeting.observation ?? ""} name="observation" /></label>
               <label className="text-sm sm:col-span-2">Motivo da correção<textarea className={inputClass} minLength={3} name="reason" required /></label>

@@ -24,6 +24,14 @@ const statusLabels = {
   PENDING_STATUS: "Horário passou · resultado pendente",
 } as const;
 
+const participantResponseLabels = {
+  NEEDS_ACTION: "aguardando resposta",
+  ACCEPTED: "aceitou",
+  TENTATIVE: "talvez",
+  DECLINED: "recusou",
+  UNKNOWN: "resposta não reconhecida",
+} as const;
+
 function statusTone(value: keyof typeof statusLabels): StatusTone {
   if (value === "COMPLETED") return "success";
   if (value === "CANCELLED" || value === "NO_SHOW") return "danger";
@@ -184,6 +192,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
           startsAtLocal: data.get("startsAtLocal"),
           durationMinutes: Number(data.get("durationMinutes")),
           observation: data.get("observation") || null,
+          participantEmail: data.get("participantEmail") || null,
         }),
       });
       await responseMessage(response);
@@ -194,7 +203,9 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       setSelectedLeadOption(null);
       setLeadListOpen(false);
       setActiveLeadIndex(-1);
-      setNotice("Reunião agendada, tarefa criada e pipeline atualizado.");
+      setNotice(data.get("participantEmail")
+        ? "Reunião agendada. Convite e lembretes do participante foram enfileirados."
+        : "Reunião agendada, tarefa criada e pipeline atualizado.");
       await refresh();
       setShowSchedule(false);
     } catch (error) {
@@ -210,6 +221,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       <p><Icon name="agenda" size={16} />{formatDate(meeting.startsAt, screen.timeZone)}</p>
       <p><Icon name="leads" size={16} />{meeting.leadName} · {meeting.closerName}</p>
       <p><Icon name="equipe" size={16} />Agendada por: {meeting.scheduledByName}</p>
+      {meeting.participantEmail ? <p><Icon name="notificacoes" size={16} />Participante: {meeting.participantEmail} · {meeting.participantResponseStatus ? participantResponseLabels[meeting.participantResponseStatus] : "aguardando resposta"}</p> : null}
       {meeting.observation ? <p className={styles.observation}>{meeting.observation}</p> : null}
       <StatusBadge tone={meeting.calendarSync.state === "SYNCED" ? "success" : meeting.calendarSync.state === "CONFLICT" || meeting.calendarSync.state === "FAILED" ? "danger" : "info"}>Calendário: {meeting.calendarSync.state === "NOT_LINKED" ? "não conectado" : meeting.calendarSync.state.toLowerCase().replaceAll("_", " ")}</StatusBadge>
       <div className={styles.detailLinks}><Link href={`/agenda/reunioes/${meeting.id}`}>Abrir briefing do closer →</Link>{meeting.calendarSync.conferenceUrl ? <a href={meeting.calendarSync.conferenceUrl} rel="noreferrer" target="_blank">Entrar no Google Meet</a> : <Link href="/integracoes/calendario">Conectar calendário</Link>}{meeting.opportunityId ? <Link href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
@@ -292,6 +304,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
         <label className={styles.fullWidth}>Título<input className={inputClass} name="title" required /></label>
         <label>Data e horário<input className={inputClass} defaultValue={`${screen.selectedDate}T09:00`} name="startsAtLocal" required type="datetime-local" /></label>
         <label>Duração<select className={inputClass} defaultValue={screen.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
+        <label className={styles.fullWidth}>E-mail do participante (opcional)<input autoComplete="email" className={inputClass} maxLength={320} name="participantEmail" placeholder="participante@exemplo.com" type="email" /><span>Receberá o convite pelo MillionSend e Google Agenda, além de avisos 3h, 1h, 30 min e na hora.</span></label>
         <label className={styles.fullWidth}>Observação<textarea className={inputClass} name="observation" rows={3} /></label>
         <p className={styles.fullWidth}>Horários em {screen.timeZone}.</p><Button className={styles.fullWidth} disabled={pending} type="submit">{pending ? "Agendando…" : "Confirmar agendamento"}</Button>
       </form> : <EmptyState compact description="Cadastre um lead ou configure um closer disponível." title="Nenhum lead disponível para agendar" />}{notice ? <p className={styles.notice} role="status">{notice}</p> : null}</AccessibleDialog> : null}

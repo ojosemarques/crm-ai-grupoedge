@@ -2,6 +2,7 @@ import { parseWorkspaceLocalDateTime } from "@/shared/core/time/workspace-time";
 
 type GoogleEventDate = Readonly<{ date?: unknown; dateTime?: unknown; timeZone?: unknown }>;
 type GoogleEventPerson = Readonly<{ email?: unknown; displayName?: unknown }>;
+type GoogleEventAttendee = Readonly<{ email?: unknown; responseStatus?: unknown }>;
 type GoogleConferenceData = Readonly<{ entryPoints?: unknown }>;
 
 export type GoogleCalendarEventPayload = Readonly<{
@@ -17,6 +18,7 @@ export type GoogleCalendarEventPayload = Readonly<{
   start?: GoogleEventDate | unknown;
   end?: GoogleEventDate | unknown;
   creator?: GoogleEventPerson | unknown;
+  attendees?: readonly GoogleEventAttendee[] | unknown;
   updated?: unknown;
   conferenceData?: GoogleConferenceData | unknown;
 }>;
@@ -44,6 +46,7 @@ export type NormalizedGoogleCalendarEvent = Readonly<
       conferenceUrl: string | null;
       creatorName: string | null;
       creatorEmail: string | null;
+      attendees: readonly Readonly<{ email: string; responseStatus: string }>[];
       sourceUpdatedAt: Date | null;
     }
 >;
@@ -117,6 +120,16 @@ function conferenceUrl(event: Record<string, unknown>) {
   return null;
 }
 
+function attendees(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const attendee = object(item);
+    const email = text(attendee?.email, 320)?.toLowerCase();
+    if (!email || !email.includes("@") || /[\s\u0000-\u001f\u007f]/u.test(email)) return [];
+    return [{ email, responseStatus: text(attendee?.responseStatus, 40) ?? "unknown" }];
+  }).slice(0, 200);
+}
+
 export function normalizeGoogleCalendarEvent(
   input: GoogleCalendarEventPayload,
   fallbackTimeZone: string,
@@ -150,6 +163,7 @@ export function normalizeGoogleCalendarEvent(
     conferenceUrl: conferenceUrl(event),
     creatorName: text(creator?.displayName, 200),
     creatorEmail: text(creator?.email, 320)?.toLowerCase() ?? null,
+    attendees: attendees(event.attendees),
     sourceUpdatedAt,
   });
 }

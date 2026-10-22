@@ -9,6 +9,7 @@ import { createLeadIntakeService } from "@/modules/leads/application/lead-intake
 import { encryptGoogleCalendarSecret } from "@/modules/integrations/application/google-calendar-crypto";
 import { createGoogleCalendarWorkerService } from "@/modules/integrations/application/google-calendar-worker-service";
 import { createMeetingPipelineReconciliationService } from "@/modules/meetings/application/meeting-pipeline-reconciliation-service";
+import { createMeetingParticipantEmailWorker } from "@/modules/meetings/application/meeting-participant-email-service";
 import { createMeetingService } from "@/modules/meetings/application/meeting-service";
 import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createPactoQualificationService } from "@/modules/qualification/application/pacto-qualification-service";
@@ -324,6 +325,94 @@ describe("agenda interna e reuniões", () => {
     expect(history).toHaveLength(1);
     expect(activities).toHaveLength(1);
     expect(audit).toHaveLength(1);
+  });
+
+  it("enfileira e envia pelo MillionSend o convite e os quatro lembretes do participante", async () => {
+    clock = new Date("2035-02-10T15:00:00.000Z");
+    const lead = await qualifyLead("CRM participante convidado");
+    const participantEmail = "participante@example.test";
+    const scheduled = await meetings().schedule(managerContext, {
+      leadId: lead.leadId,
+      closerId: closer1Id,
+      title: "Diagnóstico com participante",
+      startsAtLocal: "2035-02-11T09:00",
+      durationMinutes: 30,
+      observation: "Validação do convite externo.",
+      participantEmail: ` ${participantEmail.toUpperCase()} `,
+    });
+    const meeting = await database.meeting.findUniqueOrThrow({ where: { id: scheduled.meetingId } });
+    expect(meeting).toMatchObject({
+      participantEmail,
+      participantResponseStatus: "NEEDS_ACTION",
+      participantResponseUpdatedAt: null,
+    });
+
+    const jobs = await database.job.findMany({
+      where: {
+        workspaceId,
+        type: "NOTIFICATION",
+        payload: { path: ["kind"], equals: "MEETING_PARTICIPANT_EMAIL_V1" },
+        idempotencyKey: { startsWith: `meeting-participant-email:${meeting.id}:r1:` },
+      },
+      orderBy: { runAt: "asc" },
+    });
+    expect(jobs).toHaveLength(5);
+    expect(jobs.map((job) => job.runAt.toISOString())).toEqual([
+      "2035-02-10T15:00:00.000Z",
+      "2035-02-11T09:00:00.000Z",
+      "2035-02-11T11:00:00.000Z",
+      "2035-02-11T11:30:00.000Z",
+      "2035-02-11T12:00:00.000Z",
+    ]);
+
+    const profile = await database.emailConnectionProfile.findFirstOrThrow({ where: { workspaceId } });
+    await database.emailConnectionProfile.update({
+      where: { id: profile.id },
+      data: {
+        operatingMode: "EXTERNAL_READY",
+        spfStatus: "VERIFIED_EXTERNAL",
+        dkimStatus: "VERIFIED_EXTERNAL",
+        dmarcStatus: "VERIFIED_EXTERNAL",
+        smtpHost: "smtp.example.test",
+        smtpPort: 587,
+        validatedAt: clock,
+        lastSuccessAt: clock,
+      },
+    });
+    await database.integrationConnection.update({
+      where: { id: profile.connectionId },
+      data: { enabled: true },
+    });
+    let sentBody: Record<string, unknown> | null = null;
+    let idempotencyKey: string | null = null;
+    const fetchImpl = async (_input: string | URL | Request, init?: RequestInit) => {
+      sentBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      idempotencyKey = new Headers(init?.headers).get("Idempotency-Key");
+      return new Response(JSON.stringify({ id: "millionsend-message-test" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    const worker = createMeetingParticipantEmailWorker({
+      database,
+      now: () => clock,
+      environment: { MILLIONSEND_ENABLED: "true", MILLIONSEND_API_KEY: "ms_integration_test_key" },
+      fetchImpl,
+    });
+    await expect(worker.processNext("meeting-participant-email-test")).resolves.toMatchObject({
+      status: "SUCCEEDED",
+      emailKind: "INVITATION",
+    });
+    expect(sentBody).toMatchObject({
+      from: profile.senderAddressNormalized,
+      to: [participantEmail],
+      subject: "Convite: Diagnóstico com participante",
+    });
+    expect(idempotencyKey).toBe(`meeting-participant-email:${meeting.id}:r1:invitation`);
+    await expect(database.job.findUniqueOrThrow({ where: { id: jobs[0]!.id } })).resolves.toMatchObject({
+      status: "SUCCEEDED",
+      result: expect.objectContaining({ provider: "MILLIONSEND", providerMessageId: "millionsend-message-test" }),
+    });
   });
 
   it("permite criar, editar e remarcar reuniões no mesmo horário para o mesmo vendedor", async () => {
@@ -949,29 +1038,79 @@ describe("agenda interna e reuniões", () => {
   });
 
   it("enfileira sincronização Google ao agendar para um closer conectado", async () => {
+    clock = new Date("2035-02-21T15:00:00.000Z");
+    const encryptionKey = "integration-google-calendar-push-key-2035";
+    const previous = {
+      clientId: process.env.GOOGLE_CALENDAR_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+      encryptionKey: process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY,
+      canonicalUrl: process.env.APP_CANONICAL_URL,
+    };
+    process.env.GOOGLE_CALENDAR_CLIENT_ID = "integration-client-id-for-google-calendar";
+    process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "integration-client-secret-for-google-calendar";
+    process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY = encryptionKey;
+    process.env.APP_CANONICAL_URL = "https://crm.example.test";
     const lead = await qualifyLead("CRM15 Google conectado");
-    await database.googleCalendarAccount.create({
+    const account = await database.googleCalendarAccount.create({
       data: {
         workspaceId,
         memberId: closer1Id,
         googleSubject: `test-${randomUUID()}`,
         googleEmail: "closer@example.test",
-        accessTokenCiphertext: "token-de-teste",
-        refreshTokenCiphertext: "refresh-de-teste",
-        tokenExpiresAt: new Date("2035-03-01T00:00:00.000Z"),
+        accessTokenCiphertext: encryptGoogleCalendarSecret("token-de-teste", encryptionKey),
+        refreshTokenCiphertext: encryptGoogleCalendarSecret("refresh-de-teste", encryptionKey),
+        tokenExpiresAt: new Date("2036-03-01T00:00:00.000Z"),
         grantedScopes: ["https://www.googleapis.com/auth/calendar.events"],
         status: "CONNECTED",
         createdByActorId: managerContext.actorId,
         updatedByActorId: managerContext.actorId,
       },
     });
-    const result = await schedule(lead.leadId, managerContext, "2035-02-22T10:00");
+    const result = await meetings().schedule(managerContext, {
+      leadId: lead.leadId,
+      closerId: closer1Id,
+      title: "Reunião Google com participante",
+      startsAtLocal: "2035-02-22T10:00",
+      durationMinutes: 30,
+      participantEmail: "participante-google@example.test",
+    });
     const [link, job] = await Promise.all([
       database.googleCalendarEventLink.findFirst({ where: { workspaceId, meetingId: result.meetingId } }),
       database.job.findFirst({ where: { workspaceId, idempotencyKey: `google-calendar:${result.meetingId}:r1` } }),
     ]);
     expect(link).toMatchObject({ memberId: closer1Id, syncState: "PENDING_PUSH" });
     expect(job).toMatchObject({ type: "GOOGLE_CALENDAR_SYNC", status: "PENDING" });
+    try {
+      const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        expect(url.searchParams.get("sendUpdates")).toBe("all");
+        expect(init?.method).toBe("POST");
+        const body = JSON.parse(String(init?.body)) as { attendees?: unknown };
+        expect(body.attendees).toEqual([{ email: "participante-google@example.test" }]);
+        return new Response(JSON.stringify({
+          id: link!.externalEventId,
+          etag: '"google-push-v1"',
+          htmlLink: "https://calendar.google.com/calendar/event?eid=linked",
+          attendees: [{ email: "participante-google@example.test", responseStatus: "needsAction" }],
+          conferenceData: { entryPoints: [{ entryPointType: "video", uri: "https://meet.google.com/test-link" }] },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      };
+      const worker = createGoogleCalendarWorkerService({ database, now: () => clock, fetcher });
+      await expect(worker.processNext("google-push-participant-test")).resolves.toMatchObject({ status: "SUCCEEDED" });
+      await expect(database.googleCalendarEventLink.findUniqueOrThrow({ where: { id: link!.id } })).resolves.toMatchObject({
+        syncState: "SYNCED",
+        conferenceUrl: "https://meet.google.com/test-link",
+      });
+      await expect(database.meeting.findUniqueOrThrow({ where: { id: result.meetingId } })).resolves.toMatchObject({
+        participantResponseStatus: "NEEDS_ACTION",
+      });
+      expect(account.id).toBeTruthy();
+    } finally {
+      if (previous.clientId === undefined) delete process.env.GOOGLE_CALENDAR_CLIENT_ID; else process.env.GOOGLE_CALENDAR_CLIENT_ID = previous.clientId;
+      if (previous.clientSecret === undefined) delete process.env.GOOGLE_CALENDAR_CLIENT_SECRET; else process.env.GOOGLE_CALENDAR_CLIENT_SECRET = previous.clientSecret;
+      if (previous.encryptionKey === undefined) delete process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY; else process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY = previous.encryptionKey;
+      if (previous.canonicalUrl === undefined) delete process.env.APP_CANONICAL_URL; else process.env.APP_CANONICAL_URL = previous.canonicalUrl;
+    }
   });
 
   it("importa eventos do Google para a Agenda e aplica exclusões incrementais", async () => {
@@ -1126,6 +1265,7 @@ describe("agenda interna e reuniões", () => {
             etag: '"linked-v2"',
             status: "confirmed",
             summary: "Título alterado no Google",
+            attendees: [{ email: "participante-google@example.test", responseStatus: "accepted" }],
             start: { dateTime: "2035-02-24T14:00:00-03:00", timeZone: "America/Sao_Paulo" },
             end: { dateTime: "2035-02-24T14:30:00-03:00", timeZone: "America/Sao_Paulo" },
           }],
@@ -1135,7 +1275,13 @@ describe("agenda interna e reuniões", () => {
       const worker = createGoogleCalendarWorkerService({ database, now: () => clock, fetcher, pullIntervalSeconds: 60 });
       await expect(worker.processNext("google-linked-pull-test")).resolves.toMatchObject({ status: "PULLED" });
       const updated = await database.meeting.findUniqueOrThrow({ where: { id: link.meetingId } });
-      expect(updated).toMatchObject({ title: "Título alterado no Google", revision: link.meeting.revision + 1 });
+      expect(updated).toMatchObject({
+        title: "Título alterado no Google",
+        revision: link.meeting.revision + 1,
+        participantEmail: "participante-google@example.test",
+        participantResponseStatus: "ACCEPTED",
+        participantResponseUpdatedAt: expect.any(Date),
+      });
       expect(updated.startsAt.toISOString()).toBe("2035-02-24T17:00:00.000Z");
       expect(await database.googleCalendarEventLink.findUniqueOrThrow({ where: { id: link.id } })).toMatchObject({
         externalEtag: '"linked-v2"',
