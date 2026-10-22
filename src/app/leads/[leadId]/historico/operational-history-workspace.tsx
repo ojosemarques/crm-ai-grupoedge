@@ -387,7 +387,11 @@ export function OperationalHistoryWorkspace({
       ? "Seu perfil não pode concluir a venda deste negócio."
       : opportunities.canPrepareSale
         ? "Informe os dados para preparar e confirmar a venda."
-        : "Não há vendedor ou produto disponível para preparar a venda.";
+        : opportunities.productOptions.length === 0
+          ? "Não há produto disponível para preparar a venda."
+          : opportunities.saleSellerOptions.length === 0
+            ? "Não há vendedor comercial ativo disponível para preparar a venda."
+            : "Seu perfil não pode preparar esta venda.";
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
@@ -1557,7 +1561,7 @@ export function OperationalHistoryWorkspace({
                 router.refresh();
               }}
               opportunity={saleOpportunity}
-              sellers={opportunities.closerOptions}
+              sellers={opportunities.saleSellerOptions}
               initialTerms={preparedSaleTerms}
             />
           ) : opportunities.canPrepareSale ? (

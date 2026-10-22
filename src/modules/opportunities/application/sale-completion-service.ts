@@ -16,6 +16,7 @@ import { executeSaleCompletionSchema, prepareLeadSaleSchema, saleCompletionSchem
 import { createPaymentService } from "@/modules/payments/application/payment-service";
 import { syncActiveProspectingCommercialStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createRevenueService } from "@/modules/revenue/application/revenue-service";
+import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys, type PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -148,7 +149,13 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
       }
       const [pipeline, seller, product] = await Promise.all([
         tx.pipeline.findFirst({ where: { workspaceId: context.workspaceId, entityType: "OPPORTUNITY", isDefault: true, deletedAt: null }, include: { stages: { where: { deletedAt: null } }, transitions: { where: { active: true } } } }),
-        tx.workspaceMember.findFirst({ where: { id: input.sellerMemberId, workspaceId: context.workspaceId, status: "ACTIVE", deletedAt: null, user: { status: "ACTIVE", deletedAt: null }, teamMemberships: { some: { function: "CLOSER", deletedAt: null } } } }),
+        tx.workspaceMember.findFirst({
+          where: commercialMemberWhere({
+            workspaceId: context.workspaceId,
+            functions: ["SDR", "CLOSER"],
+            memberId: input.sellerMemberId,
+          }),
+        }),
         tx.product.findFirst({ where: { id: input.productId, workspaceId: context.workspaceId, active: true, deletedAt: null } }),
       ]);
       if (!pipeline) fail("Pipeline de vendas padrão não encontrado.", "PIPELINE_CONFIGURATION_INVALID");

@@ -64,9 +64,12 @@ describe("venda integrada atômica", () => {
     }, { workspaceId, actorId: actor.id, actorKey: actor.key, actorType: "SYSTEM" });
     if (intake.outcome === "REJECTED") throw new Error(intake.code);
     const contact = await database.contact.create({ data: { workspaceId, preferredName: "Contato da venda direta", origin: "LEAD_BACKFILL", quality: "CONFIRMED", createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
-    await database.lead.update({ where: { id: intake.leadId }, data: { contactId: contact.id } });
-    const seller = await context("closer1@demo.politizai.local");
+    const seller = await context("sdr1@demo.politizai.local");
+    await database.lead.update({ where: { id: intake.leadId }, data: { contactId: contact.id, ownerMemberId: seller.memberId } });
     const product = await database.product.findFirstOrThrow({ where: { workspaceId, active: true, salesGateProfile: "STANDARD", deletedAt: null } });
+    const leadScreen = await createOpportunityService({ database, authorization: createAuthorizationService({ database }), now: () => now }).getLeadScreen(admin, { leadId: intake.leadId });
+    expect(leadScreen).toMatchObject({ canPrepareSale: true, suggestedSaleSellerId: seller.memberId });
+    expect(leadScreen.saleSellerOptions).toContainEqual({ id: seller.memberId, name: seller.displayName });
     const idempotencyKey = randomUUID();
     const command = {
       leadId: intake.leadId,

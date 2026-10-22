@@ -125,15 +125,13 @@ export function LeadSalePreparationPanel({ screen, onPrepared }: Readonly<{
     }
   }
 
-  const defaultSellerId = screen.closerOptions.some((seller) => seller.id === screen.opportunities[0]?.ownerMemberId)
-    ? screen.opportunities[0]!.ownerMemberId
-    : screen.closerOptions[0]?.id ?? "";
+  const defaultSellerId = screen.suggestedSaleSellerId ?? "";
 
   return <section className="space-y-4 rounded-md border p-4" aria-label="Preparar venda do lead">
     <header><h3 className="font-semibold">Dados da venda</h3><p className="mt-1 text-sm text-muted-foreground">Informe valores coerentes. O sistema confere a soma antes de criar o negócio e permite revisar tudo antes da confirmação final.</p></header>
     {error ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
     <form className="grid gap-3 sm:grid-cols-2" onSubmit={submit}>
-      <label className="text-sm">Vendedor<select className={inputClass} defaultValue={defaultSellerId} name="sellerMemberId" required><option value="">Selecione</option>{screen.closerOptions.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
+      <label className="text-sm">Vendedor<select className={inputClass} defaultValue={defaultSellerId} name="sellerMemberId" required><option value="">Selecione</option>{screen.saleSellerOptions.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
       <label className="text-sm">Produto<select className={inputClass} defaultValue={screen.productOptions[0]?.id ?? ""} name="productId" required><option value="">Selecione</option>{screen.productOptions.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
       <label className="text-sm sm:col-span-2">Descrição da venda<textarea className={inputClass} minLength={3} maxLength={2_000} name="description" required placeholder="Descreva o que foi vendido e os detalhes combinados." /></label>
       <label className="text-sm">Condição de pagamento<select className={inputClass} onChange={(event) => changePlan(event.target.value as PrepareLeadSaleInput["paymentPlan"])} value={paymentPlan}><option value="UPFRONT_INSTALLMENTS">Entrada + parcelas</option><option value="INSTALLMENTS">Somente parcelas</option><option value="CASH">À vista</option></select></label>

@@ -460,6 +460,27 @@ async function referenceOptions(
   };
 }
 
+async function saleSellerOptions(
+  database: PrismaClient,
+  context: AuthenticatedContext,
+  scope: PermissionScope,
+  ownerIds: readonly string[],
+) {
+  const sellers = await database.workspaceMember.findMany({
+    where: {
+      ...commercialMemberWhere({
+        workspaceId: context.workspaceId,
+        functions: ["SDR", "CLOSER"],
+        ...(scope === "OWN" ? { memberId: context.memberId } : {}),
+      }),
+      ...(scope === "TEAM" ? { id: { in: [...ownerIds] } } : {}),
+    },
+    orderBy: { user: { displayName: "asc" } },
+    select: { id: true, user: { select: { displayName: true } } },
+  });
+  return sellers.map((seller) => ({ id: seller.id, name: seller.user.displayName }));
+}
+
 type OpportunityRow = Prisma.OpportunityGetPayload<{
   include: {
   lead: { select: { fullName: true; sourceId: true; source: { select: { name: true } }; routingQueue: { select: { teamId: true } }; queue: { select: { teamId: true } } } };
@@ -861,6 +882,8 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
         accountOptions: [],
         suggestedAccountId: lead.accountId,
         closerOptions: [],
+        saleSellerOptions: [],
+        suggestedSaleSellerId: null,
         productOptions: [],
         offerTemplateOptions: [],
         meetingOptions: [],
@@ -895,8 +918,9 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
         ownerMemberId: context.memberId,
       },
     );
-    const refs = await referenceOptions(options.database, context, readScope.scope, readScope.ownerIds);
-    const [products, templates, meetings, accounts] = await Promise.all([
+    const [refs, saleSellers, products, templates, meetings, accounts] = await Promise.all([
+      referenceOptions(options.database, context, readScope.scope, readScope.ownerIds),
+      saleSellerOptions(options.database, context, readScope.scope, readScope.ownerIds),
       options.database.product.findMany({
         where: { workspaceId: context.workspaceId, active: true, audience: "INSTITUTIONAL", availability: { in: ["AVAILABLE", "CAPACITY_LIMITED"] }, deletedAt: null },
         orderBy: [{ name: "asc" }, { id: "asc" }],
@@ -931,10 +955,14 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
       timeZone,
       canRead: true,
       canCreate: createDecision.allowed && meetings.length > 0 && refs.closerOptions.length > 0,
-      canPrepareSale: createDecision.allowed && products.length > 0 && refs.closerOptions.length > 0,
+      canPrepareSale: createDecision.allowed && products.length > 0 && saleSellers.length > 0,
       accountOptions: accounts,
       suggestedAccountId: lead.accountId,
       closerOptions: refs.closerOptions,
+      saleSellerOptions: saleSellers,
+      suggestedSaleSellerId: saleSellers.some((seller) => seller.id === lead.ownerMemberId)
+        ? lead.ownerMemberId
+        : saleSellers[0]?.id ?? null,
       productOptions: products.map((item) => ({ ...item, listPriceCents: item.listPriceCents.toString() })),
       offerTemplateOptions: templates.map((item) => ({
         ...item,

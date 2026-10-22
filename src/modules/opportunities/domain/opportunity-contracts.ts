@@ -102,6 +102,8 @@ export type LeadOpportunityScreen = Readonly<{
   accountOptions: readonly OpportunityReference[];
   suggestedAccountId: string | null;
   closerOptions: readonly OpportunityReference[];
+  saleSellerOptions: readonly OpportunityReference[];
+  suggestedSaleSellerId: string | null;
   productOptions: readonly Readonly<{
     id: string;
     name: string;
