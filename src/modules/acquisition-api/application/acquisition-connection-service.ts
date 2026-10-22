@@ -11,6 +11,9 @@ import { META_ADS_DEFAULT_API_VERSION } from "@/modules/integrations/domain/meta
 
 function fail(message: string, code: string, statusCode = 409): never { throw new ApplicationError(message, { code, statusCode, expose: true }); }
 function json(value: unknown): Prisma.InputJsonValue { return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue; }
+function formPublicSlug(workspaceId: string, key: string): string {
+  return `${key}-${sha256(`${workspaceId}:${key}`).slice(0, 10)}`;
+}
 export function createAcquisitionConnectionService(database: PrismaClient, secrets: SecretResolver = environmentSecretResolver) {
   const authorization = getAuthorizationService();
   async function configure(context: AuthenticatedContext, raw: unknown) {
@@ -31,7 +34,41 @@ export function createAcquisitionConnectionService(database: PrismaClient, secre
       const mapping = json(input.mapping); await tx.integrationFieldMappingVersion.create({ data: { workspaceId: context.workspaceId, connectionId: connection.id, objectType: "lead", version: 1, schemaVersion: ACQUISITION_CONTRACT_VERSION, mapping, precedence: json({ policy: "HUMAN_WINS", humanFields: Object.keys(input.mapping), externalFields: [] }), configHash: sha256(canonicalJson(mapping)), active: true, createdByActorId: context.actorId } });
       let formId: string | null = null; let landingPageId: string | null = null;
       if (input.provider === "LANDING_PAGE") { const landing = await tx.landingPage.create({ data: { workspaceId: context.workspaceId, key: input.key, name: input.definition!.name, canonicalUrl: input.definition!.canonicalUrl!, status: "ACTIVE", createdByActorId: context.actorId, updatedByActorId: context.actorId } }); landingPageId = landing.id; await tx.landingPageVersion.create({ data: { workspaceId: context.workspaceId, landingPageId: landing.id, version: 1, canonicalUrl: landing.canonicalUrl, title: input.definition?.title ?? null, schemaVersion: ACQUISITION_CONTRACT_VERSION, definition: json({ connectionId: connection.id, mappingVersion: 1 }), createdByActorId: context.actorId } }); }
-      if (input.provider === "FORM" || input.provider === "LANDING_PAGE") { const form = await tx.marketingForm.create({ data: { workspaceId: context.workspaceId, key: `${input.key}-form`, name: input.definition?.name ?? input.displayName, status: "ACTIVE", createdByActorId: context.actorId, updatedByActorId: context.actorId } }); formId = form.id; await tx.marketingFormVersion.create({ data: { workspaceId: context.workspaceId, marketingFormId: form.id, landingPageId, version: 1, schemaVersion: ACQUISITION_CONTRACT_VERSION, definition: json({ connectionId: connection.id, mappingVersion: 1, fields: Object.keys(input.mapping) }), createdByActorId: context.actorId } }); }
+      if (input.provider === "FORM" || input.provider === "LANDING_PAGE") {
+        const formKey = `${input.key}-form`;
+        const definition = json({ connectionId: connection.id, mappingVersion: 1, fields: Object.keys(input.mapping) });
+        const publishedAt = new Date();
+        const form = await tx.marketingForm.create({
+          data: {
+            workspaceId: context.workspaceId,
+            key: formKey,
+            name: input.definition?.name ?? input.displayName,
+            publicSlug: formPublicSlug(context.workspaceId, formKey),
+            status: "ACTIVE",
+            draftSchemaVersion: ACQUISITION_CONTRACT_VERSION,
+            draftDefinition: definition,
+            publishedAt,
+            createdByActorId: context.actorId,
+            updatedByActorId: context.actorId,
+          },
+        });
+        formId = form.id;
+        const version = await tx.marketingFormVersion.create({
+          data: {
+            workspaceId: context.workspaceId,
+            marketingFormId: form.id,
+            landingPageId,
+            version: 1,
+            schemaVersion: ACQUISITION_CONTRACT_VERSION,
+            definition,
+            definitionHash: sha256(canonicalJson(definition)),
+            publishedAt,
+            publishedByActorId: context.actorId,
+            createdByActorId: context.actorId,
+          },
+        });
+        await tx.marketingForm.update({ where: { id: form.id }, data: { publishedVersionId: version.id } });
+      }
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "acquisition.connection.configured", entityType: "IntegrationConnection", entityId: connection.id, changes: json({ provider: input.provider, mappingVersion: 1, secretReference: input.secretReferenceKey, formId, landingPageId }) } });
       const workspace = await tx.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { slug: true } });
       return { id: connection.id, key: connection.key, provider: input.provider, status: connection.status, mappingVersion: 1, formId, landingPageId, webhookPath: `/api/acquisition/${workspace.slug}/${connection.key}/webhook`, secretStored: false, secretReference: input.secretReferenceKey };

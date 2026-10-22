@@ -283,6 +283,24 @@ enum MarketingDefinitionStatus {
   DRAFT
   ACTIVE
   INACTIVE
+  ARCHIVED
+}
+
+enum MarketingFormReceiptStatus {
+  RECEIVED
+  PROCESSING
+  ACCEPTED
+  FAILED
+}
+
+enum MarketingFormEventKind {
+  FORM_VIEW
+  FORM_START
+  QUESTION_VIEWED
+  QUESTION_ANSWERED
+  FORM_SUBMITTED
+  FORM_COMPLETED
+  REDIRECT_OPENED
 }
 
 enum MarketingSessionIdentityState {
@@ -4509,6 +4527,7 @@ model LeadFormSubmission {
   marketingSessionId         String?            @db.Uuid
   marketingFormId            String?            @db.Uuid
   marketingFormVersionId     String?            @db.Uuid
+  marketingFormReceiptId     String?            @db.Uuid
   marketingTouchpointId      String?            @db.Uuid
   attributionConversionId    String?            @db.Uuid
   status                     SubmissionStatus   @default(RECEIVED)
@@ -4550,6 +4569,7 @@ model LeadFormSubmission {
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey])
+  @@unique([workspaceId, marketingFormReceiptId])
   @@index([workspaceId, leadId, submittedAt])
   @@index([workspaceId, contactId, submittedAt])
   @@index([workspaceId, sourceId, submittedAt])
@@ -4560,6 +4580,7 @@ model LeadFormSubmission {
   @@index([workspaceId, normalizedPhone, submittedAt])
   @@index([workspaceId, marketingSessionId, submittedAt])
   @@index([workspaceId, marketingFormId, marketingFormVersionId, submittedAt])
+  @@index([workspaceId, marketingFormReceiptId])
   @@index([workspaceId, marketingTouchpointId])
   @@index([workspaceId, attributionConversionId])
   @@map("lead_form_submissions")
@@ -11482,40 +11503,142 @@ model LandingPageVersion {
 }
 
 model MarketingForm {
-  id               String                    @id @default(uuid()) @db.Uuid
-  workspaceId      String                    @db.Uuid
-  key              String
-  name             String
-  status           MarketingDefinitionStatus @default(DRAFT)
-  currentVersion   Int                       @default(1)
-  createdByActorId String                    @db.Uuid
-  updatedByActorId String                    @db.Uuid
-  createdAt        DateTime                  @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime                  @updatedAt @db.Timestamptz(3)
-  deletedAt        DateTime?                 @db.Timestamptz(3)
+  id                 String                    @id @default(uuid()) @db.Uuid
+  workspaceId        String                    @db.Uuid
+  key                String
+  name               String
+  publicSlug         String                    @unique
+  status             MarketingDefinitionStatus @default(DRAFT)
+  currentVersion     Int                       @default(1)
+  revision           Int                       @default(1)
+  draftSchemaVersion String                    @default("marketing-form.v1")
+  draftDefinition    Json                      @default("{}")
+  publishedVersionId String?                   @db.Uuid
+  publishedAt        DateTime?                 @db.Timestamptz(3)
+  pausedAt           DateTime?                 @db.Timestamptz(3)
+  archivedAt         DateTime?                 @db.Timestamptz(3)
+  createdByActorId   String                    @db.Uuid
+  updatedByActorId   String                    @db.Uuid
+  createdAt          DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                  @updatedAt @db.Timestamptz(3)
+  deletedAt          DateTime?                 @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, key])
   @@index([workspaceId, status, deletedAt])
+  @@index([workspaceId, status, updatedAt])
+  @@index([workspaceId, publicSlug])
   @@map("marketing_forms")
 }
 
 model MarketingFormVersion {
-  id               String   @id @default(uuid()) @db.Uuid
-  workspaceId      String   @db.Uuid
-  marketingFormId  String   @db.Uuid
-  landingPageId    String?  @db.Uuid
-  version          Int
-  schemaVersion    String
-  definition       Json
-  createdByActorId String   @db.Uuid
-  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  id                 String   @id @default(uuid()) @db.Uuid
+  publicId           String   @unique @default(uuid()) @db.Uuid
+  workspaceId        String   @db.Uuid
+  marketingFormId    String   @db.Uuid
+  landingPageId      String?  @db.Uuid
+  version            Int
+  schemaVersion      String
+  definition         Json
+  definitionHash     String
+  publishedAt        DateTime @db.Timestamptz(3)
+  publishedByActorId String   @db.Uuid
+  createdByActorId   String   @db.Uuid
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
 
   @@unique([workspaceId, id])
+  @@unique([workspaceId, publicId])
+  @@unique([workspaceId, marketingFormId, id])
   @@unique([workspaceId, marketingFormId, version])
   @@index([workspaceId, marketingFormId, createdAt])
   @@index([workspaceId, landingPageId])
   @@map("marketing_form_versions")
+}
+
+model MarketingFormReceipt {
+  id                     String                     @id @default(uuid()) @db.Uuid
+  workspaceId            String                     @db.Uuid
+  publicId               String                     @default(uuid()) @db.Uuid
+  marketingFormId        String                     @db.Uuid
+  marketingFormVersionId String                     @db.Uuid
+  sessionId              String?                    @db.Uuid
+  idempotencyHash        String
+  status                 MarketingFormReceiptStatus @default(RECEIVED)
+  answers                Json
+  utmSource              String?
+  utmMedium              String?
+  utmCampaign            String?
+  utmContent             String?
+  utmTerm                String?
+  referrerHost           String?
+  safeErrorCode          String?
+  redirectKind           String?
+  redirectUrl            String?
+  rotationTargetKey      String?
+  rotationAppliedAt      DateTime?                  @db.Timestamptz(3)
+  startedAt              DateTime                   @db.Timestamptz(3)
+  submittedAt            DateTime                   @db.Timestamptz(3)
+  acceptedAt             DateTime?                  @db.Timestamptz(3)
+  createdByActorId       String                     @db.Uuid
+  createdAt              DateTime                   @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime                   @updatedAt @db.Timestamptz(3)
+  deletedAt              DateTime?                  @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, publicId])
+  @@unique([workspaceId, marketingFormVersionId, idempotencyHash])
+  @@index([workspaceId, marketingFormId, status, submittedAt])
+  @@index([workspaceId, marketingFormVersionId, submittedAt])
+  @@index([workspaceId, sessionId, submittedAt])
+  @@map("marketing_form_receipts")
+}
+
+model MarketingFormEvent {
+  id                     String                 @id @default(uuid()) @db.Uuid
+  workspaceId            String                 @db.Uuid
+  marketingFormId        String                 @db.Uuid
+  marketingFormVersionId String                 @db.Uuid
+  sessionId              String?                @db.Uuid
+  kind                   MarketingFormEventKind
+  questionKey            String?
+  optionKey              String?
+  occurredAt             DateTime               @db.Timestamptz(3)
+  idempotencyKey         String
+  utmSource              String?
+  utmMedium              String?
+  utmCampaign            String?
+  utmContent             String?
+  utmTerm                String?
+  referrerHost           String?
+  safeMetadata           Json?
+  createdByActorId       String                 @db.Uuid
+  createdAt              DateTime               @default(now()) @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, marketingFormId, marketingFormVersionId, kind, occurredAt])
+  @@index([workspaceId, sessionId, occurredAt])
+  @@index([workspaceId, marketingFormVersionId, questionKey, optionKey])
+  @@map("marketing_form_events")
+}
+
+model MarketingFormRotationState {
+  id                     String    @id @default(uuid()) @db.Uuid
+  workspaceId            String    @db.Uuid
+  marketingFormId        String    @db.Uuid
+  marketingFormVersionId String    @db.Uuid
+  nextIndex              Int       @default(0)
+  totalAssignments       BigInt    @default(0)
+  revision               Int       @default(1)
+  resetAt                DateTime? @db.Timestamptz(3)
+  resetByActorId         String?   @db.Uuid
+  createdAt              DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, marketingFormVersionId])
+  @@index([workspaceId, marketingFormId, updatedAt])
+  @@map("marketing_form_rotation_states")
 }
 
 model StrategyFunnel {

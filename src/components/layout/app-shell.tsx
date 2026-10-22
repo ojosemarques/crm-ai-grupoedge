@@ -6,10 +6,12 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ComponentProps,
 
 import { CopilotDrawer } from "@/components/layout/copilot-drawer";
 import { GlobalSearch } from "@/components/layout/global-search";
+import { isPublicShellRoute } from "@/components/layout/app-shell-routes";
 import { announceCompanySwitch, useCompanySession } from "@/components/layout/use-company-session";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { cn } from "@/shared/core/ui/class-names";
+import { acquireDocumentScrollLock } from "@/shared/core/ui/document-scroll-lock";
 import styles from "./app-shell.module.css";
 
 export type AppShellSession = Readonly<{
@@ -31,7 +33,6 @@ type NavigationItem = Readonly<{
   roles?: readonly string[];
 }>;
 
-const publicRoutes = new Set(["/login", "/acesso-negado", "/sessao-expirada", "/hub", "/tempo-real-publico"]);
 const operationalRoles = ["administrator", "commercial_manager", "sdr", "closer"] as const;
 const commercialRoles = ["administrator", "commercial_manager", "closer", "viewer"] as const;
 const leadRoles = ["administrator", "commercial_manager", "sdr", "closer", "viewer"] as const;
@@ -88,6 +89,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
     label: "Marketing",
     items: [
       { href: "/aquisicao/midia", icon: "dashboard", label: "Anúncios e funil", permission: "marketing.media.read" },
+      { href: "/formularios", icon: "pipeline", label: "Formulários", permission: "marketing.definitions.manage" },
       { href: "/integracoes/meta-ads", icon: "configuracoes", label: "Meta Ads", permission: "integrations.read" },
       { href: "/integracoes/google-ads", icon: "configuracoes", label: "Google Ads", permission: "integrations.read" },
       { href: "/integracoes", icon: "configuracoes", label: "Integrações", permission: "integrations.read" },
@@ -113,7 +115,7 @@ const sections = [
   { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/gestao-equipe", "/metas", "/forecast", "/metricas-receita", "/receita", "/analises"] },
   { key: "finance", label: "Financeiro", icon: "receita", paths: ["/financeiro", "/pagamentos", "/contratos"] },
   { key: "customers", label: "Clientes", icon: "leads", paths: ["/contas", "/onboarding", "/customer-success", "/customer-service", "/farmer"] },
-  { key: "marketing", label: "Marketing", icon: "dashboard", paths: ["/aquisicao/midia", "/aquisicao", "/integracoes/meta-ads", "/integracoes/google-ads", "/integracoes"] },
+  { key: "marketing", label: "Marketing", icon: "dashboard", paths: ["/aquisicao/midia", "/formularios", "/aquisicao", "/integracoes/meta-ads", "/integracoes/google-ads", "/integracoes"] },
   { key: "settings", label: "Configurações", icon: "configuracoes", paths: ["/configuracoes", "/administracao", "/auditoria", "/qualidade-dados", "/operacoes", "/privacidade"] },
 ] as const;
 
@@ -123,6 +125,7 @@ const labels: Record<string, string> = {
   "/tempo-real": "Tempo Real",
   "/atividades": "Fila de atividades",
   "/campanhas": "Campanhas de envio",
+  "/formularios": "Formulários",
   "/assistente": "Assistente",
   "/automacoes": "Fluxos de automação", "/dashboard": "Visão geral", "/gestao-equipe": "Gestão da equipe", "/analises": "Análises", "/metricas-receita": "Receita e retenção",
 };
@@ -168,7 +171,7 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
   const isMobile = useSyncExternalStore(subscribeToMobileLayout, mobileLayoutSnapshot, serverLayoutSnapshot);
   const menuRef = useRef<HTMLElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
-  const publicRoute = publicRoutes.has(pathname);
+  const publicRoute = isPublicShellRoute(pathname);
   useCompanySession(publicRoute ? undefined : session?.id);
 
   useEffect(() => {
@@ -181,9 +184,8 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
   useEffect(() => {
     if (!menuOpen) return;
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
+    const releaseScrollLock = acquireDocumentScrollLock();
     menuRef.current?.querySelector<HTMLElement>("a, button")?.focus();
-    document.body.style.overflow = "hidden";
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setMenuOpen(false);
       if (event.key === "Tab") {
@@ -195,7 +197,7 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => {
-      document.body.style.overflow = previousOverflow;
+      releaseScrollLock();
       previousFocus?.focus();
       document.removeEventListener("keydown", closeOnEscape);
     };

@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
 import { cn } from "@/shared/core/ui/class-names";
+import { acquireDocumentScrollLock } from "@/shared/core/ui/document-scroll-lock";
 
 const focusableSelector = [
   "a[href]",
@@ -34,8 +35,7 @@ export function AccessibleDialog({
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const releaseScrollLock = acquireDocumentScrollLock();
     const panel = panelRef.current;
     const firstFocusable = panel?.querySelector<HTMLElement>(focusableSelector);
     (firstFocusable ?? panel)?.focus();
@@ -67,7 +67,7 @@ export function AccessibleDialog({
 
     document.addEventListener("keydown", onKeyDown);
     return () => {
-      document.body.style.overflow = previousOverflow;
+      releaseScrollLock();
       document.removeEventListener("keydown", onKeyDown);
       previousFocus?.focus();
     };

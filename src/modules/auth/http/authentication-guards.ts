@@ -97,3 +97,23 @@ export async function requirePagePermission(
     throw error;
   }
 }
+
+export async function requireWorkspacePagePermission(
+  permission: PermissionKey,
+  resource: Omit<ResourceScope, "workspaceId">,
+): Promise<AuthenticatedContext> {
+  const context = await requirePageAuthentication();
+
+  try {
+    await getAuthorizationService().assertAuthorized(context, permission, {
+      ...resource,
+      workspaceId: context.workspaceId,
+    });
+    return context;
+  } catch (error) {
+    if (error instanceof AccessDeniedError) {
+      redirect("/acesso-negado");
+    }
+    throw error;
+  }
+}

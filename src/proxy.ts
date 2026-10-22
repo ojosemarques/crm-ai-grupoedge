@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { SESSION_COOKIE_NAME } from "@/modules/auth/http/session-cookie";
+import { marketingFormAssetOrigins } from "@/modules/marketing-forms/domain/marketing-form-assets";
 import { resolveCorrelationId } from "@/shared/core/http/correlation";
 import { buildContentSecurityPolicy } from "@/shared/core/security/security-headers";
 
@@ -8,12 +9,18 @@ const PUBLIC_ROUTES = new Set([
   "/login",
   "/acesso-negado",
   "/sessao-expirada",
-  "/tempo-real-publico",
   "/politizai-analytics.js",
   "/.well-known/oauth-authorization-server",
   "/.well-known/oauth-protected-resource",
   "/.well-known/oauth-protected-resource/api/mcp/politizai",
 ]);
+
+function isPublicPage(pathname: string): boolean {
+  return PUBLIC_ROUTES.has(pathname)
+    || pathname === "/tempo-real-publico"
+    || pathname === "/f"
+    || pathname.startsWith("/f/");
+}
 
 export function proxy(request: NextRequest): NextResponse {
   const correlationId = resolveCorrelationId(request.headers);
@@ -22,6 +29,7 @@ export function proxy(request: NextRequest): NextResponse {
     nonce,
     development: process.env.NODE_ENV === "development",
     https: request.nextUrl.protocol === "https:",
+    imageSources: marketingFormAssetOrigins(process.env.MARKETING_FORM_ASSET_ORIGINS),
   });
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
@@ -41,7 +49,7 @@ export function proxy(request: NextRequest): NextResponse {
   const apiRoute = request.nextUrl.pathname.startsWith("/api/");
   const response = remote && !trustedHosts.has(requestedHost)
     ? new NextResponse("Host não permitido.", { status: 421 })
-    : !apiRoute && !PUBLIC_ROUTES.has(request.nextUrl.pathname) && !request.cookies.has(SESSION_COOKIE_NAME)
+    : !apiRoute && !isPublicPage(request.nextUrl.pathname) && !request.cookies.has(SESSION_COOKIE_NAME)
       ? NextResponse.redirect(new URL(`/login?next=${encodeURIComponent(`${request.nextUrl.pathname}${request.nextUrl.search}`)}`, request.url))
       : NextResponse.next({ request: { headers: requestHeaders } });
 

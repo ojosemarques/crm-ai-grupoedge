@@ -2,12 +2,14 @@ export type SecurityHeaderOptions = Readonly<{
   nonce?: string;
   development?: boolean;
   https?: boolean;
+  imageSources?: readonly string[];
 }>;
 
 export function buildContentSecurityPolicy({
   nonce,
   development = false,
   https = false,
+  imageSources = [],
 }: SecurityHeaderOptions = {}): string {
   const scriptSources = ["'self'"];
   if (nonce) scriptSources.push(`'nonce-${nonce}'`, "'strict-dynamic'");
@@ -18,7 +20,7 @@ export function buildContentSecurityPolicy({
     `script-src ${scriptSources.join(" ")}`,
     `style-src ${styleSources.join(" ")}`,
     "style-src-attr 'none'",
-    "img-src 'self' data: blob:",
+    `img-src 'self' data: blob:${imageSources.length ? ` ${imageSources.join(" ")}` : ""}`,
     "font-src 'self' data:",
     "connect-src 'self'",
     "worker-src 'self' blob:",

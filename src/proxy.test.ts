@@ -46,6 +46,15 @@ describe("proteção otimista de rotas", () => {
     expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
   });
 
+  it("permite somente o namespace público de formulários sem cookie", () => {
+    const publicForm = proxy(new NextRequest("http://localhost:3000/f/captacao-mandato"));
+    const similarProtectedPath = proxy(new NextRequest("http://localhost:3000/formularios"));
+
+    expect(publicForm.status).toBe(200);
+    expect(publicForm.headers.get("x-middleware-next")).toBe("1");
+    expect(similarProtectedPath.status).toBe(307);
+  });
+
   it("libera somente a rota exata do placar público sem cookie", () => {
     const publicBoard = proxy(new NextRequest("http://localhost:3000/tempo-real-publico"));
     const similarPath = proxy(new NextRequest("http://localhost:3000/tempo-real-publico-interno"));

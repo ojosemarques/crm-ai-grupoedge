@@ -27,6 +27,10 @@ function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function formPublicSlug(workspaceId: string, key: string): string {
+  return `${key}-${hash(`${workspaceId}:${key}`).slice(0, 10)}`;
+}
+
 async function loadAcquisitionJourney(database: PrismaClient, workspaceId: string, periodStart: Date, periodEnd: Date, query: Readonly<{ sourceId?: string | undefined; campaignId?: string | undefined; creativeId?: string | undefined }>) {
   const filters: Prisma.LeadWhereInput[] = [];
   if (query.sourceId) filters.push({ OR: [{ sourceId: query.sourceId }, { latestSourceId: query.sourceId }] });
@@ -166,11 +170,12 @@ export async function ensureAttributionModelsInTransaction(tx: Tx, workspaceId: 
   }
   const form = await tx.marketingForm.upsert({
     where: { workspaceId_key: { workspaceId, key: "captacao-principal" } },
-    create: { workspaceId, key: "captacao-principal", name: "Formulário principal de captação", status: "DRAFT", createdByActorId: actorId, updatedByActorId: actorId },
+    create: { workspaceId, key: "captacao-principal", name: "Formulário principal de captação", publicSlug: formPublicSlug(workspaceId, "captacao-principal"), status: "DRAFT", createdByActorId: actorId, updatedByActorId: actorId },
     update: {},
   });
   if (!await tx.marketingFormVersion.findUnique({ where: { workspaceId_marketingFormId_version: { workspaceId, marketingFormId: form.id, version: 1 } }, select: { id: true } })) {
-    await tx.marketingFormVersion.create({ data: { workspaceId, marketingFormId: form.id, landingPageId: page.id, version: 1, schemaVersion: "1.0", definition: { fields: ["fullName", "phone", "email"], externalPublishing: false }, createdByActorId: actorId } });
+    const definition = { fields: ["fullName", "phone", "email"], externalPublishing: false };
+    await tx.marketingFormVersion.create({ data: { workspaceId, marketingFormId: form.id, landingPageId: page.id, version: 1, schemaVersion: "1.0", definition, definitionHash: hash(definition), publishedAt: new Date(), publishedByActorId: actorId, createdByActorId: actorId } });
   }
 }
 
@@ -430,10 +435,12 @@ export function createMarketingAttributionService(options: Options) {
       const version = (current?.currentVersion ?? 0) + 1;
       const form = current
         ? await tx.marketingForm.update({ where: { id: current.id }, data: { name: input.name, currentVersion: version, status: "ACTIVE", updatedByActorId: context.actorId } })
-        : await tx.marketingForm.create({ data: { workspaceId: context.workspaceId, key: input.key, name: input.name, status: "ACTIVE", currentVersion: version, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
-      await tx.marketingFormVersion.create({ data: { workspaceId: context.workspaceId, marketingFormId: form.id, landingPageId: input.landingPageId ?? null, version, schemaVersion: "1.0", definition: input.definition, createdByActorId: context.actorId } });
+        : await tx.marketingForm.create({ data: { workspaceId: context.workspaceId, key: input.key, name: input.name, publicSlug: formPublicSlug(context.workspaceId, input.key), status: "ACTIVE", currentVersion: version, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+      const publishedAt = options.now();
+      const createdVersion = await tx.marketingFormVersion.create({ data: { workspaceId: context.workspaceId, marketingFormId: form.id, landingPageId: input.landingPageId ?? null, version, schemaVersion: "1.0", definition: input.definition, definitionHash: hash(input.definition), publishedAt, publishedByActorId: context.actorId, createdByActorId: context.actorId } });
+      const publishedForm = await tx.marketingForm.update({ where: { id: form.id }, data: { publishedVersionId: createdVersion.id, publishedAt } });
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "marketing.form.versioned", entityType: "MarketingForm", entityId: form.id, changes: { version, key: input.key } } });
-      return form;
+      return publishedForm;
     });
   }
 

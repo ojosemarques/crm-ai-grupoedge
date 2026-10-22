@@ -80,6 +80,7 @@ const leadIntakeSchema = z
     budgetCents: z.number().int().nonnegative().safe().optional(),
     sourceKey: z.string().trim().min(1).max(120),
     pipelineId: z.string().uuid().optional(),
+    initialStageId: z.string().uuid().optional(),
     requestedOwnerMemberId: z.string().uuid().optional(),
     campaignExternalRef: optionalText(200),
     creativeExternalRef: optionalText(200),
@@ -503,6 +504,7 @@ async function findReferences(
     where: {
       workspaceId,
       pipelineId: pipeline.id,
+      ...(input.initialStageId ? { id: input.initialStageId } : {}),
       type: "OPEN",
       deletedAt: null,
     },
@@ -511,9 +513,11 @@ async function findReferences(
   });
   if (!stage) {
     return rejected(
-      "CONFIGURATION_UNAVAILABLE",
-      "pipeline",
-      "O pipeline selecionado não possui etapa inicial aberta.",
+      input.initialStageId ? "REFERENCE_NOT_FOUND" : "CONFIGURATION_UNAVAILABLE",
+      input.initialStageId ? "initialStageId" : "pipeline",
+      input.initialStageId
+        ? "A etapa inicial não existe, não está aberta ou não pertence ao pipeline selecionado."
+        : "O pipeline selecionado não possui etapa inicial aberta.",
     );
   }
 

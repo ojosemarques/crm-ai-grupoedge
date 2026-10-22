@@ -24,4 +24,9 @@ describe("headers seguros PROD-03", () => {
     expect(headers).toContainEqual({ key: "Cross-Origin-Resource-Policy", value: "same-origin" });
     expect(headers).toContainEqual(expect.objectContaining({ key: "Permissions-Policy" }));
   });
+
+  it("libera somente origins de imagem já validadas pelo chamador", () => {
+    const policy = buildContentSecurityPolicy({ imageSources: ["https://cdn.example", "https://assets.example:8443"] });
+    expect(policy).toContain("img-src 'self' data: blob: https://cdn.example https://assets.example:8443");
+  });
 });
