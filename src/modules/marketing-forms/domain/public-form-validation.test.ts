@@ -12,7 +12,7 @@ function definition() {
     questions: [
       base.questions[0]!,
       { stableKey: "telefone", type: "PHONE" as const, title: "Telefone", required: true, position: 1, mapping: "phone" as const, config: { defaultCountry: "BR" } },
-      { stableKey: "interesse", type: "SINGLE_CHOICE" as const, title: "Interesse", required: true, position: 2, config: { options: [{ stableKey: "crm", label: "CRM" }, { stableKey: "site", label: "Site" }] } },
+      { stableKey: "interesse", type: "SINGLE_CHOICE" as const, title: "Interesse", required: true, position: 2, mapping: "jobTitle" as const, config: { options: [{ stableKey: "crm", label: "CRM" }, { stableKey: "site", label: "Site" }] } },
     ],
   });
 }
@@ -43,7 +43,7 @@ describe("validação pública de respostas", () => {
       { questionKey: "nome-completo", value: "Pessoa Teste" },
     ]);
     expect(answers.map((answer) => answer.questionKey)).toEqual(["nome-completo", "telefone", "interesse"]);
-    expect(mapAnswersToLead(current, answers)).toEqual({ fullName: "Pessoa Teste", phone: "+5511999999999" });
+    expect(mapAnswersToLead(current, answers)).toEqual({ fullName: "Pessoa Teste", phone: "+5511999999999", jobTitle: "CRM" });
   });
 
   it("rejeita nome curto e telefone sem DDD antes de encaminhar ao intake", () => {

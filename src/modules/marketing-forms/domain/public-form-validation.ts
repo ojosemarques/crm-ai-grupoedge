@@ -131,7 +131,11 @@ export function mapAnswersToLead(
   const mapped: Record<string, AnswerValue> = {};
   for (const question of definition.questions) {
     const value = values.get(question.stableKey);
-    if (question.mapping && value !== undefined && !Array.isArray(value)) mapped[question.mapping] = value;
+    if (!question.mapping || value === undefined || Array.isArray(value)) continue;
+    const mappedValue = (question.type === "SINGLE_CHOICE" || question.type === "DROPDOWN") && typeof value === "string"
+      ? question.config.options.find((option) => option.stableKey === value)?.label ?? value
+      : value;
+    mapped[question.mapping] = mappedValue;
   }
   if (typeof mapped.fullName !== "string" || typeof mapped.phone !== "string") {
     throw new ApplicationError("O formulário publicado não possui os campos obrigatórios do CRM.", {
