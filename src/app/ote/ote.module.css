@@ -1,0 +1,34 @@
+.stack { display: grid; gap: 1.25rem; }
+.hero { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: center; justify-content: space-between; padding: 1.75rem; border: 1px solid var(--border); border-radius: 1rem; background: linear-gradient(120deg, color-mix(in srgb, var(--primary) 10%, var(--background)), var(--background)); }
+.hero h2 { font-size: 1.25rem; font-weight: 650; }
+.hero strong { display: block; font-size: 2.4rem; letter-spacing: -.04em; }
+.hero p, .muted { color: var(--muted-foreground); font-size: .875rem; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
+.card, .panel { padding: 1.25rem; border: 1px solid var(--border); background: var(--card); border-radius: .875rem; min-width: 0; }
+.card span, .card small { display: block; color: var(--muted-foreground); font-size: .8rem; }
+.card strong { display: block; font-size: 1.55rem; margin: .5rem 0; }
+.panel h2 { font-size: 1.1rem; font-weight: 650; margin-bottom: .75rem; }
+.panel h3 { font-weight: 600; margin-bottom: .5rem; }
+.panel p { line-height: 1.6; }
+.panel ul { list-style: disc; padding-left: 1.25rem; line-height: 1.9; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; }
+.tableWrap { overflow-x: auto; }
+.tableWrap table { width: 100%; border-collapse: collapse; font-size: .85rem; text-align: left; }
+.tableWrap th { color: var(--muted-foreground); font-weight: 500; white-space: nowrap; }
+.tableWrap th, .tableWrap td { padding: .875rem .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.tableWrap small { display: block; color: var(--muted-foreground); margin-top: .25rem; }
+.toolbar, .form { display: flex; align-items: end; flex-wrap: wrap; gap: .875rem; }
+.form { margin-top: 1rem; }
+.form label, .toolbar label { display: grid; gap: .375rem; font-size: .85rem; }
+.form input, .form select, .form textarea, .toolbar input { background: var(--background); color: var(--foreground); border: 1px solid var(--border); border-radius: .5rem; min-height: 2.5rem; padding: .5rem .75rem; max-width: 100%; }
+.form textarea { min-width: 240px; }
+.form label:has(input[type=checkbox]) { display: flex; align-items: center; min-height: 2.5rem; }
+.form input[type=checkbox] { min-height: auto; }
+.link { display: inline-flex; align-items: center; min-height: 2.5rem; padding: .5rem 1rem; border: 1px solid var(--border); border-radius: .5rem; font-size: .875rem; font-weight: 600; }
+.notice { border: 1px solid var(--border); padding: 1rem; border-radius: .75rem; background: color-mix(in srgb, var(--primary) 5%, var(--background)); font-size: .875rem; }
+.progress { width: 100%; height: .65rem; accent-color: var(--primary); margin: .75rem 0; }
+.scenario { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; margin-top: 1rem; }
+.scenario div { border: 1px solid var(--border); padding: .875rem; border-radius: .625rem; }
+.scenario strong, .scenario small { display: block; }
+.scenario small { color: var(--muted-foreground); font-size: .75rem; }
+@media (max-width: 700px) { .grid, .scenario { grid-template-columns: 1fr; } .hero { padding: 1.25rem; } .hero strong { font-size: 2rem; } .form label { width: 100%; } }

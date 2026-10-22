@@ -14858,3 +14858,62 @@ model CommercialMetricReconciliationCheck {
   @@index([workspaceId, runId, state])
   @@map("commercial_metric_reconciliation_checks")
 }
+
+model OtePlan {
+  id             String   @id @default(uuid()) @db.Uuid
+  workspaceId    String   @db.Uuid
+  memberId       String   @db.Uuid
+  effectiveMonth String
+  label          String
+  role           String
+  fixedCents     BigInt
+  quotaCents     BigInt
+  bonusCents     BigInt
+  meetingQuota   Int      @default(20)
+  salesQuota     Int      @default(4)
+  revision       Int      @default(1)
+  updatedByActorId String @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, memberId, effectiveMonth])
+  @@map("ote_plans")
+}
+
+model OteSale {
+  id              String   @id @default(uuid()) @db.Uuid
+  workspaceId     String   @db.Uuid
+  opportunityId   String   @db.Uuid
+  sellerMemberId  String   @db.Uuid
+  kind            String
+  acvCents        BigInt
+  selfSourced     Boolean  @default(false)
+  sdrMemberId     String?  @db.Uuid
+  evidence        String
+  revision        Int      @default(1)
+  updatedByActorId String  @db.Uuid
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, opportunityId])
+  @@index([workspaceId, sellerMemberId])
+  @@index([workspaceId, sdrMemberId])
+  @@map("ote_sales")
+}
+
+model OteMeeting {
+  id              String   @id @default(uuid()) @db.Uuid
+  workspaceId     String   @db.Uuid
+  meetingId       String   @db.Uuid
+  sdrMemberId     String   @db.Uuid
+  qualified       Boolean
+  evidence        String
+  revision        Int      @default(1)
+  updatedByActorId String  @db.Uuid
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, meetingId])
+  @@index([workspaceId, sdrMemberId])
+  @@map("ote_meetings")
+}

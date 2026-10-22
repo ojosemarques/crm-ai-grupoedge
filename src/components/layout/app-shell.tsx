@@ -304,6 +304,7 @@ export function AppShell({ children, initialSession }: Readonly<{ children: Reac
                 </dl>
                 <nav aria-label="Atalhos da conta" className={styles.profileActions}>
                   <IntentLink href="/perfil" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="leads" size={18} /><span>Meu perfil</span></IntentLink>
+                  <IntentLink href="/ote" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="receita" size={18} /><span>OTE (salário e comissão)</span></IntentLink>
                   <IntentLink href="/hub" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="pipeline" size={18} /><span>{(session?.workspace.count ?? 1) > 1 ? "Trocar de empresa" : "Minhas empresas"}</span></IntentLink>
                   <IntentLink href="/ajuda" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="inbox" size={18} /><span>Ajuda e suporte</span></IntentLink>
                   {availableSections.find((section) => section.key === "settings") ? <IntentLink href="/configuracoes" onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); }}><Icon name="configuracoes" size={18} /><span>Configurações</span></IntentLink> : null}
