@@ -9502,6 +9502,23 @@ model RequestRateLimit {
   @@map("request_rate_limits")
 }
 
+model RealtimeDashboardShare {
+  id               String    @id @default(uuid()) @db.Uuid
+  workspaceId      String    @unique @db.Uuid
+  tokenHash        String    @unique @db.Char(64)
+  revision         Int       @default(1)
+  createdByActorId String    @db.Uuid
+  updatedByActorId String    @db.Uuid
+  revokedByActorId String?   @db.Uuid
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+  rotatedAt        DateTime? @db.Timestamptz(3)
+  revokedAt        DateTime? @db.Timestamptz(3)
+
+  @@index([workspaceId, revokedAt])
+  @@map("realtime_dashboard_shares")
+}
+
 model SloDefinitionVersion {
   id                String             @id @default(uuid()) @db.Uuid
   workspaceId       String             @db.Uuid

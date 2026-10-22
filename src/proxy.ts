@@ -8,6 +8,7 @@ const PUBLIC_ROUTES = new Set([
   "/login",
   "/acesso-negado",
   "/sessao-expirada",
+  "/tempo-real-publico",
   "/politizai-analytics.js",
   "/.well-known/oauth-authorization-server",
   "/.well-known/oauth-protected-resource",

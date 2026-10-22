@@ -31,7 +31,7 @@ type NavigationItem = Readonly<{
   roles?: readonly string[];
 }>;
 
-const publicRoutes = new Set(["/login", "/acesso-negado", "/sessao-expirada", "/hub"]);
+const publicRoutes = new Set(["/login", "/acesso-negado", "/sessao-expirada", "/hub", "/tempo-real-publico"]);
 const operationalRoles = ["administrator", "commercial_manager", "sdr", "closer"] as const;
 const commercialRoles = ["administrator", "commercial_manager", "closer", "viewer"] as const;
 const leadRoles = ["administrator", "commercial_manager", "sdr", "closer", "viewer"] as const;
@@ -45,6 +45,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
     label: "Trabalho",
     items: [
       { href: "/meu-dia", icon: "meu-dia", label: "Meu Dia", roles: operationalRoles },
+      { href: "/tempo-real", icon: "dashboard", label: "Tempo Real", permission: "realtime.read" },
       { href: "/email-agente", icon: "pipeline", label: "Prospecção Ativa", roles: leadRoles },
       { href: "/anuncios", icon: "pipeline", label: "Anúncios", roles: leadRoles },
       { href: "/leads", icon: "leads", label: "Leads", roles: leadRoles },
@@ -108,7 +109,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
 ];
 
 const sections = [
-  { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/email-agente", "/anuncios", "/oportunidades", "/leads", "/agenda", "/inbox", "/atividades", "/automacoes"] },
+  { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/tempo-real", "/email-agente", "/anuncios", "/oportunidades", "/leads", "/agenda", "/inbox", "/atividades", "/automacoes"] },
   { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/gestao-equipe", "/metas", "/forecast", "/metricas-receita", "/receita", "/analises"] },
   { key: "finance", label: "Financeiro", icon: "receita", paths: ["/financeiro", "/pagamentos", "/contratos"] },
   { key: "customers", label: "Clientes", icon: "leads", paths: ["/contas", "/onboarding", "/customer-success", "/customer-service", "/farmer"] },
@@ -119,6 +120,7 @@ const sections = [
 const labels: Record<string, string> = {
   "/email-agente": "Prospecção Ativa", "/anuncios": "Anúncios", "/leads": "Leads",
   "/inbox": "Conversas",
+  "/tempo-real": "Tempo Real",
   "/atividades": "Fila de atividades",
   "/campanhas": "Campanhas de envio",
   "/assistente": "Assistente",

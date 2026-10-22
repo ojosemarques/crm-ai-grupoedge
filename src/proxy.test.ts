@@ -46,6 +46,16 @@ describe("proteção otimista de rotas", () => {
     expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
   });
 
+  it("libera somente a rota exata do placar público sem cookie", () => {
+    const publicBoard = proxy(new NextRequest("http://localhost:3000/tempo-real-publico"));
+    const similarPath = proxy(new NextRequest("http://localhost:3000/tempo-real-publico-interno"));
+    const privateBoard = proxy(new NextRequest("http://localhost:3000/tempo-real"));
+
+    expect(publicBoard.status).toBe(200);
+    expect(similarPath.status).toBe(307);
+    expect(privateBoard.status).toBe(307);
+  });
+
   it("não redireciona API sem sessão e mantém correlation ID seguro", () => {
     const response = proxy(new NextRequest("http://localhost:3000/api/health", {
       headers: { "x-correlation-id": "prod09.smoke.001" },

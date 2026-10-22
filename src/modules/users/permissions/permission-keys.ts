@@ -174,6 +174,8 @@ export const PermissionKeys = Object.freeze({
   SECURITY_MONITOR_READ: "security.monitor.read",
   PRIVACY_OPERATIONS_MANAGE: "privacy.operations.manage",
   METRICS_READ: "metrics.read",
+  REALTIME_READ: "realtime.read",
+  REALTIME_SHARE_MANAGE: "realtime.share.manage",
   AUTOMATIONS_READ: "automations.read",
   AUTOMATIONS_EXECUTE: "automations.execute",
   AUTOMATIONS_MANAGE: "automations.manage",
@@ -396,6 +398,8 @@ export const permissionCatalog: ReadonlyArray<
   { key: PermissionKeys.SECURITY_MONITOR_READ, description: "Consultar sinais agregados de segurança" },
   { key: PermissionKeys.PRIVACY_OPERATIONS_MANAGE, description: "Conduzir solicitações e retenção governada" },
   { key: PermissionKeys.METRICS_READ, description: "Consultar métricas" },
+  { key: PermissionKeys.REALTIME_READ, description: "Consultar o placar comercial em tempo real" },
+  { key: PermissionKeys.REALTIME_SHARE_MANAGE, description: "Gerenciar o link público do placar em tempo real" },
   {
     key: PermissionKeys.AUTOMATIONS_READ,
     description: "Consultar execuções de automações",

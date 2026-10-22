@@ -177,6 +177,8 @@ export const defaultRoleDefinitions: ReadonlyArray<
       [PermissionKeys.SECURITY_MONITOR_READ, "WORKSPACE"],
       [PermissionKeys.PRIVACY_OPERATIONS_MANAGE, "WORKSPACE"],
       [PermissionKeys.METRICS_READ, "TEAM"],
+      [PermissionKeys.REALTIME_READ, "WORKSPACE"],
+      [PermissionKeys.REALTIME_SHARE_MANAGE, "WORKSPACE"],
       [PermissionKeys.AUTOMATIONS_READ, "WORKSPACE"],
       [PermissionKeys.AUTOMATIONS_EXECUTE, "WORKSPACE"],
       [PermissionKeys.AUDIT_READ, "WORKSPACE"],
