@@ -38,18 +38,32 @@ afterAll(async () => database.$disconnect());
 describe("metas diárias configuráveis", () => {
   it("permite ao gestor configurar uma pessoa e o Meu Dia usa os alvos persistidos", async () => {
     const service = createDailyGoalService({ database, authorization });
-    const profile = await service.save(manager, { memberId: sdr.memberId, expectedRevision: null, callsTarget: 50, messagesTarget: 40, effectiveContactsTarget: 10, qualificationsTarget: 5, meetingsScheduledTarget: 3, proposalsTarget: 2, salesValueTargetCents: "2500000" });
+    const profile = await service.save(manager, { memberId: sdr.memberId, expectedRevision: null, callsTarget: 50, messagesTarget: 40, effectiveContactsTarget: 75, qualificationsTarget: 5, meetingsScheduledTarget: 4, meetingsCompletedTarget: 3, weeklySalesTarget: 1, proposalsTarget: 2, salesValueTargetCents: "2500000" });
     expect(profile).toMatchObject({ memberId: sdr.memberId, callsTarget: 50, salesValueTargetCents: "2500000", revision: 1 });
 
     const screen = await createSdrQueueService({ database, authorization, now: () => now }).getScreen(sdr, {});
     expect(screen.permissions.manageDailyGoals).toBe(false);
     expect(screen.dailyGoalProfiles).toEqual([]);
-    expect(screen.dailyProduction.dailyGoal).toMatchObject({ configured: true, configuredMembers: 1, expectedMembers: 1, target: 7 });
+    expect(screen.dailyProduction.dailyGoal).toMatchObject({ configured: true, configuredMembers: 1, expectedMembers: 1, target: 8 });
+    expect(screen.dailyProduction.dailyGoal.metrics.find((metric) => metric.key === "MEETINGS_COMPLETED")?.targetValue).toBe("3");
+    expect(screen.dailyProduction.dailyGoal.metrics.find((metric) => metric.key === "EFFECTIVE_CONTACTS")?.targetValue).toBe("75");
     expect(screen.dailyProduction.dailyGoal.metrics.find((metric) => metric.key === "CALLS")?.targetValue).toBe("50");
     expect(screen.dailyProduction.dailyGoal.metrics.find((metric) => metric.key === "SALES_VALUE_CENTS")?.targetValue).toBe("2500000");
 
     const managerScreen = await createSdrQueueService({ database, authorization, now: () => now }).getScreen(manager, {});
     expect(managerScreen.dailyGoalMemberOptions.some((member) => member.name === "Closer 1 de demonstração")).toBe(true);
+    expect(managerScreen.dailyGoalProfiles.find((item) => item.memberId === sdr.memberId)).toMatchObject({ meetingsCompletedTarget: 3, weeklySalesTarget: 1 });
+  });
+
+  it("preserva as metas novas quando um cliente antigo omite campos e valida limites no banco", async () => {
+    const service = createDailyGoalService({ database, authorization });
+    const result = await service.save(manager, { memberId: sdr.memberId, expectedRevision: 1, callsTarget: 50, messagesTarget: 40, effectiveContactsTarget: 75, qualificationsTarget: 5, meetingsScheduledTarget: 4, proposalsTarget: 2, salesValueTargetCents: "2500000" });
+    expect(result).toMatchObject({ meetingsCompletedTarget: 3, weeklySalesTarget: 1, revision: 2 });
+    await expect(database.dailyGoalProfile.update({ where: { id: result.id }, data: { meetingsCompletedTarget: -1 } })).rejects.toThrow();
+    await expect(database.dailyGoalProfile.update({ where: { id: result.id }, data: { weeklySalesTarget: 100001 } })).rejects.toThrow();
+    await recordCommercialMetricFactInTransaction(database, { workspaceId: sdr.workspaceId, eventKey: `daily-goal:held:${randomUUID()}`, eventType: "MEETING_COMPLETED", occurredAt: new Date("2033-05-10T14:00:00Z"), sourceEntityType: "Meeting", sourceEntityId: randomUUID(), creditedMemberId: sdr.memberId, quantity: 2 });
+    const screen = await createSdrQueueService({ database, authorization, now: () => now }).getScreen(sdr, {});
+    expect(screen.dailyProduction.dailyGoal.metrics.find((metric) => metric.key === "MEETINGS_COMPLETED")).toMatchObject({ actualValue: "2", targetValue: "3" });
   });
 
   it("bloqueia vendedor sem permissão de gestão", async () => {

@@ -47,7 +47,48 @@ describe("metas reais do painel unificado", () => {
 
   it("não dá 100% a metas zero, ausentes ou a vendedores inativos", () => {
     const result = aggregateRealtimeDashboard([fact({ id: "call", eventType: "CALL_ATTEMPTED", quantity: 10 })], [{ ...sellers[0]!, active: false }, sellers[1]!], periods, { profiles: [profile("a"), profile("b", 0)], quotas: [quota({ targetValue: 0n })] });
-    expect(result.today.goals.calls).toMatchObject({ targetValue: null, progressBasisPoints: null, coveredMembers: 0, totalMembers: 1 });
+    expect(result.today.goals.calls).toMatchObject({ targetValue: null, progressBasisPoints: null, coveredMembers: 0, totalMembers: 0 });
     expect(result.week.goals.sales.progressBasisPoints).toBeNull();
+  });
+
+  it("usa os perfis recorrentes do Meu Dia para os três vendedores, com reuniões e vendas restritas a Jhon e Ede", () => {
+    const roster = [
+      { id: "carlos", name: "Carlos", functions: ["SDR"] },
+      { id: "jhon", name: "Jhon", functions: ["CLOSER"] },
+      { id: "ede", name: "Ede", functions: ["CLOSER"] },
+      { id: "admin", name: "Admin", functions: ["CLOSER"] },
+    ];
+    const profiles = roster.map((member) => ({ ...profile(member.id, member.id === "carlos" ? 60 : 50), effectiveContactsTarget: 75, meetingsScheduledTarget: 4, meetingsCompletedTarget: member.id === "jhon" ? 3 : member.id === "ede" ? 2 : 0, weeklySalesTarget: ["jhon", "ede"].includes(member.id) ? 1 : 0 }));
+    const configuration = { profiles, quotas: [quota({ targetValue: 99n })], eligibleMemberIds: ["carlos", "jhon", "ede"] };
+    const result = aggregateRealtimeDashboard([
+      fact({ id: "held", eventType: "MEETING_COMPLETED", creditedMemberId: "jhon", quantity: 2 }),
+      fact({ id: "sale", eventType: "SALE_WON", creditedMemberId: "ede" }),
+    ], roster, periods, configuration);
+    expect(result.today.goals.effectiveContacts).toMatchObject({ targetValue: "225", coveredMembers: 3, totalMembers: 3 });
+    expect(result.today.goals.meetingsScheduled.targetValue).toBe("12");
+    expect(result.today.goals.meetingsCompleted).toMatchObject({ targetValue: "5", actualValue: "2", coveredMembers: 2, totalMembers: 2 });
+    expect(result.week.goals.effectiveContacts.targetValue).toBe("1125");
+    expect(result.week.goals.meetingsScheduled.targetValue).toBe("60");
+    expect(result.week.goals.meetingsCompleted.targetValue).toBe("25");
+    expect(result.week.goals.sales).toMatchObject({ targetValue: "2", actualValue: "1", source: "WEEKLY_PROFILE", coveredMembers: 2, totalMembers: 2 });
+    for (const row of result.week.ranking.filter((row) => row.name !== "Admin")) {
+      expect(row.goals.today.effectiveContacts.targetValue).toBe("75");
+      expect(row.goals.today.meetingsScheduled.targetValue).toBe("4");
+      expect(row.goals.today.sales.targetValue).toBeNull();
+      expect(row.goals.week.sales.targetValue).toBe(row.name === "Carlos" ? null : "1");
+    }
+    expect(result.week.ranking.find(row => row.name === "Carlos")!.goals.today.calls.targetValue).toBe("60");
+    const nextWeek = aggregateRealtimeDashboard([], roster, resolveRealtimeDashboardPeriods(new Date("2026-10-26T15:00:00Z"), "America/Sao_Paulo"), configuration);
+    expect(nextWeek.week.goals.sales).toMatchObject({ actualValue: "0", targetValue: "2", source: "WEEKLY_PROFILE" });
+  });
+
+  it("zero explícito desativa a cobrança mesmo com quota antiga, enquanto ausência mantém compatibilidade", () => {
+    const configuration = { profiles: [{ ...profile("a"), meetingsCompletedTarget: 0, weeklySalesTarget: 0 }], quotas: [quota({ targetType: "MEMBER", memberId: "a" }), quota({ targetType: "MEMBER", memberId: "a", metricKey: "MEETINGS_HELD" })] };
+    const disabled = aggregateRealtimeDashboard([], [sellers[0]!], periods, configuration);
+    expect(disabled.week.goals.sales.targetValue).toBeNull();
+    expect(disabled.week.goals.meetingsCompleted.targetValue).toBeNull();
+    const legacy = aggregateRealtimeDashboard([], [sellers[0]!], periods, { ...configuration, profiles: [{ ...profile("a"), meetingsCompletedTarget: null, weeklySalesTarget: null }] });
+    expect(legacy.week.goals.sales.targetValue).toBe("10");
+    expect(legacy.week.goals.meetingsCompleted.targetValue).toBe("10");
   });
 });

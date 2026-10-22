@@ -108,5 +108,13 @@ describe("schema do dashboard tempo real", () => {
     expect(result.week.goals.sales).toMatchObject({ actualValue: "1", targetValue: "5", source: "WEEKLY_PLAN", progressBasisPoints: 2000 });
     expect(result.week.ranking).toHaveLength(1);
     expect(result.week.ranking[0]!.goals.week.sales.targetValue).toBe("5");
+    await database.dailyGoalProfile.update({ where: { workspaceId_memberId: { workspaceId: tenant.workspaceId, memberId: member.id } }, data: { effectiveContactsTarget: 75, meetingsScheduledTarget: 4, meetingsCompletedTarget: 2, weeklySalesTarget: 1 } });
+    const recurring = await service.publicSnapshot(token);
+    expect(recurring.today.goals.effectiveContacts.targetValue).toBe("75");
+    expect(recurring.today.goals.meetingsScheduled.targetValue).toBe("4");
+    expect(recurring.today.goals.meetingsCompleted.targetValue).toBe("2");
+    expect(recurring.week.goals.sales).toMatchObject({ targetValue: "1", source: "WEEKLY_PROFILE" });
+    const nextWeek = await createRealtimeDashboardService({ database, authorization: {} as never, now: () => new Date("2026-10-26T15:00:00Z") }).publicSnapshot(token);
+    expect(nextWeek.week.goals.sales).toMatchObject({ targetValue: "1", actualValue: "0", source: "WEEKLY_PROFILE" });
   });
 });

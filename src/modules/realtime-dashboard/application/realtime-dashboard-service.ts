@@ -179,7 +179,7 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
       }),
       options.database.dailyGoalProfile.findMany({
         where: { workspaceId },
-        select: { memberId: true, callsTarget: true, messagesTarget: true, effectiveContactsTarget: true, meetingsScheduledTarget: true, salesValueTargetCents: true },
+        select: { memberId: true, callsTarget: true, messagesTarget: true, effectiveContactsTarget: true, meetingsScheduledTarget: true, meetingsCompletedTarget: true, weeklySalesTarget: true, salesValueTargetCents: true },
       }),
     ]);
 
@@ -202,7 +202,7 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
       ...historicalMembers.map((member) => ({ id: member.id, name: member.user.displayName, active: false, rankingVisible: rankingAccounts.has(member.user.normalizedEmail), functions: [], teamIds: [] })),
     ];
     const facts = factRows.map(asActivityFact);
-    const aggregation = aggregateRealtimeDashboard(facts, sellers, periods, { profiles, quotas: goalPlan?.quotas ?? [], ...(goalPlan ? { planName: goalPlan.name } : {}) });
+    const aggregation = aggregateRealtimeDashboard(facts, sellers, periods, { profiles, quotas: goalPlan?.quotas ?? [], eligibleMemberIds: sellers.filter((seller) => seller.rankingVisible).map((seller) => seller.id), ...(goalPlan ? { planName: goalPlan.name } : {}) });
     const quality = commercialMetricQuality(latestBackfill, latestReconciliation);
     const knownMembers = new Set(sellers.map((seller) => seller.id));
     const unattributed = factRows.filter((fact) => !knownMembers.has((fact.eventType === "MEETING_SCHEDULED" ? fact.bookedByMemberId ?? fact.creditedMemberId : fact.creditedMemberId) ?? "")).length;

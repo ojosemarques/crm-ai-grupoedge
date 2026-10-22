@@ -6,6 +6,7 @@ export const dailyGoalMetricKeys = [
   "EFFECTIVE_CONTACTS",
   "QUALIFICATIONS",
   "MEETINGS_SCHEDULED",
+  "MEETINGS_COMPLETED",
   "PROPOSALS",
   "SALES_VALUE_CENTS",
 ] as const;
@@ -20,6 +21,8 @@ export const dailyGoalInputSchema = z.object({
   effectiveContactsTarget: z.number().int().min(0).max(100_000),
   qualificationsTarget: z.number().int().min(0).max(100_000),
   meetingsScheduledTarget: z.number().int().min(0).max(100_000),
+  meetingsCompletedTarget: z.number().int().min(0).max(100_000).optional(),
+  weeklySalesTarget: z.number().int().min(0).max(100_000).optional(),
   proposalsTarget: z.number().int().min(0).max(100_000),
   salesValueTargetCents: z.union([
     z.string().regex(/^\d+$/),
@@ -33,6 +36,7 @@ export type DailyGoalTargets = Readonly<{
   effectiveContacts: bigint;
   qualifications: bigint;
   meetingsScheduled: bigint;
+  meetingsCompleted: bigint;
   proposals: bigint;
   salesValueCents: bigint;
 }>;
@@ -45,6 +49,7 @@ const metricDefinitions = [
   { key: "EFFECTIVE_CONTACTS", label: "Contatos efetivos", unit: "COUNT", actual: "effectiveContacts", target: "effectiveContacts" },
   { key: "QUALIFICATIONS", label: "Qualificações", unit: "COUNT", actual: "qualifications", target: "qualifications" },
   { key: "MEETINGS_SCHEDULED", label: "Reuniões marcadas", unit: "COUNT", actual: "meetingsScheduled", target: "meetingsScheduled" },
+  { key: "MEETINGS_COMPLETED", label: "Reuniões realizadas", unit: "COUNT", actual: "meetingsCompleted", target: "meetingsCompleted" },
   { key: "PROPOSALS", label: "Propostas", unit: "COUNT", actual: "proposals", target: "proposals" },
   { key: "SALES_VALUE_CENTS", label: "Valor vendido", unit: "CURRENCY_CENTS", actual: "salesValueCents", target: "salesValueCents" },
 ] as const;

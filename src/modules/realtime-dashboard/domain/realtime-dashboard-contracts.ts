@@ -16,7 +16,7 @@ export type RealtimeGoalProgress = Readonly<{
   progressBasisPoints: number | null;
   coveredMembers: number;
   totalMembers: number;
-  source: "DAILY_PROFILE" | "DAILY_PROFILE_X5" | "WEEKLY_PLAN" | null;
+  source: "DAILY_PROFILE" | "DAILY_PROFILE_X5" | "WEEKLY_PROFILE" | "WEEKLY_PLAN" | null;
   label: string;
 }>;
 export type RealtimeDashboardGoals = Readonly<Record<RealtimeGoalMetric, RealtimeGoalProgress>>;

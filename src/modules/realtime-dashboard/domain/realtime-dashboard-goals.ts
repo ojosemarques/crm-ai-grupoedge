@@ -4,12 +4,12 @@ import type { RealtimeDashboardGoals, RealtimeGoalMetric, RealtimeGoalProgress }
 import { addLocalDays, workspaceDayRange } from "@/shared/core/time/workspace-time";
 
 export type RealtimeSeller = Readonly<{ id: string; name: string; active?: boolean; rankingVisible?: boolean; functions?: readonly string[]; teamIds?: readonly string[] }>;
-export type RealtimeDailyProfile = Readonly<{ memberId: string; callsTarget: number; messagesTarget: number; effectiveContactsTarget: number; meetingsScheduledTarget: number; salesValueTargetCents: bigint }>;
+export type RealtimeDailyProfile = Readonly<{ memberId: string; callsTarget: number; messagesTarget: number; effectiveContactsTarget: number; meetingsScheduledTarget: number; meetingsCompletedTarget?: number | null; weeklySalesTarget?: number | null; salesValueTargetCents: bigint }>;
 export type RealtimeWeeklyQuota = Readonly<{ targetType: string; memberId: string | null; teamId: string | null; function: string | null; metricKey: string; targetValue: bigint }>;
-export type RealtimeGoalConfiguration = Readonly<{ profiles: readonly RealtimeDailyProfile[]; quotas: readonly RealtimeWeeklyQuota[]; planName?: string }>;
+export type RealtimeGoalConfiguration = Readonly<{ profiles: readonly RealtimeDailyProfile[]; quotas: readonly RealtimeWeeklyQuota[]; planName?: string; eligibleMemberIds?: readonly string[] }>;
 export const realtimeGoalMetrics: readonly RealtimeGoalMetric[] = ["calls", "messages", "effectiveContacts", "meetingsScheduled", "meetingsCompleted", "sales", "salesValueCents"];
 
-const profileFields = { calls: "callsTarget", messages: "messagesTarget", effectiveContacts: "effectiveContactsTarget", meetingsScheduled: "meetingsScheduledTarget", salesValueCents: "salesValueTargetCents" } as const;
+const profileFields = { calls: "callsTarget", messages: "messagesTarget", effectiveContacts: "effectiveContactsTarget", meetingsScheduled: "meetingsScheduledTarget", meetingsCompleted: "meetingsCompletedTarget", salesValueCents: "salesValueTargetCents" } as const;
 const quotaMetrics: Partial<Record<RealtimeGoalMetric, string>> = { meetingsCompleted: "MEETINGS_HELD", sales: "OPPORTUNITIES_WON", salesValueCents: "REVENUE_WON_CENTS" };
 
 function actuals(facts: readonly IntegratedActivityFact[], sellers: readonly RealtimeSeller[]) {
@@ -31,7 +31,8 @@ export function buildRealtimeDashboardGoals(input: Readonly<{
   timeZone: string;
   configuration: RealtimeGoalConfiguration;
 }>) {
-  const active = input.sellers.filter((seller) => seller.active !== false);
+  const eligibleIds = input.configuration.eligibleMemberIds ? new Set(input.configuration.eligibleMemberIds) : null;
+  const active = input.sellers.filter((seller) => seller.active !== false && (!eligibleIds || eligibleIds.has(seller.id)));
   const profiles = new Map(input.configuration.profiles.map((profile) => [profile.memberId, profile]));
   const day = actuals(input.todayFacts, input.sellers);
   const week = actuals(input.weekFacts, input.sellers);
@@ -47,14 +48,28 @@ export function buildRealtimeDashboardGoals(input: Readonly<{
 
   function profileGoal(metric: RealtimeGoalMetric, members: readonly RealtimeSeller[], weekly: boolean): RealtimeGoalProgress {
     const field = profileFields[metric as keyof typeof profileFields];
-    const eligible = field ? members.filter((member) => member.active !== false && profiles.has(member.id) && BigInt(profiles.get(member.id)![field]) > 0n) : [];
-    const target = eligible.length ? eligible.reduce((sum, seller) => sum + BigInt(profiles.get(seller.id)![field!]) * (weekly ? 5n : 1n), 0n) : null;
+    const eligible = field ? members.filter((member) => member.active !== false && profiles.has(member.id) && BigInt(profiles.get(member.id)![field] ?? 0) > 0n) : [];
+    const target = eligible.length ? eligible.reduce((sum, seller) => sum + BigInt(profiles.get(seller.id)![field!] ?? 0) * (weekly ? 5n : 1n), 0n) : null;
     const achieved = eligible.reduce((sum, seller) => sum + (weekly && metric === "effectiveContacts" ? contactDays.get(seller.id) ?? 0n : (weekly ? week : day).get(seller.id)?.[metric] ?? 0n), 0n);
     const label = metric === "messages" ? weekly ? "Meta WA/IG · diária × 5" : "Meta WA/IG" : metric === "effectiveContacts" && weekly ? "Meta de contatos-dia · diária × 5" : weekly ? "Meta diária × 5" : "Meta diária";
-    return progress(achieved, target, eligible.length, members.filter((member) => member.active !== false).length, target === null ? null : weekly ? "DAILY_PROFILE_X5" : "DAILY_PROFILE", target === null ? "Sem meta cadastrada" : label);
+    const expectedMembers = members.filter((member) => member.active !== false && (!field || profiles.get(member.id)?.[field] == null || BigInt(profiles.get(member.id)![field]!) > 0n)).length;
+    return progress(achieved, target, eligible.length, expectedMembers, target === null ? null : weekly ? "DAILY_PROFILE_X5" : "DAILY_PROFILE", target === null ? "Sem meta cadastrada" : label);
   }
 
   function weeklyGoal(metric: RealtimeGoalMetric, members: readonly RealtimeSeller[], individual: boolean): RealtimeGoalProgress {
+    if (metric === "sales") {
+      const eligible = members.filter((member) => member.active !== false && (profiles.get(member.id)?.weeklySalesTarget ?? 0) > 0);
+      if (members.some((member) => member.active !== false && profiles.get(member.id)?.weeklySalesTarget != null)) {
+        const target = eligible.reduce((sum, member) => sum + BigInt(profiles.get(member.id)!.weeklySalesTarget!), 0n);
+        const achieved = eligible.reduce((sum, member) => sum + (week.get(member.id)?.sales ?? 0n), 0n);
+        const expectedMembers = members.filter((member) => member.active !== false && (profiles.get(member.id)?.weeklySalesTarget == null || profiles.get(member.id)!.weeklySalesTarget! > 0)).length;
+        return progress(achieved, eligible.length ? target : null, eligible.length, expectedMembers, eligible.length ? "WEEKLY_PROFILE" : null, eligible.length ? "Meta semanal · Meu Dia" : "Sem meta cadastrada");
+      }
+    }
+    if (metric === "meetingsCompleted") {
+      const dailyProfile = profileGoal(metric, members, true);
+      if (members.some((member) => member.active !== false && profiles.get(member.id)?.meetingsCompletedTarget != null)) return dailyProfile;
+    }
     const candidates = input.configuration.quotas.filter((quota) => quota.metricKey === quotaMetrics[metric] && (!individual || quota.targetType === "MEMBER")).map((quota, index) => ({ quota, index, scope: members.filter((member) => member.active !== false && (quota.targetType === "MEMBER" ? quota.memberId === member.id : quota.targetType === "TEAM" ? member.teamIds?.includes(quota.teamId ?? "") : member.functions?.includes(quota.function ?? ""))) })).filter((candidate) => candidate.scope.length > 0);
     if (!candidates.length) return profileGoal(metric, members, true);
     // A collective quota already includes its members; individual targets remain visible on their own rows.

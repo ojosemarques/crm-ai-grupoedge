@@ -33,6 +33,8 @@ export function createDailyGoalService(options: Readonly<{ database: PrismaClien
       effectiveContactsTarget: input.effectiveContactsTarget,
       qualificationsTarget: input.qualificationsTarget,
       meetingsScheduledTarget: input.meetingsScheduledTarget,
+      meetingsCompletedTarget: input.meetingsCompletedTarget ?? existing?.meetingsCompletedTarget ?? null,
+      weeklySalesTarget: input.weeklySalesTarget ?? existing?.weeklySalesTarget ?? null,
       proposalsTarget: input.proposalsTarget,
       salesValueTargetCents: input.salesValueTargetCents,
     };

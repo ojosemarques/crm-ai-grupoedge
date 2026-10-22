@@ -576,6 +576,8 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
           effectiveContactsTarget: number("effectiveContactsTarget"),
           qualificationsTarget: number("qualificationsTarget"),
           meetingsScheduledTarget: number("meetingsScheduledTarget"),
+          meetingsCompletedTarget: number("meetingsCompletedTarget"),
+          weeklySalesTarget: number("weeklySalesTarget"),
           proposalsTarget: number("proposalsTarget"),
           salesValueTargetCents: Math.round(number("salesValueTarget") * 100).toString(),
         }),
@@ -642,12 +644,15 @@ export function SdrQueueWorkspace({ screen }: Readonly<{ screen: SdrQueueScreen 
           <div className={styles.goalFormGrid}>
             <label>Ligações por dia<input defaultValue={goalEditorProfile?.callsTarget ?? 50} min="0" name="callsTarget" required type="number" /></label>
             <label>Mensagens por dia<input defaultValue={goalEditorProfile?.messagesTarget ?? 40} min="0" name="messagesTarget" required type="number" /></label>
-            <label>Contatos efetivos<input defaultValue={goalEditorProfile?.effectiveContactsTarget ?? 10} min="0" name="effectiveContactsTarget" required type="number" /></label>
+            <label>Contatos efetivos<input defaultValue={goalEditorProfile?.effectiveContactsTarget ?? 75} min="0" name="effectiveContactsTarget" required type="number" /></label>
             <label>Qualificações<input defaultValue={goalEditorProfile?.qualificationsTarget ?? 5} min="0" name="qualificationsTarget" required type="number" /></label>
-            <label>Reuniões marcadas<input defaultValue={goalEditorProfile?.meetingsScheduledTarget ?? 3} min="0" name="meetingsScheduledTarget" required type="number" /></label>
+            <label>Reuniões marcadas<input defaultValue={goalEditorProfile?.meetingsScheduledTarget ?? 4} min="0" name="meetingsScheduledTarget" required type="number" /></label>
+            <label>Reuniões realizadas por dia<input defaultValue={goalEditorProfile?.meetingsCompletedTarget ?? 0} min="0" name="meetingsCompletedTarget" required type="number" /></label>
             <label>Propostas<input defaultValue={goalEditorProfile?.proposalsTarget ?? 2} min="0" name="proposalsTarget" required type="number" /></label>
             <label>Valor de vendas esperado (R$)<input defaultValue={goalEditorProfile ? (Number(BigInt(goalEditorProfile.salesValueTargetCents)) / 100).toFixed(2) : "0.00"} min="0" name="salesValueTarget" required step="0.01" type="number" /></label>
           </div>
+          <p>Meta semanal recorrente: a contagem reinicia a cada segunda-feira. Também é usada no Tempo Real.</p>
+          <div className={styles.goalFormGrid}><label>Vendas por semana<input defaultValue={goalEditorProfile?.weeklySalesTarget ?? 0} min="0" name="weeklySalesTarget" required type="number" /></label></div>
           {goalNotice ? <p className="feedback feedback-error" role="alert">{goalNotice}</p> : null}
           <footer className={styles.goalDialogActions}><Button disabled={goalSaving} onClick={() => setGoalEditorOpen(false)} type="button" variant="secondary">Cancelar</Button><Button disabled={goalSaving || !goalEditorMemberId} type="submit">{goalSaving ? "Salvando…" : "Salvar metas diárias"}</Button></footer>
         </form>

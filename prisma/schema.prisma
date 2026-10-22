@@ -13611,6 +13611,8 @@ model DailyGoalProfile {
   effectiveContactsTarget Int      @default(0)
   qualificationsTarget    Int      @default(0)
   meetingsScheduledTarget Int      @default(0)
+  meetingsCompletedTarget Int?
+  weeklySalesTarget       Int?
   proposalsTarget         Int      @default(0)
   salesValueTargetCents   BigInt   @default(0)
   revision                Int      @default(1)

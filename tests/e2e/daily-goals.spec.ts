@@ -28,6 +28,8 @@ test("gestor configura metas diárias por pessoa e vendedor acompanha o progress
   await dialog.getByLabel("Contatos efetivos").fill("10");
   await dialog.getByLabel("Qualificações").fill("5");
   await dialog.getByLabel("Reuniões marcadas").fill("3");
+  await dialog.getByLabel("Reuniões realizadas por dia").fill("3");
+  await dialog.getByLabel("Vendas por semana").fill("1");
   await dialog.getByLabel("Propostas").fill("2");
   await dialog.getByLabel("Valor de vendas esperado (R$)").fill("25000.00");
   await dialog.getByRole("button", { name: "Salvar metas diárias" }).click();
@@ -35,7 +37,12 @@ test("gestor configura metas diárias por pessoa e vendedor acompanha o progress
 
   await page.getByLabel("Visualizar fila por SDR").selectOption({ label: DEMO_USERS[2].displayName });
   await expect(page).toHaveURL(new RegExp(`memberId=`));
-  await expect(page.getByText(/de 7 metas atingidas/)).toBeVisible();
+  await expect(page.getByText(/de 8 metas atingidas/)).toBeVisible();
+  await expect(page.locator("article").filter({ hasText: "Reuniões realizadas" })).toContainText("/ 3");
+  await page.getByRole("button", { name: "Configurar metas por pessoa" }).click();
+  await expect(dialog.getByLabel("Reuniões realizadas por dia")).toHaveValue("3");
+  await expect(dialog.getByLabel("Vendas por semana")).toHaveValue("1");
+  await dialog.getByRole("button", { name: "Cancelar", exact: true }).click();
   await expect(page.locator("article").filter({ hasText: "Ligações" })).toContainText("/ 50");
   await expect(page.locator("article").filter({ hasText: "Mensagens" })).toContainText("/ 40");
   await expect(page.locator("article").filter({ hasText: "Valor vendido" })).toContainText("R$ 25.000,00");
@@ -47,6 +54,6 @@ test("gestor configura metas diárias por pessoa e vendedor acompanha o progress
   await login(page, DEMO_USERS[2].email);
   await page.goto("/meu-dia");
   await expect(page.getByRole("button", { name: "Configurar metas por pessoa" })).toHaveCount(0);
-  await expect(page.getByText(/de 7 metas atingidas/)).toBeVisible();
+  await expect(page.getByText(/de 8 metas atingidas/)).toBeVisible();
   await expect(page.locator("article").filter({ hasText: "Ligações" })).toContainText("/ 50");
 });

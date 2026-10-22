@@ -102,6 +102,8 @@ export type SdrQueueScreen = Readonly<{
     effectiveContactsTarget: number;
     qualificationsTarget: number;
     meetingsScheduledTarget: number;
+    meetingsCompletedTarget: number | null;
+    weeklySalesTarget: number | null;
     proposalsTarget: number;
     salesValueTargetCents: string;
   }>[];
@@ -176,7 +178,7 @@ export type SdrQueueScreen = Readonly<{
       remaining: number;
       progressPercent: number;
       metrics: readonly Readonly<{
-        key: "CALLS" | "MESSAGES" | "EFFECTIVE_CONTACTS" | "QUALIFICATIONS" | "MEETINGS_SCHEDULED" | "PROPOSALS" | "SALES_VALUE_CENTS";
+        key: "CALLS" | "MESSAGES" | "EFFECTIVE_CONTACTS" | "QUALIFICATIONS" | "MEETINGS_SCHEDULED" | "MEETINGS_COMPLETED" | "PROPOSALS" | "SALES_VALUE_CENTS";
         label: string;
         unit: "COUNT" | "CURRENCY_CENTS";
         actualValue: string;
