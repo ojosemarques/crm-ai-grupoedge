@@ -44,6 +44,7 @@ const environmentSchema = z.object({
   LOG_FORMAT: z.enum(["json", "pretty"]),
   AUTOMATION_WORKER_ENABLED: booleanString,
   EXTERNAL_ADAPTERS_MODE: z.enum(["disabled", "local", "mock", "simulated"]),
+  META_ADS_SERVER_CREDENTIALS_ENABLED: booleanString.default("false"),
   DEMO_SEED_ENABLED: booleanString,
   DEMO_CREDENTIALS_ENABLED: booleanString,
   DEMO_DATA_MODE: z.enum(["disabled", "local"]),
@@ -107,6 +108,7 @@ function withSafeLocalDefaults(
     LOG_FORMAT: source.LOG_FORMAT ?? (local ? "pretty" : undefined),
     AUTOMATION_WORKER_ENABLED: source.AUTOMATION_WORKER_ENABLED ?? (local ? "false" : undefined),
     EXTERNAL_ADAPTERS_MODE: source.EXTERNAL_ADAPTERS_MODE ?? (local ? "disabled" : undefined),
+    META_ADS_SERVER_CREDENTIALS_ENABLED: source.META_ADS_SERVER_CREDENTIALS_ENABLED ?? "false",
     DEMO_SEED_ENABLED: source.DEMO_SEED_ENABLED ?? (local ? "true" : undefined),
     DEMO_CREDENTIALS_ENABLED: source.DEMO_CREDENTIALS_ENABLED ?? (local ? "true" : undefined),
     DEMO_DATA_MODE: source.DEMO_DATA_MODE ?? (local ? "local" : undefined),
@@ -182,8 +184,12 @@ export function loadEnvironmentContract(
   for (const [name, value] of Object.entries(source)) {
     if (name.startsWith("NEXT_PUBLIC_") && SECRET_PUBLIC_NAME.test(name) && value?.trim()) invalidVariables.add(name);
     if (remote && /(PROVIDER|ADAPTER)_MODE$/i.test(name) && value && !DISABLED_ADAPTER_MODES.has(value.toLowerCase())) invalidVariables.add(name);
-    if (remote && EXTERNAL_CREDENTIAL_NAMES.has(name) && value?.trim()) invalidVariables.add(name);
+    if (remote && EXTERNAL_CREDENTIAL_NAMES.has(name) && value?.trim()) {
+      const explicitlyEnabledMetaCredential = name.startsWith("META_ADS_") && values.META_ADS_SERVER_CREDENTIALS_ENABLED === "true";
+      if (!explicitlyEnabledMetaCredential) invalidVariables.add(name);
+    }
   }
+  if (remote && values.META_ADS_SERVER_CREDENTIALS_ENABLED === "true" && !source.META_ADS_ACCESS_TOKEN?.trim()) invalidVariables.add("META_ADS_ACCESS_TOKEN");
   if (values.PROCESS_ROLE === "worker" && values.AUTOMATION_WORKER_ENABLED !== "true") invalidVariables.add("AUTOMATION_WORKER_ENABLED");
   if (values.PROCESS_ROLE !== "bootstrap" && values.ADMIN_BOOTSTRAP_ENABLED === "true") invalidVariables.add("ADMIN_BOOTSTRAP_ENABLED");
 

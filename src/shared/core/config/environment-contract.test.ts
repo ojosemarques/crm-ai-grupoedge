@@ -62,6 +62,21 @@ describe("contrato de ambiente PROD-03", () => {
     expect(() => loadEnvironmentContract({ ...environment, META_ADS_ACCESS_TOKEN: "unconfigured-adapter-test" })).toThrow(/META_ADS_ACCESS_TOKEN/);
   });
 
+  it("libera credenciais Meta server-side somente com opt-in explícito", () => {
+    const environment = {
+      ...staging,
+      APP_ENV: "production" as const,
+      META_ADS_SERVER_CREDENTIALS_ENABLED: "true" as const,
+      META_ADS_ACCESS_TOKEN: "server-only-meta-token",
+    };
+    expect(loadEnvironmentContract(environment).META_ADS_SERVER_CREDENTIALS_ENABLED).toBe("true");
+    expect(() => loadEnvironmentContract({
+      ...staging,
+      APP_ENV: "production",
+      META_ADS_SERVER_CREDENTIALS_ENABLED: "true",
+    })).toThrow(/META_ADS_ACCESS_TOKEN/);
+  });
+
   it.each([
     ["sem HTTPS", { ...staging, APP_CANONICAL_URL: "http://crm-politizai-staging.example.com" }, "APP_CANONICAL_URL"],
     ["host inesperado", { ...staging, DATABASE_EXPECTED_HOST: "outro.example" }, "DATABASE_EXPECTED_HOST"],
