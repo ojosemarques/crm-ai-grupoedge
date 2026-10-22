@@ -38,6 +38,25 @@ describe("validação pública de respostas", () => {
     expect(mapAnswersToLead(current, answers)).toEqual({ fullName: "Pessoa Teste", phone: "+5511999999999" });
   });
 
+  it("rejeita nome curto e telefone sem DDD antes de encaminhar ao intake", () => {
+    const current = definition();
+    const baseAnswers = [
+      { questionKey: "interesse", value: "crm" },
+    ];
+
+    expect(() => validatePublicFormAnswers(current, [
+      { questionKey: "nome-completo", value: "A" },
+      { questionKey: "telefone", value: "+5511999999999" },
+      ...baseAnswers,
+    ])).toThrowError("Informe um nome com pelo menos 2 caracteres.");
+
+    expect(() => validatePublicFormAnswers(current, [
+      { questionKey: "nome-completo", value: "Pessoa Teste" },
+      { questionKey: "telefone", value: "98765-4321" },
+      ...baseAnswers,
+    ])).toThrowError("O telefone brasileiro precisa incluir DDD");
+  });
+
   it("rejeita pergunta, opção e duplicata não pertencentes à versão", () => {
     const current = definition();
     expect(() => validatePublicFormAnswers(current, [{ questionKey: "nome-completo", value: "Pessoa" }, { questionKey: "telefone", value: "+5511999999999" }, { questionKey: "interesse", value: "outro" }])).toThrow();

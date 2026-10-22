@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { MarketingFormDefinition, MarketingFormQuestion } from "@/modules/marketing-forms/domain/marketing-form-contracts";
+import { publicFormAnswerError } from "@/modules/marketing-forms/domain/public-form-validation";
 import styles from "@/app/f/[slug]/public-form-runtime.module.css";
 
 type Answer = string | number | boolean | string[];
@@ -23,20 +24,6 @@ type SubmitResult = Readonly<{
 }>;
 
 function cssString(value: string) { return JSON.stringify(value).replaceAll("<", "\\3c ").replaceAll(">", "\\3e "); }
-
-function isEmpty(value: Answer | undefined) { return value === undefined || value === "" || value === false || (Array.isArray(value) && value.length === 0); }
-function isValidIsoDate(value: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false; const parsed = new Date(`${value}T00:00:00.000Z`); return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value; }
-function validate(question: MarketingFormQuestion, value: Answer | undefined): string | null {
-  if (question.required && isEmpty(value)) return "Responda esta pergunta para continuar.";
-  if (isEmpty(value)) return null;
-  if (question.type === "EMAIL" && typeof value === "string" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return "Informe um e-mail válido.";
-  if (question.type === "PHONE" && typeof value === "string" && value.replace(/\D/g, "").length < 8) return "Informe um telefone válido.";
-  if ((question.type === "SHORT_TEXT" || question.type === "LONG_TEXT") && typeof value === "string") { if (question.config.minLength !== undefined && value.length < question.config.minLength) return `Use pelo menos ${question.config.minLength} caracteres.`; if (value.length > question.config.maxLength) return `Use no máximo ${question.config.maxLength} caracteres.`; }
-  if (question.type === "NUMBER") { if (typeof value !== "number" || !Number.isFinite(value)) return "Informe um número válido."; if (question.config.min !== undefined && value < question.config.min) return `O mínimo é ${question.config.min}.`; if (question.config.max !== undefined && value > question.config.max) return `O máximo é ${question.config.max}.`; }
-  if (question.type === "DATE" && typeof value === "string") { if (!isValidIsoDate(value)) return "Informe uma data válida."; if (question.config.min && value < question.config.min) return `Escolha uma data a partir de ${question.config.min}.`; if (question.config.max && value > question.config.max) return `Escolha uma data até ${question.config.max}.`; }
-  if (question.type === "MULTIPLE_CHOICE" && Array.isArray(value)) { if (value.length < question.config.minSelections) return `Escolha pelo menos ${question.config.minSelections}.`; if (question.config.maxSelections !== undefined && value.length > question.config.maxSelections) return `Escolha no máximo ${question.config.maxSelections}.`; }
-  return null;
-}
 
 export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; nonce: string | null }>) {
   const [index, setIndex] = useState(0);
@@ -103,7 +90,7 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
   function setAnswer(value: Answer) { if (!question) return; setAnswers((current) => ({ ...current, [question.stableKey]: value })); setError(null); }
   async function advance() {
     if (!question) return;
-    const validation = validate(question, answer); if (validation) { setError(validation); return; }
+    const validation = publicFormAnswerError(question, answer); if (validation) { setError(validation); return; }
     const telemetry: Array<{ kind: "FORM_START" | "QUESTION_ANSWERED"; questionKey?: string; optionKey?: string }> = [];
     if (!started.current) { started.current = true; telemetry.push({ kind: "FORM_START" }); }
     if (!answered.current.has(question.stableKey)) {

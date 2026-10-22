@@ -274,6 +274,14 @@ describe("serviço administrativo de formulários", () => {
     await expect(reportingService.detail(tenantB.context, form.id, first.receiptPublicId)).rejects.toMatchObject({ code: "MARKETING_FORM_NOT_FOUND", statusCode: 404 });
 
     await expect(submissionService.submit(slug, { ...payload, idempotencyToken: randomUUID(), answers: [{ questionKey: "nome-completo", value: "Sem telefone" }] })).rejects.toMatchObject({ code: "MARKETING_FORM_ANSWER_INVALID", statusCode: 422 });
+    await expect(submissionService.submit(slug, {
+      ...payload,
+      idempotencyToken: randomUUID(),
+      answers: [
+        { questionKey: "nome-completo", value: "A" },
+        { questionKey: "telefone", value: payload.answers[1]!.value },
+      ],
+    })).rejects.toMatchObject({ code: "MARKETING_FORM_ANSWER_INVALID", statusCode: 422 });
     await expect(submissionService.submit(slug, { ...payload, answers: [{ questionKey: "nome-completo", value: "Payload alterado" }, { questionKey: "telefone", value: payload.answers[1]!.value }] })).rejects.toMatchObject({ code: "MARKETING_FORM_IDEMPOTENCY_CONFLICT", statusCode: 409 });
   });
 });

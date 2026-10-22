@@ -3,6 +3,7 @@ import type {
   MarketingFormQuestion,
 } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import type { PublicFormSubmitInput } from "@/modules/marketing-forms/domain/public-form-contracts";
+import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 type AnswerValue = PublicFormSubmitInput["answers"][number]["value"];
@@ -25,41 +26,80 @@ function isValidIsoDate(value: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-function validateAnswer(question: MarketingFormQuestion, value: AnswerValue | undefined): void {
-  if (question.required && empty(value)) invalid(question.stableKey, "Responda todas as perguntas obrigatórias.");
-  if (empty(value)) return;
+function mappedAnswerError(question: MarketingFormQuestion, value: AnswerValue): string | null {
+  if (!question.mapping) return null;
+  if (question.mapping === "contactPreference") return typeof value === "boolean" ? null : "Resposta inválida.";
+  if (question.mapping === "budgetCents") {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+      ? null
+      : "Informe um orçamento inteiro e não negativo.";
+  }
+  if (typeof value !== "string") return "Resposta inválida.";
+  const trimmed = value.trim();
+  if (question.mapping === "fullName") {
+    if (trimmed.length < 2) return "Informe um nome com pelo menos 2 caracteres.";
+    if (trimmed.length > 200) return "Use no máximo 200 caracteres.";
+  }
+  if (question.mapping === "phone") {
+    if (trimmed.length > 80) return "Use no máximo 80 caracteres.";
+    const normalized = normalizePhone(trimmed);
+    if (!normalized.success) return normalized.message;
+  }
+  if (question.mapping === "email" && (trimmed.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed))) return "Informe um e-mail válido.";
+  if (question.mapping === "jobTitle" && trimmed.length > 160) return "Use no máximo 160 caracteres.";
+  if (question.mapping === "organizationName" && trimmed.length > 200) return "Use no máximo 200 caracteres.";
+  if (question.mapping === "city" && trimmed.length > 120) return "Use no máximo 120 caracteres.";
+  if (question.mapping === "stateCode" && trimmed.length !== 2) return "Informe a UF com 2 caracteres.";
+  if (question.mapping === "interestSummary" && trimmed.length > 2_000) return "Use no máximo 2000 caracteres.";
+  return null;
+}
+
+export function publicFormAnswerError(question: MarketingFormQuestion, value: AnswerValue | undefined): string | null {
+  if (question.required && empty(value)) return "Responda esta pergunta para continuar.";
+  if (value === undefined || empty(value)) return null;
+  const mappingError = mappedAnswerError(question, value);
+  if (mappingError) return mappingError;
   if (question.type === "CHECKBOX") {
-    if (typeof value !== "boolean") invalid(question.stableKey, "Resposta inválida.");
-    return;
+    return typeof value === "boolean" ? null : "Resposta inválida.";
   }
   if (question.type === "NUMBER") {
-    if (typeof value !== "number" || !Number.isFinite(value)) invalid(question.stableKey, "Número inválido.");
-    if (question.config.min !== undefined && value < question.config.min) invalid(question.stableKey, "Número abaixo do mínimo.");
-    if (question.config.max !== undefined && value > question.config.max) invalid(question.stableKey, "Número acima do máximo.");
-    return;
+    if (typeof value !== "number" || !Number.isFinite(value)) return "Informe um número válido.";
+    if (question.config.min !== undefined && value < question.config.min) return `O mínimo é ${question.config.min}.`;
+    if (question.config.max !== undefined && value > question.config.max) return `O máximo é ${question.config.max}.`;
+    return null;
   }
   if (question.type === "MULTIPLE_CHOICE") {
-    if (!Array.isArray(value) || new Set(value).size !== value.length) invalid(question.stableKey, "Seleção inválida.");
+    if (!Array.isArray(value) || new Set(value).size !== value.length) return "Seleção inválida.";
     const allowed = new Set(question.config.options.map((option) => option.stableKey));
-    if (value.some((key) => !allowed.has(key))) invalid(question.stableKey, "Seleção inválida.");
-    if (value.length < question.config.minSelections || (question.config.maxSelections !== undefined && value.length > question.config.maxSelections)) invalid(question.stableKey, "Quantidade de opções inválida.");
-    return;
+    if (value.some((key) => !allowed.has(key))) return "Seleção inválida.";
+    if (value.length < question.config.minSelections) return `Escolha pelo menos ${question.config.minSelections}.`;
+    if (question.config.maxSelections !== undefined && value.length > question.config.maxSelections) return `Escolha no máximo ${question.config.maxSelections}.`;
+    return null;
   }
-  if (typeof value !== "string") invalid(question.stableKey, "Resposta inválida.");
-  if (question.type === "EMAIL" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) invalid(question.stableKey, "E-mail inválido.");
-  if (question.type === "PHONE" && value.replace(/\D/g, "").length < 8) invalid(question.stableKey, "Telefone inválido.");
+  if (typeof value !== "string") return "Resposta inválida.";
+  if (question.type === "EMAIL" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return "Informe um e-mail válido.";
+  if (question.type === "PHONE") {
+    const normalized = normalizePhone(value);
+    if (!normalized.success) return normalized.message;
+  }
   if (question.type === "DATE") {
-    if (!isValidIsoDate(value)) invalid(question.stableKey, "Data inválida.");
-    if (question.config.min && value < question.config.min) invalid(question.stableKey, "Data anterior ao mínimo.");
-    if (question.config.max && value > question.config.max) invalid(question.stableKey, "Data posterior ao máximo.");
+    if (!isValidIsoDate(value)) return "Informe uma data válida.";
+    if (question.config.min && value < question.config.min) return `Escolha uma data a partir de ${question.config.min}.`;
+    if (question.config.max && value > question.config.max) return `Escolha uma data até ${question.config.max}.`;
   }
   if (question.type === "SHORT_TEXT" || question.type === "LONG_TEXT") {
-    if (question.config.minLength !== undefined && value.length < question.config.minLength) invalid(question.stableKey, "Resposta curta demais.");
-    if (value.length > question.config.maxLength) invalid(question.stableKey, "Resposta longa demais.");
+    if (question.config.minLength !== undefined && value.length < question.config.minLength) return `Use pelo menos ${question.config.minLength} caracteres.`;
+    if (value.length > question.config.maxLength) return `Use no máximo ${question.config.maxLength} caracteres.`;
   }
   if (question.type === "SINGLE_CHOICE" || question.type === "DROPDOWN") {
-    if (!question.config.options.some((option) => option.stableKey === value)) invalid(question.stableKey, "Seleção inválida.");
+    if (!question.config.options.some((option) => option.stableKey === value)) return "Seleção inválida.";
   }
+  return null;
+}
+
+function validateAnswer(question: MarketingFormQuestion, value: AnswerValue | undefined): void {
+  const error = publicFormAnswerError(question, value);
+  if (error) invalid(question.stableKey, error);
 }
 
 export function validatePublicFormAnswers(
