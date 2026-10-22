@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { MarketingFormDefinition, MarketingFormQuestion } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import { publicFormAnswerError } from "@/modules/marketing-forms/domain/public-form-validation";
+import { shouldAutoAdvanceSingleChoice } from "@/app/f/[slug]/public-form-navigation";
 import styles from "@/app/f/[slug]/public-form-runtime.module.css";
 
 type Answer = string | number | boolean | string[];
@@ -87,15 +88,20 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
     void sendEvents([{ kind: "FORM_VIEW" }]);
   }, [sendEvents, sessionPublicId]);
 
-  function setAnswer(value: Answer) { if (!question) return; setAnswers((current) => ({ ...current, [question.stableKey]: value })); setError(null); }
-  async function advance() {
+  function setAnswer(value: Answer, autoAdvance = false) {
     if (!question) return;
-    const validation = publicFormAnswerError(question, answer); if (validation) { setError(validation); return; }
+    setAnswers((current) => ({ ...current, [question.stableKey]: value }));
+    setError(null);
+    if (autoAdvance) void advance(value);
+  }
+  async function advance(selectedAnswer: Answer | undefined = answer) {
+    if (!question) return;
+    const validation = publicFormAnswerError(question, selectedAnswer); if (validation) { setError(validation); return; }
     const telemetry: Array<{ kind: "FORM_START" | "QUESTION_ANSWERED"; questionKey?: string; optionKey?: string }> = [];
     if (!started.current) { started.current = true; telemetry.push({ kind: "FORM_START" }); }
     if (!answered.current.has(question.stableKey)) {
       answered.current.add(question.stableKey);
-      const optionKey = typeof answer === "string" && ["SINGLE_CHOICE", "DROPDOWN"].includes(question.type) ? answer : undefined;
+      const optionKey = typeof selectedAnswer === "string" && ["SINGLE_CHOICE", "DROPDOWN"].includes(question.type) ? selectedAnswer : undefined;
       telemetry.push({ kind: "QUESTION_ANSWERED", questionKey: question.stableKey, ...(optionKey ? { optionKey } : {}) });
     }
     void sendEvents(telemetry);
@@ -121,14 +127,14 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
     <style nonce={nonce ?? undefined}>{dynamicCss}</style>
     <div aria-hidden="true" className={styles.progress}><span /></div>
     {form.style.logoUrl ? <img alt={form.title} className={styles.logo} height={72} src={form.style.logoUrl} width={240} /> : null}
-    {!done && question ? <section className={styles.question} key={question.stableKey}><p className={styles.counter}>{index + 1} → {form.questions.length}</p><h1 id="question-title" ref={headingRef} tabIndex={-1}>{question.title}{question.required ? <span aria-label="obrigatória"> *</span> : null}</h1>{question.description ? <p className={styles.description} id="question-description">{question.description}</p> : null}<QuestionInput answer={answer} error={error} question={question} setAnswer={setAnswer} /><div className={styles.actions}><button className={styles.primary} disabled={submitting} onClick={() => void advance()} type="button">{submitting ? "Enviando…" : index === form.questions.length - 1 ? "Enviar" : "Avançar"} <span aria-hidden="true">↵</span></button><small>pressione Enter</small></div>{error ? <p aria-live="polite" className={styles.error} id="question-error" role="alert">{error}</p> : null}</section> : null}
+    {!done && question ? <section className={styles.question} key={question.stableKey}><p className={styles.counter}>{index + 1} → {form.questions.length}</p><h1 id="question-title" ref={headingRef} tabIndex={-1}>{question.title}{question.required ? <span aria-label="obrigatória"> *</span> : null}</h1>{question.description ? <p className={styles.description} id="question-description">{question.description}</p> : null}<QuestionInput answer={answer} autoAdvanceSingleChoice={shouldAutoAdvanceSingleChoice(question.type, index, form.questions.length)} error={error} question={question} setAnswer={setAnswer} /><div className={styles.actions}><button className={styles.primary} disabled={submitting} onClick={() => void advance()} type="button">{submitting ? "Enviando…" : index === form.questions.length - 1 ? "Enviar" : "Avançar"} <span aria-hidden="true">↵</span></button><small>pressione Enter</small></div>{error ? <p aria-live="polite" className={styles.error} id="question-error" role="alert">{error}</p> : null}</section> : null}
     {done ? <section className={styles.thankYou}><p aria-hidden="true">✓</p><h1 ref={headingRef} tabIndex={-1}>{form.thankYou.title}</h1><div>{form.thankYou.message}</div>{done.redirect ? <a className={styles.primary} href={done.redirect.url}>{form.thankYou.ctaLabel ?? "Continuar"}</a> : null}</section> : null}
     {!done ? <nav aria-label="Navegação entre perguntas" className={styles.arrows}><button aria-label="Pergunta anterior" disabled={index === 0 || submitting} onClick={() => { setIndex((current) => Math.max(0, current - 1)); setError(null); }} type="button">↑</button><button aria-label="Próxima pergunta" disabled={index === form.questions.length - 1 || submitting} onClick={() => void advance()} type="button">↓</button></nav> : null}
     <input aria-hidden="true" autoComplete="off" className={styles.honeypot} name="website" onChange={(event) => setHoneypot(event.target.value)} tabIndex={-1} value={honeypot} />
   </main>;
 }
 
-function QuestionInput({ question, answer, error, setAnswer }: Readonly<{ question: MarketingFormQuestion; answer: Answer | undefined; error: string | null; setAnswer: (value: Answer) => void }>) {
+function QuestionInput({ question, answer, autoAdvanceSingleChoice, error, setAnswer }: Readonly<{ question: MarketingFormQuestion; answer: Answer | undefined; autoAdvanceSingleChoice: boolean; error: string | null; setAnswer: (value: Answer, autoAdvance?: boolean) => void }>) {
   const describedBy = [question.description ? "question-description" : null, error ? "question-error" : null].filter(Boolean).join(" ") || undefined;
   const accessibility = { "aria-describedby": describedBy, "aria-invalid": Boolean(error), "aria-labelledby": "question-title" } as const;
   if (question.type === "LONG_TEXT") return <textarea {...accessibility} autoFocus maxLength={question.config.maxLength} onChange={(event) => setAnswer(event.target.value)} placeholder={question.config.placeholder ?? "Digite sua resposta…"} rows={3} value={typeof answer === "string" ? answer : ""} />;
@@ -137,5 +143,5 @@ function QuestionInput({ question, answer, error, setAnswer }: Readonly<{ questi
   if (question.type === "DROPDOWN") return <select {...accessibility} autoFocus onChange={(event) => setAnswer(event.target.value)} value={typeof answer === "string" ? answer : ""}><option value="">{question.config.placeholder ?? "Selecione"}</option>{question.config.options.map((option) => <option key={option.stableKey} value={option.stableKey}>{option.label}</option>)}</select>;
   if (question.type !== "SINGLE_CHOICE" && question.type !== "MULTIPLE_CHOICE") return null;
   const multiple = question.type === "MULTIPLE_CHOICE"; const selected = Array.isArray(answer) ? answer : typeof answer === "string" ? [answer] : [];
-  return <div {...accessibility} className={styles.choices} role="group">{question.config.options.map((option, index) => { const checked = selected.includes(option.stableKey); return <label key={option.stableKey}><input checked={checked} name={multiple ? undefined : question.stableKey} onChange={(event) => setAnswer(multiple ? event.target.checked ? [...selected, option.stableKey] : selected.filter((key) => key !== option.stableKey) : option.stableKey)} type={multiple ? "checkbox" : "radio"} /><b>{String.fromCharCode(65 + index)}</b><span>{option.label}</span></label>; })}</div>;
+  return <div {...accessibility} className={styles.choices} role="group">{question.config.options.map((option, index) => { const checked = selected.includes(option.stableKey); return <label key={option.stableKey}><input checked={checked} name={multiple ? undefined : question.stableKey} onClick={() => { if (!multiple && checked && autoAdvanceSingleChoice) setAnswer(option.stableKey, true); }} onChange={(event) => setAnswer(multiple ? event.target.checked ? [...selected, option.stableKey] : selected.filter((key) => key !== option.stableKey) : option.stableKey, !multiple && autoAdvanceSingleChoice)} type={multiple ? "checkbox" : "radio"} /><b>{String.fromCharCode(65 + index)}</b><span>{option.label}</span></label>; })}</div>;
 }
