@@ -11,6 +11,7 @@ import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-servi
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
+import { createRealtimeDashboardService } from "@/modules/realtime-dashboard/application/realtime-dashboard-service";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -161,6 +162,38 @@ afterAll(async () => {
 });
 
 describe("histórico operacional baseado em eventos", () => {
+  it.each([
+    { kind: "CALL", initial: "CONNECTED", corrected: "NO_ANSWER", date: "2033-06-06T12:00:00Z", metric: "calls" as const },
+    { kind: "WHATSAPP", initial: "SENT", corrected: "OTHER", date: "2033-06-07T12:00:00Z", metric: "messages" as const },
+  ])("reflete conclusão, correção e reabertura de $kind no Tempo Real sem manter fatos antigos nem duplicar", async ({ kind, initial, corrected, date, metric }) => {
+    const base = new Date(date);
+    const lead = await createLead(base);
+    const history = historyService();
+    const task = await history.createTask(managerContext, { leadId: lead.leadId, title: `Contato ${kind}`, kind, priority: "MEDIUM", dueAt: new Date(base.getTime() + 3_600_000) });
+    const realtime = createRealtimeDashboardService({ database, authorization, now: () => clock });
+    const snapshot = async () => {
+      clock = new Date(clock.getTime() + 1_000);
+      return (await realtime.screen(managerContext)).snapshot.today.totals;
+    };
+    const edit = async (status: "OPEN" | "COMPLETED", result: string | null) => {
+      const stored = await database.task.findUniqueOrThrow({ where: { id: task.id } });
+      clock = new Date(clock.getTime() + 1_000);
+      return history.updateCompletedTask(adminContext, { leadId: lead.leadId, taskId: task.id, expectedUpdatedAt: stored.updatedAt, reason: "Correção conferida no CRM", title: stored.title, description: stored.description, priority: stored.priority, dueAt: stored.dueAt, status, result });
+    };
+    await history.completeTask(managerContext, { leadId: lead.leadId, taskId: task.id, result: initial });
+    expect(await snapshot()).toMatchObject({ [metric]: 1, effectiveContacts: 1, tasksCompleted: 1 });
+    await edit("COMPLETED", corrected);
+    expect(await snapshot()).toMatchObject({ [metric]: kind === "CALL" ? 1 : 0, effectiveContacts: 0, tasksCompleted: 1 });
+    await edit("COMPLETED", initial);
+    expect(await snapshot()).toMatchObject({ [metric]: 1, effectiveContacts: 1, tasksCompleted: 1 });
+    const attributed = await database.commercialMetricFact.aggregate({ where: { workspaceId, taskId: task.id, creditedMemberId: managerContext.memberId, eventType: kind === "CALL" ? "CALL_ATTEMPTED" : "WHATSAPP_MESSAGE_SENT" }, _sum: { quantity: true } });
+    expect(attributed._sum.quantity).toBe(1);
+    await edit("OPEN", null);
+    expect(await snapshot()).toMatchObject({ [metric]: 0, effectiveContacts: 0, tasksCompleted: 0 });
+    await history.completeTask(managerContext, { leadId: lead.leadId, taskId: task.id, result: initial });
+    expect(await snapshot()).toMatchObject({ [metric]: 1, effectiveContacts: 1, tasksCompleted: 1 });
+  });
+
   it("cria e conclui tarefa com resultado, próxima tarefa explícita, timeline e auditoria", async () => {
     const base = new Date("2032-07-15T13:00:00.000Z");
     const lead = await createLead(base);

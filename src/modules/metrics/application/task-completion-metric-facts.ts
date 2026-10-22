@@ -18,6 +18,12 @@ type TaskCompletionMetricInput = Readonly<{
   executionMode: CommercialMetricExecutionMode;
 }>;
 
+export const taskCompletionMetricEventTypes = [
+  "TASK_COMPLETED", "CALL_ATTEMPTED", "CALL_CONNECTED", "CALL_UNANSWERED", "CALL_FAILED",
+  "WHATSAPP_MESSAGE_SENT", "WHATSAPP_UNAVAILABLE", "WHATSAPP_OTHER",
+  "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED",
+] as const;
+
 export async function recordTaskCompletionMetricFactsInTransaction(
   transaction: Pick<Prisma.TransactionClient, "commercialMetricFact">,
   input: TaskCompletionMetricInput,
@@ -47,14 +53,15 @@ export async function recordTaskCompletionMetricFactsInTransaction(
         eventKey: completionBaseKey,
       },
     },
-    select: { id: true },
+    select: { id: true, activityId: true },
   });
+  // Keep legacy keys for the first completion; later audited completions have their own identity.
+  const activitySuffix = existingCompletion && existingCompletion.activityId !== input.activityId
+    ? `:activity:${input.activityId}` : "";
 
   await recordCommercialMetricFactInTransaction(transaction, {
     ...common,
-    eventKey: existingCompletion
-      ? `task:${input.taskId}:completed:activity:${input.activityId}:v1`
-      : completionBaseKey,
+    eventKey: `task:${input.taskId}:completed${activitySuffix}:v1`,
     eventType: "TASK_COMPLETED",
     activityType: "TASK",
     safeMetadata: {
@@ -66,7 +73,7 @@ export async function recordTaskCompletionMetricFactsInTransaction(
   for (const event of prospectingTaskMetricEvents(input.kind, input.result)) {
     await recordCommercialMetricFactInTransaction(transaction, {
       ...common,
-      eventKey: `task:${input.taskId}:${event.eventKeySuffix}:v1`,
+      eventKey: `task:${input.taskId}:${event.eventKeySuffix}${activitySuffix}:v1`,
       eventType: event.eventType,
       channel: event.channel,
       direction: "OUTBOUND" as const,

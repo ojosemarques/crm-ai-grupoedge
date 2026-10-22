@@ -10,7 +10,7 @@ export function nextRealtimePollDelay(input: Readonly<{
   jitterMs?: number;
 }>): number {
   if (input.hidden && !input.fullscreen) return 60_000;
-  if (input.succeeded) return 15_000;
+  if (input.succeeded) return 5_000;
   const backoff = Math.min(120_000, 30_000 * (2 ** Math.max(0, input.failureCount - 1)));
   return backoff + Math.max(0, Math.min(1_500, input.jitterMs ?? 0));
 }

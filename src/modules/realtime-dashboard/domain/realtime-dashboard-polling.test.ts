@@ -14,9 +14,9 @@ describe("temporização do dashboard tempo real", () => {
   });
 
   it("aplica polling normal, economia em aba oculta e backoff limitado", () => {
-    expect(nextRealtimePollDelay({ succeeded: true, failureCount: 0, hidden: false, fullscreen: false })).toBe(15_000);
+    expect(nextRealtimePollDelay({ succeeded: true, failureCount: 0, hidden: false, fullscreen: false })).toBe(5_000);
     expect(nextRealtimePollDelay({ succeeded: true, failureCount: 0, hidden: true, fullscreen: false })).toBe(60_000);
-    expect(nextRealtimePollDelay({ succeeded: true, failureCount: 0, hidden: true, fullscreen: true })).toBe(15_000);
+    expect(nextRealtimePollDelay({ succeeded: true, failureCount: 0, hidden: true, fullscreen: true })).toBe(5_000);
     expect(nextRealtimePollDelay({ succeeded: false, failureCount: 1, hidden: false, fullscreen: false, jitterMs: 500 })).toBe(30_500);
     expect(nextRealtimePollDelay({ succeeded: false, failureCount: 2, hidden: false, fullscreen: false })).toBe(60_000);
     expect(nextRealtimePollDelay({ succeeded: false, failureCount: 8, hidden: false, fullscreen: false, jitterMs: 2_000 })).toBe(121_500);

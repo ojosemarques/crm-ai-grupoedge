@@ -29,7 +29,8 @@
 ## Polling
 
 - primeira chamada imediata;
-- sucesso: próxima em 15 s;
+- sucesso: próxima em 5 s, consultando novamente os fatos persistidos de todos os usuários/dispositivos;
+- retorno à aba, foco da janela e reconexão de rede disparam consulta imediata, sem reload da página;
 - falha: 30/60/120 s + jitter até recuperação;
 - aba oculta fora de fullscreen: 60 s;
 - `AbortController` e flag in-flight impedem overlap;
@@ -40,6 +41,8 @@
 ## Idempotência e concorrência
 
 GETs não mutam. REVOKE é idempotente. ROTATE sempre gera novo bearer e invalida o anterior; duas rotações são serializadas, sendo válido apenas o último token retornado pela última transação.
+
+Correções de tarefas concluídas compensam tanto `TASK_COMPLETED` quanto os fatos de ligação/mensagem emitidos pela conclusão anterior. Novas conclusões usam chaves por atividade auditada; a primeira preserva as chaves legadas. Corrigir um resultado preserva o crédito do executor original; o editor permanece na auditoria. O painel lê o saldo líquido, inclusive após corrigir resultado, reabrir e concluir novamente. Movimentações e agendamentos continuam vindo dos produtores canônicos do CRM, sem inventar chamadas ou reuniões a partir de qualquer mudança de card.
 
 ## Orçamento
 

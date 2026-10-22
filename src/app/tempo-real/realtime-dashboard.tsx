@@ -109,6 +109,8 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = async () => {
+      if (!active || inFlight.current) return;
+      if (timer) clearTimeout(timer);
       const ok = await load();
       if (!active) return;
       timer = setTimeout(schedule, nextRealtimePollDelay({
@@ -119,9 +121,18 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
         jitterMs: Math.floor(Math.random() * 1_500),
       }));
     };
+    const wake = () => {
+      if (!document.hidden || document.fullscreenElement) void schedule();
+    };
+    document.addEventListener("visibilitychange", wake);
+    window.addEventListener("focus", wake);
+    window.addEventListener("online", wake);
     void schedule();
     return () => {
       active = false;
+      document.removeEventListener("visibilitychange", wake);
+      window.removeEventListener("focus", wake);
+      window.removeEventListener("online", wake);
       if (timer) clearTimeout(timer);
       inFlight.current?.abort();
       inFlight.current = null;

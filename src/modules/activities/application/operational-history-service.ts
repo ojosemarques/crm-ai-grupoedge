@@ -1,6 +1,7 @@
 import type {
   ActivityResult,
   ActivityType,
+  CommercialMetricFact,
   LeadPriority,
   LeadStatus,
   Prisma,
@@ -32,7 +33,7 @@ import {
 import { syncActiveProspectingStageInTransaction } from "@/modules/prospecting/application/active-prospecting-stage-service";
 import { resolveCadenceStopReasonForContact } from "@/modules/prospecting/domain/prospecting-cadence";
 import { manualActivityStageOutcome } from "@/modules/prospecting/domain/prospecting-stage-outcome";
-import { recordTaskCompletionMetricFactsInTransaction } from "@/modules/metrics/application/task-completion-metric-facts";
+import { recordTaskCompletionMetricFactsInTransaction, taskCompletionMetricEventTypes } from "@/modules/metrics/application/task-completion-metric-facts";
 import {
   recordCommercialMetricCorrectionInTransaction,
   recordCommercialMetricFactInTransaction,
@@ -487,18 +488,19 @@ async function reverseActiveTaskCompletionFacts(
     correctedAt: Date;
     reason: string;
   }>,
-): Promise<void> {
+): Promise<CommercialMetricFact | null> {
   const originals = await transaction.commercialMetricFact.findMany({
     where: {
       workspaceId: input.workspaceId,
       taskId: input.taskId,
       sourceEntityType: "Task",
-      eventType: "TASK_COMPLETED",
+      eventType: { in: [...taskCompletionMetricEventTypes] },
       quantity: { gt: 0 },
       correctionOfFactId: null,
     },
+    orderBy: [{ recordedAt: "desc" }, { id: "desc" }],
   });
-  if (originals.length === 0) return;
+  if (originals.length === 0) return null;
 
   const corrections = await transaction.commercialMetricFact.findMany({
     where: {
@@ -516,9 +518,11 @@ async function reverseActiveTaskCompletionFacts(
     );
   }
 
+  let completionBasis: CommercialMetricFact | null = null;
   for (const original of originals) {
     const activeQuantity = original.quantity + (correctedQuantity.get(original.id) ?? 0);
     if (activeQuantity <= 0) continue;
+    if (original.eventType === "TASK_COMPLETED" && !completionBasis) completionBasis = original;
     await recordCommercialMetricCorrectionInTransaction(transaction, {
       workspaceId: input.workspaceId,
       eventKey: `${original.eventKey}:task-edit:${input.activityId}:reversal:v1`,
@@ -536,6 +540,17 @@ async function reverseActiveTaskCompletionFacts(
       leadOwnerMemberIdAtEvent: original.leadOwnerMemberIdAtEvent,
       taskKind: original.taskKind,
       activityType: original.activityType,
+      channel: original.channel,
+      direction: original.direction,
+      pipelineId: original.pipelineId,
+      stageId: original.stageId,
+      teamId: original.teamId,
+      sourceId: original.sourceId,
+      campaignId: original.campaignId,
+      creativeId: original.creativeId,
+      cadenceInstanceId: original.cadenceInstanceId,
+      cadenceStepKey: original.cadenceStepKey,
+      cadenceDay: original.cadenceDay,
       result: original.result,
       executionMode: original.executionMode,
       quantity: -activeQuantity,
@@ -549,6 +564,7 @@ async function reverseActiveTaskCompletionFacts(
       },
     });
   }
+  return completionBasis;
 }
 
 async function createTaskRecord(
@@ -1253,8 +1269,9 @@ export function createOperationalHistoryService(
       const completionChanged = parsed.data.status !== "COMPLETED" ||
         result !== task.result ||
         parsed.data.dueAt.getTime() !== task.dueAt.getTime();
+      let completionBasis: CommercialMetricFact | null = null;
       if (completionChanged) {
-        await reverseActiveTaskCompletionFacts(transaction, {
+        completionBasis = await reverseActiveTaskCompletionFacts(transaction, {
           workspaceId: context.workspaceId,
           taskId: task.id,
           activityId: activity.id,
@@ -1269,14 +1286,15 @@ export function createOperationalHistoryService(
           leadId: lead.id,
           opportunityId: null,
           activityId: activity.id,
-          assigneeMemberId: task.assigneeMemberId,
-          performedByMemberId: "memberId" in context ? context.memberId : null,
-          leadOwnerMemberId: currentLead.ownerMemberId,
+          // Correcting an outcome does not transfer the seller's credit to the editor.
+          assigneeMemberId: completionBasis?.creditedMemberId ?? task.assigneeMemberId,
+          performedByMemberId: completionBasis ? completionBasis.performedByMemberId : "memberId" in context ? context.memberId : null,
+          leadOwnerMemberId: completionBasis ? completionBasis.leadOwnerMemberIdAtEvent : currentLead.ownerMemberId,
           kind: task.kind,
           result,
           dueAt: parsed.data.dueAt,
           completedAt: completedAt!,
-          executionMode: "memberId" in context ? "MANUAL" : "SYSTEM",
+          executionMode: completionBasis?.executionMode ?? ("memberId" in context ? "MANUAL" : "SYSTEM"),
         });
       } else if (parsed.data.status === "CANCELLED") {
         await recordCommercialMetricFactInTransaction(transaction, {
