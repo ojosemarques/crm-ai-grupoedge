@@ -69,15 +69,18 @@ describe("CRM OAuth login, consent and token routes", () => {
   });
   it("requires valid session-bound consent and returns a one-use code, client state and issuer", async () => {
     const response = await authorizePOST(formRequest(authPath, { decision: "allow", consent_token: "signed-consent" }));
-    expect(response.status).toBe(303);
-    const redirect = new URL(response.headers.get("location")!);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+    const redirect = new URL(response.headers.get("refresh")!.replace(/^0;url=/, ""));
     expect(redirect.origin).toBe("https://client.example"); expect(redirect.searchParams.get("code")).toBe("one-use-code");
     expect(redirect.searchParams.get("state")).toBe("csrf-client-state"); expect(redirect.searchParams.get("iss")).toBe("https://crm.example/api/oauth/crm");
     expect(mocks.validateConsent).toHaveBeenCalledWith("signed-consent", expect.anything(), authorization);
+    expect(await response.text()).toContain('http-equiv="refresh"');
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
   });
   it("does not issue a code after consent denial or an invalid consent signature", async () => {
     const denial = await authorizePOST(formRequest(authPath, { decision: "deny", consent_token: "signed-consent" }));
-    expect(new URL(denial.headers.get("location")!).searchParams.get("error")).toBe("access_denied");
+    expect(new URL(denial.headers.get("refresh")!.replace(/^0;url=/, "")).searchParams.get("error")).toBe("access_denied");
     expect(mocks.createAuthorizationCode).not.toHaveBeenCalled();
     mocks.validateConsent.mockRejectedValueOnce(new OAuthError(OAuthErrorCode.InvalidRequest, "invalid consent"));
     expect((await authorizePOST(formRequest(authPath, { decision: "allow", consent_token: "wrong" }))).status).toBe(400);

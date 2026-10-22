@@ -45,6 +45,9 @@ export async function POST(request: NextRequest) {
     redirect.searchParams.set("iss", getCrmMcpOAuthConfig().issuer);
     if (uniqueParam(form, "decision") !== "allow") redirect.searchParams.set("error", "access_denied");
     else redirect.searchParams.set("code", await service.createAuthorizationCode(context, authorization));
-    return NextResponse.redirect(redirect, { status: 303, headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+    // A 303 after this form is blocked by Chromium's form-action 'self' CSP.
+    const destination = redirect.toString();
+    const body = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="refresh" content="0;url=${htmlEscape(destination)}"><title>Concluindo conexão</title></head><body><p>Concluindo conexão com o cliente autorizado…</p><a href="${htmlEscape(destination)}" rel="noreferrer">Continuar</a></body></html>`;
+    return new NextResponse(body, { headers: { ...browserHeaders, Pragma: "no-cache", Refresh: `0;url=${destination}` } });
   } catch (error) { return oauthFailure(error); }
 }
