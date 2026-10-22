@@ -4,6 +4,8 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import styles from "@/app/formularios/[formId]/marketing-form-builder.module.css";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 
 type ResponseItem = Readonly<{
   publicId: string;
@@ -21,17 +23,20 @@ type ResponseDetail = Readonly<{
 }>;
 type Statistics = Readonly<{ views: number; starts: number; completed: number; completionRate: number | null; medianSeconds: number | null; abandonment: readonly { questionKey: string; viewed: number; abandoned: number }[]; choices: readonly { version: number; questionKey: string; optionKey: string; total: number }[]; grain: string }>;
 
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { cache: "no-store" });
+async function getJson<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(url, { ...init, cache: "no-store" });
   const body = await response.json() as { result?: T; error?: { message?: string } };
   if (!response.ok || !body.result) throw new Error(body.error?.message ?? "Não foi possível carregar os dados.");
   return body.result;
 }
 
 export function ResponsesPanel({ formId }: Readonly<{ formId: string }>) {
-  const [data, setData] = useState<{ total: number; page: number; pageSize: number; versions: readonly number[]; items: readonly ResponseItem[] } | null>(null);
+  const [data, setData] = useState<{ total: number; page: number; pageSize: number; versions: readonly number[]; permissions: Readonly<{ delete: boolean }>; items: readonly ResponseItem[] } | null>(null);
   const [detail, setDetail] = useState<ResponseDetail | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ResponseItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({ status: "", version: "", utmSource: "", from: "", to: "" });
   const [applied, setApplied] = useState(filters);
@@ -43,13 +48,31 @@ export function ResponsesPanel({ formId }: Readonly<{ formId: string }>) {
     if (applied.utmSource) query.set("utmSource", applied.utmSource);
     if (applied.from) query.set("from", new Date(`${applied.from}T00:00:00`).toISOString());
     if (applied.to) query.set("to", new Date(`${applied.to}T23:59:59.999`).toISOString());
-    void getJson<{ total: number; page: number; pageSize: number; versions: readonly number[]; items: readonly ResponseItem[] }>(`/api/marketing/forms/${formId}/responses?${query}`)
+    void getJson<{ total: number; page: number; pageSize: number; versions: readonly number[]; permissions: Readonly<{ delete: boolean }>; items: readonly ResponseItem[] }>(`/api/marketing/forms/${formId}/responses?${query}`)
       .then((result) => { if (active) setData(result); })
       .catch((caught) => { if (active) setError(caught instanceof Error ? caught.message : "Falha ao carregar."); });
     return () => { active = false; };
   }, [applied, formId, page]);
   function applyFilters(event: FormEvent) { event.preventDefault(); setError(null); setPage(1); setApplied(filters); }
   async function open(publicId: string) { setError(null); try { setDetail(await getJson<ResponseDetail>(`/api/marketing/forms/${formId}/responses/${publicId}`)); } catch (caught) { setError(caught instanceof Error ? caught.message : "Falha ao carregar."); } }
+  async function remove() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await getJson<{ publicId: string }>(`/api/marketing/forms/${formId}/responses/${deleteTarget.publicId}`, { method: "DELETE" });
+      const shouldGoBack = page > 1 && data?.items.length === 1;
+      setData((current) => current ? { ...current, total: Math.max(0, current.total - 1), items: current.items.filter((item) => item.publicId !== deleteTarget.publicId) } : null);
+      setDeleteTarget(null);
+      setNotice("Resposta excluída. O lead vinculado foi preservado no CRM.");
+      if (shouldGoBack) setPage((current) => Math.max(1, current - 1));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Falha ao excluir a resposta.");
+    } finally {
+      setDeleting(false);
+    }
+  }
   const exportQuery = new URLSearchParams();
   if (applied.status) exportQuery.set("status", applied.status);
   if (applied.version) exportQuery.set("version", applied.version);
@@ -67,9 +90,11 @@ export function ResponsesPanel({ formId }: Readonly<{ formId: string }>) {
       <a href={`/api/marketing/forms/${formId}/responses/export${exportQuery.size ? `?${exportQuery}` : ""}`}>Exportar CSV</a>
     </form>
     <div className={styles.reportToolbar}><span>{data ? `${data.total} resposta${data.total === 1 ? "" : "s"}` : "Carregando…"}</span></div>
+    {notice ? <p className={styles.reportSuccess} role="status">{notice}</p> : null}
     {error ? <p className={styles.reportError} role="alert">{error}</p> : null}
-    {data?.items.length ? <><div className={styles.tableWrap}><table className={styles.responsesTable}><thead><tr><th>Recebida</th><th>Pessoa</th><th>Contato</th><th>Versão</th><th>Origem</th><th>Status</th><th><span className={styles.srOnly}>Ação</span></th></tr></thead><tbody>{data.items.map((item) => <tr key={item.publicId}><td>{new Date(item.submittedAt).toLocaleString("pt-BR")}</td><td>{item.submission?.submittedFullName ?? "—"}</td><td>{item.submission?.submittedEmail ?? item.submission?.submittedPhone ?? "—"}</td><td>v{item.version ?? "—"}</td><td>{item.utmSource ?? "Não atribuída"}</td><td>{item.status}</td><td><button onClick={() => void open(item.publicId)} type="button">Ver resposta</button></td></tr>)}</tbody></table></div><nav aria-label="Páginas de respostas" className={styles.reportToolbar}><button disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">Anterior</button><span>Página {page}</span><button disabled={page * data.pageSize >= data.total} onClick={() => setPage((current) => current + 1)} type="button">Próxima</button></nav></> : data ? <div className={styles.placeholder}>Nenhuma resposta recebida.</div> : null}
+    {data?.items.length ? <><div className={styles.tableWrap}><table className={styles.responsesTable}><thead><tr><th>Recebida</th><th>Pessoa</th><th>Contato</th><th>Versão</th><th>Origem</th><th>Status</th><th><span className={styles.srOnly}>Ações</span></th></tr></thead><tbody>{data.items.map((item) => <tr key={item.publicId}><td>{new Date(item.submittedAt).toLocaleString("pt-BR")}</td><td>{item.submission?.submittedFullName ?? "—"}</td><td>{item.submission?.submittedEmail ?? item.submission?.submittedPhone ?? "—"}</td><td>v{item.version ?? "—"}</td><td>{item.utmSource ?? "Não atribuída"}</td><td>{item.status}</td><td><div className={styles.responseActions}><button onClick={() => void open(item.publicId)} type="button">Ver resposta</button>{data.permissions.delete ? <button aria-label={`Excluir resposta de ${item.submission?.submittedFullName ?? new Date(item.submittedAt).toLocaleString("pt-BR")}`} className={styles.deleteResponseButton} disabled={deleting} onClick={() => { setError(null); setNotice(null); setDeleteTarget(item); }} title="Excluir resposta" type="button"><Icon name="lixeira" size={16} /></button> : null}</div></td></tr>)}</tbody></table></div><nav aria-label="Páginas de respostas" className={styles.reportToolbar}><button disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">Anterior</button><span>Página {page}</span><button disabled={page * data.pageSize >= data.total} onClick={() => setPage((current) => current + 1)} type="button">Próxima</button></nav></> : data ? <div className={styles.placeholder}>Nenhuma resposta recebida.</div> : null}
     {detail ? <AccessibleDialog backdropClassName={styles.modalBackdrop!} className={styles.responseModal!} labelledBy="response-title" onDismiss={() => setDetail(null)}><header><div><h3 id="response-title">Resposta v{detail.version}</h3><p>{new Date(detail.receipt.submittedAt).toLocaleString("pt-BR")} · {detail.receipt.status}</p></div><button aria-label="Fechar" onClick={() => setDetail(null)} type="button">×</button></header><dl className={styles.responseMeta}><div><dt>UTM source</dt><dd>{detail.receipt.utmSource ?? "—"}</dd></div><div><dt>UTM campaign</dt><dd>{detail.receipt.utmCampaign ?? "—"}</dd></div><div><dt>Lead</dt><dd>{detail.submission?.leadId ?? "—"}</dd></div></dl><div className={styles.answerList}>{detail.answers.map((answer) => <article key={answer.questionKey}><span>{answer.question}</span><strong>{answer.displayValue}</strong></article>)}</div></AccessibleDialog> : null}
+    {deleteTarget ? <AccessibleDialog backdropClassName={styles.modalBackdrop!} busy={deleting} className={styles.deleteResponseDialog!} describedBy="delete-response-description" labelledBy="delete-response-title" onDismiss={() => setDeleteTarget(null)}><h3 id="delete-response-title">Excluir esta resposta?</h3><p id="delete-response-description">A resposta será removida dos relatórios, exportações e estatísticas. O lead criado no CRM será preservado.</p><div className={styles.deleteResponseActions}><Button disabled={deleting} onClick={() => setDeleteTarget(null)} type="button" variant="secondary">Cancelar</Button><Button disabled={deleting} onClick={() => void remove()} type="button" variant="destructive">{deleting ? "Excluindo…" : "Excluir resposta"}</Button></div></AccessibleDialog> : null}
   </>;
 }
 

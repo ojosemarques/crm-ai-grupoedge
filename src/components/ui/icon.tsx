@@ -12,6 +12,7 @@ export type IconName =
   | "filtro"
   | "inbox"
   | "leads"
+  | "lixeira"
   | "mais"
   | "meu-dia"
   | "notificacoes"
@@ -40,6 +41,8 @@ function IconPaths({ name }: Readonly<{ name: IconName }>) {
       return <><path d="M12 3a9 9 0 1 0 9 9" /><path d="M12 7v5l3 2" /><path d="M17 3h4v4" /><path d="m21 3-5 5" /></>;
     case "leads":
       return <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>;
+    case "lixeira":
+      return <><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="m19 6-1 14H6L5 6" /><path d="M10 11v5M14 11v5" /></>;
     case "entrada":
       return <><path d="M4 4h16v16H4z" /><path d="M4 9h4l2 3h4l2-3h4" /></>;
     case "inbox":

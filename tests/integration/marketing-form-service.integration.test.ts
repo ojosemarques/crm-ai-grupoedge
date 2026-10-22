@@ -286,5 +286,20 @@ describe("serviço administrativo de formulários", () => {
       ],
     })).rejects.toMatchObject({ code: "MARKETING_FORM_ANSWER_INVALID", statusCode: 422 });
     await expect(submissionService.submit(slug, { ...payload, answers: [{ questionKey: "nome-completo", value: "Payload alterado" }, { questionKey: "telefone", value: payload.answers[1]!.value }] })).rejects.toMatchObject({ code: "MARKETING_FORM_IDEMPOTENCY_CONFLICT", statusCode: 409 });
+
+    await expect(reportingService.remove(tenantA.viewer, form.id, first.receiptPublicId)).rejects.toBeInstanceOf(AccessDeniedError);
+    await expect(reportingService.remove(tenantB.context, form.id, first.receiptPublicId)).rejects.toMatchObject({ code: "MARKETING_FORM_NOT_FOUND", statusCode: 404 });
+    await expect(reportingService.remove(tenantA.context, form.id, first.receiptPublicId)).resolves.toMatchObject({ publicId: first.receiptPublicId, deletedAt: now, leadPreserved: true });
+
+    expect(await database.marketingFormReceipt.findUniqueOrThrow({ where: { id: receipt.id }, select: { deletedAt: true } })).toEqual({ deletedAt: now });
+    expect(await database.leadFormSubmission.count({ where: { workspaceId: tenantA.context.workspaceId, marketingFormReceiptId: receipt.id } })).toBe(1);
+    expect(await database.lead.count({ where: { workspaceId: tenantA.context.workspaceId, id: submission.leadId!, deletedAt: null } })).toBe(1);
+    await expect(reportingService.list(tenantA.context, form.id, {})).resolves.toMatchObject({ total: 0, permissions: { delete: true }, items: [] });
+    await expect(reportingService.detail(tenantA.context, form.id, first.receiptPublicId)).rejects.toMatchObject({ code: "MARKETING_FORM_RESPONSE_NOT_FOUND", statusCode: 404 });
+    await expect(reportingService.csv(tenantA.context, form.id, {})).resolves.toMatchObject({ total: 0 });
+    await expect(reportingService.statistics(tenantA.context, form.id, {})).resolves.toMatchObject({ views: 1, starts: 1, completed: 0, completionRate: 0 });
+    await expect(service.list(tenantA.context)).resolves.toContainEqual(expect.objectContaining({ id: form.id, responseCount: 0 }));
+    await expect(database.auditLog.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, action: "marketing.form.response_deleted", entityId: receipt.id } })).resolves.toMatchObject({ actorId: tenantA.context.actorId, changes: expect.objectContaining({ leadPreserved: true }) });
+    await expect(reportingService.remove(tenantA.context, form.id, first.receiptPublicId)).rejects.toMatchObject({ code: "MARKETING_FORM_RESPONSE_NOT_FOUND", statusCode: 404 });
   });
 });

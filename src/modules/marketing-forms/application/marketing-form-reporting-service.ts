@@ -91,9 +91,12 @@ export function createMarketingFormReportingService(options: Options) {
   async function list(context: AuthenticatedContext, formId: string, raw: unknown) {
     await assertForm(context, formId);
     const query = querySchema.parse(raw);
-    const selectedVersion = query.version ? await options.database.marketingFormVersion.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, version: query.version }, select: { id: true } }) : null;
+    const [selectedVersion, deleteDecision] = await Promise.all([
+      query.version ? options.database.marketingFormVersion.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, version: query.version }, select: { id: true } }) : null,
+      options.authorization.authorize(context, PermissionKeys.MARKETING_DEFINITIONS_MANAGE, resource(context, formId)),
+    ]);
     const filter = where(context, formId, query, selectedVersion?.id);
-    if (query.version && !selectedVersion) return { total: 0, page: query.page, pageSize: query.pageSize, versions: [], items: [] };
+    if (query.version && !selectedVersion) return { total: 0, page: query.page, pageSize: query.pageSize, versions: [], permissions: { delete: deleteDecision.allowed }, items: [] };
     const [total, receipts, versions] = await Promise.all([
       options.database.marketingFormReceipt.count({ where: filter }),
       options.database.marketingFormReceipt.findMany({ where: filter, orderBy: [{ submittedAt: "desc" }, { id: "desc" }], skip: (query.page - 1) * query.pageSize, take: query.pageSize, select: { id: true, publicId: true, marketingFormVersionId: true, status: true, utmSource: true, utmMedium: true, utmCampaign: true, submittedAt: true, acceptedAt: true } }),
@@ -102,7 +105,7 @@ export function createMarketingFormReportingService(options: Options) {
     const submissions = await options.database.leadFormSubmission.findMany({ where: { workspaceId: context.workspaceId, marketingFormReceiptId: { in: receipts.map((receipt) => receipt.id) } }, select: { marketingFormReceiptId: true, leadId: true, submittedFullName: true, submittedEmail: true, submittedPhone: true, intakeOutcome: true } });
     const byReceipt = new Map(submissions.map((submission) => [submission.marketingFormReceiptId, submission]));
     const versionById = new Map(versions.map((version) => [version.id, version.version]));
-    return { total, page: query.page, pageSize: query.pageSize, versions: versions.map((version) => version.version), items: receipts.map((receipt) => ({ ...receipt, version: versionById.get(receipt.marketingFormVersionId) ?? null, submission: byReceipt.get(receipt.id) ?? null })) };
+    return { total, page: query.page, pageSize: query.pageSize, versions: versions.map((version) => version.version), permissions: { delete: deleteDecision.allowed }, items: receipts.map((receipt) => ({ ...receipt, version: versionById.get(receipt.marketingFormVersionId) ?? null, submission: byReceipt.get(receipt.id) ?? null })) };
   }
 
   async function detail(context: AuthenticatedContext, formId: string, receiptId: string) {
@@ -121,6 +124,35 @@ export function createMarketingFormReportingService(options: Options) {
       return { questionKey: question.stableKey, question: question.title, value: raw?.value ?? null, displayValue: raw ? answerLabel(definition, question.stableKey, raw.value) : "—" };
     });
     return { receipt: { publicId: receipt.publicId, status: receipt.status, submittedAt: receipt.submittedAt, acceptedAt: receipt.acceptedAt, utmSource: receipt.utmSource, utmMedium: receipt.utmMedium, utmCampaign: receipt.utmCampaign, utmContent: receipt.utmContent, utmTerm: receipt.utmTerm, referrerHost: receipt.referrerHost, redirectKind: receipt.redirectKind }, version: version.version, submission, answers };
+  }
+
+  async function remove(context: AuthenticatedContext, formId: string, receiptId: string) {
+    z.string().uuid().parse(formId);
+    z.string().uuid().parse(receiptId);
+    await assertForm(context, formId);
+    await options.authorization.assertAuthorized(context, PermissionKeys.MARKETING_DEFINITIONS_MANAGE, resource(context, formId));
+    return options.database.$transaction(async (transaction) => {
+      const receipt = await transaction.marketingFormReceipt.findFirst({
+        where: { workspaceId: context.workspaceId, marketingFormId: formId, publicId: receiptId, deletedAt: null },
+        select: { id: true, publicId: true, status: true },
+      });
+      if (!receipt) fail("Resposta não encontrada.", "MARKETING_FORM_RESPONSE_NOT_FOUND", 404);
+      const deletedAt = options.now();
+      const removed = await transaction.marketingFormReceipt.updateMany({
+        where: { id: receipt.id, workspaceId: context.workspaceId, marketingFormId: formId, deletedAt: null },
+        data: { deletedAt },
+      });
+      if (removed.count !== 1) fail("Resposta não encontrada.", "MARKETING_FORM_RESPONSE_NOT_FOUND", 404);
+      await transaction.auditLog.create({ data: {
+        workspaceId: context.workspaceId,
+        actorId: context.actorId,
+        action: "marketing.form.response_deleted",
+        entityType: "MarketingFormReceipt",
+        entityId: receipt.id,
+        changes: { formId, receiptPublicId: receipt.publicId, previousStatus: receipt.status, leadPreserved: true },
+      } });
+      return { publicId: receipt.publicId, deletedAt, leadPreserved: true };
+    });
   }
 
   async function csv(context: AuthenticatedContext, formId: string, raw: unknown) {
@@ -174,7 +206,7 @@ export function createMarketingFormReportingService(options: Options) {
     return { views: totals.get("FORM_VIEW") ?? 0, starts, completed, completionRate: starts ? Math.round(completed / starts * 10_000) / 100 : null, medianSeconds: submissions[0]?.medianSeconds ?? null, abandonment: abandonment.map((row) => ({ questionKey: row.questionKey, viewed: Number(row.viewed), abandoned: Number(row.abandoned) })), choices: choices.map((row) => ({ ...row, total: Number(row.total) })), grain: "sessões únicas e receipts aceitos", generatedAt: options.now().toISOString() };
   }
 
-  return Object.freeze({ list, detail, csv, statistics });
+  return Object.freeze({ list, detail, remove, csv, statistics });
 }
 
 let service: ReturnType<typeof createMarketingFormReportingService> | undefined;
