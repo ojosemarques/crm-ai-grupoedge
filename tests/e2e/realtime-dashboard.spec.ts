@@ -22,9 +22,11 @@ test("gestor opera placar privado e bearer público revogável", async ({ contex
   await page.goto("/tempo-real");
   await expect(page.getByRole("heading", { name: "TEMPO REAL" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Slide 1 de 2" })).toBeVisible();
+  await page.waitForTimeout(500);
   await page.screenshot({ path: testInfo.outputPath("tempo-real-geral-1920x1080.png"), fullPage: true });
   await page.getByRole("button", { name: "Mostrar slide 2" }).click();
   await expect(page.getByRole("heading", { name: "Ranking de atividade" })).toBeVisible();
+  await page.waitForTimeout(500);
   await page.screenshot({ path: testInfo.outputPath("tempo-real-ranking-1920x1080.png"), fullPage: true });
 
   const request = browserRequest(page);
@@ -40,6 +42,7 @@ test("gestor opera placar privado e bearer público revogável", async ({ contex
   await expect(publicPage.getByRole("heading", { name: "TEMPO REAL" })).toBeVisible();
   await expect(publicPage.locator(".app-shell")).toHaveCount(0);
   expect(await publicPage.evaluate(() => window.location.hash.length)).toBe(44);
+  await publicPage.waitForTimeout(500);
   await publicPage.screenshot({ path: testInfo.outputPath("tempo-real-publico-1366x768.png"), fullPage: true });
 
   const revokeResponse = await request.post("/api/tempo-real", { data: { action: "REVOKE" } });
