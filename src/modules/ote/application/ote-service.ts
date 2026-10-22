@@ -1,6 +1,8 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { calculateSale, expectedOte, isNewAcv, oteCommandSchema, oteQuerySchema, releaseSchedule } from "@/modules/ote/domain/ote-calculator";
+import { automaticOteSale, oteSaleTerms } from "@/modules/ote/domain/automatic-ote-sale";
+import { readOteSdrOrigins } from "./ote-sdr-origins";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -41,27 +43,42 @@ export function createOteService({ database, authorization, now }: Options) {
     if (!plan) return { ...base, plan: null, sales: [], meetings: [], pendingSales: 0, summary: null };
     const at = now();
     const dateFilter = { gte: range.from, lt: range.to, lte: at };
+    const origins = plan.role === "SDR" ? await readOteSdrOrigins(database, context.workspaceId, context.memberId, at) : null;
+    const reviewedSdrSales = plan.role === "SDR" ? await database.oteSale.findMany({ where: { workspaceId: context.workspaceId, sdrMemberId: context.memberId }, select: { opportunityId: true } }) : [];
     // Ownership always comes from the validated session, never a query/body memberId.
-    const won = await database.opportunity.findMany({ where: { workspaceId: context.workspaceId, status: "WON", deletedAt: null, closedAt: dateFilter, currency: "BRL", ...(plan.role === "SDR" ? { id: { in: (await database.oteSale.findMany({ where: { workspaceId: context.workspaceId, sdrMemberId: context.memberId }, select: { opportunityId: true } })).map((s) => s.opportunityId) } } : { ownerMemberId: context.memberId }) }, select: { id: true, name: true, closedAt: true, ownerMemberId: true }, orderBy: [{ closedAt: "asc" }, { id: "asc" }] });
-    const facts = await database.oteSale.findMany({ where: { workspaceId: context.workspaceId, opportunityId: { in: won.map((s) => s.id) }, ...(plan.role === "SDR" ? { sdrMemberId: context.memberId } : { sellerMemberId: context.memberId }) } });
+    const won = await database.opportunity.findMany({ where: { workspaceId: context.workspaceId, status: "WON", deletedAt: null, closedAt: dateFilter, currency: "BRL", ...(origins ? { OR: [{ id: { in: [...reviewedSdrSales.map((s) => s.opportunityId), ...origins.saleIds] } }, ...origins.leads.map((l) => ({ leadId: l.leadId, closedAt: { gte: l.at } }))] } : { ownerMemberId: context.memberId }) }, select: { id: true, name: true, closedAt: true, ownerMemberId: true, amountCents: true, mrrCents: true, tcvCents: true, farmerExpansionSignalId: true, product: { select: { sku: true, kind: true, revenueCategory: true } } }, orderBy: [{ closedAt: "asc" }, { id: "asc" }] });
+    const facts = await database.oteSale.findMany({ where: { workspaceId: context.workspaceId, opportunityId: { in: won.map((s) => s.id) } } });
     if (plan.role === "SDR") {
-      const qualified = await database.oteMeeting.findMany({ where: { workspaceId: context.workspaceId, sdrMemberId: context.memberId, qualified: true } });
-      const meetings = await database.meeting.findMany({ where: { workspaceId: context.workspaceId, id: { in: qualified.map((m) => m.meetingId) }, status: "COMPLETED", deletedAt: null, completedAt: dateFilter }, select: { id: true, title: true, completedAt: true }, orderBy: { completedAt: "asc" } });
-      const variable = BigInt(meetings.length) * 4000n + BigInt(won.length) * 10000n;
-      return { ...base, plan: planView(plan), pendingSales: 0, meetings: meetings.map((m) => ({ id: m.id, name: m.title, date: m.completedAt!.toISOString(), amountCents: "4000" })), sales: won.map((s) => ({ id: s.id, name: s.name, date: s.closedAt!.toISOString(), kind: "SDR", acvCents: "0", receivedCents: "0", projectedCents: "10000", eligibleCents: "10000", rate: "R$ 100 por cliente originado", selfSourced: false, schedule: [], eligible: true })), summary: { newAcvCents: "0", commissionCents: variable.toString(), bonusCents: "0", totalCents: (plan.fixedCents + variable).toString(), eligibleCents: variable.toString(), meetingCount: meetings.length, saleCount: won.length } };
+      const reviewedMeetings = await database.oteMeeting.findMany({ where: { workspaceId: context.workspaceId, OR: [{ sdrMemberId: context.memberId }, { meetingId: { in: origins!.meetingIds } }] } });
+      const qualified = reviewedMeetings.filter((m) => m.sdrMemberId === context.memberId && m.qualified);
+      const automaticIds = origins!.meetingIds.filter((id) => !reviewedMeetings.some((m) => m.meetingId === id));
+      const meetings = await database.meeting.findMany({ where: { workspaceId: context.workspaceId, OR: [
+        { id: { in: qualified.map((m) => m.meetingId) } },
+        { id: { in: automaticIds }, lead: { qualification: { status: "COMPLETED", validatedAt: { not: null, lte: at } } } },
+      ], status: "COMPLETED", deletedAt: null, completedAt: dateFilter }, select: { id: true, title: true, completedAt: true }, orderBy: { completedAt: "asc" } });
+      const credited = won.filter((s) => { const reviewed = facts.find((f) => f.opportunityId === s.id); return !reviewed || reviewed.sdrMemberId === context.memberId; });
+      const variable = BigInt(meetings.length) * 4000n + BigInt(credited.length) * 10000n;
+      return { ...base, plan: planView(plan), pendingSales: 0, meetings: meetings.map((m) => ({ id: m.id, name: m.title, date: m.completedAt!.toISOString(), amountCents: "4000" })), sales: credited.map((s) => ({ id: s.id, name: s.name, date: s.closedAt!.toISOString(), kind: "SDR", acvCents: "0", receivedCents: "0", projectedCents: "10000", eligibleCents: "10000", rate: "R$ 100 por cliente originado", selfSourced: false, schedule: [], eligible: true, source: facts.some((f) => f.opportunityId === s.id) ? "REVIEWED" as const : "AUTOMATIC" as const, terms: null })), summary: { newAcvCents: "0", commissionCents: variable.toString(), bonusCents: "0", totalCents: (plan.fixedCents + variable).toString(), eligibleCents: variable.toString(), meetingCount: meetings.length, saleCount: credited.length } };
     }
-    const contracts = await database.commercialContract.findMany({ where: { workspaceId: context.workspaceId, opportunityId: { in: facts.map((s) => s.opportunityId) } }, select: { id: true, opportunityId: true } });
+    const contracts = await database.commercialContract.findMany({ where: { workspaceId: context.workspaceId, opportunityId: { in: won.map((s) => s.id) } }, select: { id: true, opportunityId: true, currentVersionId: true } });
     const contractIds = contracts.map((c) => c.id);
-    const [subscriptions, invoices] = await Promise.all([
+    const [subscriptions, invoices, versions, completions] = await Promise.all([
       database.subscription.findMany({ where: { workspaceId: context.workspaceId, contractId: { in: contractIds } }, select: { contractId: true, status: true, startsAt: true, endsAt: true, cancellationEffectiveAt: true } }),
       database.invoice.findMany({ where: { workspaceId: context.workspaceId, contractId: { in: contractIds } }, select: { id: true, contractId: true, totalCents: true, paidCents: true, dueAt: true, status: true } }),
+      database.contractVersion.findMany({ where: { workspaceId: context.workspaceId, id: { in: contracts.flatMap((c) => c.currentVersionId ? [c.currentVersionId] : []) } }, select: { id: true, totalCents: true, mrrCents: true, durationMonths: true, billingFrequency: true, paymentTerms: true } }),
+      database.auditLog.findMany({ where: { workspaceId: context.workspaceId, entityType: "Opportunity", entityId: { in: won.map((s) => s.id) }, action: "lead.sale.completed" }, select: { entityId: true, metadata: true }, orderBy: { occurredAt: "desc" } }),
     ]);
     const payments = await database.payment.findMany({ where: { workspaceId: context.workspaceId, invoiceId: { in: invoices.map((i) => i.id) }, status: "CONFIRMED", reversedAt: null, occurredAt: { lte: at }, currency: "BRL" }, select: { invoiceId: true, amountCents: true } });
     let newAcv = 0n;
     const sales = won.flatMap((sale) => {
-      const fact = facts.find((f) => f.opportunityId === sale.id);
-      if (!fact) return [];
       const contract = contracts.find((c) => c.opportunityId === sale.id);
+      const version = versions.find((v) => v.id === contract?.currentVersionId);
+      const reviewed = facts.find((f) => f.opportunityId === sale.id);
+      if (reviewed && reviewed.sellerMemberId !== context.memberId) return [];
+      const fact = reviewed ? { ...reviewed, source: "REVIEWED" as const } : automaticOteSale(sale, version);
+      if (!fact) return [];
+      const metadata = completions.find((c) => c.entityId === sale.id)?.metadata;
+      const snapshot = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata.salePayload : null;
       const subscription = subscriptions.find((s) => s.contractId === contract?.id);
       const saleInvoices = invoices.filter((i) => i.contractId === contract?.id);
       const received = payments.filter((p) => saleInvoices.some((i) => i.id === p.invoiceId)).reduce((sum, p) => sum + p.amountCents, 0n);
@@ -72,7 +89,7 @@ export function createOteService({ database, authorization, now }: Options) {
       if (isNewAcv(fact.kind)) newAcv += fact.acvCents;
       const schedule = fact.kind === "ANNUAL_MONTHLY" ? releaseSchedule(calculation.projectedCents, [30, 60, 90].map((days) => addWorkspaceCalendarDays(sale.closedAt!, days, range.timeZone)), at, eligible) : [];
       const eligibleCents = fact.kind === "ANNUAL_MONTHLY" ? schedule.filter((s) => s.eligible).reduce((sum, s) => sum + BigInt(s.amountCents), 0n) : eligible ? calculation.receiptCommissionCents : 0n;
-      return [{ id: sale.id, name: sale.name, date: sale.closedAt!.toISOString(), kind: fact.kind, acvCents: fact.acvCents.toString(), receivedCents: received.toString(), projectedCents: calculation.projectedCents.toString(), eligibleCents: eligibleCents.toString(), rate: calculation.rate, selfSourced: fact.selfSourced, schedule, eligible }];
+      return [{ id: sale.id, name: sale.name, date: sale.closedAt!.toISOString(), kind: fact.kind, acvCents: fact.acvCents.toString(), receivedCents: received.toString(), projectedCents: calculation.projectedCents.toString(), eligibleCents: eligibleCents.toString(), rate: calculation.rate, selfSourced: fact.selfSourced, schedule, eligible, source: fact.source, terms: oteSaleTerms(sale, version, snapshot) }];
     });
     const commission = sales.reduce((sum, s) => sum + BigInt(s.projectedCents), 0n);
     const bonus = newAcv >= plan.quotaCents ? plan.bonusCents : 0n;

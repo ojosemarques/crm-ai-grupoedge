@@ -42,7 +42,9 @@ export function calculateSale(input: { kind: string; acvCents: bigint; receivedC
     const tier2 = min(acv - tier1, max(0n, quota * 125n / 100n - max(prior, quota)));
     const tier3 = acv - tier1 - tier2;
     const commission = percent(tier1, 600 + extra) + percent(tier2, 800 + extra) + percent(tier3, 1000 + extra);
-    return { projectedCents: commission, receiptCommissionCents: commission, rate: `${6 + extra / 100}% / ${8 + extra / 100}% / ${10 + extra / 100}% por faixa` };
+    const rates = [[tier1, 6], [tier2, 8], [tier3, 10]] as const;
+    const applied = rates.filter(([base]) => base > 0n).map(([, rate]) => `${rate + extra / 100}%`);
+    return { projectedCents: commission, receiptCommissionCents: commission, rate: `${applied.join(" / ") || `${6 + extra / 100}%`}${applied.length > 1 ? " por faixa" : " do ACV"}` };
   }
   if (kind === "ANNUAL_UPFRONT") return { projectedCents: percent(received, 800 + extra), receiptCommissionCents: percent(received, 800 + extra), rate: `${8 + extra / 100}% do recebido` };
   if (kind === "PROJECT") return { projectedCents: percent(received, 500 + extra), receiptCommissionCents: percent(received, 500 + extra), rate: `${5 + extra / 100}% do recebido` };

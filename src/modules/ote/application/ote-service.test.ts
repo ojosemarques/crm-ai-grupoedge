@@ -10,9 +10,11 @@ function fixture(kind = "ANNUAL_MONTHLY") {
     actor: { findFirst: vi.fn().mockResolvedValue({ id: "actor" }) },
     workspace: { findUniqueOrThrow: vi.fn().mockResolvedValue({ timeZone: "America/Sao_Paulo" }) },
     otePlan: { findFirst: vi.fn().mockResolvedValue({ role: "CLOSER", label: "Plano", effectiveMonth: "2026-10", fixedCents: 370000n, quotaCents: 6000000n, bonusCents: 120000n, meetingQuota: 20, salesQuota: 4 }) },
-    opportunity: { findMany: vi.fn().mockResolvedValue([{ id: "sale", name: "Venda", closedAt: new Date("2026-10-01T15:00:00Z"), ownerMemberId: "seller" }]) },
+    opportunity: { findMany: vi.fn().mockResolvedValue([{ id: "sale", name: "Venda", closedAt: new Date("2026-10-01T15:00:00Z"), ownerMemberId: "seller", amountCents: 6000000n, mrrCents: 500000n, tcvCents: 6000000n }]) },
     oteSale: { findMany: vi.fn().mockResolvedValue([{ opportunityId: "sale", sellerMemberId: "seller", kind, acvCents: 6000000n, selfSourced: false }]) },
     commercialContract: { findMany: vi.fn().mockResolvedValue([{ id: "contract", opportunityId: "sale" }]) },
+    contractVersion: { findMany: vi.fn().mockResolvedValue([]) },
+    auditLog: { findMany: vi.fn().mockResolvedValue([]) },
     subscription: { findMany: vi.fn().mockResolvedValue([{ contractId: "contract", status: "ACTIVE", startsAt: new Date("2026-10-01"), endsAt: null, cancellationEffectiveAt: null }]) },
     invoice: { findMany: vi.fn().mockResolvedValue([{ id: "invoice", contractId: "contract", totalCents: 500000n, paidCents: 500000n, dueAt: new Date("2026-10-01"), status: "PAID" }]) },
     payment: { findMany: vi.fn().mockResolvedValue([{ invoiceId: "invoice", amountCents: 500000n }]) },
@@ -21,6 +23,15 @@ function fixture(kind = "ANNUAL_MONTHLY") {
   return { database, service };
 }
 describe("elegibilidade OTE a partir de fatos financeiros", () => {
+  it("inclui automaticamente a primeira venda de 18 mil sem classificação manual", async () => {
+    const { database, service } = fixture();
+    database.oteSale.findMany.mockResolvedValue([]);
+    database.opportunity.findMany.mockResolvedValue([{ id: "sale", name: "Cliente sintético", closedAt: new Date("2026-10-01T15:00:00Z"), ownerMemberId: "seller", amountCents: 1800000n, tcvCents: 1800000n, mrrCents: 150000n, product: { sku: "SISTEMA-POLITIZAI", kind: "LICENSE", revenueCategory: "SOFTWARE" } }] as never);
+    const screen = await service.screen(context, { month: "2026-10" });
+    expect(screen.pendingSales).toBe(0);
+    expect(screen.summary).toMatchObject({ newAcvCents: "1800000", commissionCents: "108000", bonusCents: "0", totalCents: "478000", saleCount: 1 });
+    expect(screen.sales).toHaveLength(1);
+  });
   it("consulta somente o dono e recebimentos confirmados, sem estorno e sem datas futuras", async () => {
     const { database, service } = fixture();
     const screen = await service.screen(context, { month: "2026-10" });
