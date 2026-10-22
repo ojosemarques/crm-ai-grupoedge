@@ -6,7 +6,7 @@
 [Rail: Geral | Ranking | Pausar | Tela cheia | Compartilhar | Voltar ao CRM]
 [TEMPO REAL | Status | Escuro/Claro | Workspace]
 [Título/contexto da visão | Geral/Ranking]
-[Ações hoje][Ações semana][Execuções hoje/semana][Meta semanal de vendas]
+[Contatos de hoje][Contatos da semana][Ligações feitas hoje/semana][Meta semanal de vendas]
 
 GERAL
 [Hoje: 6 métricas + metas + receita] [Semana: 6 métricas + metas + receita] [Meta vendas / Série diária]
@@ -28,6 +28,7 @@ O pedido corretivo de 22/10/2026 unifica as composições: mesmo rail, cabeçalh
 - Métricas essenciais sem scroll manual.
 - Top 3 + tabela com quatro linhas por página. Páginas avançam a cada 12 segundos e a posição é preservada entre os ciclos para incluir toda a equipe.
 - Ranking restrito às contas de Carlos Henrique, Ede Rafael e Jhon Cunha, identificadas no servidor pelo e-mail normalizado. Matheus Mendon, Administrador e demais contas não aparecem nas linhas nem no pódio. Os totais de fatos continuam considerando a base completa; as metas da equipe consideram somente os três vendedores. A mesma regra vale para o painel privado e o público.
+- Os três primeiros cards somam os contatos efetivos de hoje, os contatos efetivos únicos na semana por vendedor e as ligações de hoje dos profissionais retornados no ranking (com ligações da semana no apoio). Não usam a soma de ações nem tarefas concluídas, não fixam a produção no valor das metas e não alteram os painéis de metas diária/semanal nem a meta semanal de vendas.
 - Shell próprio nas rotas exatas privada e pública; autenticação e autorização da rota privada permanecem no servidor.
 - TV mantém métricas sem scroll; celular empilha os painéis e usa scroll interno na tabela individual.
 - Fullscreen via Web API, com fallback informativo.

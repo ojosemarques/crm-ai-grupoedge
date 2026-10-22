@@ -6,7 +6,6 @@ export const number = new Intl.NumberFormat("pt-BR");
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 export function formatCents(value: string) { return money.format(Number(BigInt(value)) / 100); }
 const date = (value: string) => value.split("-").reverse().slice(0, 2).join("/");
-const activity = (totals: RealtimeDashboardTotals) => totals.calls + totals.messages + totals.meetingsScheduled + totals.meetingsCompleted;
 const metrics = [
   { key: "effectiveContacts", label: "Contatos efetivos", detail: "Pessoas únicas no período", icon: "people" },
   { key: "calls", label: "Ligações", detail: "Tentativas registradas", icon: "phone" },
@@ -31,10 +30,14 @@ export function GoalMeter({ goal, metric, compact = false }: Readonly<{ goal: Re
 
 export function DashboardSummary({ snapshot }: Readonly<{ snapshot: RealtimeDashboardSnapshot }>) {
   const goal = snapshot.week.goals.sales;
+  const contactsToday = snapshot.week.ranking.reduce((total, row) => total + row.today.effectiveContacts, 0);
+  const contactsWeek = snapshot.week.ranking.reduce((total, row) => total + row.effectiveContacts, 0);
+  const callsToday = snapshot.week.ranking.reduce((total, row) => total + row.today.calls, 0);
+  const callsWeek = snapshot.week.ranking.reduce((total, row) => total + row.calls, 0);
   return <div className={styles.summaryStrip}>
-    <article><span>Ações de hoje</span><strong>{number.format(activity(snapshot.today.totals))}<Icon name="chart" /></strong><small>Ligações, mensagens e reuniões</small></article>
-    <article><span>Ações da semana</span><strong>{number.format(activity(snapshot.week.totals))}<Icon name="people" /></strong><small>Segunda a sexta</small></article>
-    <article><span>Execuções concluídas</span><strong>{number.format(snapshot.today.totals.tasksCompleted)}<small>hoje</small><Icon name="check" /></strong><small>{number.format(snapshot.week.totals.tasksCompleted)} na semana · tarefas registradas</small></article>
+    <article aria-label="Contatos de hoje"><span>Contatos de hoje</span><strong>{number.format(contactsToday)}<Icon name="people" /></strong><small>Contatos efetivos · soma por vendedor</small></article>
+    <article aria-label="Contatos da semana"><span>Contatos da semana</span><strong>{number.format(contactsWeek)}<Icon name="people" /></strong><small>Soma por vendedor · segunda a sexta</small></article>
+    <article aria-label="Ligações feitas hoje"><span>Ligações feitas hoje</span><strong>{number.format(callsToday)}<Icon name="phone" /></strong><small>{number.format(callsWeek)} na semana · ligações registradas</small></article>
     <article className={styles.summaryGoal}><span>Meta semanal de vendas</span><strong>{goal.targetValue === null ? number.format(snapshot.week.totals.sales) : goalValue(goal.actualValue)}<small>/ {goal.targetValue === null ? "não definida" : goalValue(goal.targetValue)}</small><Icon name="sale" /></strong><small>{goal.targetValue === null ? "Cadastre uma meta semanal em Metas" : goal.label}</small></article>
   </div>;
 }

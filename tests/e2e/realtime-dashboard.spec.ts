@@ -138,6 +138,32 @@ function visualSnapshot(): RealtimeDashboardSnapshot {
   return { workspaceName: "Grupo Edge", timeZone, generatedAt: now.toISOString(), freshnessAt: now.toISOString(), quality: { state: "LIVE", reason: "Fixture visual isolada" }, ...result, week: { ...result.week, salesGoal: { target: "200", achieved: 160, progressBasisPoints: 8000, label: "Vendas da semana" } } };
 }
 
+test("resumo mostra contatos dos vendedores e ligações reais sem alterar os painéis de metas", async ({ page }) => {
+  const original = visualSnapshot();
+  const snapshot: RealtimeDashboardSnapshot = {
+    ...original,
+    today: { ...original.today, totals: { ...original.today.totals, effectiveContacts: 999, calls: 999, tasksCompleted: 999 } },
+    week: { ...original.week, totals: { ...original.week.totals, effectiveContacts: 888, calls: 888 }, ranking: original.week.ranking.slice(0, 3).map((row, index) => ({
+      ...row, name: ["Carlos Henrique", "Jhon Cunha", "Ede Rafael"][index]!,
+      effectiveContacts: [200, 65, 80][index]!, calls: [100, 50, 80][index]!,
+      today: { ...row.today, effectiveContacts: [75, 12, 30][index]!, calls: [40, 7, 13][index]!, tasksCompleted: 500 },
+    })) },
+  };
+  await page.route("**/api/public/tempo-real", (route) => route.fulfill({ json: { result: snapshot } }));
+  await page.goto(`/tempo-real-publico#${"v".repeat(43)}`);
+  const today = page.getByRole("article", { name: "Contatos de hoje", exact: true });
+  const week = page.getByRole("article", { name: "Contatos da semana", exact: true });
+  const calls = page.getByRole("article", { name: "Ligações feitas hoje", exact: true });
+  await expect(today.locator(":scope > strong")).toHaveText("117");
+  await expect(week.locator(":scope > strong")).toHaveText("345");
+  await expect(calls.locator(":scope > strong")).toHaveText("60");
+  await expect(calls).toContainText("230 na semana");
+  await expect(calls).not.toContainText("tarefas");
+  await expect(page.getByRole("region", { name: "Métricas de hoje" }).locator('[data-metric="effectiveContacts"] > strong')).toHaveText("999");
+  await expect(page.getByRole("region", { name: "Métricas da semana" }).locator('[data-metric="effectiveContacts"] > strong')).toHaveText("888");
+  await expect(page.getByRole("article", { name: "Meta de vendas da semana" })).toContainText("de 200 vendas");
+});
+
 test("visual de TV unificado suporta dois temas e paginação de 32 profissionais", async ({ page }, testInfo) => {
   const snapshot = visualSnapshot();
   const errors: string[] = [];
