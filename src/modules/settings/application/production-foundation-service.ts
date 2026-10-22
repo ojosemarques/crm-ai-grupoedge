@@ -1,6 +1,10 @@
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { defaultLeadStageCodes, leadStageLabels } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import { regularDestinationCodes } from "@/modules/pipelines/domain/lead-stage-transition-policy";
+import {
+  ACTIVE_PROSPECTING_PIPELINE_NAME,
+  ADVERTISING_PIPELINE_NAME,
+} from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 
 const defaultCadence = [
   { dayOffset: 1, action: "WHATSAPP" },
@@ -110,15 +114,16 @@ async function ensureLeadPipeline(
   }
 }
 
-async function ensureActiveProspectingPipelineInTransaction(
+async function ensureProspectingOperationPipelineInTransaction(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   actorId: string,
   result: Counters,
+  pipelineName: string,
 ) {
-  let pipeline = await tx.pipeline.findFirst({ where: { workspaceId, entityType: "LEAD", name: "Prospecção Ativa", deletedAt: null } });
+  let pipeline = await tx.pipeline.findFirst({ where: { workspaceId, entityType: "LEAD", name: pipelineName, deletedAt: null } });
   if (!pipeline) {
-    pipeline = await tx.pipeline.create({ data: { workspaceId, name: "Prospecção Ativa", entityType: "LEAD", isDefault: false, createdByActorId: actorId, updatedByActorId: actorId } });
+    pipeline = await tx.pipeline.create({ data: { workspaceId, name: pipelineName, entityType: "LEAD", isDefault: false, createdByActorId: actorId, updatedByActorId: actorId } });
     result.pipelines += 1;
   }
   const ids: string[] = [];
@@ -152,7 +157,20 @@ export async function ensureActiveProspectingPipeline(
   return database.$transaction(async (transaction) => {
     await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`active-prospecting:${workspaceId}`}))`;
     const result: Counters = { settings: 0, cadence: 0, pipelines: 0, stages: 0, transitions: 0, scoringRules: 0, slaPolicies: 0, priorityBands: 0, reasons: 0 };
-    await ensureActiveProspectingPipelineInTransaction(transaction, workspaceId, actorId, result);
+    await ensureProspectingOperationPipelineInTransaction(transaction, workspaceId, actorId, result, ACTIVE_PROSPECTING_PIPELINE_NAME);
+    return result;
+  }, { maxWait: 10_000, timeout: 30_000 });
+}
+
+export async function ensureAdvertisingPipeline(
+  database: PrismaClient,
+  workspaceId: string,
+  actorId: string,
+) {
+  return database.$transaction(async (transaction) => {
+    await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`advertising-pipeline:${workspaceId}`}))`;
+    const result: Counters = { settings: 0, cadence: 0, pipelines: 0, stages: 0, transitions: 0, scoringRules: 0, slaPolicies: 0, priorityBands: 0, reasons: 0 };
+    await ensureProspectingOperationPipelineInTransaction(transaction, workspaceId, actorId, result, ADVERTISING_PIPELINE_NAME);
     return result;
   }, { maxWait: 10_000, timeout: 30_000 });
 }
@@ -259,7 +277,8 @@ export async function ensureProductionFoundationInTransaction(tx: Prisma.Transac
     }
 
     await ensureLeadPipeline(tx, workspaceId, actorId, result, { name: "Pré-vendas", isDefault: true });
-    await ensureActiveProspectingPipelineInTransaction(tx, workspaceId, actorId, result);
+    await ensureProspectingOperationPipelineInTransaction(tx, workspaceId, actorId, result, ACTIVE_PROSPECTING_PIPELINE_NAME);
+    await ensureProspectingOperationPipelineInTransaction(tx, workspaceId, actorId, result, ADVERTISING_PIPELINE_NAME);
     await ensureSalesPipeline(tx, workspaceId, actorId, result);
 
     for (const [position, [key, name]] of ([

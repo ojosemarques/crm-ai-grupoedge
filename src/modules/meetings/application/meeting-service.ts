@@ -36,6 +36,7 @@ import { enqueueGoogleCalendarSyncInTransaction } from "@/modules/integrations/a
 import {
   transitionLeadStageInTransaction,
 } from "@/modules/pipelines/application/pre-sales-pipeline-service";
+import { prospectingOperationPipelineNames } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { pactoDimensionLabels } from "@/modules/qualification/domain/pacto-contracts";
 import type {
   AuthorizationDecision,
@@ -342,8 +343,6 @@ function statusLabel(status: MeetingStatus): string {
   } satisfies Record<MeetingStatus, string>)[status];
 }
 
-const activeProspectingPipelineName = "Prospecção Ativa";
-
 function activeProspectingMeetingStage(status: MeetingStatus) {
   if (status === "COMPLETED") return "active-prospecting.meeting-completed";
   if (status === "CANCELLED" || status === "NO_SHOW") return "active-prospecting.meeting-no-show";
@@ -367,7 +366,7 @@ async function syncActiveProspectingMeetingStageInTransaction(
       id: input.pipelineId,
       workspaceId: context.workspaceId,
       entityType: "LEAD",
-      name: activeProspectingPipelineName,
+      name: { in: [...prospectingOperationPipelineNames] },
       deletedAt: null,
     },
     select: { id: true },

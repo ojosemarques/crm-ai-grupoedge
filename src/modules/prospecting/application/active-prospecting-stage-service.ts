@@ -1,9 +1,8 @@
 import type { Prisma } from "@/generated/prisma/client";
 import { transitionLeadStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
+import { isProspectingOperationPipelineName } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import type { ActiveProspectingStageOutcome } from "@/modules/prospecting/domain/prospecting-stage-outcome";
 import { ApplicationError } from "@/shared/core/errors/application-error";
-
-const activeProspectingPipelineName = "Prospecção Ativa";
 
 const stageRules: Readonly<Record<ActiveProspectingStageOutcome, Readonly<{
   targetStableKey: string;
@@ -56,7 +55,7 @@ export async function syncActiveProspectingStageInTransaction(
       pipeline: { select: { id: true, name: true } },
     },
   });
-  if (!lead || lead.pipeline.name !== activeProspectingPipelineName) {
+  if (!lead || !isProspectingOperationPipelineName(lead.pipeline.name)) {
     return Object.freeze({ synced: false as const, reason: "OUTSIDE_ACTIVE_PROSPECTING" as const });
   }
   if (lead.currentStage.stableKey === rule.targetStableKey) {
@@ -75,7 +74,7 @@ export async function syncActiveProspectingStageInTransaction(
     select: { id: true },
   });
   if (!target) {
-    throw new ApplicationError(`Etapa ${rule.targetStableKey} ausente na Prospecção Ativa.`, {
+    throw new ApplicationError(`Etapa ${rule.targetStableKey} ausente no pipeline ${lead.pipeline.name}.`, {
       code: "PROSPECTING_STAGE_NOT_FOUND",
       statusCode: 503,
       expose: true,

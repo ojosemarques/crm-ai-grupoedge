@@ -2,6 +2,7 @@ import type { AuthenticatedContext } from "@/modules/auth/application/authentica
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { getDatabaseClient } from "@/shared/core/database/client";
+import { isProspectingOperationPipelineName } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 
 export type BusinessPipelineOption = Readonly<{
   id: string;
@@ -10,7 +11,7 @@ export type BusinessPipelineOption = Readonly<{
   href: string;
 }>;
 
-export const ACTIVE_PROSPECTING_PIPELINE_NAME = "Prospecção Ativa";
+export { ACTIVE_PROSPECTING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 
 export async function listBusinessPipelines(
   context: AuthenticatedContext,
@@ -35,7 +36,7 @@ export async function listBusinessPipelines(
     }),
   ]);
   return pipelines
-    .filter((pipeline) => !(pipeline.entityType === "LEAD" && pipeline.name === ACTIVE_PROSPECTING_PIPELINE_NAME))
+    .filter((pipeline) => !(pipeline.entityType === "LEAD" && isProspectingOperationPipelineName(pipeline.name)))
     .filter((pipeline) => pipeline.entityType === "LEAD" ? leadRead.allowed : opportunityRead.allowed)
     .map((pipeline) => ({
       ...pipeline,

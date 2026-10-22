@@ -31,6 +31,7 @@ import {
   type PreSalesPipelineScreen,
   type StageTransitionOption,
 } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
+import { isProspectingOperationPipelineName } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import type { ResourceScope } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
@@ -118,7 +119,6 @@ function isLeadStageCode(value: LeadPipelineStageCode | null): value is LeadStag
   return value !== null && leadStageCodes.includes(value);
 }
 
-const activeProspectingPipelineName = "Prospecção Ativa";
 const activeProspectingStageCodes = [
   "NEW",
   "TRYING_CONTACT",
@@ -135,7 +135,7 @@ const activeProspectingStageCodes = [
 
 function assertCompleteLeadStages(pipelineName: string, stages: readonly PipelineStageRecord[]) {
   const configured = new Set(stages.flatMap((stage) => isLeadStageCode(stage.leadStageCode) ? [stage.leadStageCode] : []));
-  const required = pipelineName === activeProspectingPipelineName ? activeProspectingStageCodes : defaultLeadStageCodes;
+  const required = isProspectingOperationPipelineName(pipelineName) ? activeProspectingStageCodes : defaultLeadStageCodes;
   const missing = required.filter((code) => !configured.has(code));
   if (missing.length > 0) {
     conflict(
@@ -698,7 +698,7 @@ export async function syncActiveProspectingCommercialStageInTransaction(
     where: { id: input.leadId, workspaceId: context.workspaceId, deletedAt: null },
     select: { id: true, currentStageId: true, pipeline: { select: { id: true, name: true } } },
   });
-  if (!lead || lead.pipeline.name !== activeProspectingPipelineName) {
+  if (!lead || !isProspectingOperationPipelineName(lead.pipeline.name)) {
     return Object.freeze({ synced: false as const });
   }
   const target = await transaction.pipelineStage.findFirst({
@@ -711,7 +711,7 @@ export async function syncActiveProspectingCommercialStageInTransaction(
     select: { id: true },
   });
   if (!target) {
-    conflict("PIPELINE_CONFIGURATION_INVALID", `A etapa ${input.targetCode} não está configurada na Prospecção Ativa.`);
+    conflict("PIPELINE_CONFIGURATION_INVALID", `A etapa ${input.targetCode} não está configurada no pipeline ${lead.pipeline.name}.`);
   }
   if (target.id === lead.currentStageId) return Object.freeze({ synced: false as const });
   const result = await transitionLeadStageInTransaction(transaction, context, {

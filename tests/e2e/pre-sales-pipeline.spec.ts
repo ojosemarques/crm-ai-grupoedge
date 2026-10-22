@@ -173,11 +173,35 @@ test("separa a Prospecção Ativa do pipeline de pré-vendas e expõe a operaç�
   await expect(page.getByRole("button", { name: /^(Expandir|Recolher) menu$/ })).toHaveCount(0);
   await expect(areaNavigation.getByRole("link", { name: "Negócios", exact: true })).toHaveCount(0);
   const activeProspectingLink = areaNavigation.getByRole("link", { name: "Prospecção Ativa", exact: true });
+  const advertisingLink = areaNavigation.getByRole("link", { name: "Anúncios", exact: true });
+  await expect(areaNavigation.getByRole("link", { name: "Pré-vendas", exact: true })).toHaveCount(0);
   await expect(activeProspectingLink).toHaveAttribute("href", "/email-agente");
+  await expect(advertisingLink).toHaveAttribute("href", "/anuncios");
   await expect(page.locator("#menu-principal")).toHaveCSS("width", "208px");
   await page.goto("/pipeline");
   const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
   await expect(pipelineNavigation.getByText("Prospecção Ativa", { exact: true })).toHaveCount(0);
+  await expect(pipelineNavigation.getByText("Anúncios", { exact: true })).toHaveCount(0);
+  await advertisingLink.click();
+  await expect(page).toHaveURL(/\/anuncios(?:\?|$)/);
+  await expect(page.getByRole("heading", { name: "Anúncios", exact: true })).toBeVisible();
+  const advertisingAreas = page.getByRole("navigation", { name: "Áreas de Anúncios" });
+  for (const label of ["Pipeline", "Estoque", "Atividades", "Métricas"]) {
+    await expect(advertisingAreas.getByRole("link", { name: label, exact: true })).toBeVisible();
+  }
+  await expect(page.getByRole("region", { name: "Quadro do pipeline" })).toBeVisible();
+  const advertisingLeadName = `Anúncios E2E ${randomUUID().slice(0, 8)}`;
+  await page.getByRole("button", { name: "Adicionar", exact: true }).click();
+  const advertisingLeadDialog = page.getByRole("dialog");
+  await advertisingLeadDialog.getByLabel("Nome", { exact: true }).fill(advertisingLeadName);
+  await advertisingLeadDialog.getByLabel("Telefone", { exact: true }).fill(uniquePhone(advertisingLeadName));
+  await advertisingLeadDialog.getByRole("button", { name: "Adicionar lead" }).click();
+  const advertisingLeadCard = page.locator("article").filter({ hasText: advertisingLeadName });
+  await expect(advertisingLeadCard).toBeVisible();
+  await advertisingLeadCard.click();
+  await expect(page.getByRole("dialog").getByText(advertisingLeadName, { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Fechar ficha e voltar ao pipeline" }).click();
+  await expect(page).toHaveURL(/\/anuncios(?:\?|$)/);
   await activeProspectingLink.click();
   await expect(page).toHaveURL(/\/email-agente(?:\?|$)/);
   await expect(page.getByRole("heading", { name: "Prospecção Ativa", exact: true })).toBeVisible();

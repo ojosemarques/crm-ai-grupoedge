@@ -1,8 +1,7 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { prospectingOperationPipelineNames } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
-
-export const ACTIVE_PROSPECTING_PIPELINE_NAME = "Prospecção Ativa";
 
 export async function getActiveProspectingLeadEntryPipeline(
   database: PrismaClient,
@@ -33,7 +32,7 @@ export async function getActiveProspectingLeadEntryPipeline(
       where: {
         workspaceId: context.workspaceId,
         entityType: "LEAD",
-        name: ACTIVE_PROSPECTING_PIPELINE_NAME,
+        name: { in: [...prospectingOperationPipelineNames] },
         ...(pipelineId ? { id: pipelineId } : {}),
         deletedAt: null,
         stages: { some: { type: "OPEN", deletedAt: null } },
