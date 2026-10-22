@@ -159,6 +159,8 @@ test("visual de TV unificado suporta dois temas e paginação de 32 profissionai
   await page.getByRole("button", { name: "Mostrar slide 1" }).click();
   await page.getByRole("button", { name: "Mostrar slide 2" }).click();
   await page.clock.fastForward(12_000);
+  await expect(page.getByRole("table")).toContainText("Contatos-dia");
+  await expect(page.getByRole("table")).toContainText("Meta × 5");
   await expect(page.getByRole("table")).toContainText("Profissional de sobrenome composto 5");
   await page.getByRole("button", { name: "Pausar apresentação" }).click();
   await page.clock.fastForward(70_000);

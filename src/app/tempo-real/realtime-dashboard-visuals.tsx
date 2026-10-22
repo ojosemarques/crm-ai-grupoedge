@@ -21,8 +21,9 @@ function goalValue(value: string, metric?: RealtimeGoalMetric) { return metric =
 
 export function GoalMeter({ goal, metric, compact = false }: Readonly<{ goal: RealtimeGoalProgress; metric?: RealtimeGoalMetric; compact?: boolean }>) {
   const configured = goal.targetValue !== null && BigInt(goal.targetValue) > 0n;
+  const compactLabel = metric === "messages" ? "Meta WA/IG" : goal.source === "DAILY_PROFILE_X5" ? metric === "effectiveContacts" ? "Contatos-dia" : "Meta × 5" : "Meta";
   return <div className={styles.goalMeter} data-compact={compact || undefined} data-configured={configured} title={configured ? `${goal.label} · ${goal.coveredMembers}/${goal.totalMembers} vendedores com meta` : goal.label}>
-    <div><span>{configured ? compact ? metric === "messages" ? "Meta WA/IG" : "Meta" : goal.label : "Sem meta cadastrada"}</span>{configured ? <b>{goalValue(goal.actualValue, metric)} <i>/ {goalValue(goal.targetValue!, metric)}</i></b> : <b>—</b>}</div>
+    <div><span>{configured ? compact ? compactLabel : goal.label : "Sem meta cadastrada"}</span>{configured ? <b>{goalValue(goal.actualValue, metric)} <i>/ {goalValue(goal.targetValue!, metric)}</i></b> : <b>—</b>}</div>
     {configured ? <div className={styles.progressTrack} role="meter" aria-label={`${goal.label}${metric ? ` · ${metric}` : ""}`} aria-valuenow={percent(goal)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${percent(goal)}%` }} /></div> : <div className={styles.progressTrack}><i /></div>}
     {!compact && configured && goal.coveredMembers < goal.totalMembers ? <small>Cobertura parcial · {goal.coveredMembers}/{goal.totalMembers} vendedores com meta</small> : null}
   </div>;
