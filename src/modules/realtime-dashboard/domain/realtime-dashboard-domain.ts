@@ -131,10 +131,7 @@ function rankedSellerActivity(
       actions: row.calls + row.whatsappMessages + row.instagramMessages + row.emailsSent
         + row.meetingsBooked + row.meetingsCompleted,
     }))
-    .sort((left, right) => right.actions - left.actions
-      || right.effectiveContacts - left.effectiveContacts
-      || right.meetingsCompleted - left.meetingsCompleted
-      || right.sales - left.sales
+    .sort((left, right) => right.meetingsBooked - left.meetingsBooked
       || left.name.localeCompare(right.name, "pt-BR")
       || left.id.localeCompare(right.id));
 }
@@ -201,8 +198,12 @@ export function aggregateRealtimeDashboard(
       goals: goals.week,
       ranking: Object.freeze(weeklyRows.map((row, index) => {
         const memberId = orderedMembers[index]!.id;
-        return Object.freeze({ ...row, today: dailyRows.get(memberId)!, goals: goals.byMember.get(memberId)! });
-      })),
+        return { ...row, today: dailyRows.get(memberId)!, goals: goals.byMember.get(memberId)! };
+      }).sort((left, right) => right.today.meetingsScheduled - left.today.meetingsScheduled
+        || right.meetingsScheduled - left.meetingsScheduled
+        || left.name.localeCompare(right.name, "pt-BR")
+        || left.position - right.position)
+        .map((row, index) => Object.freeze({ ...row, position: index + 1 }))),
     }),
   });
 }

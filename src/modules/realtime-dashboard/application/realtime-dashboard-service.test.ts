@@ -132,7 +132,7 @@ describe("serviço do dashboard tempo real", () => {
     const screen = await service.screen({ workspaceId: "workspace" } as never);
     expect(screen.snapshot).toEqual(publicSnapshot);
     expect(publicSnapshot.week.ranking.map((row) => [row.name, row.position, row.calls])).toEqual([
-      ["Jhon Cunha", 1, 1], ["Carlos Henrique", 2, 0], ["Ede Rafael", 3, 0],
+      ["Carlos Henrique", 1, 0], ["Ede Rafael", 2, 0], ["Jhon Cunha", 3, 1],
     ]);
     expect(publicSnapshot.today.totals.calls).toBe(3);
     expect(publicSnapshot.week.totals.calls).toBe(3);

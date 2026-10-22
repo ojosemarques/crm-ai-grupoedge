@@ -56,11 +56,12 @@ describe("dashboard tempo real", () => {
     expect(summary.week.totals).toEqual(summary.today.totals);
   });
 
-  it("ordena ranking pelos critérios definidos e mantém vendedores com zero", () => {
+  it("prioriza agendamentos no período em vez de ações e mantém vendedores com zero", () => {
     const facts = [
-      fact({ id: "a1", eventType: "CALL_ATTEMPTED", occurredAt: "2026-10-22T12:00:00.000Z", creditedMemberId: "a" }),
+      fact({ id: "a1", eventType: "CALL_ATTEMPTED", occurredAt: "2026-10-22T12:00:00.000Z", creditedMemberId: "a", quantity: 100 }),
       fact({ id: "b1", eventType: "MEETING_COMPLETED", occurredAt: "2026-10-22T12:00:00.000Z", creditedMemberId: "b" }),
       fact({ id: "b2", eventType: "SALE_WON", occurredAt: "2026-10-22T12:01:00.000Z", creditedMemberId: "b" }),
+      fact({ id: "b3", eventType: "MEETING_SCHEDULED", occurredAt: "2026-10-22T12:02:00.000Z", creditedMemberId: "a", bookedByMemberId: "b" }),
     ];
     const ranking = buildRealtimeDashboardRanking(facts, [
       { id: "a", name: "Ana Lima" },
@@ -69,10 +70,30 @@ describe("dashboard tempo real", () => {
     ]);
 
     expect(ranking.map((row) => [row.name, row.actions, row.position])).toEqual([
-      ["Bia Luz", 1, 1],
-      ["Ana Lima", 1, 2],
+      ["Bia Luz", 2, 1],
+      ["Ana Lima", 100, 2],
       ["Carlos Sol", 0, 3],
     ]);
+  });
+
+  it("ordena pódio e tabela por agendamentos de hoje, com desempate semanal e nominal, sem trocar metas entre pessoas", () => {
+    const periods = resolveRealtimeDashboardPeriods(new Date("2026-10-22T15:00:00Z"), "America/Sao_Paulo");
+    const sellers = [{ id: "c", name: "Carlos" }, { id: "e", name: "Ede" }, { id: "j", name: "Jhon" }];
+    const profiles = sellers.map((seller, index) => ({ memberId: seller.id, callsTarget: 50 + index, messagesTarget: 40, effectiveContactsTarget: 75, meetingsScheduledTarget: 4, meetingsCompletedTarget: seller.id === "c" ? 0 : 2, salesValueTargetCents: 0n }));
+    const facts = [
+      fact({ id: "c-old", eventType: "MEETING_SCHEDULED", creditedMemberId: "c", quantity: 10, occurredAt: "2026-10-20T12:00:00Z" }),
+      fact({ id: "c-calls", eventType: "CALL_ATTEMPTED", creditedMemberId: "c", quantity: 100, occurredAt: "2026-10-22T12:00:00Z" }),
+      fact({ id: "e-today", eventType: "MEETING_SCHEDULED", creditedMemberId: "c", bookedByMemberId: "e", quantity: 3, occurredAt: "2026-10-22T12:00:00Z" }),
+      fact({ id: "j-today", eventType: "MEETING_SCHEDULED", creditedMemberId: "j", quantity: 2, occurredAt: "2026-10-22T12:00:00Z" }),
+    ];
+    const summary = aggregateRealtimeDashboard(facts, sellers, periods, { profiles, quotas: [] });
+    expect(summary.week.ranking.map(row => [row.position, row.name, row.today.meetingsScheduled, row.meetingsScheduled, row.goals.today.calls.targetValue])).toEqual([
+      [1, "Ede", 3, 3, "51"], [2, "Jhon", 2, 2, "52"], [3, "Carlos", 0, 10, "50"],
+    ]);
+    const tied = aggregateRealtimeDashboard([], sellers, periods, { profiles, quotas: [] });
+    expect(tied.week.ranking.map(row => row.name)).toEqual(["Carlos", "Ede", "Jhon"]);
+    const weeklyTie = aggregateRealtimeDashboard(facts.filter(row => row.id !== "e-today" && row.id !== "j-today"), sellers, periods, { profiles, quotas: [] });
+    expect(weeklyTie.week.ranking.map(row => row.name)).toEqual(["Carlos", "Ede", "Jhon"]);
   });
 
   it("oculta membros somente do ranking, preservando fatos, totais e metas gerais", () => {
@@ -94,7 +115,7 @@ describe("dashboard tempo real", () => {
     expect(filtered.week.goals).toEqual(original.week.goals);
     expect(filtered.week.daily).toEqual(original.week.daily);
     expect(filtered.week.ranking.map((row) => [row.name, row.position, row.calls])).toEqual([
-      ["Jhon Cunha", 1, 3], ["Ede Rafael", 2, 2], ["Carlos Henrique", 3, 1],
+      ["Carlos Henrique", 1, 1], ["Ede Rafael", 2, 2], ["Jhon Cunha", 3, 3],
     ]);
     for (const row of filtered.week.ranking) {
       expect(row.today.calls).toBe(row.calls);

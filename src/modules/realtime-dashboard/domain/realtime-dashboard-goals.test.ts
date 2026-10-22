@@ -12,7 +12,7 @@ const quota = (input: Partial<RealtimeWeeklyQuota> = {}): RealtimeWeeklyQuota =>
 describe("metas reais do painel unificado", () => {
   it("isola vendedores homônimos por ID sem publicar IDs", () => {
     const result = aggregateRealtimeDashboard([fact({ id: "a", eventType: "CALL_ATTEMPTED", quantity: 3 }), fact({ id: "b", eventType: "CALL_ATTEMPTED", creditedMemberId: "b", quantity: 7 })], sellers, periods, { profiles: [profile("a", 10), profile("b", 20)], quotas: [] });
-    expect(result.week.ranking.map((row) => [row.today.calls, row.goals.today.calls.targetValue])).toEqual([[7, "20"], [3, "10"]]);
+    expect(result.week.ranking.map((row) => [row.today.calls, row.goals.today.calls.targetValue])).toEqual([[3, "10"], [7, "20"]]);
     expect(result.today.goals.calls).toMatchObject({ actualValue: "10", targetValue: "30", coveredMembers: 2 });
     expect(result.week.goals.calls).toMatchObject({ actualValue: "10", targetValue: "150", source: "DAILY_PROFILE_X5" });
     expect(JSON.stringify(result)).not.toContain('"memberId"');
@@ -58,7 +58,7 @@ describe("metas reais do painel unificado", () => {
       { id: "ede", name: "Ede", functions: ["CLOSER"] },
       { id: "admin", name: "Admin", functions: ["CLOSER"] },
     ];
-    const profiles = roster.map((member) => ({ ...profile(member.id, member.id === "carlos" ? 60 : 50), effectiveContactsTarget: 75, meetingsScheduledTarget: 4, meetingsCompletedTarget: member.id === "jhon" ? 3 : member.id === "ede" ? 2 : 0, weeklySalesTarget: ["jhon", "ede"].includes(member.id) ? 1 : 0 }));
+    const profiles = roster.map((member) => ({ ...profile(member.id, member.id === "carlos" ? 60 : 50), effectiveContactsTarget: 75, meetingsScheduledTarget: 4, meetingsCompletedTarget: ["jhon", "ede"].includes(member.id) ? 2 : 0, weeklySalesTarget: ["jhon", "ede"].includes(member.id) ? 1 : 0 }));
     const configuration = { profiles, quotas: [quota({ targetValue: 99n })], eligibleMemberIds: ["carlos", "jhon", "ede"] };
     const result = aggregateRealtimeDashboard([
       fact({ id: "held", eventType: "MEETING_COMPLETED", creditedMemberId: "jhon", quantity: 2 }),
@@ -66,14 +66,18 @@ describe("metas reais do painel unificado", () => {
     ], roster, periods, configuration);
     expect(result.today.goals.effectiveContacts).toMatchObject({ targetValue: "225", coveredMembers: 3, totalMembers: 3 });
     expect(result.today.goals.meetingsScheduled.targetValue).toBe("12");
-    expect(result.today.goals.meetingsCompleted).toMatchObject({ targetValue: "5", actualValue: "2", coveredMembers: 2, totalMembers: 2 });
+    expect(result.today.goals.meetingsCompleted).toMatchObject({ targetValue: "4", actualValue: "2", coveredMembers: 2, totalMembers: 2 });
     expect(result.week.goals.effectiveContacts.targetValue).toBe("1125");
     expect(result.week.goals.meetingsScheduled.targetValue).toBe("60");
-    expect(result.week.goals.meetingsCompleted.targetValue).toBe("25");
+    expect(result.week.goals.meetingsCompleted.targetValue).toBe("20");
     expect(result.week.goals.sales).toMatchObject({ targetValue: "2", actualValue: "1", source: "WEEKLY_PROFILE", coveredMembers: 2, totalMembers: 2 });
     for (const row of result.week.ranking.filter((row) => row.name !== "Admin")) {
       expect(row.goals.today.effectiveContacts.targetValue).toBe("75");
       expect(row.goals.today.meetingsScheduled.targetValue).toBe("4");
+      expect(row.goals.week.effectiveContacts.targetValue).toBe("375");
+      expect(row.goals.week.meetingsScheduled.targetValue).toBe("20");
+      expect(row.goals.today.meetingsCompleted.targetValue).toBe(row.name === "Carlos" ? null : "2");
+      expect(row.goals.week.meetingsCompleted.targetValue).toBe(row.name === "Carlos" ? null : "10");
       expect(row.goals.today.sales.targetValue).toBeNull();
       expect(row.goals.week.sales.targetValue).toBe(row.name === "Carlos" ? null : "1");
     }

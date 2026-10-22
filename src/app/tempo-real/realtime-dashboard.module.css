@@ -125,7 +125,7 @@
 .rankingPanel h2 { font-size: 1.1em; font-weight: 500; letter-spacing: -.04em; }
 .rankingPanel > header > div:last-child { color: var(--muted); display: flex; font-size: .55em; gap: 1.5em; }
 .rankingTable { border: 1px solid var(--line); border-radius: .6em; display: grid; flex: 1; grid-template-rows: 1.6em repeat(4, minmax(0, 1fr)); min-height: 0; overflow: hidden; }
-.rankingHeader, .rankingRow { align-items: center; display: grid; gap: .65em; grid-template-columns: .25fr 1.65fr repeat(6, minmax(0, 1fr)) .8fr; padding: 0 .8em; }
+.rankingHeader, .rankingRow { align-items: center; display: grid; gap: .65em; grid-template-columns: .25fr 1.65fr repeat(6, minmax(0, 1fr)); padding: 0 .8em; }
 .rankingHeader { background: var(--surface); color: var(--muted); font-weight: 500; }
 .rankingHeader > span { font-size: max(11px, .58em); }
 .rankingRow { border-top: 1px solid var(--line); min-height: 0; }
@@ -146,10 +146,6 @@
 .sellerMetric .goalMeter:first-of-type .progressTrack > i { background: var(--blue); }
 .sellerMetric .goalMeter:nth-child(2) { margin-bottom: .2em; }
 .sellerMetric .progressTrack { height: 2px; margin-top: .15em; }
-.executionCell { display: flex; flex-direction: column; gap: .2em; line-height: 1.15; }
-.executionCell > span { align-items: baseline; color: var(--muted); display: flex; font-size: .5em; justify-content: space-between; }
-.executionCell b, .executionCell strong { color: var(--ink); font-size: 1.4em; font-weight: 500; }
-.executionCell > small { color: var(--muted); font-size: .4em; }
 .rankingPanel > footer { color: var(--muted); display: flex; font-size: .43em; justify-content: space-between; }
 .noRanking { color: var(--muted); font-size: .75em; grid-column: 1/-1; padding: 1em; text-align: center; }
 .footer { align-items: center; color: var(--muted); display: flex; font-size: .5em; gap: 1em; justify-content: space-between; }
