@@ -194,6 +194,44 @@ describe("histórico operacional baseado em eventos", () => {
     expect(await snapshot()).toMatchObject({ [metric]: 1, effectiveContacts: 1, tasksCompleted: 1 });
   });
 
+  it.each(["CALL", "WHATSAPP"] as const)(
+    "permite concluir tarefa futura de %s sem esperar vencimento nem cadastrar tarefa seguinte",
+    async (kind) => {
+      const base = new Date(kind === "CALL" ? "2033-06-08T12:00:00Z" : "2033-06-09T12:00:00Z");
+      const lead = await createLead(base);
+      const history = historyService();
+      const task = await history.createTask(managerContext, {
+        leadId: lead.leadId,
+        title: `Contato futuro ${kind}`,
+        kind,
+        priority: "MEDIUM",
+        dueAt: new Date(base.getTime() + 24 * 60 * 60_000),
+      });
+      await database.task.updateMany({
+        where: {
+          workspaceId,
+          leadId: lead.leadId,
+          id: { not: task.id },
+          status: { in: ["OPEN", "IN_PROGRESS"] },
+          deletedAt: null,
+        },
+        data: { status: "CANCELLED", updatedByActorId: systemContext.actorId },
+      });
+
+      clock = new Date(base.getTime() + 60_000);
+      await expect(history.completeTask(managerContext, {
+        leadId: lead.leadId,
+        taskId: task.id,
+        result: kind === "CALL" ? "CONNECTED" : "SENT",
+      })).resolves.toMatchObject({ status: "COMPLETED" });
+
+      await expect(database.task.findUniqueOrThrow({ where: { id: task.id } })).resolves.toMatchObject({
+        status: "COMPLETED",
+        completedAt: clock,
+      });
+    },
+  );
+
   it("cria e conclui tarefa com resultado, próxima tarefa explícita, timeline e auditoria", async () => {
     const base = new Date("2032-07-15T13:00:00.000Z");
     const lead = await createLead(base);

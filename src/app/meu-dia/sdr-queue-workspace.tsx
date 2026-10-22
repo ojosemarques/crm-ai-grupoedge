@@ -29,34 +29,9 @@ import {
   SDR_QUEUE_TASK_COMPLETED_EVENT,
   type SdrQueueTaskCompletedDetail,
 } from "@/modules/leads/ui/sdr-queue-events";
+import { sdrQueueTaskCompletion } from "@/modules/leads/ui/sdr-queue-task-completion";
 
 const AUTO_REFRESH_SECONDS = 30;
-
-const cadenceResultOptions: Readonly<Record<string, readonly Readonly<{ value: string; label: string }>[]>> = {
-  CALL: [
-    { value: "CONNECTED", label: "Conectou" },
-    { value: "CALLBACK_REQUESTED", label: "Pediu retorno" },
-    { value: "WHATSAPP_SHARED", label: "Passou contato/WhatsApp" },
-    { value: "NO_ANSWER", label: "Não atendeu" },
-    { value: "BUSY", label: "Ocupado" },
-    { value: "VOICEMAIL", label: "Caixa postal" },
-    { value: "WRONG_NUMBER", label: "Número incorreto" },
-    { value: "CHANNEL_UNAVAILABLE", label: "Canal indisponível" },
-  ],
-  INSTAGRAM_MESSAGE: [
-    { value: "SENT", label: "Feito" },
-    { value: "FAILED", label: "Falhou" },
-    { value: "PROFILE_NOT_FOUND", label: "Não achou Instagram" },
-    { value: "CHANNEL_UNAVAILABLE", label: "Canal indisponível" },
-  ],
-  INSTAGRAM_FOLLOW: [
-    { value: "COMPLETED", label: "Feito" },
-    { value: "ALREADY_FOLLOWING", label: "Já seguia" },
-    { value: "FAILED", label: "Falhou" },
-    { value: "PROFILE_NOT_FOUND", label: "Não achou Instagram" },
-    { value: "CHANNEL_UNAVAILABLE", label: "Canal indisponível" },
-  ],
-};
 
 const summaryBuckets: readonly Readonly<{
   key: SdrQueueBucket;
@@ -138,19 +113,19 @@ function QueueRow({
   nowMs: number;
   screen: SdrQueueScreen;
 }>) {
-  const resultOptions = cadenceResultOptions[item.nextActionKind ?? ""] ?? [];
-  const canCompleteCadenceTask = Boolean(
-    item.nextActionTaskId &&
-    item.nextActionSourceKey?.startsWith("active-prospecting:") &&
-    resultOptions.length,
-  );
+  const completion = sdrQueueTaskCompletion({
+    taskId: item.nextActionTaskId,
+    kind: item.nextActionKind,
+    sourceKey: item.nextActionSourceKey,
+  });
+  const resultOptions = completion.options;
   const [result, setResult] = useState(resultOptions[0]?.value ?? "");
   const [resultReason, setResultReason] = useState("");
   const [stopReason, setStopReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  async function completeCadenceTask(event: FormEvent<HTMLFormElement>) {
+  async function completeTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!item.nextActionTaskId || !result) return;
     setSaving(true);
@@ -231,10 +206,10 @@ function QueueRow({
         <p className={styles.rowActionMeta}>
           Entrada há {elapsedLabel(item.receivedAt, nowMs)}
         </p>
-        {canCompleteCadenceTask ? (
+        {completion.available ? (
           <details className={styles.quickComplete}>
             <summary>Concluir aqui</summary>
-            <form onSubmit={completeCadenceTask}>
+            <form onSubmit={completeTask}>
               <label>
                 Resultado
                 <select disabled={saving} onChange={(event) => setResult(event.target.value)} value={result}>
@@ -245,16 +220,18 @@ function QueueRow({
                 Observação opcional
                 <textarea disabled={saving} maxLength={2_000} onChange={(event) => setResultReason(event.target.value)} rows={2} value={resultReason} />
               </label>
-              <label>
-                Encerrar cadência
-                <select disabled={saving} onChange={(event) => setStopReason(event.target.value)} value={stopReason}>
-                  <option value="">Continuar normalmente</option>
-                  <option value="REFUSAL">Recusou contato</option>
-                  <option value="DO_NOT_CONTACT">Pediu para não contatar</option>
-                </select>
-              </label>
-              {stopReason && resultReason.trim().length < 3 ? <small>Informe o motivo na observação para encerrar.</small> : null}
-              <Button disabled={saving || !result || Boolean(stopReason && resultReason.trim().length < 3)} size="sm" type="submit">
+              {completion.cadence ? (
+                <label>
+                  Encerrar cadência
+                  <select disabled={saving} onChange={(event) => setStopReason(event.target.value)} value={stopReason}>
+                    <option value="">Continuar normalmente</option>
+                    <option value="REFUSAL">Recusou contato</option>
+                    <option value="DO_NOT_CONTACT">Pediu para não contatar</option>
+                  </select>
+                </label>
+              ) : null}
+              {completion.cadence && stopReason && resultReason.trim().length < 3 ? <small>Informe o motivo na observação para encerrar.</small> : null}
+              <Button disabled={saving || !result || Boolean(completion.cadence && stopReason && resultReason.trim().length < 3)} size="sm" type="submit">
                 {saving ? "Salvando…" : "Concluir e avançar"}
               </Button>
               {notice ? <p aria-live="polite" className={styles.quickCompleteNotice}>{notice}</p> : null}

@@ -13,5 +13,7 @@ ciclo de SLA consistente.
 
 A fonte da próxima ação é a tarefa ativa mais antiga por `dueAt`, `createdAt` e
 `id`. O lead guarda uma projeção vinculada por `nextActionTaskId`. Concluir a
-última tarefa de um lead aberto sem fornecer outra ação é rejeitado; ausências
-persistidas fora do serviço são detectadas e exibidas como erro operacional.
+última tarefa de um lead aberto sem fornecer outra ação é rejeitado, exceto para
+tarefas `CALL` e `WHATSAPP`, que podem ser encerradas antes do vencimento sem
+criar uma tarefa seguinte. Ausências persistidas fora do serviço são detectadas
+e exibidas como erro operacional.

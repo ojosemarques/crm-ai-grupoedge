@@ -1013,7 +1013,8 @@ export function createOperationalHistoryService(
         completedAt,
       });
       const nextTask = await findNextTask(transaction, context.workspaceId, lead.id);
-      if (requiresNextAction(currentLead.status) && !nextTask && !prospectingNext) {
+      const canCloseWithoutNextAction = task.kind === "CALL" || task.kind === "WHATSAPP";
+      if (requiresNextAction(currentLead.status) && !nextTask && !prospectingNext && !canCloseWithoutNextAction) {
         conflict(
           "NEXT_ACTION_REQUIRED",
           "Lead aberto precisa de uma próxima ação antes de concluir esta tarefa.",

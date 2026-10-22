@@ -411,6 +411,97 @@ describe("fila priorizada do SDR", () => {
     expect(after.dailyProduction.callsPending).toBe(before.dailyProduction.callsPending);
   });
 
+  it("expõe ligação e WhatsApp futuros como tarefas concluíveis antes do vencimento", async () => {
+    const lead = await createLead(`CRM10 conclusão antecipada ${randomUUID().slice(0, 8)}`, "P2");
+    await assignTo(lead.leadId, isolatedSdrContext.memberId);
+    const dueAt = new Date(now.getTime() + 24 * 60 * 60_000);
+
+    await database.$transaction(async (transaction) => {
+      await transaction.task.updateMany({
+        where: {
+          workspaceId,
+          leadId: lead.leadId,
+          status: { in: ["OPEN", "IN_PROGRESS"] },
+          deletedAt: null,
+        },
+        data: { status: "CANCELLED", updatedByActorId: systemContext.actorId },
+      });
+      const call = await transaction.task.create({
+        data: {
+          workspaceId,
+          leadId: lead.leadId,
+          assigneeMemberId: isolatedSdrContext.memberId,
+          title: "Ligação futura livre",
+          kind: "CALL",
+          status: "OPEN",
+          priority: "MEDIUM",
+          dueAt,
+          createdByActorId: systemContext.actorId,
+          updatedByActorId: systemContext.actorId,
+        },
+      });
+      await transaction.lead.update({
+        where: { id: lead.leadId },
+        data: {
+          nextActionTaskId: call.id,
+          nextActionAt: call.dueAt,
+          nextActionDescription: call.title,
+          updatedByActorId: systemContext.actorId,
+        },
+      });
+    });
+
+    const callScreen = await queueService().getScreen(isolatedSdrContext, {});
+    const callItem = callScreen.sections
+      .find((section) => section.key === "NOW")
+      ?.items.find((candidate) => candidate.id === lead.leadId);
+    expect(callItem).toMatchObject({
+      nextActionAt: dueAt.toISOString(),
+      nextActionKind: "CALL",
+      nextActionSourceKey: null,
+      recommendation: { code: "CALL_NOW" },
+    });
+
+    const whatsapp = await database.task.create({
+      data: {
+        workspaceId,
+        leadId: lead.leadId,
+        assigneeMemberId: isolatedSdrContext.memberId,
+        title: "WhatsApp futuro livre",
+        kind: "WHATSAPP",
+        status: "OPEN",
+        priority: "MEDIUM",
+        dueAt: new Date(dueAt.getTime() + 60_000),
+        createdByActorId: systemContext.actorId,
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+    await database.task.updateMany({
+      where: { workspaceId, leadId: lead.leadId, kind: "CALL", status: "OPEN" },
+      data: { status: "COMPLETED", completedAt: now, result: "Concluída antes do prazo", updatedByActorId: systemContext.actorId },
+    });
+    await database.lead.update({
+      where: { id: lead.leadId },
+      data: {
+        nextActionTaskId: whatsapp.id,
+        nextActionAt: whatsapp.dueAt,
+        nextActionDescription: whatsapp.title,
+        updatedByActorId: systemContext.actorId,
+      },
+    });
+
+    const whatsappScreen = await queueService().getScreen(isolatedSdrContext, {});
+    const whatsappItem = whatsappScreen.sections
+      .find((section) => section.key === "NOW")
+      ?.items.find((candidate) => candidate.id === lead.leadId);
+    expect(whatsappItem).toMatchObject({
+      nextActionAt: whatsapp.dueAt.toISOString(),
+      nextActionKind: "WHATSAPP",
+      nextActionSourceKey: null,
+      recommendation: { code: "RECORD_MESSAGE" },
+    });
+  });
+
   it("omite ligação sem telefone e seleciona a tarefa de Instagram disponível", async () => {
     const before = await queueService().getScreen(isolatedSdrContext, {});
     const lead = await createLead(`CRM10 sem telefone ${randomUUID().slice(0, 8)}`, "P2");

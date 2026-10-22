@@ -349,6 +349,11 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
           task."id"
         LIMIT 1
       ) next_task ON TRUE
+      LEFT JOIN "tasks" projected_task
+        ON projected_task."workspaceId" = l."workspaceId"
+        AND projected_task."id" = COALESCE(next_task."id", l."nextActionTaskId")
+        AND projected_task."status"::text IN ('OPEN', 'IN_PROGRESS')
+        AND projected_task."deletedAt" IS NULL
       LEFT JOIN "lead_current_scores" current_score
         ON current_score."workspaceId" = l."workspaceId"
         AND current_score."leadId" = l."id"
@@ -441,11 +446,11 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
             latest_cycle."attentionMaxSeconds",
             l."lastActivityAt",
             latest_activity."subject" AS "lastActivitySubject",
-            COALESCE(next_task."id", l."nextActionTaskId")::text AS "nextActionTaskId",
-            COALESCE(next_task."dueAt", l."nextActionAt") AS "nextActionAt",
-            COALESCE(next_task."title", l."nextActionDescription") AS "nextActionDescription",
-            next_task."kind"::text AS "nextActionKind",
-            next_task."sourceKey" AS "nextActionSourceKey",
+            COALESCE(projected_task."id", l."nextActionTaskId")::text AS "nextActionTaskId",
+            COALESCE(projected_task."dueAt", l."nextActionAt") AS "nextActionAt",
+            COALESCE(projected_task."title", l."nextActionDescription") AS "nextActionDescription",
+            projected_task."kind"::text AS "nextActionKind",
+            projected_task."sourceKey" AS "nextActionSourceKey",
             l."awaitingHumanResponse",
             l."lastInboundResponseAt",
             meeting_today."id"::text AS "meetingTodayId",
