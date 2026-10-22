@@ -5,12 +5,14 @@ import {
   REALTIME_DASHBOARD_SLIDE_COUNT,
   REALTIME_DASHBOARD_SLIDE_DURATION_MS,
   REALTIME_DASHBOARD_STALE_AFTER_MS,
+  REALTIME_TV_PAGE_RELOAD_INTERVAL_MS,
 } from "@/modules/realtime-dashboard/domain/realtime-dashboard-polling";
 
 describe("temporização do dashboard tempo real", () => {
   it("mantém exatamente dois slides de sessenta segundos", () => {
     expect(REALTIME_DASHBOARD_SLIDE_COUNT).toBe(2);
     expect(REALTIME_DASHBOARD_SLIDE_DURATION_MS).toBe(60_000);
+    expect(REALTIME_TV_PAGE_RELOAD_INTERVAL_MS).toBe(1_800_000);
   });
 
   it("aplica polling normal, economia em aba oculta e backoff limitado", () => {

@@ -12,6 +12,7 @@ import {
   nextRealtimePollDelay,
   REALTIME_DASHBOARD_SLIDE_DURATION_MS,
   REALTIME_DASHBOARD_STALE_AFTER_MS,
+  REALTIME_TV_PAGE_RELOAD_INTERVAL_MS,
 } from "@/modules/realtime-dashboard/domain/realtime-dashboard-polling";
 import { Avatar, BrandMark, Icon } from "./realtime-dashboard-icons";
 import { DashboardSummary, Leaderboard, Overview } from "./realtime-dashboard-visuals";
@@ -54,6 +55,29 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
   const failureCount = useRef(0);
   const dialogOpen = settingsOpen || Boolean(shareUrl);
   const hasSnapshot = Boolean(snapshot);
+
+  useEffect(() => {
+    if (!tvMode) return;
+    const deadline = Date.now() + REALTIME_TV_PAGE_RELOAD_INTERVAL_MS;
+    let reloading = false;
+    const reload = () => {
+      if (reloading) return;
+      reloading = true;
+      window.location.reload();
+    };
+    // Abas suspensas podem ter seus timers adiados pelo navegador.
+    const checkDeadline = () => { if (Date.now() >= deadline) reload(); };
+    const timer = window.setTimeout(reload, REALTIME_TV_PAGE_RELOAD_INTERVAL_MS);
+    window.addEventListener("focus", checkDeadline);
+    window.addEventListener("pageshow", checkDeadline);
+    document.addEventListener("visibilitychange", checkDeadline);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", checkDeadline);
+      window.removeEventListener("pageshow", checkDeadline);
+      document.removeEventListener("visibilitychange", checkDeadline);
+    };
+  }, [tvMode]);
 
   const publicToken = useMemo(() => {
     if (!publicMode || typeof window === "undefined") return null;

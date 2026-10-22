@@ -7,6 +7,53 @@ import { getDatabaseClient } from "@/shared/core/database/client";
 import { enterDemoCompany } from "./helpers/company-hub";
 import { aggregateRealtimeDashboard, resolveRealtimeDashboardPeriods, weeklySalesGoal } from "@/modules/realtime-dashboard/domain/realtime-dashboard-domain";
 
+for (const scenario of ["intervalo", "retomada", "outro-endereco"] as const) {
+test(`refresh completo da TV a cada 30 minutos: ${scenario}`, async ({ page }) => {
+  const now = new Date("2026-10-22T18:00:00Z");
+  const result = aggregateRealtimeDashboard([], [], resolveRealtimeDashboardPeriods(now, "America/Sao_Paulo"));
+  const snapshot = { ...result, workspaceName: "Empresa", timeZone: "America/Sao_Paulo", generatedAt: now.toISOString(), freshnessAt: null,
+    quality: { state: "LIVE", reason: "Fixture" }, week: { ...result.week, salesGoal: weeklySalesGoal(0, null, null) } };
+  await page.clock.install({ time: now });
+  await page.clock.pauseAt(new Date(now.getTime() + 1_000));
+  await page.addInitScript(() => {
+    (window as Window & { refreshTestDocument?: string }).refreshTestDocument = crypto.randomUUID();
+  });
+  await page.route("**/api/public/tempo", route => route.fulfill({ json: { result: snapshot } }));
+  await page.route("**/api/public/tempo-real", route => route.fulfill({ json: { result: snapshot } }));
+  const documentId = () => page.evaluate(() => (window as Window & { refreshTestDocument?: string }).refreshTestDocument);
+  await page.goto(scenario === "outro-endereco" ? `/tempo-real-publico#${"v".repeat(43)}` : "/tempo");
+  await expect(page.getByRole("button", { name: "Pausar apresentação", exact: true })).toBeVisible();
+  const initial = await documentId();
+  if (scenario === "outro-endereco") {
+    await page.clock.fastForward(30 * 60_000);
+    expect(await documentId()).toBe(initial);
+    return;
+  }
+  const navigation = page.waitForEvent("framenavigated", frame => frame === page.mainFrame());
+  if (scenario === "retomada") {
+    // Simula suspensão: o relógio avança sem disparar os timers.
+    await page.clock.setSystemTime(new Date(now.getTime() + 31 * 60_000));
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  } else {
+    await page.clock.fastForward(30 * 60_000 - 1);
+    expect(await documentId()).toBe(initial);
+    await page.clock.runFor(1);
+  }
+  await navigation;
+  await expect(page.getByRole("button", { name: "Pausar apresentação", exact: true })).toBeVisible();
+  const second = await documentId();
+  expect(second).not.toBe(initial);
+  await expect(page).toHaveURL(/\/tempo$/);
+  if (scenario === "intervalo") {
+    const nextNavigation = page.waitForEvent("framenavigated", frame => frame === page.mainFrame());
+    await page.clock.fastForward(30 * 60_000);
+    await nextNavigation;
+    await expect(page.getByRole("button", { name: "Pausar apresentação", exact: true })).toBeVisible();
+    expect(await documentId()).not.toBe(second);
+  }
+});
+}
+
 test("consulta a cada cinco segundos e retoma imediatamente no foco, visibilidade e reconexão sem sobrepor requisições", async ({ page }) => {
   const now = new Date("2026-10-22T18:00:00Z");
   await page.clock.install({ time: now });
