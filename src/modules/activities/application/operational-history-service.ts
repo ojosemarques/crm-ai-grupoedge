@@ -1013,13 +1013,6 @@ export function createOperationalHistoryService(
         completedAt,
       });
       const nextTask = await findNextTask(transaction, context.workspaceId, lead.id);
-      const canCloseWithoutNextAction = task.kind === "CALL" || task.kind === "WHATSAPP";
-      if (requiresNextAction(currentLead.status) && !nextTask && !prospectingNext && !canCloseWithoutNextAction) {
-        conflict(
-          "NEXT_ACTION_REQUIRED",
-          "Lead aberto precisa de uma próxima ação antes de concluir esta tarefa.",
-        );
-      }
 
       await transaction.lead.update({
         where: { id: lead.id },
@@ -1467,12 +1460,6 @@ export function createOperationalHistoryService(
         });
       }
       const nextTask = await findNextTask(transaction, context.workspaceId, lead.id);
-      if (requiresNextAction(currentLead.status) && !nextTask) {
-        conflict(
-          "NEXT_ACTION_REQUIRED",
-          "Lead aberto precisa de uma próxima ação. Informe a tarefa seguinte.",
-        );
-      }
 
       await transaction.lead.update({
         where: { id: lead.id },

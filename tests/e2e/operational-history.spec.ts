@@ -91,7 +91,8 @@ test("registra atividade e tarefa no histórico operacional persistido", async (
 
   let taskCard = page.locator("li").filter({ hasText: "Retornar no E2E" });
   await taskCard.locator("summary").click();
-  await taskCard.getByLabel("Resultado da conclusão").fill("Contato realizado no teste E2E.");
+  await taskCard.getByLabel("Resultado da conclusão").selectOption("COMPLETED");
+  await taskCard.getByLabel("Motivo/observação").fill("Contato realizado no teste E2E.");
   await taskCard.getByRole("button", { name: "Concluir tarefa" }).click();
   await expect(page.getByRole("status")).toContainText("Operação registrada com sucesso.");
   taskCard = page.locator("li").filter({ hasText: "Retornar no E2E" });

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { createUnifiedActivityService } from "@/modules/activities/application/unified-activity-service";
 import { createSalesGateService } from "@/modules/opportunities/application/sales-gate-service";
 import { seedCrm29DemoData } from "@/modules/settings/application/crm29-demo-data-service";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
@@ -56,7 +57,7 @@ beforeAll(async () => {
 afterAll(async () => database.$disconnect());
 
 describe("fila unificada de atividades", () => {
-  it("reúne lead, cadência, reunião, oportunidade, etapa e pós-venda sem duplicar reunião", async () => {
+  it("reúne todas as origens sem duplicar reunião e conclui tarefas antes do prazo", async () => {
     const suffix = randomUUID().slice(0, 8);
     const lead = await database.lead.findFirstOrThrow({
       where: { workspaceId, deletedAt: null },
@@ -157,5 +158,18 @@ describe("fila unificada de atividades", () => {
     expect(byId.get(stageTask.id)).toMatchObject({ origin: "OPPORTUNITY_STAGE", opportunityId: opportunity.id });
     expect(screen.items.filter((item) => item.meetingId === meeting.id)).toHaveLength(1);
     expect(screen.counts.total).toBe(screen.items.length);
+
+    const taskIds = [leadTask, cadenceTask, opportunityTask, meetingTask, postSaleTask, stageTask].map(task => task.id);
+    const completed = await createUnifiedActivityService({ database, authorization, now: () => now }).bulkCommand(admin, {
+      action: "COMPLETE", taskIds, result: "Atividade realizada antes do prazo.",
+    });
+    expect(completed.affected).toBe(6);
+    const savedTasks = await database.task.findMany({ where: { workspaceId, id: { in: taskIds } } });
+    expect(savedTasks).toHaveLength(6);
+    for (const task of savedTasks) {
+      expect(task).toMatchObject({ status: "COMPLETED", completedAt: now, dueAt: baseTask.dueAt });
+      expect(task.completedAt!.getTime()).toBeLessThan(task.dueAt.getTime());
+    }
+    expect(await database.opportunityStageActivityInstance.findFirstOrThrow({ where: { workspaceId, taskId: stageTask.id } })).toMatchObject({ status: "COMPLETED", completedAt: now });
   });
 });

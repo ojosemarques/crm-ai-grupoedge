@@ -82,6 +82,19 @@ beforeAll(async () => {
 afterAll(async () => database.$disconnect());
 
 describe("gates consultivos e atividades de etapa", () => {
+  it("conclui atividade futura pelo card de negócio sem aguardar vencimento", async () => {
+    const created = await scenario("conclusão antecipada");
+    await validatePacto(created.leadId);
+    let revision = 1;
+    for (const type of ["DIAGNOSIS", "USE_CASE"] as const) revision = (await saveEvidence(created.opportunityId, revision, type) as { revision: number }).revision;
+    revision = (await opportunityService().transition(manager, { action: "TRANSITION", opportunityId: created.opportunityId, targetStageId: stages.get("OPPORTUNITY_CONFIRMED"), expectedRevision: revision, reason: "Confirmar oportunidade", origin: "OPPORTUNITY_CARD", confirmed: false, lossReasonId: null }) as { revision: number }).revision;
+    const instance = await database.opportunityStageActivityInstance.findFirstOrThrow({ where: { workspaceId, opportunityId: created.opportunityId, status: "ACTIVE" } });
+    expect(instance.dueAt.getTime()).toBeGreaterThan(now.getTime());
+    await gateService().command(manager, created.opportunityId, { action: "COMPLETE_STAGE_ACTIVITY", instanceId: instance.id, result: "Atividade realizada antes do prazo.", expectedRevision: revision });
+    expect(await database.task.findUniqueOrThrow({ where: { id: instance.taskId } })).toMatchObject({ status: "COMPLETED", completedAt: now, dueAt: instance.dueAt });
+    expect(await database.opportunityStageActivityInstance.findUniqueOrThrow({ where: { id: instance.id } })).toMatchObject({ status: "COMPLETED", completedAt: now, dueAt: instance.dueAt });
+  });
+
   it("bloqueia proposta sem PACTO/evidência, recalcula atividade na reentrada e não cria pagamento ao ganhar", async () => {
     const created = await scenario("fluxo");
     await expect(opportunityService().transition(manager, { action: "TRANSITION", opportunityId: created.opportunityId, targetStageId: stages.get("OPPORTUNITY_CONFIRMED"), expectedRevision: 1, reason: "Confirmar oportunidade", origin: "OPPORTUNITY_CARD", confirmed: false, lossReasonId: null })).rejects.toMatchObject({ code: "PACTO_HUMAN_VALIDATION_REQUIRED" });

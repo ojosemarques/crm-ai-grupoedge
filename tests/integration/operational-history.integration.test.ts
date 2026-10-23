@@ -162,6 +162,28 @@ afterAll(async () => {
 });
 
 describe("histórico operacional baseado em eventos", () => {
+  it("registra ligação antecipada e conclui Ligar agora sem exigir tarefa seguinte", async () => {
+    const base = new Date("2033-06-11T12:00:00Z");
+    const lead = await createLead(base);
+    const immediate = await database.task.findFirstOrThrow({ where: { workspaceId, leadId: lead.leadId, kind: "IMMEDIATE_CALL", status: "OPEN" } });
+    const dueAt = new Date(base.getTime() + 48 * 3_600_000);
+    await database.task.update({ where: { id: immediate.id }, data: { dueAt } });
+    await expect(historyService().recordActivity(managerContext, { leadId: lead.leadId, type: "CALL_UNANSWERED", direction: "OUTBOUND", subject: "Ligação realizada antes do prazo" })).resolves.toBeDefined();
+    expect(await database.task.findUniqueOrThrow({ where: { id: immediate.id } })).toMatchObject({ status: "COMPLETED", dueAt, completedAt: base });
+  });
+
+  it.each(["MESSAGE", "INSTAGRAM_MESSAGE", "INSTAGRAM_FOLLOW", "EMAIL", "FOLLOW_UP", "GENERAL"] as const)("conclui a última tarefa futura %s sem exigir outra tarefa em qualquer pipeline", async kind => {
+    const base = new Date("2033-06-10T12:00:00Z");
+    const lead = await createLead(base);
+    const history = historyService();
+    const dueAt = new Date(base.getTime() + 48 * 3_600_000);
+    const task = await history.createTask(managerContext, { leadId: lead.leadId, title: `Tarefa futura ${kind}`, kind, priority: "MEDIUM", dueAt });
+    await database.task.updateMany({ where: { workspaceId, leadId: lead.leadId, id: { not: task.id }, status: { in: ["OPEN", "IN_PROGRESS"] } }, data: { status: "CANCELLED", updatedByActorId: systemContext.actorId } });
+    await expect(history.completeTask(managerContext, { leadId: lead.leadId, taskId: task.id, result: kind === "MESSAGE" || kind === "INSTAGRAM_MESSAGE" || kind === "EMAIL" ? "SENT" : "COMPLETED" })).resolves.toMatchObject({ status: "COMPLETED" });
+    expect(await database.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "COMPLETED", dueAt, completedAt: base });
+    expect(await database.lead.findUniqueOrThrow({ where: { id: lead.leadId } })).toMatchObject({ nextActionTaskId: null, nextActionAt: null });
+  });
+
   it.each([
     { kind: "CALL", initial: "CONNECTED", corrected: "NO_ANSWER", date: "2033-06-06T12:00:00Z", metric: "calls" as const },
     { kind: "WHATSAPP", initial: "SENT", corrected: "OTHER", date: "2033-06-07T12:00:00Z", metric: "messages" as const },

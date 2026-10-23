@@ -20,6 +20,17 @@ const resultOptions: Readonly<Record<string, readonly SdrQueueTaskCompletionOpti
     { value: "NO_WHATSAPP", label: "Não tem WhatsApp" },
     { value: "OTHER", label: "Outro" },
   ],
+  MESSAGE: [
+    { value: "SENT", label: "Mensagem enviada" },
+    { value: "OTHER", label: "Outro" },
+  ],
+  EMAIL: [
+    { value: "SENT", label: "E-mail enviado" },
+    { value: "OTHER", label: "Outro" },
+  ],
+  GENERAL: [{ value: "COMPLETED", label: "Concluída" }],
+  FOLLOW_UP: [{ value: "COMPLETED", label: "Concluída" }],
+  MEETING: [{ value: "COMPLETED", label: "Concluída" }],
   INSTAGRAM_MESSAGE: [
     { value: "SENT", label: "Feito" },
     { value: "FAILED", label: "Falhou" },
@@ -42,9 +53,8 @@ export function sdrQueueTaskCompletion(input: Readonly<{
 }>) {
   const options = resultOptions[input.kind ?? ""] ?? [];
   const cadence = input.sourceKey?.startsWith("active-prospecting:") ?? false;
-  const directKind = input.kind === "CALL" || input.kind === "WHATSAPP";
   return Object.freeze({
-    available: Boolean(input.taskId && options.length > 0 && (directKind || cadence)),
+    available: Boolean(input.taskId && options.length > 0),
     cadence,
     options,
   });

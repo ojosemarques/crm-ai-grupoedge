@@ -242,7 +242,7 @@ async function readResponse(response: Response) {
 function NextActionFields({ required = false }: Readonly<{ required?: boolean }>) {
   return (
     <fieldset className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
-      <legend className="px-1 text-sm font-semibold">Próxima ação explícita</legend>
+      <legend className="px-1 text-sm font-semibold">Próxima ação (opcional)</legend>
       <label className="text-sm">
         Título
         <input className={inputClass} name="nextTitle" placeholder="Retornar ao lead" required={required} />
@@ -551,7 +551,6 @@ export function OperationalHistoryWorkspace({
       );
       const completion = sdrQueueTaskCompletion({ taskId: currentTask?.id ?? null, kind: currentTask?.kind ?? null, sourceKey: currentTask?.sourceKey ?? null });
       const nextTask = nextTaskFromForm(form);
-      if (!moveStageOnly && !completion.available && !nextTask) throw new Error("Defina a próxima ação antes de concluir este atendimento.");
       const resultDescription = formText(form, "resultDescription");
       if (!moveStageOnly && !completion.available && !resultDescription) throw new Error("Descreva o resultado do atendimento.");
       const action = currentTask && currentTask.kind !== "IMMEDIATE_CALL"
@@ -1015,8 +1014,8 @@ export function OperationalHistoryWorkspace({
 
 
         {operations.lead.nextActionIssue ? (
-          <p className="mt-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900" role="alert">
-            Erro operacional: {operations.lead.nextActionIssue}
+          <p className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="note">
+            Acompanhamento: {operations.lead.nextActionIssue}
           </p>
         ) : null}
         {operations.lead.contactPreference === "DO_NOT_CONTACT" ? (
@@ -1092,7 +1091,7 @@ export function OperationalHistoryWorkspace({
               </div>
             ) : null}
             {!quickCompletion.available ? <label className="text-sm">Resultado do atendimento<textarea className={textareaClass} name="resultDescription" placeholder="Ex.: não atendeu; retornar amanhã às 10h" required /></label> : null}
-            {!quickCompletion.available || !quickCompletion.cadence ? <NextActionFields required={!quickCompletion.available} /> : null}
+            {!quickCompletion.available || !quickCompletion.cadence ? <NextActionFields /> : null}
             {pipeline.canWrite ? (
               <fieldset className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
                 <legend className="px-1 text-sm font-semibold">Mover etapa (opcional)</legend>
@@ -1417,6 +1416,7 @@ export function OperationalHistoryWorkspace({
           <section className="space-y-6">
             <article className="surface-panel scroll-mt-4 p-5" id="tarefas">
               <h2 className="text-lg font-semibold">Tarefas</h2>
+              <p className="mt-1 text-xs text-muted-foreground">Tarefas abertas podem ser concluídas antes do prazo. A próxima ação é opcional.</p>
               {operations.tasks.length === 0 ? <p className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">Nenhuma tarefa registrada para este lead.</p> : (
                 <ul className="mt-4 space-y-3">
                   {operations.tasks.map((task) => {
@@ -1478,7 +1478,7 @@ export function OperationalHistoryWorkspace({
                                 <Button disabled={pending} size="sm" type="submit">Concluir tarefa</Button>
                               </form>
                             ) : null}
-                            {task.kind === "IMMEDIATE_CALL" && (task.status === "OPEN" || task.status === "IN_PROGRESS") ? <p className="mt-3 text-xs text-muted-foreground">Conclua registrando a ligação, com a próxima ação quando necessária.</p> : null}
+                            {task.kind === "IMMEDIATE_CALL" && (task.status === "OPEN" || task.status === "IN_PROGRESS") ? <div className="mt-3 space-y-2"><p className="text-xs text-muted-foreground">Conclua registrando a ligação, antes ou depois do prazo, sem exigir uma próxima ação.</p>{operations.permissions.canWrite ? <Button disabled={pending} onClick={() => openOperationalAction("CALL_UNANSWERED")} size="sm" type="button">Registrar ligação e concluir</Button> : null}</div> : null}
                           </div>
                         </details>
                       </li>
