@@ -23,6 +23,7 @@ import type { LeadScoreView } from "@/modules/qualification/domain/scoring-contr
 import type { LeadPipelineState } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import type { ContactPointView, LeadContactView } from "@/modules/contacts/domain/contact-contracts";
 import { notifySdrQueueTaskCompleted } from "@/modules/leads/ui/sdr-queue-events";
+import { sdrQueueTaskCompletion } from "@/modules/leads/ui/sdr-queue-task-completion";
 import { JourneyPanel } from "@/components/lifecycle/journey-panel";
 import type { JourneySnapshot } from "@/modules/lifecycle/domain/lifecycle-contracts";
 import type { getOmnichannelService } from "@/modules/communications/application/omnichannel-service";
@@ -144,17 +145,6 @@ const contactPointLabels: Readonly<Record<ContactPointView["type"], string>> = {
   WHATSAPP: "WhatsApp",
   INSTAGRAM: "Instagram",
 };
-
-const prospectingResultOptions = Object.freeze({
-  CALL: [["CONNECTED", "Conectou"], ["CALLBACK_REQUESTED", "Pediu retorno"], ["WHATSAPP_SHARED", "Passou contato/WhatsApp"], ["MEETING_SCHEDULED", "Reunião agendada"], ["NO_ANSWER", "Não atendeu"], ["BUSY", "Ocupado"], ["VOICEMAIL", "Caixa postal"], ["WRONG_NUMBER", "Número incorreto"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
-  WHATSAPP: [["NO_WHATSAPP", "Não tem WhatsApp"], ["SENT", "Mensagem enviada"], ["OTHER", "Outro (preencher)"]],
-  INSTAGRAM_MESSAGE: [["SENT", "Feito"], ["FAILED", "Falhou"], ["PROFILE_NOT_FOUND", "Não achou Instagram"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
-  INSTAGRAM_FOLLOW: [["COMPLETED", "Feito"], ["ALREADY_FOLLOWING", "Já seguia"], ["FAILED", "Falhou"], ["PROFILE_NOT_FOUND", "Não achou Instagram"], ["CHANNEL_UNAVAILABLE", "Canal indisponível"]],
-} as const);
-
-function isColdProspectingTask(task: Readonly<{ sourceKey: string | null; kind: string }> | null | undefined): task is NonNullable<typeof task> & Readonly<{ kind: keyof typeof prospectingResultOptions }> {
-  return Boolean(task?.sourceKey?.startsWith("active-prospecting:") && task.kind in prospectingResultOptions);
-}
 
 const tabs: readonly Readonly<{ key: TabKey; label: string }>[] = [
   { key: "timeline", label: "Atividades" },
@@ -558,21 +548,22 @@ export function OperationalHistoryWorkspace({
       const currentTask = operations.tasks.find(
         (task) => task.id === operations.lead.nextAction?.taskId,
       );
-      const cadenceTask = isColdProspectingTask(currentTask);
+      const completion = sdrQueueTaskCompletion({ taskId: currentTask?.id ?? null, kind: currentTask?.kind ?? null, sourceKey: currentTask?.sourceKey ?? null });
       const nextTask = nextTaskFromForm(form);
-      if (!moveStageOnly && !cadenceTask && !nextTask) throw new Error("Defina a próxima ação antes de concluir este atendimento.");
+      if (!moveStageOnly && !completion.available && !nextTask) throw new Error("Defina a próxima ação antes de concluir este atendimento.");
       const resultDescription = formText(form, "resultDescription");
-      if (!moveStageOnly && !cadenceTask && !resultDescription) throw new Error("Descreva o resultado do atendimento.");
+      if (!moveStageOnly && !completion.available && !resultDescription) throw new Error("Descreva o resultado do atendimento.");
       const action = currentTask && currentTask.kind !== "IMMEDIATE_CALL"
         ? "COMPLETE_TASK"
         : "RECORD_ACTIVITY";
       const completedActivityType = formText(form, "activityType");
-      const data = cadenceTask
+      const data = completion.available && currentTask
         ? {
             taskId: currentTask.id,
             result: formText(form, "cadenceResult"),
             ...(formText(form, "resultReason") ? { resultReason: formText(form, "resultReason") } : {}),
             ...(formText(form, "stopReason") ? { stopReason: formText(form, "stopReason") } : {}),
+            ...(nextTask ? { nextTask } : {}),
           }
         : action === "COMPLETE_TASK"
         ? {
@@ -973,7 +964,7 @@ export function OperationalHistoryWorkspace({
   const quickCurrentTask = operations.tasks.find(
     (task) => task.id === operations.lead.nextAction?.taskId,
   ) ?? null;
-  const quickCadenceTask = isColdProspectingTask(quickCurrentTask);
+  const quickCompletion = sdrQueueTaskCompletion({ taskId: quickCurrentTask?.id ?? null, kind: quickCurrentTask?.kind ?? null, sourceKey: quickCurrentTask?.sourceKey ?? null });
   const visibleStageCodes = leadStageCodes.filter((code) =>
     code === pipeline.currentStageCode || pipeline.transitions.some((stage) => stage.code === code));
 
@@ -1085,12 +1076,12 @@ export function OperationalHistoryWorkspace({
               </p>
             ) : null}
             <form className="mt-4 grid gap-4" onSubmit={concludeAndOpenNext}>
-            {quickCadenceTask ? (
+            {quickCompletion.available ? (
               <fieldset className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
-                <legend className="px-1 text-sm font-semibold">Conclusão da tarefa da cadência</legend>
-                <label className="text-sm">Resultado<select className={inputClass} name="cadenceResult" required><option value="">Selecione</option>{prospectingResultOptions[quickCurrentTask.kind].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                <label className="text-sm">Motivo/observação<input className={inputClass} name="resultReason" placeholder={quickCurrentTask.kind === "WHATSAPP" ? "Obrigatório ao selecionar Outro" : "Opcional; o CRM registra o resultado"} /></label>
-                <label className="text-sm sm:col-span-2">Interromper cadência<select className={inputClass} defaultValue="" name="stopReason"><option value="">Não interromper</option><option value="REFUSAL">Recusa</option><option value="DO_NOT_CONTACT">Pedido de não contato</option></select></label>
+                <legend className="px-1 text-sm font-semibold">{quickCompletion.cadence ? "Conclusão da tarefa da cadência" : "Conclusão da tarefa"}</legend>
+                <label className="text-sm">Resultado<select className={inputClass} name="cadenceResult" required><option value="">Selecione</option>{quickCompletion.options.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>
+                <label className="text-sm">Motivo/observação<input className={inputClass} name="resultReason" placeholder={quickCurrentTask?.kind === "WHATSAPP" ? "Obrigatório ao selecionar Outro" : "Opcional; o CRM registra o resultado"} /></label>
+                {quickCompletion.cadence ? <label className="text-sm sm:col-span-2">Interromper cadência<select className={inputClass} defaultValue="" name="stopReason"><option value="">Não interromper</option><option value="REFUSAL">Recusa</option><option value="DO_NOT_CONTACT">Pedido de não contato</option></select></label> : <p className="text-xs text-muted-foreground sm:col-span-2">Pode concluir antes do prazo. A próxima ação é opcional.</p>}
               </fieldset>
             ) : !quickCurrentTask || quickCurrentTask.kind === "IMMEDIATE_CALL" ? (
               <div className="grid gap-4 sm:grid-cols-3">
@@ -1099,8 +1090,8 @@ export function OperationalHistoryWorkspace({
                 <label className="text-sm">Assunto<input className={inputClass} defaultValue="Atendimento concluído" name="subject" required /></label>
               </div>
             ) : null}
-            {!quickCadenceTask ? <label className="text-sm">Resultado do atendimento<textarea className={textareaClass} name="resultDescription" placeholder="Ex.: não atendeu; retornar amanhã às 10h" required /></label> : null}
-            {!quickCadenceTask ? <NextActionFields required /> : null}
+            {!quickCompletion.available ? <label className="text-sm">Resultado do atendimento<textarea className={textareaClass} name="resultDescription" placeholder="Ex.: não atendeu; retornar amanhã às 10h" required /></label> : null}
+            {!quickCompletion.available || !quickCompletion.cadence ? <NextActionFields required={!quickCompletion.available} /> : null}
             {pipeline.canWrite ? (
               <fieldset className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
                 <legend className="px-1 text-sm font-semibold">Mover etapa (opcional)</legend>
@@ -1429,6 +1420,7 @@ export function OperationalHistoryWorkspace({
                 <ul className="mt-4 space-y-3">
                   {operations.tasks.map((task) => {
                     const priority = taskPriorityPresentation[task.priority] ?? taskPriorityPresentation.MEDIUM!;
+                    const completion = sdrQueueTaskCompletion({ taskId: task.id, kind: task.kind, sourceKey: task.sourceKey });
                     const status = task.overdue
                       ? { label: "Vencida", className: "border-red-300 bg-red-100 text-red-800" }
                       : taskStatusPresentation[task.status] ?? { label: task.status, className: "border-slate-300 bg-slate-100 text-slate-700" };
@@ -1476,10 +1468,10 @@ export function OperationalHistoryWorkspace({
                             ) : <Button className="mt-3" onClick={() => setEditingTaskId(task.id)} size="sm" type="button" variant="secondary">Editar tarefa concluída</Button> : null}
                             {operations.permissions.canManageTasks && (task.status === "OPEN" || task.status === "IN_PROGRESS") && task.kind !== "IMMEDIATE_CALL" ? (
                               <form className="mt-3 grid gap-3" onSubmit={(event) => submitCompletion(event, task.id)}>
-                                {isColdProspectingTask(task) ? <>
-                                  <label className="text-sm">Resultado da conclusão<select className={inputClass} name="result" required><option value="">Selecione</option>{prospectingResultOptions[task.kind].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                                {completion.available ? <>
+                                  <label className="text-sm">Resultado da conclusão<select className={inputClass} name="result" required><option value="">Selecione</option>{completion.options.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>
                                   <label className="text-sm">Motivo/observação<input className={inputClass} name="resultReason" placeholder={task.kind === "WHATSAPP" ? "Obrigatório ao selecionar Outro" : "Opcional; o CRM registra o resultado automaticamente"} /></label>
-                                  <label className="text-sm">Interromper cadência<select className={inputClass} defaultValue="" name="stopReason"><option value="">Não interromper</option><option value="REFUSAL">Recusa</option><option value="DO_NOT_CONTACT">Pedido de não contato</option></select></label>
+                                  {completion.cadence ? <label className="text-sm">Interromper cadência<select className={inputClass} defaultValue="" name="stopReason"><option value="">Não interromper</option><option value="REFUSAL">Recusa</option><option value="DO_NOT_CONTACT">Pedido de não contato</option></select></label> : <p className="text-xs text-muted-foreground">Pode concluir antes do prazo. A próxima ação é opcional.</p>}
                                 </> : <label className="text-sm">Resultado da conclusão<input className={inputClass} name="result" required /></label>}
                                 <NextActionFields />
                                 <Button disabled={pending} size="sm" type="submit">Concluir tarefa</Button>

@@ -331,6 +331,16 @@ describe("staging governado da Prospecção Ativa", () => {
       completedAt: clock,
     }))).rejects.toMatchObject({ code: "PROSPECTING_WHATSAPP_OTHER_REASON_REQUIRED" });
 
+    for (const futureStep of [connectedCall, whatsappTwo]) {
+      const futureTask = await database.task.findUniqueOrThrow({ where: { id: futureStep.taskId! } });
+      expect(futureTask.dueAt.getTime()).toBeGreaterThan(clock.getTime());
+      await operationalHistory.completeTask({ workspaceId: principal.workspaceId, actorId: systemActorId, actorKey: "system", actorType: "SYSTEM" }, {
+        leadId, taskId: futureTask.id, result: futureStep.action === "CALL" ? "NO_ANSWER" : "SENT", completedAt: clock,
+      });
+      await expect(database.task.findUniqueOrThrow({ where: { id: futureTask.id } })).resolves.toMatchObject({ status: "COMPLETED", completedAt: clock, dueAt: futureTask.dueAt });
+      await expect(database.prospectingCadenceStep.findUniqueOrThrow({ where: { id: futureStep.id } })).resolves.toMatchObject({ status: "COMPLETED", completedAt: clock });
+    }
+
     const firstEmail = await database.prospectingEmailJob.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "email-1" } });
     clock = new Date(Math.max(clock.getTime(), firstEmail.scheduledAt.getTime()) + 5 * 60_000);
     const email = createProspectingEmailService({ database, now: () => clock });
