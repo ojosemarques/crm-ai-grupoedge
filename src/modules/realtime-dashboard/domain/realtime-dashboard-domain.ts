@@ -110,7 +110,7 @@ export function summarizeRealtimeDashboardTotals(
     calls: rows.reduce((total, row) => total + row.calls, 0),
     effectiveContacts: summarizeEffectiveContacts(facts).total,
     messages: rows.reduce(
-      (total, row) => total + row.whatsappMessages + row.instagramMessages + row.emailsSent,
+      (total, row) => total + row.whatsappMessages + row.instagramMessages,
       0,
     ),
     meetingsScheduled: rows.reduce((total, row) => total + row.meetingsBooked, 0),
@@ -127,7 +127,7 @@ function rankedSellerActivity(
   return summarizeDashboardSellerActivity(facts, sellers)
     .map((row) => ({
       ...row,
-      messages: row.whatsappMessages + row.instagramMessages + row.emailsSent,
+      messages: row.whatsappMessages + row.instagramMessages,
       actions: row.calls + row.whatsappMessages + row.instagramMessages + row.emailsSent
         + row.meetingsBooked + row.meetingsCompleted,
     }))

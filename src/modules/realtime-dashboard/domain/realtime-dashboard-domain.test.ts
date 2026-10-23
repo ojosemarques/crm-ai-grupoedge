@@ -52,8 +52,27 @@ describe("dashboard tempo real", () => {
     ];
 
     const summary = aggregateRealtimeDashboard(facts, [{ id: "a", name: "Ana Lima" }, { id: "b", name: "Bia Luz" }], periods);
-    expect(summary.today.totals).toMatchObject({ calls: 1, messages: 2, effectiveContacts: 1, sales: 1, salesValueCents: "250000" });
+    expect(summary.today.totals).toMatchObject({ calls: 1, messages: 1, effectiveContacts: 1, sales: 1, salesValueCents: "250000" });
     expect(summary.week.totals).toEqual(summary.today.totals);
+  });
+
+  it("conta somente WhatsApp e Instagram em totais, ranking e gráfico sem excluir contatos por e-mail", () => {
+    const periods = resolveRealtimeDashboardPeriods(new Date("2026-10-22T15:00:00Z"), "America/Sao_Paulo");
+    const facts = [
+      fact({ id: "wa", eventType: "WHATSAPP_MESSAGE_SENT", occurredAt: "2026-10-22T12:00:00Z", creditedMemberId: "a", leadId: "lead-wa", quantity: 4 }),
+      fact({ id: "ig", eventType: "INSTAGRAM_MESSAGE_SENT", occurredAt: "2026-10-22T12:01:00Z", creditedMemberId: "a", leadId: "lead-ig", quantity: 3 }),
+      fact({ id: "ig-correction", eventType: "INSTAGRAM_MESSAGE_SENT", occurredAt: "2026-10-22T12:01:00Z", creditedMemberId: "a", leadId: "lead-ig", quantity: -1 }),
+      fact({ id: "email", eventType: "EMAIL_SENT", occurredAt: "2026-10-22T12:02:00Z", creditedMemberId: "a", leadId: "lead-email", quantity: 100 }),
+      fact({ id: "old-wa", eventType: "WHATSAPP_MESSAGE_SENT", occurredAt: "2026-10-20T12:00:00Z", creditedMemberId: "a", leadId: "lead-wa", quantity: 2 }),
+      fact({ id: "old-email", eventType: "EMAIL_SENT", occurredAt: "2026-10-20T12:00:00Z", creditedMemberId: "a", leadId: "lead-email", quantity: 50 }),
+      fact({ id: "unattributed", eventType: "INSTAGRAM_MESSAGE_SENT", occurredAt: "2026-10-22T12:03:00Z", quantity: 1 }),
+    ];
+    const summary = aggregateRealtimeDashboard(facts, [{ id: "a", name: "Ana Lima" }], periods);
+    expect(summary.today.totals.messages).toBe(7);
+    expect(summary.week.totals.messages).toBe(9);
+    expect(summary.week.ranking[0]).toMatchObject({ messages: 8, today: { messages: 6 } });
+    expect(summary.week.daily.map(day => day.totals.messages)).toEqual([0, 2, 0, 7, 0]);
+    expect(summary.today.totals.effectiveContacts).toBe(3);
   });
 
   it("prioriza agendamentos no período em vez de ações e mantém vendedores com zero", () => {

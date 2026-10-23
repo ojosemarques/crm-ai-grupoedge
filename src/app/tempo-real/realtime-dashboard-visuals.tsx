@@ -9,7 +9,7 @@ const date = (value: string) => value.split("-").reverse().slice(0, 2).join("/")
 const metrics = [
   { key: "effectiveContacts", label: "Contatos efetivos", detail: "Pessoas únicas no período", icon: "people" },
   { key: "calls", label: "Ligações", detail: "Tentativas registradas", icon: "phone" },
-  { key: "messages", label: "Mensagens enviadas", detail: "WhatsApp, Instagram e e-mail", icon: "message" },
+  { key: "messages", label: "Mensagens enviadas", detail: "WhatsApp e Instagram", icon: "message" },
   { key: "meetingsScheduled", label: "Reuniões marcadas", detail: "Crédito de agendamento", icon: "calendar" },
   { key: "meetingsCompleted", label: "Reuniões realizadas", detail: "Concluídas no período", icon: "check" },
   { key: "sales", label: "Vendas", detail: "Oportunidades ganhas", icon: "sale" },

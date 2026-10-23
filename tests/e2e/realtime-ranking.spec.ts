@@ -49,6 +49,30 @@ test("resumo usa o consolidado da API sem perder atividade fora do ranking nem d
   await expect(today.locator('[data-metric="calls"] > strong')).toHaveText("103");
 });
 
+test("TV mostra apenas WhatsApp e Instagram em mensagens de hoje, da semana e do ranking", async ({ page }) => {
+  const original = rankingSnapshot();
+  const now = new Date(original.generatedAt);
+  const result = aggregateRealtimeDashboard([
+    { id: "wa", eventType: "WHATSAPP_MESSAGE_SENT", quantity: 2, occurredAt: "2026-10-22T14:00:00Z" },
+    { id: "ig", eventType: "INSTAGRAM_MESSAGE_SENT", quantity: 3, occurredAt: "2026-10-22T14:00:00Z" },
+    { id: "email", eventType: "EMAIL_SENT", quantity: 100, occurredAt: "2026-10-22T14:00:00Z" },
+    { id: "old-wa", eventType: "WHATSAPP_MESSAGE_SENT", quantity: 4, occurredAt: "2026-10-20T14:00:00Z" },
+  ].map(fact => ({ ...fact, sourceEntityType: "Activity", creditedMemberId: "jhon", leadId: "lead",
+    performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, valueCents: null,
+  })), [{ id: "jhon", name: "Jhon Cunha" }], resolveRealtimeDashboardPeriods(now, "America/Sao_Paulo"));
+  const snapshot = { ...original, ...result, week: { ...result.week, salesGoal: original.week.salesGoal } };
+  await page.route("**/api/public/tempo", route => route.fulfill({ json: { result: snapshot } }));
+  await page.goto("/tempo");
+  await page.getByRole("button", { name: "Pausar apresentação", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Métricas de hoje" }).locator('[data-metric="messages"] > strong')).toHaveText("5");
+  await expect(page.getByRole("region", { name: "Métricas da semana" }).locator('[data-metric="messages"] > strong')).toHaveText("9");
+  await expect(page.getByText("WhatsApp e Instagram", { exact: true })).toHaveCount(2);
+  await page.getByRole("button", { name: "Mostrar slide 2", exact: true }).click();
+  const cell = page.getByRole("table").getByRole("row").nth(1).getByRole("cell").nth(4);
+  await expect(cell.locator(":scope > div:first-child > b")).toHaveText("5");
+  await expect(cell.locator(":scope > div:nth-child(3) > strong")).toHaveText("9");
+});
+
 test("ranking destaca agendamentos de hoje, respeita metas individuais e não mostra execuções", async ({ page }, testInfo) => {
   const snapshot = rankingSnapshot();
   const errors: string[] = [];

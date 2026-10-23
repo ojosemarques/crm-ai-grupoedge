@@ -18,9 +18,9 @@ describe("metas reais do painel unificado", () => {
     expect(JSON.stringify(result)).not.toContain('"memberId"');
   });
 
-  it("não infla meta WA/IG com e-mails e mantém total de mensagens dos Indicadores", () => {
+  it("não inclui e-mails no total de mensagens nem na meta WA/IG da TV", () => {
     const result = aggregateRealtimeDashboard([fact({ id: "wa", eventType: "WHATSAPP_MESSAGE_SENT", quantity: 2 }), fact({ id: "email", eventType: "EMAIL_SENT", quantity: 8 })], sellers, periods, { profiles: [profile("a")], quotas: [] });
-    expect(result.today.totals.messages).toBe(10);
+    expect(result.today.totals.messages).toBe(2);
     expect(result.today.goals.messages).toMatchObject({ actualValue: "2", targetValue: "5", progressBasisPoints: 4000, coveredMembers: 1, totalMembers: 2 });
   });
 
