@@ -73,6 +73,36 @@ test("TV mostra apenas WhatsApp e Instagram em mensagens de hoje, da semana e do
   await expect(cell.locator(":scope > div:nth-child(3) > strong")).toHaveText("9");
 });
 
+test("funil semanal exibe as bases, taxas, valor vendido e ausência de denominador", async ({ page }) => {
+  const original = rankingSnapshot();
+  const result = aggregateRealtimeDashboard([
+    ...Array.from({ length: 100 }, (_, i) => ({ id: `lead-${i}`, leadId: `lead-${i}`, eventType: "CALL_ATTEMPTED", quantity: 1, valueCents: null })),
+    { id: "scheduled", leadId: "lead-0", eventType: "MEETING_SCHEDULED", quantity: 30, valueCents: null },
+    { id: "completed", leadId: "lead-0", eventType: "MEETING_COMPLETED", quantity: 10, valueCents: null },
+    { id: "sales", leadId: "lead-0", eventType: "SALE_WON", quantity: 2, valueCents: "1800001" },
+  ].map(fact => ({ ...fact, occurredAt: "2026-10-22T14:00:00Z", sourceEntityType: "Activity", creditedMemberId: "seller",
+    performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null,
+  })), [{ id: "seller", name: "Vendedor" }], resolveRealtimeDashboardPeriods(new Date(original.generatedAt), "America/Sao_Paulo"));
+  let snapshot = { ...original, ...result, week: { ...result.week, salesGoal: original.week.salesGoal } };
+  await page.route("**/api/public/tempo", route => route.fulfill({ json: { result: snapshot } }));
+  await page.goto("/tempo");
+  const funnel = page.getByRole("article", { name: "Funil de vendas da semana", exact: true });
+  await expect(funnel).toBeVisible();
+  await expect(funnel.locator('[data-funnel-stage] > div > div:first-child > strong')).toHaveText(["100", "30", "10", "2"]);
+  await expect(funnel.getByText("30%", { exact: true })).toBeVisible();
+  await expect(funnel.getByText("33,3%", { exact: true })).toBeVisible();
+  await expect(funnel.getByText("20%", { exact: true })).toBeVisible();
+  await expect(funnel.getByText("R$ 18.000,01", { exact: true })).toBeVisible();
+  await expect(page.getByText("FOCO DA SEMANA", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Evolução da equipe", { exact: true })).toHaveCount(0);
+  const empty = aggregateRealtimeDashboard([], [], resolveRealtimeDashboardPeriods(new Date(original.generatedAt), "America/Sao_Paulo"));
+  snapshot = { ...original, ...empty, week: { ...empty.week, salesGoal: original.week.salesGoal } };
+  await page.reload();
+  await expect(funnel.locator('[data-funnel-stage] > div > div:first-child > strong')).toHaveText(["0", "0", "0", "0"]);
+  await expect(funnel.getByText("—", { exact: true })).toHaveCount(4);
+  await expect(funnel).not.toContainText(/NaN|Infinity|#DIV/);
+});
+
 test("ranking destaca agendamentos de hoje, respeita metas individuais e não mostra execuções", async ({ page }, testInfo) => {
   const snapshot = rankingSnapshot();
   const errors: string[] = [];
@@ -153,7 +183,7 @@ test("TV em tela cheia mantém números e metas separados em telas HD, Full HD e
         await page.evaluate(() => document.fonts.ready);
         const problems = await page.locator('main[aria-label="TEMPO REAL"]').evaluate(board => {
           const problems: string[] = [];
-          const groups = board.querySelectorAll('[class*="metricTile"], [class*="sellerMetric"], [class*="leaderCard"], [class*="revenueRow"], [class*="summaryStrip"] > article, [class*="salesGoalCard"]');
+          const groups = board.querySelectorAll('[class*="metricTile"], [class*="sellerMetric"], [class*="leaderCard"], [class*="revenueRow"], [class*="summaryStrip"] > article, [class*="funnelCard"], [class*="funnelBand"], [class*="funnelRevenue"]');
           for (const group of groups) {
             const outer = group.getBoundingClientRect();
             const walker = document.createTreeWalker(group, NodeFilter.SHOW_TEXT);

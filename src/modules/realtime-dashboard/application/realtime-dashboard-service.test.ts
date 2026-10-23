@@ -112,6 +112,7 @@ describe("serviço do dashboard tempo real", () => {
     expect(await service.publicTvSnapshot()).toEqual(snapshot);
     const serialized = JSON.stringify(snapshot);
     expect(snapshot.week.totals).toMatchObject({ sales: 1, salesValueCents: "10000" });
+    expect(snapshot.week.funnel).toMatchObject({ leadsWorked: 1, sales: 1, salesValueCents: "10000", salesRateBasisPoints: null });
     expect(snapshot.week.ranking[0]).toMatchObject({ name: "Ana Exemplo", initials: "AE", sales: 1 });
     expect(snapshot.today.goals.salesValueCents).toMatchObject({ actualValue: "10000", targetValue: "20000", progressBasisPoints: 5000 });
     expect(snapshot.week.goals.calls.targetValue).toBe("50");

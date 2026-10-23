@@ -54,7 +54,7 @@
 .stage { min-height: 0; min-width: 0; }
 .overview { display: grid; gap: .8em; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .72fr); height: 100%; }
 .periodPanel { background: var(--panel); border: 1px solid var(--line); border-radius: .85em; display: flex; flex-direction: column; gap: .7em; min-height: 0; min-width: 0; padding: 1em; }
-.periodPanel > header, .salesGoalCard > header, .chartCard > header, .rankingPanel > header { align-items: center; display: flex; justify-content: space-between; }
+.periodPanel > header, .funnelCard > header, .rankingPanel > header { align-items: center; display: flex; justify-content: space-between; }
 .eyebrow { color: var(--muted); font-size: .48em; font-weight: 600; letter-spacing: .12em; }
 .periodPanel h2 { font-size: 1.3em; font-weight: 500; letter-spacing: -.04em; line-height: 1.2; margin-top: .15em; }
 .periodDate { align-items: center; color: var(--muted); display: flex; font-size: .6em; gap: .5em; white-space: nowrap; }
@@ -79,32 +79,34 @@
 .revenueRow > div:first-child > span { color: var(--muted); display: block; font-size: .56em; }
 .revenueRow > div:first-child > strong { display: block; font-size: 1.1em; font-weight: 500; margin-top: .15em; }
 .revenueRow .goalMeter { margin: 0; }
-.overviewAside { display: grid; gap: .8em; grid-template-rows: 1fr 1fr; min-height: 0; min-width: 0; }
-.salesGoalCard, .chartCard { background: var(--panel); border: 1px solid var(--line); border-radius: .85em; display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 1em; }
-.salesGoalCard > header > svg, .chartCard > header > svg { color: var(--accent); height: .9em; width: .9em; }
-.salesGoalCard h2 { font-size: 1.15em; font-weight: 500; letter-spacing: -.045em; line-height: 1.15; margin-top: .6em; }
-.salesGoalVisual { align-items: center; display: flex; flex: 1; gap: 1em; min-height: 0; padding: .6em 0; }
-.goalRing { align-items: center; display: flex; height: 5.5em; justify-content: center; max-height: 100%; position: relative; width: 5.5em; }
-.goalRing svg { height: 100%; position: absolute; width: 100%; }
-.goalRing circle { fill: none; stroke: var(--line); stroke-width: 5; }
-.goalRing circle:last-child { stroke: var(--accent); stroke-linecap: round; transform: rotate(-90deg); transform-origin: center; }
-.goalRing > strong { font-size: 1.1em; font-weight: 500; position: relative; }
-.salesGoalVisual > div:last-child > strong { display: block; font-size: 2.1em; font-weight: 500; line-height: 1; }
-.salesGoalVisual > div:last-child > span { color: var(--muted); font-size: .65em; }
-.salesGoalCard .goalMeter { margin-top: 0; }
-.salesGoalCard > p, .chartCard > p { color: var(--muted); font-size: .46em; margin-top: .7em; }
-.chartCard h3 { font-size: .85em; font-weight: 500; margin-top: .2em; }
-.chartLegend { display: flex; gap: 1em; margin-top: .7em; }
-.chartLegend > span { align-items: center; color: var(--muted); display: flex; font-size: .5em; gap: .4em; }
-.chartLegend i { background: var(--blue); border-radius: 50%; height: .5em; width: .5em; }
-.chartLegend > span:last-child i { background: var(--accent); }
-.chartCard > svg { flex: 1; min-height: 0; width: 100%; }
-.chartCard line { stroke: var(--line); stroke-width: .7; }
-.chartCard text { fill: var(--muted); font-family: inherit; font-size: 11px; }
-.chartSeries { stroke: var(--blue); }
-.chartSeries[data-series="messages"] { stroke: var(--accent); }
-.chartSeries polyline { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
-.chartSeries circle { fill: var(--panel); stroke-width: 2; }
+.overviewAside { display: flex; min-height: 0; min-width: 0; }
+.funnelCard { background: radial-gradient(ellipse at 100% 0, color-mix(in srgb, var(--accent) 8%, transparent), transparent 65%), var(--panel); border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line)); border-radius: .85em; display: flex; flex: 1; flex-direction: column; gap: .7em; min-height: 0; min-width: 0; padding: 1em; }
+.funnelCard header > svg { color: var(--accent); flex: 0 0 auto; height: 1.15em; width: 1.15em; }
+.funnelCard h2 { font-size: 1.05em; font-weight: 500; letter-spacing: -.04em; line-height: 1.2; margin-top: .25em; }
+.funnelPeriod { color: var(--muted); display: flex; font-size: .55em; justify-content: space-between; }
+.funnelPeriod > span:first-child { color: var(--accent); }
+.funnelStages { display: grid; flex: 1; gap: .35em; grid-template-rows: repeat(4, minmax(0, 1fr)); list-style: none; margin: 0; min-height: 0; padding: 0; }
+.funnelStages > li { --step: 0; --step-color: var(--accent); margin-inline: calc(var(--step) * .35em); min-height: 0; min-width: 0; }
+.funnelStages > li:nth-child(2) { --step: 1; --step-color: #5298ff; }
+.funnelStages > li:nth-child(3) { --step: 2; --step-color: #39b8cf; }
+.funnelStages > li:nth-child(4) { --step: 3; --step-color: #45b991; }
+.board[data-appearance="light"] .funnelStages > li:nth-child(2) { --step-color: #235faf; }
+.board[data-appearance="light"] .funnelStages > li:nth-child(3) { --step-color: #096b7e; }
+.board[data-appearance="light"] .funnelStages > li:nth-child(4) { --step-color: #14734f; }
+.funnelBand { align-items: center; display: flex; gap: .7em; height: 100%; justify-content: space-between; padding: .5em 1.25em; position: relative; }
+.funnelBand::before { background: linear-gradient(110deg, color-mix(in srgb, var(--step-color) 22%, var(--panel)), color-mix(in srgb, var(--step-color) 5%, var(--panel))); border-block: 1px solid color-mix(in srgb, var(--step-color) 35%, transparent); clip-path: polygon(0 0, 100% 0, 94% 100%, 6% 100%); content: ""; inset: 0; position: absolute; }
+.funnelMetric, .funnelRate { min-width: 0; position: relative; }
+.funnelMetric > span { align-items: center; color: var(--muted); display: flex; font-size: .6em; gap: .45em; line-height: 1.25; }
+.funnelMetric svg { color: var(--step-color); flex: 0 0 auto; height: 1em; width: 1em; }
+.funnelMetric > strong { display: block; font-size: 1.65em; font-weight: 500; letter-spacing: -.05em; line-height: 1.1; margin-top: .12em; }
+.funnelRate { flex: 0 0 auto; text-align: right; }
+.funnelRate > strong { color: var(--step-color); display: block; font-size: 1em; font-weight: 600; line-height: 1.2; }
+.funnelRate > span { color: var(--muted); display: block; font-size: .45em; margin-top: .25em; white-space: nowrap; }
+.funnelRevenue { background: color-mix(in srgb, #45b991 7%, var(--panel)); border: 1px solid color-mix(in srgb, #45b991 25%, var(--line)); border-radius: .6em; padding: .7em .85em; }
+.funnelRevenue > span { color: var(--muted); display: block; font-size: .6em; }
+.funnelRevenue > strong { display: block; font-size: 1.45em; font-weight: 500; letter-spacing: -.045em; line-height: 1.15; margin-top: .2em; overflow-wrap: anywhere; }
+.funnelRevenue > small { color: var(--muted); display: block; font-size: .45em; margin-top: .4em; }
+.funnelNote { color: var(--muted); font-size: .43em; line-height: 1.4; }
 .rankingView { display: flex; flex-direction: column; gap: .8em; height: 100%; min-height: 0; }
 .leaderGrid { display: grid; flex: 0 0 18%; gap: .7em; grid-template-columns: repeat(3, minmax(0, 1fr)); min-height: 0; }
 .leaderCard { align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: .85em; column-gap: .7em; display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; min-height: 0; overflow: hidden; padding: .8em; }
@@ -184,8 +186,8 @@
 .dialogActions button.primaryButton { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 .dialogActions svg { height: 1.1em; width: 1.1em; }
 .dialogActions button:disabled { cursor: wait; opacity: .5; }
-@media (max-height: 800px) and (min-width: 901px) { .presentation { gap: 10px; padding: 16px 20px; } .screenName h1 { font-size: 1.3em; } .viewHeading p { font-size: .56em; } .summaryStrip article { padding: .6em .85em; } .summaryStrip article > strong { font-size: 1.5em; } .periodPanel { gap: .5em; padding: .8em; } .metricTile { padding: .55em; } .metricNumber { font-size: 1.8em; } .salesGoalCard, .chartCard { padding: .8em; } .salesGoalCard h2 { font-size: 1em; } .leaderGrid { flex-basis: 18%; } .leaderCard { padding: .6em; } .leaderGoals { margin-top: .3em; padding-top: .3em; } .rankingPanel { gap: .5em; padding: .65em .8em .5em; } }
-@media (max-width: 1100px) and (min-width: 901px) { .overview { grid-template-columns: 1fr 1fr; } .overviewAside { display: none; } .workspaceProfile { display: none; } }
+@media (max-height: 800px) and (min-width: 901px) { .presentation { gap: 10px; padding: 16px 20px; } .screenName h1 { font-size: 1.3em; } .viewHeading p { font-size: .56em; } .summaryStrip article { padding: .6em .85em; } .summaryStrip article > strong { font-size: 1.5em; } .periodPanel { gap: .5em; padding: .8em; } .metricTile { padding: .55em; } .metricNumber { font-size: 1.8em; } .funnelCard { gap: .55em; padding: .8em; } .leaderGrid { flex-basis: 18%; } .leaderCard { padding: .6em; } .leaderGoals { margin-top: .3em; padding-top: .3em; } .rankingPanel { gap: .5em; padding: .65em .8em .5em; } }
+@media (max-width: 1100px) and (min-width: 901px) { .overview { align-content: start; grid-template-columns: 1fr 1fr; overflow-y: auto; } .periodPanel { min-height: 38em; } .overviewAside { grid-column: 1/-1; min-height: 34em; } .workspaceProfile { display: none; } }
 @media (max-width: 900px) {
   .board { font-size: 15px; height: auto; min-height: 100dvh; overflow: visible; }
   .frame { grid-template-columns: 50px minmax(0, 1fr); height: auto; min-height: 100dvh; }
@@ -215,8 +217,7 @@
   .metricNumber { font-size: 2em; }
   .metricTile > p { font-size: .5em; }
   .goalMeter > div:first-child { font-size: .55em; }
-  .overviewAside { display: grid; grid-template-rows: 22em 22em; }
-  .chartCard text { font-size: 11px; }
+  .overviewAside { min-height: 36em; }
   .rankingView { height: auto; }
   .leaderGrid { grid-template-columns: 1fr; }
   .leaderCard { min-height: 7em; }

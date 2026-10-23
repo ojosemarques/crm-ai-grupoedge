@@ -14,6 +14,7 @@ import {
   workspaceWeekRange,
 } from "@/shared/core/time/workspace-time";
 import { buildRealtimeDashboardGoals, type RealtimeGoalConfiguration, type RealtimeSeller } from "./realtime-dashboard-goals";
+import { buildRealtimeSalesFunnel } from "./realtime-sales-funnel";
 
 export const realtimeDashboardEventTypes = Object.freeze([
   "TASK_COMPLETED",
@@ -166,6 +167,7 @@ export function aggregateRealtimeDashboard(
 ) {
   const todayFacts = factsWithin(facts, periods.today);
   const weekFacts = factsWithin(facts, periods.week);
+  const weekTotals = summarizeRealtimeDashboardTotals(weekFacts, sellers);
   const goals = buildRealtimeDashboardGoals({ sellers, todayFacts, weekFacts, weekFromDate: periods.week.fromDate, timeZone: periods.week.timeZone, configuration });
   // Visibility only affects individual rows, never the team's facts or targets.
   const rankingSellers = sellers.filter((seller) => seller.rankingVisible !== false);
@@ -194,7 +196,8 @@ export function aggregateRealtimeDashboard(
           }), sellers),
         });
       })),
-      totals: summarizeRealtimeDashboardTotals(weekFacts, sellers),
+      totals: weekTotals,
+      funnel: buildRealtimeSalesFunnel(weekFacts, weekTotals),
       goals: goals.week,
       ranking: Object.freeze(weeklyRows.map((row, index) => {
         const memberId = orderedMembers[index]!.id;

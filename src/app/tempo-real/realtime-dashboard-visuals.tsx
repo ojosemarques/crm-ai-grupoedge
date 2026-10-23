@@ -53,25 +53,34 @@ function PeriodPanel({ period, totals, goals, title, dates }: Readonly<{ period:
   </section>;
 }
 
-function SalesGoal({ snapshot }: Readonly<{ snapshot: RealtimeDashboardSnapshot }>) {
-  const goal = snapshot.week.goals.sales;
-  const configured = goal.targetValue !== null && BigInt(goal.targetValue) > 0n;
-  return <article className={styles.salesGoalCard} aria-label="Meta de vendas da semana"><header><span className={styles.eyebrow}>FOCO DA SEMANA</span><Icon name="sale" /></header><h2>Transformar atividade<br />em resultado.</h2><div className={styles.salesGoalVisual}><div className={styles.goalRing}><svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="51" /><circle cx="60" cy="60" r="51" pathLength="100" strokeDasharray={`${percent(goal)} 100`} /></svg><strong>{configured ? `${Math.round((goal.progressBasisPoints ?? 0) / 100)}%` : "—"}</strong></div><div><strong>{configured ? goalValue(goal.actualValue) : snapshot.week.totals.sales}</strong><span>{configured ? `de ${goalValue(goal.targetValue!)} vendas` : "vendas na semana"}</span></div></div><GoalMeter goal={goal} metric="sales" /><p>Semana comercial · {date(snapshot.week.period.fromDate)} a {date(snapshot.week.daily[4]!.date)}</p></article>;
-}
+const rateNumber = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 });
+const funnelMoney = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const funnelRate = (basisPoints: number | null) => basisPoints === null ? "—" : `${rateNumber.format(basisPoints / 100)}%`;
 
-function WeeklyChart({ snapshot }: Readonly<{ snapshot: RealtimeDashboardSnapshot }>) {
-  const days = snapshot.week.daily;
-  const top = Math.ceil(Math.max(4, ...days.flatMap((day) => [day.totals.calls, day.totals.messages])) / 4) * 4;
-  const points = (kind: "calls" | "messages") => days.flatMap((day, index) => day.future ? [] : [`${38 + index * 65},${180 - day.totals[kind] / top * 150}`]);
-  return <article className={styles.chartCard} aria-label="Evolução semanal"><header><div><span className={styles.eyebrow}>CONSISTÊNCIA</span><h3>Evolução da equipe</h3></div><Icon name="chart" /></header><div className={styles.chartLegend}><span><i />Ligações</span><span><i />Mensagens</span></div><svg viewBox="0 0 325 215" role="img" aria-label="Ligações e mensagens por dia útil da semana">
-    {[0, 1, 2, 3, 4].map((step) => <g key={step}><line x1="38" x2="298" y1={180 - step * 37.5} y2={180 - step * 37.5} /><text x="27" y={184 - step * 37.5} textAnchor="end">{number.format(top / 4 * step)}</text></g>)}
-    {days.map((day, index) => <text key={day.date} x={38 + index * 65} y="207" textAnchor="middle">{["SEG", "TER", "QUA", "QUI", "SEX"][index]}</text>)}
-    {(["calls", "messages"] as const).map((kind) => <g key={kind} className={styles.chartSeries} data-series={kind}><polyline points={points(kind).join(" ")} />{points(kind).map((point, index) => <circle key={index} cx={point.split(",")[0]} cy={point.split(",")[1]} r="3" />)}</g>)}
-  </svg><p>Fatos registrados · {snapshot.timeZone}</p></article>;
+function SalesFunnel({ snapshot }: Readonly<{ snapshot: RealtimeDashboardSnapshot }>) {
+  const funnel = snapshot.week.funnel;
+  const stages = [
+    { key: "leads", label: "Leads trabalhados", value: funnel.leadsWorked, rate: funnel.leadsWorked > 0 ? 10000 : null, basis: "base do funil", icon: "people" },
+    { key: "scheduled", label: "Reuniões agendadas", value: funnel.meetingsScheduled, rate: funnel.scheduledRateBasisPoints, basis: "dos leads", icon: "calendar" },
+    { key: "completed", label: "Reuniões realizadas", value: funnel.meetingsCompleted, rate: funnel.completedRateBasisPoints, basis: "das agendadas", icon: "check" },
+    { key: "sales", label: "Vendas", value: funnel.sales, rate: funnel.salesRateBasisPoints, basis: "das realizadas", icon: "sale" },
+  ] as const;
+  return <article className={styles.funnelCard} aria-label="Funil de vendas da semana">
+    <header><div><span className={styles.eyebrow}>FUNIL COMERCIAL</span><h2>Da prospecção à venda.</h2></div><Icon name="chart" /></header>
+    <div className={styles.funnelPeriod}><span>Esta semana</span><span>{date(snapshot.week.period.fromDate)} — {date(snapshot.week.daily[4]!.date)}</span></div>
+    <ol className={styles.funnelStages} aria-label="Etapas do funil comercial">{stages.map(stage => <li key={stage.key} data-funnel-stage={stage.key}>
+      <div className={styles.funnelBand}>
+        <div className={styles.funnelMetric}><span><Icon name={stage.icon} />{stage.label}</span><strong>{number.format(stage.value)}</strong></div>
+        <div className={styles.funnelRate} title={stage.rate === null ? "Sem denominador para calcular a taxa." : `${funnelRate(stage.rate)} ${stage.basis}`}><strong>{funnelRate(stage.rate)}</strong><span>{stage.basis}</span></div>
+      </div>
+    </li>)}</ol>
+    <div className={styles.funnelRevenue}><span>Valor vendido</span><strong>{funnelMoney.format(Number(BigInt(funnel.salesValueCents)) / 100)}</strong><small>Vendas registradas nesta semana</small></div>
+    <p className={styles.funnelNote} title="Leads únicos com atividade registrada na semana. As taxas comparam volumes do período, não a evolução de uma mesma coorte. Reuniões realizadas podem ter sido agendadas antes. Um traço indica ausência de denominador.">Volumes da semana · taxas sobre a etapa anterior.</p>
+  </article>;
 }
 
 export function Overview({ snapshot }: Readonly<{ snapshot: RealtimeDashboardSnapshot }>) {
-  return <div className={styles.overview}><PeriodPanel period="today" totals={snapshot.today.totals} goals={snapshot.today.goals} title="Hoje" dates={date(snapshot.today.period.fromDate)} /><PeriodPanel period="week" totals={snapshot.week.totals} goals={snapshot.week.goals} title="Esta semana" dates={`${date(snapshot.week.period.fromDate)} — ${date(snapshot.week.period.toDate)}`} /><aside className={styles.overviewAside}><SalesGoal snapshot={snapshot} /><WeeklyChart snapshot={snapshot} /></aside></div>;
+  return <div className={styles.overview}><PeriodPanel period="today" totals={snapshot.today.totals} goals={snapshot.today.goals} title="Hoje" dates={date(snapshot.today.period.fromDate)} /><PeriodPanel period="week" totals={snapshot.week.totals} goals={snapshot.week.goals} title="Esta semana" dates={`${date(snapshot.week.period.fromDate)} — ${date(snapshot.week.period.toDate)}`} /><aside className={styles.overviewAside}><SalesFunnel snapshot={snapshot} /></aside></div>;
 }
 
 function SellerMetric({ row, metric }: Readonly<{ row: RealtimeDashboardRankingRow; metric: typeof metrics[number] }>) {

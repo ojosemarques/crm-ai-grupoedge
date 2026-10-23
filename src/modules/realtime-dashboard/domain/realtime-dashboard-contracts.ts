@@ -9,6 +9,17 @@ export type RealtimeDashboardTotals = Readonly<{
   salesValueCents: string;
 }>;
 
+export type RealtimeSalesFunnel = Readonly<{
+  leadsWorked: number;
+  meetingsScheduled: number;
+  meetingsCompleted: number;
+  sales: number;
+  salesValueCents: string;
+  scheduledRateBasisPoints: number | null;
+  completedRateBasisPoints: number | null;
+  salesRateBasisPoints: number | null;
+}>;
+
 export type RealtimeGoalMetric = Exclude<keyof RealtimeDashboardTotals, "tasksCompleted">;
 export type RealtimeGoalProgress = Readonly<{
   actualValue: string;
@@ -63,6 +74,7 @@ export type RealtimeDashboardSnapshot = Readonly<{
   }>;
   week: Readonly<{
     period: RealtimeDashboardPeriod;
+    funnel: RealtimeSalesFunnel;
     endsAt: string;
     daily: readonly Readonly<{ date: string; totals: RealtimeDashboardTotals; future: boolean }>[];
     totals: RealtimeDashboardTotals;

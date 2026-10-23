@@ -17,7 +17,7 @@ async function expectPanelLayout(page: Page, desktop: boolean) {
   expect(await board(page).evaluate((element) => getComputedStyle(element).getPropertyValue("--brand-blue").trim())).toBe("#1f35fd");
   const theme = await board(page).getAttribute("data-appearance");
   expect(await board(page).evaluate((element) => getComputedStyle(element).getPropertyValue("--accent").trim())).toBe(theme === "light" ? "#1f35fd" : "#8c9aff");
-  const panels = await page.locator('[class*="summaryStrip"] > article, [class*="periodPanel"], [class*="salesGoalCard"], [class*="chartCard"], [class*="leaderCard"], [class*="rankingPanel"]').evaluateAll((elements) => elements.map((element) => {
+  const panels = await page.locator('[class*="summaryStrip"] > article, [class*="periodPanel"], [class*="funnelCard"], [class*="leaderCard"], [class*="rankingPanel"]').evaluateAll((elements) => elements.map((element) => {
     const rect = element.getBoundingClientRect();
     return { label: element.textContent?.slice(0, 40), left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
   }));
@@ -178,7 +178,7 @@ test("resumo mostra contatos dos vendedores e ligações reais sem alterar os pa
   await expect(calls).not.toContainText("tarefas");
   await expect(page.getByRole("region", { name: "Métricas de hoje" }).locator('[data-metric="effectiveContacts"] > strong')).toHaveText("999");
   await expect(page.getByRole("region", { name: "Métricas da semana" }).locator('[data-metric="effectiveContacts"] > strong')).toHaveText("888");
-  await expect(page.getByRole("article", { name: "Meta de vendas da semana" })).toContainText("de 200 vendas");
+  await expect(page.getByRole("article", { name: "Funil de vendas da semana" })).toContainText("Valor vendido");
 });
 
 test("visual de TV unificado suporta dois temas e paginação de 32 profissionais", async ({ page }, testInfo) => {
