@@ -18,3 +18,16 @@ sem exigir uma tarefa seguinte, em qualquer pipeline. A próxima ação também 
 opcional ao registrar uma atividade, inclusive a ligação que conclui `Ligar agora`.
 A ausência de próxima ação em um lead aberto permanece sinalizada para acompanhamento,
 sem impedir a conclusão ou desfazer o registro realizado.
+
+Nos cards, os estados operacionais são `Em aberto`, `Vencida` (aberta com prazo
+passado) e `Concluída`. Cancelamentos técnicos, tarefas substituídas e bloqueios
+de contato ficam preservados no histórico, fora da lista operacional.
+Interromper a cadência por resposta, contato efetivo ou reunião interrompe os
+envios automáticos, mas mantém as tarefas manuais disponíveis. Recusa e pedido
+de não contato continuam bloqueando as tarefas de prospecção.
+
+`scripts/sql/restore-cancelled-prospecting-tasks.sql` reabre em lotes as tarefas
+manuais canceladas por uma interrupção normal da cadência. Exige transação com
+`search_path` do ambiente e `app.task_repair_workspace_id`/`app.task_repair_run_id`
+definidos localmente; não reabre leads encerrados, opt-outs ou tarefas substituídas.
+Cada tarefa reparada guarda os valores anteriores na auditoria para reversão.

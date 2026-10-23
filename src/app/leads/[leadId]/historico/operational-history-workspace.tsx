@@ -127,10 +127,9 @@ const taskPriorityPresentation: Readonly<Record<string, Readonly<{
 };
 
 const taskStatusPresentation: Readonly<Record<string, Readonly<{ label: string; className: string }>>> = {
-  OPEN: { label: "Aberta", className: "border-slate-300 bg-slate-100 text-slate-700" },
-  IN_PROGRESS: { label: "Em andamento", className: "border-blue-300 bg-blue-100 text-blue-800" },
+  OPEN: { label: "Em aberto", className: "border-slate-300 bg-slate-100 text-slate-700" },
+  IN_PROGRESS: { label: "Em aberto", className: "border-slate-300 bg-slate-100 text-slate-700" },
   COMPLETED: { label: "Concluída", className: "border-emerald-300 bg-emerald-100 text-emerald-800" },
-  CANCELLED: { label: "Cancelada", className: "border-slate-300 bg-slate-100 text-slate-600" },
 };
 
 const actorLabels: Readonly<Record<string, string>> = {
@@ -965,6 +964,7 @@ export function OperationalHistoryWorkspace({
     (task) => task.id === operations.lead.nextAction?.taskId,
   ) ?? null;
   const quickCompletion = sdrQueueTaskCompletion({ taskId: quickCurrentTask?.id ?? null, kind: quickCurrentTask?.kind ?? null, sourceKey: quickCurrentTask?.sourceKey ?? null });
+  const visibleTasks = operations.tasks.filter(task => task.status !== "CANCELLED");
   const visibleStageCodes = leadStageCodes.filter((code) =>
     code === pipeline.currentStageCode || pipeline.transitions.some((stage) => stage.code === code));
 
@@ -1417,9 +1417,9 @@ export function OperationalHistoryWorkspace({
             <article className="surface-panel scroll-mt-4 p-5" id="tarefas">
               <h2 className="text-lg font-semibold">Tarefas</h2>
               <p className="mt-1 text-xs text-muted-foreground">Tarefas abertas podem ser concluídas antes do prazo. A próxima ação é opcional.</p>
-              {operations.tasks.length === 0 ? <p className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">Nenhuma tarefa registrada para este lead.</p> : (
+              {visibleTasks.length === 0 ? <p className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">Nenhuma tarefa em aberto ou concluída para este lead.</p> : (
                 <ul className="mt-4 space-y-3">
-                  {operations.tasks.map((task) => {
+                  {visibleTasks.map((task) => {
                     const priority = taskPriorityPresentation[task.priority] ?? taskPriorityPresentation.MEDIUM!;
                     const completion = sdrQueueTaskCompletion({ taskId: task.id, kind: task.kind, sourceKey: task.sourceKey });
                     const status = task.overdue
@@ -1457,7 +1457,7 @@ export function OperationalHistoryWorkspace({
                                 <label className="text-sm sm:col-span-2">Título<input className={inputClass} defaultValue={task.title} name="title" required /></label>
                                 <label className="text-sm sm:col-span-2">Descrição<textarea className={textareaClass} defaultValue={task.description ?? ""} name="description" /></label>
                                 <label className="text-sm">Prioridade<select className={inputClass} defaultValue={task.priority} name="priority"><option value="LOW">Baixa</option><option value="MEDIUM">Média</option><option value="HIGH">Alta</option><option value="URGENT">Urgente</option></select></label>
-                                <label className="text-sm">Status<select className={inputClass} defaultValue={task.status} name="status"><option value="OPEN">Aberta</option><option value="IN_PROGRESS">Em andamento</option><option value="COMPLETED">Concluída</option><option value="CANCELLED">Cancelada</option></select></label>
+                                <label className="text-sm">Status<select className={inputClass} defaultValue={task.status} name="status"><option value="OPEN">Em aberto</option><option value="COMPLETED">Concluída</option></select></label>
                                 <label className="text-sm">Prazo<input className={inputClass} defaultValue={dateTimeLocalValue(task.dueAt)} name="dueAt" required type="datetime-local" /></label>
                                 <label className="text-sm">Resultado<input className={inputClass} defaultValue={task.result ?? ""} name="result" /></label>
                                 <label className="text-sm sm:col-span-2">Motivo da alteração<textarea className={textareaClass} name="reason" required /></label>

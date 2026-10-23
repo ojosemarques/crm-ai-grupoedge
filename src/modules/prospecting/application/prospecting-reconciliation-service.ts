@@ -590,14 +590,14 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
           JOIN "prospecting_cadence_instances" cadence
             ON cadence."workspaceId" = task."workspaceId" AND cadence."leadId" = task."leadId"
           WHERE task."workspaceId" = ${workspaceId}::uuid
-            AND cadence."status"::text IN ('CONVERSATION_STARTED', 'MEETING_SCHEDULED', 'CLOSED_NO_RESPONSE', 'DISCARDED', 'CANCELLED')
+            AND cadence."status"::text IN ('DISCARDED', 'CANCELLED')
             AND task."sourceKey" LIKE 'active-prospecting:%'
             AND task."status"::text IN ('OPEN', 'IN_PROGRESS') AND task."deletedAt" IS NULL)::bigint AS "terminalCadencesWithOpenTasks",
         (SELECT MIN(task."id"::text) FROM "tasks" task
           JOIN "prospecting_cadence_instances" cadence
             ON cadence."workspaceId" = task."workspaceId" AND cadence."leadId" = task."leadId"
           WHERE task."workspaceId" = ${workspaceId}::uuid
-            AND cadence."status"::text IN ('CONVERSATION_STARTED', 'MEETING_SCHEDULED', 'CLOSED_NO_RESPONSE', 'DISCARDED', 'CANCELLED')
+            AND cadence."status"::text IN ('DISCARDED', 'CANCELLED')
             AND task."sourceKey" LIKE 'active-prospecting:%'
             AND task."status"::text IN ('OPEN', 'IN_PROGRESS') AND task."deletedAt" IS NULL) AS "terminalCadenceTaskId",
         (SELECT COUNT(*) FROM "prospecting_email_jobs" job
@@ -680,7 +680,7 @@ export function createProspectingReconciliationService(options: Readonly<{ datab
     const findings: ProspectingReconciliationFinding[] = [];
     finding(findings, { code: "RELEASED_CANDIDATE_WITHOUT_LEAD", severity: "CRITICAL", count: facts.releasedCandidatesMissingLead, entityType: "ProspectCandidate", entityId: facts.releasedCandidateId, message: "Candidato liberado sem Lead correspondente.", action: "Bloquear novas liberações e reconciliar o candidato com o Lead." });
     finding(findings, { code: "RELEASE_WITHOUT_LEAD", severity: "CRITICAL", count: facts.releasedReleasesMissingLead, entityType: "ProspectRelease", entityId: facts.releasedReleaseId, message: "Liberação concluída sem Lead correspondente.", action: "Revisar a transação de liberação e o ledger de auditoria." });
-    finding(findings, { code: "TERMINAL_CADENCE_WITH_OPEN_TASK", severity: "CRITICAL", count: facts.terminalCadencesWithOpenTasks, entityType: "Task", entityId: facts.terminalCadenceTaskId, message: "Cadência encerrada ainda possui tarefa fria aberta.", action: "Cancelar as tarefas residuais antes de retomar a cadência." });
+    finding(findings, { code: "TERMINAL_CADENCE_WITH_OPEN_TASK", severity: "CRITICAL", count: facts.terminalCadencesWithOpenTasks, entityType: "Task", entityId: facts.terminalCadenceTaskId, message: "Cadência bloqueada ou descartada ainda possui tarefa de contato aberta.", action: "Revisar a restrição de contato antes de retomar o trabalho manual." });
     finding(findings, { code: "TERMINAL_CADENCE_WITH_PENDING_EMAIL", severity: "CRITICAL", count: facts.terminalCadencesWithPendingEmail, entityType: "ProspectingEmailJob", entityId: facts.terminalCadenceEmailId, message: "Cadência encerrada ainda possui ordem de e-mail pendente.", action: "Manter o egress bloqueado e cancelar a ordem residual." });
     finding(findings, { code: "STALE_EMAIL_CLAIM", severity: "CRITICAL", count: facts.staleClaims, entityType: "ProspectingEmailJob", entityId: facts.staleClaimId, message: "Ordem de e-mail permanece reivindicada após o vencimento do lease.", action: "Reconciliar o provider antes de reprocessar." });
     finding(findings, { code: "SENT_EMAIL_WITHOUT_PROVIDER_RECEIPT", severity: "CRITICAL", count: facts.sentWithoutProviderReceipt, entityType: "ProspectingEmailJob", entityId: facts.sentWithoutProviderReceiptId, message: "Ordem marcada como enviada sem identificador do provider.", action: "Confirmar o envio no provider e registrar receipt ou falha." });

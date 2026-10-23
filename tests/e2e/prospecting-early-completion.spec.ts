@@ -52,6 +52,7 @@ for (const { kind, entry } of [
     const card = page.getByRole("dialog", { name: "Ficha completa do lead", exact: true });
     await expect(card).toBeVisible();
     await card.getByRole("tab", { name: "Atividades", exact: true }).click();
+    await expect(card.locator("#tarefas").getByText("Cancelada", { exact: true })).toHaveCount(0);
     const result = kind === "CALL" ? "NO_ANSWER" : kind === "GENERAL" ? "COMPLETED" : "SENT";
     let completion = entry === "rápida"
       ? card.getByRole("article", { name: "Concluir atendimento e abrir próximo", exact: true })

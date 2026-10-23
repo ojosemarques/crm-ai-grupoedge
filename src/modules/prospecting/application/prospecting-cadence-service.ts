@@ -26,8 +26,9 @@ export async function stopColdCadenceInTransaction(
     where: { workspaceId_leadId: { workspaceId: input.workspaceId, leadId: input.leadId } },
   });
   if (!cadence) return { stopped: false };
+  const contactBlocked = input.reason === "REFUSAL" || input.reason === "DO_NOT_CONTACT";
   const concurrentReplyWins = cadence.status === "CLOSED_NO_RESPONSE" && input.reason === "HUMAN_REPLY" && input.occurredAt <= cadence.deadlineAt;
-  if (["CLOSED_NO_RESPONSE", "DISCARDED", "CANCELLED", "MEETING_SCHEDULED", "CONVERSATION_STARTED"].includes(cadence.status) && !concurrentReplyWins) return { stopped: false };
+  if (["CLOSED_NO_RESPONSE", "DISCARDED", "CANCELLED", "MEETING_SCHEDULED", "CONVERSATION_STARTED"].includes(cadence.status) && !concurrentReplyWins && !contactBlocked) return { stopped: false };
   if (input.reason === "D30_NO_RESPONSE" && !["ACTIVE", "PENDING_D1"].includes(cadence.status)) return { stopped: false };
   const status = input.reason === "MEETING_SCHEDULED" ? "MEETING_SCHEDULED"
     : input.reason === "D30_NO_RESPONSE" ? "CLOSED_NO_RESPONSE"
@@ -37,13 +38,16 @@ export async function stopColdCadenceInTransaction(
   const terminalColdStop = input.reason !== "AUTO_REPLY" && input.reason !== "BOUNCE";
   await transaction.prospectingCadenceInstance.update({ where: { id: cadence.id }, data: { status, stoppedAt: terminalColdStop ? input.occurredAt : null, stopReasonCode: input.reason, revision: { increment: 1 } } });
   await transaction.prospectingCadenceStep.updateMany({
-    where: { workspaceId: input.workspaceId, cadenceInstanceId: cadence.id, status: { in: ["BLOCKED", "SCHEDULED", "OPEN", "IN_PROGRESS"] } },
+    where: { workspaceId: input.workspaceId, cadenceInstanceId: cadence.id, ...(!contactBlocked ? { executor: { not: "SELLER" as const } } : {}), status: { in: ["BLOCKED", "SCHEDULED", "OPEN", "IN_PROGRESS"] } },
     data: { status: terminalColdStop ? "CANCELLED" : "BLOCKED", cancelledAt: terminalColdStop ? input.occurredAt : null, resultReason: input.reason },
   });
-  await transaction.task.updateMany({
-    where: { workspaceId: input.workspaceId, leadId: input.leadId, sourceKey: { startsWith: `active-prospecting:${cadence.id}:` }, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null },
-    data: { status: terminalColdStop ? "CANCELLED" : "OPEN", result: input.reason, updatedByActorId: input.actorId },
-  });
+  // Interromper os envios automáticos não deve encerrar o trabalho manual do vendedor.
+  if (contactBlocked) {
+    await transaction.task.updateMany({
+      where: { workspaceId: input.workspaceId, leadId: input.leadId, sourceKey: { startsWith: `active-prospecting:${cadence.id}:` }, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null },
+      data: { status: "CANCELLED", result: input.reason, updatedByActorId: input.actorId },
+    });
+  }
   await transaction.prospectingEmailJob.updateMany({
     where: { workspaceId: input.workspaceId, cadenceInstanceId: cadence.id, status: { in: ["BLOCKED", "SCHEDULED", "CLAIMED", "FAILED"] } },
     data: { status: terminalColdStop ? "CANCELLED" : "SUPPRESSED", finalizedAt: input.occurredAt, lastErrorCode: input.reason, leaseExpiresAt: null, lastAuthorizedAt: null },

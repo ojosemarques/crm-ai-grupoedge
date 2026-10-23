@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { PrismaClient } from "@/generated/prisma/client";
+import { PrismaClient, type Prisma } from "@/generated/prisma/client";
 import { createOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
 import { createOpenDotRequestService } from "@/modules/prospecting/application/open-dot-request-service";
-import { applyProspectingTaskCompletionInTransaction } from "@/modules/prospecting/application/prospecting-cadence-service";
+import { applyProspectingTaskCompletionInTransaction, stopColdCadenceInTransaction } from "@/modules/prospecting/application/prospecting-cadence-service";
 import { createProspectingEmailService } from "@/modules/prospecting/application/prospecting-email-service";
 import { createProspectingPlannerService } from "@/modules/prospecting/application/prospecting-planner-service";
 import { createProspectingReconciliationService } from "@/modules/prospecting/application/prospecting-reconciliation-service";
@@ -21,6 +22,7 @@ import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL is required for prospecting integration tests.");
 const database = new PrismaClient({ adapter: createPostgresAdapter(connectionString, { max: 10 }) });
+const taskRepairSql = readFileSync(new URL("../../scripts/sql/restore-cancelled-prospecting-tasks.sql", import.meta.url), "utf8");
 let clock = new Date("2026-10-05T15:00:00.000Z");
 const service = createProspectingStagingService({ database, now: () => clock });
 const operationalHistory = createOperationalHistoryService({
@@ -300,6 +302,8 @@ describe("staging governado da Prospecção Ativa", () => {
         completedAt: clock,
       });
       await expect(transaction.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id } })).resolves.toMatchObject({ status: "MEETING_SCHEDULED", stopReasonCode: "MEETING_SCHEDULED" });
+      expect(await transaction.task.count({ where: { workspaceId: principal.workspaceId, leadId, sourceKey: { startsWith: `active-prospecting:${cadence.id}:` }, status: "CANCELLED" } })).toBe(0);
+      expect(await transaction.prospectingCadenceStep.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "whatsapp-2" } })).toMatchObject({ status: "OPEN", cancelledAt: null });
       await expect(transaction.lead.findUniqueOrThrow({
         where: { id: leadId },
         select: { currentStage: { select: { stableKey: true } } },
@@ -317,6 +321,7 @@ describe("staging governado da Prospecção Ativa", () => {
         completedAt: clock,
       });
       await expect(transaction.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id } })).resolves.toMatchObject({ status: "CONVERSATION_STARTED", stopReasonCode: "CONTACT_CONNECTED" });
+      expect(await transaction.task.count({ where: { workspaceId: principal.workspaceId, leadId, sourceKey: { startsWith: `active-prospecting:${cadence.id}:` }, status: "CANCELLED" } })).toBe(0);
       await expect(transaction.lead.findUniqueOrThrow({ where: { id: leadId } })).resolves.toMatchObject({ awaitingHumanResponse: false, lastInboundResponseAt: null });
       await expect(transaction.task.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, leadId, sourceKey: `active-prospecting:${cadence.id}:respond-human` } })).resolves.toMatchObject({ title: "Continuar conversa iniciada" });
       throw new Error("ROLLBACK_CONNECTED_CONTACT_ASSERTIONS");
@@ -367,6 +372,54 @@ describe("staging governado da Prospecção Ativa", () => {
     expect(await database.lead.findUniqueOrThrow({ where: { id: leadId } })).toMatchObject({ awaitingHumanResponse: true });
     expect(await database.task.count({ where: { workspaceId: principal.workspaceId, leadId, sourceKey: `active-prospecting:${cadence.id}:respond-human`, status: "OPEN" } })).toBe(1);
     expect(await database.prospectingEmailJob.count({ where: { cadenceInstanceId: cadence.id, status: "CANCELLED" } })).toBe(5);
+    expect(await database.task.count({ where: { workspaceId: principal.workspaceId, leadId, sourceKey: { startsWith: `active-prospecting:${cadence.id}:` }, status: "CANCELLED" } })).toBe(0);
+    const nextMessage = await database.prospectingCadenceStep.findFirstOrThrow({ where: { cadenceInstanceId: cadence.id, stepKey: "instagram-message-2" } });
+    await operationalHistory.completeTask({ workspaceId: principal.workspaceId, actorId: systemActorId, actorKey: "system", actorType: "SYSTEM" }, { leadId, taskId: nextMessage.taskId!, result: "SENT", completedAt: clock });
+    expect(await database.task.findUniqueOrThrow({ where: { id: nextMessage.taskId! } })).toMatchObject({ status: "COMPLETED" });
+    expect(await database.task.count({ where: { workspaceId: principal.workspaceId, leadId, sourceKey: { startsWith: `active-prospecting:${cadence.id}:` }, status: "CANCELLED" } })).toBe(0);
+    await expect(database.$transaction(async transaction => {
+      await stopColdCadenceInTransaction(transaction, { workspaceId: principal.workspaceId, leadId, actorId: systemActorId, reason: "DO_NOT_CONTACT", occurredAt: clock });
+      expect(await transaction.lead.findUniqueOrThrow({ where: { id: leadId } })).toMatchObject({ contactPreference: "DO_NOT_CONTACT" });
+      expect(await transaction.task.count({ where: { workspaceId: principal.workspaceId, leadId, sourceKey: { startsWith: `active-prospecting:${cadence.id}:` }, status: { in: ["OPEN", "IN_PROGRESS"] } } })).toBe(0);
+      throw new Error("ROLLBACK_OPT_OUT_ASSERTIONS");
+    })).rejects.toThrow("ROLLBACK_OPT_OUT_ASSERTIONS");
+  });
+
+  it("reabre apenas tarefas manuais canceladas automaticamente, com auditoria e sem reativar e-mails", async () => {
+    const cadence = await database.prospectingCadenceInstance.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, stopReasonCode: "HUMAN_REPLY" } });
+    const steps = await database.prospectingCadenceStep.findMany({ where: { workspaceId: principal.workspaceId, cadenceInstanceId: cadence.id, stepKey: { in: ["whatsapp-3", "instagram-message-4"] } } });
+    expect(steps).toHaveLength(2);
+    const taskIds = steps.map(step => step.taskId!);
+    const original = await database.task.findMany({ where: { id: { in: taskIds } } });
+    const emails = await database.prospectingEmailJob.findMany({ where: { cadenceInstanceId: cadence.id }, orderBy: { id: "asc" } });
+    await database.task.updateMany({ where: { id: { in: taskIds } }, data: { status: "CANCELLED", result: "HUMAN_REPLY" } });
+    await database.prospectingCadenceStep.updateMany({ where: { id: { in: steps.map(step => step.id) } }, data: { status: "CANCELLED", resultReason: "HUMAN_REPLY", cancelledAt: clock } });
+    const repair = async (transaction: Prisma.TransactionClient, workspaceId = principal.workspaceId) => {
+      await transaction.$queryRaw`SELECT set_config('app.task_repair_workspace_id', ${workspaceId}, true), set_config('app.task_repair_run_id', 'integration:manual-tasks', true)`;
+      return transaction.$queryRawUnsafe<Array<{ tasks: number; steps: number; leads: number; audits: number }>>(taskRepairSql);
+    };
+    expect(await database.$transaction(tx => repair(tx, "00000000-0000-4000-8000-000000000000"))).toEqual([{ tasks: 0, steps: 0, leads: 0, audits: 0 }]);
+    for (const status of ["DISQUALIFIED", "CONVERTED"] as const) {
+      await expect(database.$transaction(async tx => {
+        await tx.lead.update({ where: { id: cadence.leadId }, data: { status } });
+        expect((await repair(tx))[0]?.tasks).toBe(0);
+        throw new Error("ROLLBACK_PROTECTED_LEAD");
+      })).rejects.toThrow("ROLLBACK_PROTECTED_LEAD");
+    }
+    await expect(database.$transaction(async tx => {
+      await tx.lead.update({ where: { id: cadence.leadId }, data: { contactPreference: "DO_NOT_CONTACT" } });
+      expect((await repair(tx))[0]?.tasks).toBe(0);
+      throw new Error("ROLLBACK_PROTECTED_LEAD");
+    })).rejects.toThrow("ROLLBACK_PROTECTED_LEAD");
+    expect(await database.$transaction(tx => repair(tx))).toEqual([{ tasks: 2, steps: 2, leads: 1, audits: 2 }]);
+    expect(await database.$transaction(tx => repair(tx))).toEqual([{ tasks: 0, steps: 0, leads: 0, audits: 0 }]);
+    for (const task of original) expect(await database.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "OPEN", result: null, dueAt: task.dueAt });
+    expect(await database.prospectingCadenceStep.count({ where: { id: { in: steps.map(step => step.id) }, status: "OPEN", cancelledAt: null } })).toBe(2);
+    const earliest = await database.task.findFirstOrThrow({ where: { workspaceId: principal.workspaceId, leadId: cadence.leadId, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null }, orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }] });
+    expect(await database.lead.findUniqueOrThrow({ where: { id: cadence.leadId } })).toMatchObject({ nextActionTaskId: earliest.id, nextActionAt: earliest.dueAt });
+    expect(await database.prospectingEmailJob.findMany({ where: { cadenceInstanceId: cadence.id }, orderBy: { id: "asc" } })).toEqual(emails);
+    expect(await database.prospectingCadenceInstance.findUniqueOrThrow({ where: { id: cadence.id } })).toEqual(cadence);
+    expect(await database.auditLog.findFirstOrThrow({ where: { action: "prospecting.manual_task.restored", entityId: taskIds[0]! } })).toMatchObject({ changes: { previous: { task: { status: "CANCELLED", result: "HUMAN_REPLY" } }, externalEgress: false } });
   });
 
   it("restaura a etapa escolhida pelo vendedor quando a cadência a sobrescreveu", async () => {
@@ -569,6 +622,7 @@ describe("staging governado da Prospecção Ativa", () => {
     expect(state.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "RELEASED_CANDIDATE_WITHOUT_LEAD", severity: "CRITICAL", entityId: inconsistent.id, count: 1 }),
     ]));
+    expect(state.findings).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "TERMINAL_CADENCE_WITH_OPEN_TASK" })]));
     const auditCount = await database.auditLog.count({ where: { workspaceId: principal.workspaceId, action: "prospecting.reconciliation.changed", entityId: state.id } });
     await reconciliation.reconcileWorkspace(principal.workspaceId, "integration:reconciliation:replay", true);
     await expect(database.auditLog.count({ where: { workspaceId: principal.workspaceId, action: "prospecting.reconciliation.changed", entityId: state.id } })).resolves.toBe(auditCount);

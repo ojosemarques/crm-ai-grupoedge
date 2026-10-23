@@ -106,7 +106,8 @@ test("registra atividade e tarefa no histórico operacional persistido", async (
   await editForm.getByRole("button", { name: "Salvar alterações" }).click();
   await expect(page.getByRole("status")).toContainText("Tarefa atualizada e correção registrada no histórico.");
   await expect(page.getByText("Retornar no E2E reaberto", { exact: true }).first()).toBeVisible();
-  await expect(page.locator("li").filter({ hasText: "Retornar no E2E reaberto" }).getByText("Aberta", { exact: true })).toBeVisible();
+  await expect(page.locator("li").filter({ hasText: "Retornar no E2E reaberto" }).getByText("Vencida", { exact: true })).toHaveCount(0);
+  await expect(page.locator("li").filter({ hasText: "Retornar no E2E reaberto" }).getByText("Em aberto", { exact: true })).toBeVisible();
 });
 
 test("exibe estados seguro de inexistência e negação de mutação", async ({ page }) => {
