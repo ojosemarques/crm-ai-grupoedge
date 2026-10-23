@@ -32,6 +32,7 @@ import {
   recordCommercialMetricFactInTransaction,
 } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { stopColdCadenceInTransaction } from "@/modules/prospecting/application/prospecting-cadence-service";
+import { reconcileStageMeetingBookingInTransaction } from "@/modules/metrics/application/stage-meeting-booking-credit";
 import { enqueueGoogleCalendarSyncInTransaction } from "@/modules/integrations/application/google-calendar-service";
 import {
   cancelMeetingParticipantEmailsInTransaction,
@@ -928,13 +929,14 @@ export function createMeetingService(options: MeetingServiceOptions) {
         leadOwnerMemberIdAtEvent: currentLead.ownerMemberId,
         executionMode: "MANUAL" as const,
       };
-      await recordCommercialMetricFactInTransaction(transaction, {
+      const bookingCredit = await recordCommercialMetricFactInTransaction(transaction, {
         ...meetingFactDimensions,
         eventKey: `meeting-history:${meetingHistory.id}:scheduled:v1`,
         eventType: "MEETING_SCHEDULED",
         sourceEntityType: "MeetingHistory",
         sourceEntityId: meetingHistory.id,
       });
+      await reconcileStageMeetingBookingInTransaction(transaction, bookingCredit.fact);
       await recordCommercialMetricFactInTransaction(transaction, {
         ...meetingFactDimensions,
         eventKey: `task:${task.id}:created:v1`,

@@ -95,6 +95,11 @@ async function expectedChecks(database: PrismaClient, workspaceId: string): Prom
 
   const inboundMessages = inboundMessageRows.length;
   const firstHumanResponses = new Set(inboundMessageRows.flatMap((message) => message.conversation.leadId ? [message.conversation.leadId] : [])).size;
+  const stageBookingsMaterialized = await database.commercialMetricFact.count({
+    where: { workspaceId, eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", quantity: -1,
+      eventKey: { endsWith: ":stage-booking-dedup:v1" }, correctionOfFactId: { not: null },
+      safeMetadata: { path: ["correction"], equals: "stage_meeting_booking_dedup" } },
+  });
   const [manualActivities] = await database.$queryRaw<ReadonlyArray<{
     callAttempts: bigint;
     connectedCalls: bigint;
@@ -156,7 +161,7 @@ async function expectedChecks(database: PrismaClient, workspaceId: string): Prom
     check("Task", "CALL_ATTEMPTED", taskCallAttempts), check("Task", "CALL_CONNECTED", taskCallsConnected), check("Task", "CALL_UNANSWERED", taskCallsUnanswered), check("Task", "CALL_FAILED", taskCallsFailed),
     check("Task", "WHATSAPP_MESSAGE_SENT", taskWhatsappMessages), check("Task", "WHATSAPP_UNAVAILABLE", taskWhatsappUnavailable), check("Task", "WHATSAPP_OTHER", taskWhatsappOther),
     check("Task", "INSTAGRAM_MESSAGE_SENT", taskInstagramMessages), check("Task", "INSTAGRAM_FOLLOW_COMPLETED", instagramFollows),
-    check("MeetingHistory", "MEETING_SCHEDULED", meetings), check("MeetingHistory", "MEETING_CONFIRMED", confirmedMeetings), check("MeetingHistory", "MEETING_RESCHEDULED", rescheduledMeetings), check("MeetingHistory", "MEETING_COMPLETED", completedMeetings), check("MeetingHistory", "MEETING_CANCELLED", cancelledMeetings), check("MeetingHistory", "MEETING_NO_SHOW", noShowMeetings),
+    check("MeetingHistory", "MEETING_SCHEDULED", meetings - stageBookingsMaterialized, { stageBookingsMaterialized }), check("MeetingHistory", "MEETING_CONFIRMED", confirmedMeetings), check("MeetingHistory", "MEETING_RESCHEDULED", rescheduledMeetings), check("MeetingHistory", "MEETING_COMPLETED", completedMeetings), check("MeetingHistory", "MEETING_CANCELLED", cancelledMeetings), check("MeetingHistory", "MEETING_NO_SHOW", noShowMeetings),
     check("Opportunity", "OPPORTUNITY_CREATED", opportunities), check("Offer", "PROPOSAL_REACHED", offers), check("OpportunityOutcomeSnapshot", "OPPORTUNITY_WON", wonOpportunities), check("OpportunityOutcomeSnapshot", "SALE_WON", wonOpportunities), check("OpportunityOutcomeSnapshot", "OPPORTUNITY_LOST", lostOpportunities),
     check("PactoRevision", "PACTO_VALIDATED", validatedPacto),
     check("PhoneCallStatusEvent", "CALL_ATTEMPTED", statusCallAttempts), check("PhoneCallStatusEvent", "CALL_CONNECTED", statusCallsConnected), check("PhoneCallStatusEvent", "CALL_UNANSWERED", statusCallsUnanswered), check("PhoneCallStatusEvent", "CALL_FAILED", statusCallsFailed),

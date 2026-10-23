@@ -12,6 +12,8 @@ import { createMeetingPipelineReconciliationService } from "@/modules/meetings/a
 import { createMeetingParticipantEmailWorker } from "@/modules/meetings/application/meeting-participant-email-service";
 import { createMeetingService } from "@/modules/meetings/application/meeting-service";
 import { summarizeRealtimeDashboardTotals } from "@/modules/realtime-dashboard/domain/realtime-dashboard-domain";
+import { reconcileStageMeetingBookingInTransaction } from "@/modules/metrics/application/stage-meeting-booking-credit";
+import { createCommercialMetricReconciliationService } from "@/modules/metrics/application/commercial-metric-reconciliation-service";
 import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createPactoQualificationService } from "@/modules/qualification/application/pacto-qualification-service";
 import { pactoDimensions } from "@/modules/qualification/domain/pacto-contracts";
@@ -326,6 +328,32 @@ describe("agenda interna e reuniões", () => {
     expect(history).toHaveLength(1);
     expect(activities).toHaveLength(1);
     expect(audit).toHaveLength(1);
+  });
+
+  it("conta uma vez ao mover o card e depois agendar, preservando o crédito original", async () => {
+    const lead = await createActiveProspectingLead("Card antes da agenda");
+    const pipeline = createPreSalesPipelineService({ database, authorization, now: () => clock });
+    const stage = await database.pipelineStage.findFirstOrThrow({ where: { workspaceId, pipeline: { name: "Prospecção Ativa" }, leadStageCode: "MEETING_SCHEDULED" } });
+    const state = await pipeline.getLeadState(managerContext, { leadId: lead.leadId });
+    await pipeline.transition(managerContext, { leadId: lead.leadId, targetStageId: stage.id, expectedUpdatedAt: state.updatedAt, origin: "PIPELINE_BOARD" });
+    const stageFact = await database.commercialMetricFact.findFirstOrThrow({ where: { workspaceId, leadId: lead.leadId, eventType: "MEETING_SCHEDULED" } });
+    clock = new Date(clock.getTime() + 86_400_000);
+    const result = await schedule(lead.leadId, adminContext, "2035-04-20T09:00");
+    const booking = await database.commercialMetricFact.findFirstOrThrow({ where: { workspaceId, meetingId: result.meetingId, eventType: "MEETING_SCHEDULED", correctionOfFactId: null } });
+    const facts = await database.commercialMetricFact.findMany({ where: { workspaceId, leadId: lead.leadId, eventType: "MEETING_SCHEDULED" } });
+    expect(facts.reduce((sum, fact) => sum + fact.quantity, 0)).toBe(1);
+    expect(facts.filter(fact => fact.quantity > 0 && fact.occurredAt.getTime() === stageFact.occurredAt.getTime())).toEqual([stageFact]);
+    expect(facts.find(fact => fact.quantity === -1)).toMatchObject({ correctionOfFactId: booking.id, occurredAt: booking.occurredAt, creditedMemberId: booking.creditedMemberId, bookedByMemberId: booking.bookedByMemberId });
+    await database.$transaction(tx => reconcileStageMeetingBookingInTransaction(tx, booking));
+    expect(await database.commercialMetricFact.count({ where: { workspaceId, leadId: lead.leadId, eventType: "MEETING_SCHEDULED" } })).toBe(facts.length);
+    expect(await database.meeting.count({ where: { workspaceId, leadId: lead.leadId } })).toBe(1);
+    expect(await database.meeting.findUniqueOrThrow({ where: { id: result.meetingId } })).toMatchObject({ startsAt: new Date("2035-04-20T12:00:00Z"), revision: 1 });
+    expect(facts.filter(fact => fact.occurredAt.getTime() === booking.occurredAt.getTime()).reduce((sum, fact) => sum + fact.quantity, 0)).toBe(0);
+    const reconciliation = await createCommercialMetricReconciliationService({ database, now: () => clock }).run(adminContext, { runKey: `stage-booking-${randomUUID()}` });
+    expect("checks" in reconciliation && reconciliation.checks.find(check => check.sourceEntityType === "MeetingHistory" && check.eventType === "MEETING_SCHEDULED")).toMatchObject({ state: "MATCHED" });
+    await meetings().act(managerContext, { meetingId: result.meetingId, expectedRevision: 1, action: "CANCEL", reason: "Cancelamento para validar um novo agendamento legítimo.", nextAction: { title: "Reagendar reunião", dueAtLocal: "2035-02-20T10:00" } });
+    await schedule(lead.leadId, managerContext, "2035-04-20T10:00");
+    expect((await database.commercialMetricFact.aggregate({ where: { workspaceId, leadId: lead.leadId, eventType: "MEETING_SCHEDULED" }, _sum: { quantity: true } }))._sum.quantity).toBe(2);
   });
 
   it("preserva os quatro créditos de agendamento após editar três reuniões futuras", async () => {
