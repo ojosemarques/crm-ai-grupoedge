@@ -104,3 +104,66 @@ test("ranking destaca agendamentos de hoje, respeita metas individuais e não mo
   }
   expect(errors).toEqual([]);
 });
+
+test("TV em tela cheia mantém números e metas separados em telas HD, Full HD e 4K", async ({ page }, testInfo) => {
+  const original = rankingSnapshot();
+  const snapshot = { ...original, week: { ...original.week, ranking: [...original.week.ranking,
+    { ...original.week.ranking[0]!, position: 4, name: "Profissional de sobrenome composto" },
+  ] } };
+  await page.clock.install({ time: new Date(snapshot.generatedAt) });
+  await page.route("**/api/public/tempo", route => route.fulfill({ json: { result: snapshot } }));
+  await page.goto("/tempo");
+  await page.getByRole("button", { name: "Pausar apresentação", exact: true }).click();
+  for (const size of [
+    { width: 1366, height: 768 }, { width: 1280, height: 720 },
+    { width: 1920, height: 720 }, { width: 1920, height: 1080 },
+    { width: 1536, height: 864 }, { width: 3840, height: 2160 },
+  ]) {
+    await page.setViewportSize(size);
+    await page.getByRole("button", { name: "Tela cheia", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
+    for (const theme of ["escuro", "claro"]) {
+      await page.getByRole("button", { name: `Tema ${theme}`, exact: true }).click();
+      for (const index of [1, 2]) {
+        await page.getByRole("button", { name: `Mostrar slide ${index}`, exact: true }).click();
+        await page.evaluate(() => document.fonts.ready);
+        const problems = await page.locator('main[aria-label="TEMPO REAL"]').evaluate(board => {
+          const problems: string[] = [];
+          const groups = board.querySelectorAll('[class*="metricTile"], [class*="sellerMetric"], [class*="leaderCard"], [class*="revenueRow"], [class*="summaryStrip"] > article, [class*="salesGoalCard"]');
+          for (const group of groups) {
+            const outer = group.getBoundingClientRect();
+            const walker = document.createTreeWalker(group, NodeFilter.SHOW_TEXT);
+            const texts: { text: string; rect: DOMRect }[] = [];
+            while (walker.nextNode()) {
+              const node = walker.currentNode;
+              const parent = node.parentElement!;
+              if (!node.textContent?.trim() || parent.closest("svg")) continue;
+              // Names and explanatory labels intentionally ellipsize; numerical values must not.
+              const style = getComputedStyle(parent);
+              if (style.textOverflow === "ellipsis" || style.webkitLineClamp !== "none") continue;
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              for (const rect of range.getClientRects()) {
+                if (!rect.width || !rect.height) continue;
+                const text = node.textContent.trim();
+                if (rect.left < outer.left - 2 || rect.right > outer.right + 2 || rect.top < outer.top - 2 || rect.bottom > outer.bottom + 2) problems.push(`Cortado: ${text}`);
+                texts.push({ text, rect });
+              }
+            }
+            for (let i = 0; i < texts.length; i++) for (const other of texts.slice(i + 1)) {
+              const current = texts[i]!;
+              if (Math.min(current.rect.right, other.rect.right) - Math.max(current.rect.left, other.rect.left) > 2
+                && Math.min(current.rect.bottom, other.rect.bottom) - Math.max(current.rect.top, other.rect.top) > 2) problems.push(`Sobreposição: ${current.text} / ${other.text}`);
+            }
+          }
+          return problems;
+        });
+        await page.screenshot({ path: testInfo.outputPath(`tv-${size.width}x${size.height}-${theme}-slide-${index}.png`), animations: "disabled" });
+        expect.soft(problems, `${size.width}×${size.height}, ${theme}, slide ${index}`).toEqual([]);
+        expect.soft(await page.evaluate(() => ({ width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight }))).toEqual(size);
+      }
+    }
+    await page.getByRole("button", { name: "Sair da tela cheia", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(false);
+  }
+});

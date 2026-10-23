@@ -1,6 +1,7 @@
 .board {
   --brand-blue: #1f35fd; --bg: #101419; --panel: #181e25; --surface: #1e2630; --ink: #edf2f7; --muted: #95a2b2; --line: #2b3542; --accent: #8c9aff; --blue: #bac4ff; --gold: #dfc47d;
-  background: var(--bg); color: var(--ink); font-family: var(--font-politizai-sans), Arial, sans-serif; font-size: clamp(15px, 1.05vw, 23px); font-variant-numeric: tabular-nums; height: 100dvh; letter-spacing: -.025em; overflow: hidden;
+  /* Fit the TV's usable height too: width-only sizing overflows on short, wide screens. */
+  background: var(--bg); color: var(--ink); font-family: var(--font-politizai-sans), Arial, sans-serif; font-size: clamp(12px, min(1.05vw, 2vh), 23px); font-variant-numeric: tabular-nums; height: 100dvh; letter-spacing: -.025em; overflow: hidden;
 }
 .board[data-appearance="light"] { --bg: #f4f6f9; --panel: #fff; --surface: #f6f8fb; --ink: #172433; --muted: #637385; --line: #e2e8ef; --accent: var(--brand-blue); --blue: #4c5fff; --gold: #ad822b; }
 .board *, .board *::before, .board *::after { box-sizing: border-box; }
