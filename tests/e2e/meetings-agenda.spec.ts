@@ -104,13 +104,37 @@ test("agenda, ciclo da reunião e briefing funcionam sobre dados persistidos", a
   await expect(panel.getByText("Agendada", { exact: true })).toBeVisible();
 
   await page.goto("/agenda?view=day&date=2035-02-11");
-  await expect(page.getByRole("heading", { name: "Agenda interna" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Agenda", exact: true })).toBeVisible();
   const meetingCard = page.locator('button[data-status="SCHEDULED"]').filter({ hasText: "Diagnóstico comercial E2E" });
   await expect(meetingCard).toContainText(leadName);
   await expect(meetingCard).toHaveCSS("background-color", "rgb(23, 23, 23)");
   await meetingCard.click();
   const meetingDialog = page.getByRole("dialog", { name: "Diagnóstico comercial E2E" });
   await expect(meetingDialog.getByText(/Participante: convidado-aba-lead@example.test/)).toBeVisible();
+  const agendaUrl = page.url();
+  const agendaDocumentId = randomUUID();
+  await page.evaluate(value => { (window as Window & { agendaDocumentId?: string }).agendaDocumentId = value; }, agendaDocumentId);
+  await meetingDialog.getByRole("button", { name: "Ir ao lead", exact: true }).click();
+  const leadDialog = page.getByRole("dialog", { name: "Ficha completa do lead", exact: true });
+  await expect(leadDialog).toBeVisible();
+  await expect(leadDialog.getByRole("heading", { name: leadName, exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Agenda", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  expect(await page.evaluate(() => (window as Window & { agendaDocumentId?: string }).agendaDocumentId)).toBe(agendaDocumentId);
+  await leadDialog.getByRole("button", { name: "Fechar ficha e voltar à agenda" }).click();
+  await expect(page).toHaveURL(agendaUrl);
+  await expect(leadDialog).not.toBeVisible();
+  await expect(meetingCard).toBeVisible();
+  // A ficha também abre na visualização de lista, sem perder a agenda ao fechar com Escape.
+  await page.getByRole("button", { name: "Lista", exact: true }).click();
+  await page.getByRole("button", { name: "Ir ao lead", exact: true }).click();
+  await expect(leadDialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(agendaUrl);
+  await expect(leadDialog).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "Lista", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Dia", exact: true }).click();
+  await meetingCard.click();
   await meetingDialog.getByRole("button", { name: "Confirmar", exact: true }).click();
   await expect(meetingDialog.getByText("Confirmada", { exact: true })).toBeVisible();
   const confirmedCard = page.locator('button[data-status="CONFIRMED"]').filter({ hasText: "Diagnóstico comercial E2E" });

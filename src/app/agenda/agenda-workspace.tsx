@@ -226,7 +226,11 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       {meeting.observation ? <p className={styles.observation}>{meeting.observation}</p> : null}
       <StatusBadge tone={meeting.calendarSync.state === "SYNCED" ? "success" : meeting.calendarSync.state === "CONFLICT" || meeting.calendarSync.state === "FAILED" ? "danger" : "info"}>Calendário: {meeting.calendarSync.state === "NOT_LINKED" ? "não conectado" : meeting.calendarSync.state.toLowerCase().replaceAll("_", " ")}</StatusBadge>
       <div className={styles.detailLinks}><Link href={`/agenda/reunioes/${meeting.id}`}>Abrir briefing do closer →</Link>{meeting.calendarSync.conferenceUrl ? <a href={meeting.calendarSync.conferenceUrl} rel="noreferrer" target="_blank">Entrar no Google Meet</a> : <Link href="/integracoes/calendario">Conectar calendário</Link>}{meeting.opportunityId ? <Link href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
-      <MeetingActions meeting={meeting} onCommitted={refresh} />
+      <MeetingActions meeting={meeting} onCommitted={refresh} onOpenLead={() => {
+        setSelectedMeetingId(null);
+        setScreen(null);
+        router.push(`/leads/${meeting.leadId}/historico`, { scroll: false });
+      }} />
     </div>;
   }
 

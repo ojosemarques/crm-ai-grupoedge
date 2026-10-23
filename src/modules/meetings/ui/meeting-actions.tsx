@@ -37,7 +37,8 @@ async function readResponse(response: Response) {
 export function MeetingActions({
   meeting,
   onCommitted,
-}: Readonly<{ meeting: MeetingListItem; onCommitted: () => Promise<void> }>) {
+  onOpenLead,
+}: Readonly<{ meeting: MeetingListItem; onCommitted: () => Promise<void>; onOpenLead?: () => void }>) {
   const [action, setAction] = useState<Action | null>(null);
   const [editStatus, setEditStatus] = useState(meeting.status);
   const [pending, setPending] = useState(false);
@@ -105,11 +106,12 @@ export function MeetingActions({
     });
   }
 
-  if (!meeting.canWrite) return null;
+  if (!meeting.canWrite && !onOpenLead) return null;
 
   return (
     <div className="mt-3 border-t pt-3">
       <div className="flex flex-wrap gap-2">
+        {meeting.canWrite ? <>
         {active && meeting.status === "SCHEDULED" ? (
           <Button disabled={pending} onClick={() => void post({ action: "CONFIRM" })} size="sm" type="button">
             Confirmar
@@ -122,6 +124,8 @@ export function MeetingActions({
           <Button disabled={pending} onClick={() => setAction("NO_SHOW")} size="sm" type="button" variant="secondary">No-show</Button>
         </> : null}
         <Button disabled={pending} onClick={() => { setEditStatus(meeting.status); setAction("EDIT"); }} size="sm" type="button" variant="secondary">Editar reunião</Button>
+        </> : null}
+        {onOpenLead ? <Button disabled={pending} onClick={onOpenLead} size="sm" type="button" variant="secondary">Ir ao lead</Button> : null}
       </div>
       {action ? (
         <form className="mt-3 grid gap-3 rounded-md border bg-muted/40 p-3 sm:grid-cols-2" onSubmit={submit}>
