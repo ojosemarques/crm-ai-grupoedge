@@ -11,6 +11,7 @@ import { createGoogleCalendarWorkerService } from "@/modules/integrations/applic
 import { createMeetingPipelineReconciliationService } from "@/modules/meetings/application/meeting-pipeline-reconciliation-service";
 import { createMeetingParticipantEmailWorker } from "@/modules/meetings/application/meeting-participant-email-service";
 import { createMeetingService } from "@/modules/meetings/application/meeting-service";
+import { summarizeRealtimeDashboardTotals } from "@/modules/realtime-dashboard/domain/realtime-dashboard-domain";
 import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createPactoQualificationService } from "@/modules/qualification/application/pacto-qualification-service";
 import { pactoDimensions } from "@/modules/qualification/domain/pacto-contracts";
@@ -325,6 +326,32 @@ describe("agenda interna e reuniões", () => {
     expect(history).toHaveLength(1);
     expect(activities).toHaveLength(1);
     expect(audit).toHaveLength(1);
+  });
+
+  it("preserva os quatro créditos de agendamento após editar três reuniões futuras", async () => {
+    clock = new Date("2035-02-10T15:00:00.000Z");
+    const meetingIds: string[] = [];
+    for (let index = 0; index < 4; index++) {
+      const lead = await qualifyLead(`Crédito imutável ${index}`);
+      const saved = await schedule(lead.leadId, managerContext, "2035-02-15T10:00", closer1Id);
+      meetingIds.push(saved.meetingId);
+      if (index < 3) {
+        await meetings().act(managerContext, {
+          action: "EDIT", meetingId: saved.meetingId, expectedRevision: 1,
+          title: `Reunião futura corrigida ${index}`, startsAtLocal: "2035-02-16T11:00", durationMinutes: 30,
+          status: "SCHEDULED", observation: "Horário e participantes atualizados.", outcome: null,
+          reason: "Correção do horário sem apagar o trabalho de agendamento.",
+        });
+        await meetings().act(managerContext, { action: "CONFIRM", meetingId: saved.meetingId, expectedRevision: 2 });
+      }
+    }
+    const facts = await database.commercialMetricFact.findMany({ where: { workspaceId, meetingId: { in: meetingIds }, eventType: "MEETING_SCHEDULED" } });
+    const totals = summarizeRealtimeDashboardTotals(facts.map((fact) => ({ ...fact, occurredAt: fact.occurredAt.toISOString(), valueCents: fact.valueCents?.toString() ?? null })), [
+      { id: managerContext.memberId, name: "Quem agendou" }, { id: closer1Id, name: "Responsável pela reunião" },
+    ]);
+    expect(totals.meetingsScheduled).toBe(4);
+    expect(facts).toHaveLength(4);
+    expect(facts.every((fact) => fact.bookedByMemberId === managerContext.memberId && fact.occurredAt.toISOString() === "2035-02-10T15:00:00.000Z")).toBe(true);
   });
 
   it("enfileira e envia pelo MillionSend o convite e os quatro lembretes do participante", async () => {

@@ -13,6 +13,7 @@ import { manualActivityCorrectionFacts, type ManualActivityFactBasis } from "@/m
 import { missingPhoneCallEvents, phoneCallMetricEventType } from "@/modules/metrics/domain/phone-call-metric-events";
 import { messageStatusMetricEventType } from "@/modules/metrics/domain/message-status-metric-events";
 import { COMMERCIAL_METRIC_BACKFILL_RULE_VERSION } from "@/modules/metrics/domain/commercial-metric-quality";
+import { meetingBookingCreditRestoration } from "./meeting-booking-credit-restoration";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
@@ -951,6 +952,27 @@ function sources(database: PrismaClient, workspaceId: string): readonly Source[]
             direction: original.direction, previousResult, correctedResult: nextResult,
             originalFacts: basisFacts,
           });
+        });
+      },
+    },
+    {
+      name: "meeting_booking_credit_restorations",
+      fetch: async (cursor, take) => {
+        const reversals = await database.commercialMetricFact.findMany({
+          where: {
+            workspaceId, eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", quantity: { lt: 0 },
+            correctionOfFactId: { not: null }, eventKey: { contains: ":meeting-edit:", endsWith: ":reversal:v1" },
+            ...(cursor ? { id: { gt: cursor } } : {}),
+          }, orderBy: { id: "asc" }, take,
+        });
+        const originals = await database.commercialMetricFact.findMany({
+          where: { workspaceId, id: { in: reversals.flatMap((fact) => fact.correctionOfFactId ? [fact.correctionOfFactId] : []) } },
+        });
+        const originalById = new Map(originals.map((fact) => [fact.id, fact]));
+        return page(reversals, (reversal) => {
+          const original = originalById.get(reversal.correctionOfFactId!);
+          const restoration = original ? meetingBookingCreditRestoration(reversal, original) : null;
+          return restoration ? [restoration] : [];
         });
       },
     },

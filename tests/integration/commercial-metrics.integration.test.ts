@@ -96,13 +96,22 @@ describe("razão comercial integrada", () => {
       newStartsAt: meeting.startsAt, newEndsAt: meeting.endsAt, occurredAt: completedAt,
       recordedByActorId: executorActor.id,
     } });
-    await recordCommercialMetricFactInTransaction(database, {
+    const { fact: originalBooking } = await recordCommercialMetricFactInTransaction(database, {
       workspaceId: context.workspaceId, eventKey: `meeting-history:${meetingHistory.id}:scheduled:v1`,
       eventType: "MEETING_SCHEDULED", occurredAt: completedAt,
       sourceEntityType: "MeetingHistory", sourceEntityId: meetingHistory.id,
       meetingId: meeting.id, leadId: lead.id, creditedMemberId: executor.id,
       performedByMemberId: executor.id, bookedByMemberId: executor.id,
       meetingOwnerMemberIdAtEvent: context.memberId,
+    });
+    const { fact: erroneousReversal } = await recordCommercialMetricCorrectionInTransaction(database, {
+      workspaceId: context.workspaceId,
+      eventKey: `${originalBooking.eventKey}:meeting-edit:${randomUUID()}:reversal:v1`,
+      eventType: "MEETING_SCHEDULED", occurredAt: originalBooking.occurredAt,
+      sourceEntityType: "MeetingHistory", sourceEntityId: meetingHistory.id,
+      meetingId: meeting.id, leadId: lead.id, creditedMemberId: context.memberId,
+      performedByMemberId: context.memberId, meetingOwnerMemberIdAtEvent: context.memberId, quantity: -1,
+      correctionOfFactId: originalBooking.id, reversalReason: "Edição antiga de horário",
     });
     await recordCommercialMetricFactInTransaction(database, {
       workspaceId: context.workspaceId, eventKey: `meeting-history:${meetingHistory.id}:meeting_scheduled:v1`,
@@ -238,6 +247,23 @@ describe("razão comercial integrada", () => {
     const repeated = await backfill.run(context, { mode: "APPLY", runKey: `commercial-metrics:repeat:${randomUUID()}`, batchSize: 100 });
     expect(repeated.createdCount).toBe(0);
     expect(repeated.failedCount).toBe(0);
+    const restoration = await database.commercialMetricFact.findUniqueOrThrow({
+      where: { workspaceId_eventKey: {
+        workspaceId: context.workspaceId,
+        eventKey: `${erroneousReversal.eventKey}:booking-credit-restored:v1`,
+      } },
+    });
+    expect(restoration).toMatchObject({
+      quantity: 1, bookedByMemberId: null, creditedMemberId: context.memberId,
+      occurredAt: originalBooking.occurredAt, correctionOfFactId: erroneousReversal.id,
+    });
+    expect(await database.commercialMetricFact.findUniqueOrThrow({ where: { id: originalBooking.id } })).toEqual(originalBooking);
+    expect(await database.commercialMetricFact.findUniqueOrThrow({ where: { id: erroneousReversal.id } })).toEqual(erroneousReversal);
+    expect(await database.meeting.findUniqueOrThrow({ where: { id: meeting.id } })).toEqual(meeting);
+    expect((await database.commercialMetricFact.aggregate({
+      where: { workspaceId: context.workspaceId, meetingId: meeting.id, eventType: "MEETING_SCHEDULED" },
+      _sum: { quantity: true },
+    }))._sum.quantity).toBe(1);
     const firstResponseFacts = await database.commercialMetricFact.findMany({
       where: { workspaceId: context.workspaceId, leadId: lead.id, sourceEntityType: "Message", eventType: "HUMAN_RESPONSE_CONFIRMED" },
       select: { sourceEntityId: true, quantity: true },
@@ -270,7 +296,8 @@ describe("razão comercial integrada", () => {
     });
     expect(meetingFacts.filter((fact) => fact.creditedMemberId === context.memberId).reduce((sum, fact) => sum + fact.quantity, 0)).toBe(0);
     expect(meetingFacts.filter((fact) => fact.creditedMemberId === executor.id).reduce((sum, fact) => sum + fact.quantity, 0)).toBe(1);
-    expect(meetingFacts.every((fact) => fact.bookedByMemberId === executor.id && fact.meetingOwnerMemberIdAtEvent === context.memberId)).toBe(true);
+    expect(meetingFacts.filter((fact) => fact.bookedByMemberId !== null)
+      .every((fact) => fact.bookedByMemberId === executor.id && fact.meetingOwnerMemberIdAtEvent === context.memberId)).toBe(true);
     expect(await database.commercialMetricFact.findFirstOrThrow({
       where: { workspaceId: context.workspaceId, sourceEntityType: "StageHistory", sourceEntityId: qualificationHistory.id, eventType: "LEAD_QUALIFIED" },
       select: { creditedMemberId: true, leadId: true, quantity: true },

@@ -1344,7 +1344,9 @@ export function createMeetingService(options: MeetingServiceOptions) {
             quantity: { gt: 0 },
           },
         });
-        if (originalFact) {
+        // Editing a meeting corrects its current state, not the fact that it was booked.
+        // Keep the original booking date and booker; reschedules are separate events.
+        if (originalFact && originalFact.eventType !== "MEETING_SCHEDULED") {
           await recordCommercialMetricCorrectionInTransaction(transaction, {
             workspaceId: context.workspaceId,
             eventKey: `${originalFact.eventKey}:meeting-edit:${meetingHistory.id}:reversal:v1`,
