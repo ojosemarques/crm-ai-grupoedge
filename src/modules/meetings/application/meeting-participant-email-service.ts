@@ -1,18 +1,22 @@
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
+import { createHash } from "node:crypto";
+import { meetingGuests } from "@/modules/meetings/domain/meeting-participants";
 import { MillionSendProviderError, MillionSendTransport } from "@/modules/integrations/application/millionsend-transport";
 import { calculateRetryDelaySeconds } from "@/modules/integrations/domain/integration-policy";
 
-const JOB_KIND = "MEETING_PARTICIPANT_EMAIL_V1";
+const LEGACY_JOB_KIND = "MEETING_PARTICIPANT_EMAIL_V1";
+const JOB_KIND = "MEETING_PARTICIPANT_EMAIL_V2";
 const REMINDER_MINUTES = [180, 60, 30, 0] as const;
 
 type Transaction = Prisma.TransactionClient;
 type EmailKind = "INVITATION" | "REMINDER";
 type JobPayload = Readonly<{
-  kind: typeof JOB_KIND;
+  kind: typeof JOB_KIND | typeof LEGACY_JOB_KIND;
   emailKind: EmailKind;
   meetingId: string;
   meetingRevision: number;
   reminderMinutes: number | null;
+  recipientEmail?: string;
 }>;
 
 type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
@@ -30,18 +34,20 @@ const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.Inp
 function parsePayload(value: Prisma.JsonValue): JobPayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("MEETING_PARTICIPANT_EMAIL_JOB_INVALID");
   if (
-    value.kind !== JOB_KIND ||
+    (value.kind !== JOB_KIND && value.kind !== LEGACY_JOB_KIND) ||
     (value.emailKind !== "INVITATION" && value.emailKind !== "REMINDER") ||
     typeof value.meetingId !== "string" ||
     typeof value.meetingRevision !== "number" ||
-    (value.reminderMinutes !== null && typeof value.reminderMinutes !== "number")
+    (value.reminderMinutes !== null && typeof value.reminderMinutes !== "number") ||
+    (value.kind === JOB_KIND && typeof value.recipientEmail !== "string")
   ) throw new Error("MEETING_PARTICIPANT_EMAIL_JOB_INVALID");
   return {
-    kind: JOB_KIND,
+    kind: value.kind,
     emailKind: value.emailKind,
     meetingId: value.meetingId,
     meetingRevision: value.meetingRevision,
     reminderMinutes: value.reminderMinutes,
+    ...(typeof value.recipientEmail === "string" ? { recipientEmail: value.recipientEmail } : {}),
   };
 }
 
@@ -69,7 +75,7 @@ async function cancelPendingParticipantEmailJobs(
     WHERE "workspaceId" = ${input.workspaceId}::uuid
       AND "type" = 'NOTIFICATION'
       AND "status" = 'PENDING'
-      AND "payload"->>'kind' = ${JOB_KIND}
+      AND "payload"->>'kind' IN (${JOB_KIND}, ${LEGACY_JOB_KIND})
       AND "payload"->>'meetingId' = ${input.meetingId}
   `);
   await transaction.$executeRaw(Prisma.sql`
@@ -80,7 +86,7 @@ async function cancelPendingParticipantEmailJobs(
     WHERE "workspaceId" = ${input.workspaceId}::uuid
       AND "type" = 'NOTIFICATION'
       AND "status" = 'RUNNING'
-      AND "payload"->>'kind' = ${JOB_KIND}
+      AND "payload"->>'kind' IN (${JOB_KIND}, ${LEGACY_JOB_KIND})
       AND "payload"->>'meetingId' = ${input.meetingId}
   `);
   return cancelled;
@@ -99,7 +105,7 @@ export async function scheduleMeetingParticipantEmailsInTransaction(
     workspaceId: string;
     meetingId: string;
     meetingRevision: number;
-    participantEmail: string | null;
+    participantEmails: readonly string[];
     startsAt: Date;
     occurredAt: Date;
     actorId: string;
@@ -113,7 +119,7 @@ export async function scheduleMeetingParticipantEmailsInTransaction(
     occurredAt: input.occurredAt,
     reasonCode: "MEETING_PARTICIPANT_EMAIL_SUPERSEDED",
   });
-  if (!input.participantEmail) return Object.freeze({ scheduled: 0, cancelled });
+  if (!input.participantEmails.length) return Object.freeze({ scheduled: 0, cancelled });
 
   const definitions: Array<Readonly<{ emailKind: EmailKind; reminderMinutes: number | null; runAt: Date; priority: number }>> = [];
   if (input.includeInvitation) definitions.push({ emailKind: "INVITATION", reminderMinutes: null, runAt: input.occurredAt, priority: 95 });
@@ -121,9 +127,12 @@ export async function scheduleMeetingParticipantEmailsInTransaction(
     definitions.push({ emailKind: "REMINDER", reminderMinutes: reminder.reminderMinutes, runAt: reminder.runAt, priority: reminder.reminderMinutes === 0 ? 100 : 90 });
   }
 
-  for (const definition of definitions) {
+  for (const [index, recipientEmail] of input.participantEmails.entries()) {
+   for (const definition of definitions) {
     const suffix = definition.emailKind === "INVITATION" ? "invitation" : `m${definition.reminderMinutes}`;
-    const idempotencyKey = `meeting-participant-email:${input.meetingId}:r${input.meetingRevision}:${suffix}`;
+    // Keep primary legacy keys so an already queued invitation cannot be sent twice on deploy.
+    const recipientKey = index === 0 ? "" : `:${createHash("sha256").update(recipientEmail).digest("hex").slice(0, 24)}`;
+    const idempotencyKey = `meeting-participant-email:${input.meetingId}:r${input.meetingRevision}:${suffix}${recipientKey}`;
     await transaction.job.upsert({
       where: { workspaceId_idempotencyKey: { workspaceId: input.workspaceId, idempotencyKey } },
       update: {},
@@ -141,6 +150,7 @@ export async function scheduleMeetingParticipantEmailsInTransaction(
           meetingId: input.meetingId,
           meetingRevision: input.meetingRevision,
           reminderMinutes: definition.reminderMinutes,
+          recipientEmail,
         } satisfies JobPayload),
         createdByActorId: input.actorId,
         updatedByActorId: input.actorId,
@@ -149,7 +159,8 @@ export async function scheduleMeetingParticipantEmailsInTransaction(
       },
     });
   }
-  return Object.freeze({ scheduled: definitions.length, cancelled });
+   }
+  return Object.freeze({ scheduled: definitions.length * input.participantEmails.length, cancelled });
 }
 
 function loadConfig(environment: WorkerEnvironment) {
@@ -214,7 +225,7 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
       const rows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         SELECT "id" FROM "jobs"
         WHERE "type" = 'NOTIFICATION'
-          AND "payload"->>'kind' = ${JOB_KIND}
+          AND "payload"->>'kind' IN (${JOB_KIND}, ${LEGACY_JOB_KIND})
           AND (("status" = 'PENDING' AND "runAt" <= ${now})
             OR ("status" = 'RUNNING' AND "lockExpiresAt" < ${now}))
         ORDER BY "priority" DESC, "runAt" ASC, "createdAt" ASC
@@ -275,13 +286,17 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
       const meeting = await options.database.meeting.findFirst({
         where: { id: data.meetingId, workspaceId: job.workspaceId, deletedAt: null },
         include: {
+          participants: { orderBy: { position: "asc" } },
           lead: { select: { fullName: true } },
           owner: { select: { user: { select: { displayName: true } } } },
           googleCalendarLink: { select: { conferenceUrl: true } },
         },
       });
       const now = options.now();
-      if (!meeting || !meeting.participantEmail || !["SCHEDULED", "CONFIRMED"].includes(meeting.status) || meeting.endsAt <= now) {
+      const recipientEmail = data.recipientEmail ?? meeting?.participantEmail;
+      // Confirming increments the revision without changing the invitation schedule.
+      // Other edits cancel jobs transactionally; removed guests are revalidated here too.
+      if (!meeting || !recipientEmail || !meetingGuests(meeting).some((guest) => guest.email === recipientEmail) || !["SCHEDULED", "CONFIRMED"].includes(meeting.status) || meeting.endsAt <= now) {
         return finishCancelled(job, workerId, "MEETING_PARTICIPANT_EMAIL_STALE");
       }
       const [profile, suppression, currentJob] = await Promise.all([
@@ -297,7 +312,7 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
           orderBy: [{ lastSuccessAt: "desc" }, { validatedAt: "desc" }, { createdAt: "asc" }],
         }),
         options.database.emailSuppression.findFirst({
-          where: { workspaceId: job.workspaceId, normalizedEmail: meeting.participantEmail, action: "APPLIED" },
+          where: { workspaceId: job.workspaceId, normalizedEmail: recipientEmail, action: "APPLIED" },
           orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }],
           select: { id: true },
         }),
@@ -319,7 +334,7 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
       const result = await transport.send({
         from: profile.senderAddressNormalized,
         replyTo: profile.replyTo,
-        to: [meeting.participantEmail],
+        to: [recipientEmail],
         subject: content.subject,
         text: content.text,
         messageId: `<${job.id}@politizai.com>`,

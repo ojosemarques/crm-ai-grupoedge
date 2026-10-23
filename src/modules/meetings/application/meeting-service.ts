@@ -59,6 +59,7 @@ import {
   workspaceWeekRange,
 } from "@/shared/core/time/workspace-time";
 import { z } from "zod";
+import { meetingGuests, participantEmailSchema, participantEmailsSchema } from "@/modules/meetings/domain/meeting-participants";
 
 type AuthorizationPort = Readonly<{
   authorize: (
@@ -97,8 +98,6 @@ const leadMeetingsQuerySchema = z.object({ leadId: z.string().uuid() }).strict()
 const meetingQuerySchema = z.object({ meetingId: z.string().uuid() }).strict();
 const leadOptionSearchSchema = z.object({ query: z.string().trim().min(2).max(80) }).strict();
 const WORKSPACE_MEETING_SCHEDULER_EMAILS = new Set(["carloshenrique@politizai.com"]);
-const participantEmailSchema = z.string().trim().email().max(320).transform((value) => value.toLowerCase());
-
 const scheduleSchema = z.object({
   leadId: z.string().uuid(),
   opportunityId: z.string().uuid().nullable().optional(),
@@ -108,6 +107,7 @@ const scheduleSchema = z.object({
   durationMinutes: z.union([z.literal(30), z.literal(40)]),
   observation: z.string().trim().max(5_000).nullable().optional(),
   participantEmail: participantEmailSchema.nullable().optional(),
+  participantEmails: participantEmailsSchema.optional(),
   taskPriority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
 }).strict();
 
@@ -156,6 +156,7 @@ const actionSchema = z.discriminatedUnion("action", [
     status: z.enum(["SCHEDULED", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]),
     observation: z.string().trim().max(5_000).nullable(),
     participantEmail: participantEmailSchema.nullable().optional(),
+    participantEmails: participantEmailsSchema.optional(),
     outcome: z.string().trim().max(5_000).nullable(),
     reason: z.string().trim().min(3).max(2_000),
   }).strict(),
@@ -186,6 +187,7 @@ const transcriptSchema = z.object({
 
 type MeetingRow = Prisma.MeetingGetPayload<{
   include: {
+    participants: true;
     lead: { select: { fullName: true } };
     owner: { select: { user: { select: { displayName: true } } } };
     createdBy: { select: { displayName: true } };
@@ -303,6 +305,7 @@ function serializeMeeting(row: MeetingRow, now: Date, canWrite: boolean): Meetin
     participantEmail: row.participantEmail,
     participantResponseStatus: row.participantResponseStatus,
     participantResponseUpdatedAt: row.participantResponseUpdatedAt?.toISOString() ?? null,
+    participants: meetingGuests(row).map((guest) => ({ ...guest, responseUpdatedAt: guest.responseUpdatedAt?.toISOString() ?? null })),
     revision: row.revision,
     canWrite,
     calendarSync: row.googleCalendarLink
@@ -639,6 +642,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           createdBy: { select: { displayName: true } },
           calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
           googleCalendarLink: { select: { syncState: true, conferenceUrl: true } },
+          participants: { orderBy: { position: "asc" } },
         },
         orderBy: [{ startsAt: "asc" }, { id: "asc" }],
       }),
@@ -711,6 +715,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           createdBy: { select: { displayName: true } },
           calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
           googleCalendarLink: { select: { syncState: true, conferenceUrl: true } },
+          participants: { orderBy: { position: "asc" } },
           history: {
             orderBy: [{ meetingRevision: "desc" }],
             include: { recordedBy: { select: { displayName: true } } },
@@ -823,6 +828,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         conflict("MEETING_OPPORTUNITY_INVALID", "A oportunidade não está aberta ou não pertence ao lead.");
       }
       const occurredAt = options.now();
+      const participantEmails = parsed.data.participantEmails ?? (parsed.data.participantEmail ? [parsed.data.participantEmail] : []);
       const meeting = await transaction.meeting.create({
         data: {
           workspaceId: context.workspaceId,
@@ -836,8 +842,9 @@ export function createMeetingService(options: MeetingServiceOptions) {
           durationMinutes: parsed.data.durationMinutes,
           timeZone: workspaceRow.timeZone,
           observation: parsed.data.observation || null,
-          participantEmail: parsed.data.participantEmail ?? null,
-          participantResponseStatus: parsed.data.participantEmail ? "NEEDS_ACTION" : null,
+          participantEmail: participantEmails[0] ?? null,
+          participantResponseStatus: participantEmails.length ? "NEEDS_ACTION" : null,
+          participants: { create: participantEmails.map((email, position) => ({ email, position })) },
           createdByActorId: context.actorId,
           updatedByActorId: context.actorId,
           createdAt: occurredAt,
@@ -954,7 +961,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
             durationMinutes: parsed.data.durationMinutes,
             taskId: task.id,
             activityId: activity.id,
-            participantConfigured: Boolean(parsed.data.participantEmail),
+            participantConfigured: participantEmails.length > 0,
+            participantCount: participantEmails.length,
           },
           metadata: { timeZone: workspaceRow.timeZone },
         },
@@ -1019,7 +1027,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         workspaceId: context.workspaceId,
         meetingId: meeting.id,
         meetingRevision: meeting.revision,
-        participantEmail: meeting.participantEmail,
+        participantEmails,
         startsAt,
         occurredAt,
         actorId: context.actorId,
@@ -1048,7 +1056,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       await lockCloser(transaction, context.workspaceId, authorizedMeeting.ownerMemberId);
       const meeting = await transaction.meeting.findFirst({
         where: { id: parsed.data.meetingId, workspaceId: context.workspaceId, deletedAt: null },
-        include: { lead: { select: { ownerMemberId: true, queueId: true, pipelineId: true, currentStageId: true } } },
+        include: { participants: { orderBy: { position: "asc" } }, lead: { select: { ownerMemberId: true, queueId: true, pipelineId: true, currentStageId: true } } },
       });
       if (!meeting) notFound("Reunião não encontrada.");
       if (meeting.revision !== parsed.data.expectedRevision) {
@@ -1075,13 +1083,16 @@ export function createMeetingService(options: MeetingServiceOptions) {
       let endsAt = meeting.endsAt;
       let title = meeting.title;
       let observation = meeting.observation;
-      let participantEmail = meeting.participantEmail;
+      const currentGuests = meetingGuests(meeting);
+      let participantEmails = currentGuests.map((guest) => guest.email);
       let reason: string | null = null;
       let outcome: string | null = null;
       if (parsed.data.action === "EDIT") {
         title = parsed.data.title;
         observation = parsed.data.observation;
-        participantEmail = parsed.data.participantEmail === undefined ? meeting.participantEmail : parsed.data.participantEmail;
+        participantEmails = parsed.data.participantEmails ?? (parsed.data.participantEmail === undefined
+          ? participantEmails
+          : [...new Set([...(parsed.data.participantEmail ? [parsed.data.participantEmail] : []), ...participantEmails.filter((email) => email !== meeting.participantEmail)])]);
         startsAt = parseWorkspaceLocalDateTime(parsed.data.startsAtLocal, meeting.timeZone);
         endsAt = new Date(startsAt.getTime() + parsed.data.durationMinutes * 60_000);
         newStatus = parsed.data.status;
@@ -1111,6 +1122,17 @@ export function createMeetingService(options: MeetingServiceOptions) {
         outcome = parsed.data.reason;
       }
 
+      const participantEmail = participantEmails[0] ?? null;
+      const primaryGuest = currentGuests.find((guest) => guest.email === participantEmail);
+      await transaction.meetingParticipant.deleteMany({ where: { workspaceId: context.workspaceId, meetingId: meeting.id, email: { notIn: participantEmails } } });
+      for (const [position, email] of participantEmails.entries()) {
+        const guest = currentGuests.find((item) => item.email === email);
+        await transaction.meetingParticipant.upsert({
+          where: { workspaceId_meetingId_email: { workspaceId: context.workspaceId, meetingId: meeting.id, email } },
+          create: { workspaceId: context.workspaceId, meetingId: meeting.id, email, position, responseStatus: guest?.responseStatus ?? "NEEDS_ACTION", responseUpdatedAt: guest?.responseUpdatedAt ?? null },
+          update: { position },
+        });
+      }
       const updated = await transaction.meeting.update({
         where: { id: meeting.id },
         data: {
@@ -1122,12 +1144,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
           observation,
           outcome,
           participantEmail,
-          participantResponseStatus: participantEmail
-            ? participantEmail !== meeting.participantEmail
-              ? "NEEDS_ACTION"
-              : meeting.participantResponseStatus ?? "NEEDS_ACTION"
-            : null,
-          participantResponseUpdatedAt: participantEmail === meeting.participantEmail ? meeting.participantResponseUpdatedAt : null,
+          participantResponseStatus: participantEmail ? primaryGuest?.responseStatus ?? "NEEDS_ACTION" : null,
+          participantResponseUpdatedAt: primaryGuest?.responseUpdatedAt ?? null,
           confirmedAt: newStatus === "CONFIRMED" ? meeting.confirmedAt ?? now : newStatus === "SCHEDULED" ? null : meeting.confirmedAt,
           cancelledAt: newStatus === "CANCELLED" ? meeting.cancelledAt ?? now : null,
           completedAt: newStatus === "COMPLETED" ? meeting.completedAt ?? now : null,
@@ -1476,7 +1494,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
             newTitle: title,
             previousObservation: meeting.observation,
             newObservation: observation,
-            participantChanged: participantEmail !== meeting.participantEmail,
+            participantChanged: JSON.stringify(participantEmails) !== JSON.stringify(currentGuests.map((guest) => guest.email)),
+            participantCount: participantEmails.length,
             reason,
             outcome,
             activityId: activity.id,
@@ -1542,7 +1561,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           workspaceId: context.workspaceId,
           meetingId: meeting.id,
           meetingRevision: updated.revision,
-          participantEmail,
+          participantEmails,
           startsAt,
           occurredAt: now,
           actorId: context.actorId,
@@ -1596,6 +1615,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         opportunity: { select: { id: true, name: true, nextActionTaskId: true, nextActionAt: true, nextActionDescription: true } },
         calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
         googleCalendarLink: { select: { syncState: true, conferenceUrl: true } },
+        participants: { orderBy: { position: "asc" } },
         lead: {
           include: {
             submissions: {

@@ -6570,6 +6570,7 @@ model Meeting {
   calendarBackfills   CalendarBackfillItem[]
   googleCalendarLink  GoogleCalendarEventLink?
   transcriptArtifacts MeetingTranscriptArtifact[]
+  participants        MeetingParticipant[]
 
   @@unique([workspaceId, id])
   @@index([workspaceId, ownerMemberId, status, startsAt])
@@ -6578,6 +6579,20 @@ model Meeting {
   @@index([workspaceId, participantEmail, startsAt])
   @@index([workspaceId, createdAt])
   @@map("meetings")
+}
+
+model MeetingParticipant {
+  workspaceId       String @db.Uuid
+  meetingId         String @db.Uuid
+  email             String
+  position          Int
+  responseStatus    MeetingParticipantResponseStatus @default(NEEDS_ACTION)
+  responseUpdatedAt DateTime? @db.Timestamptz(3)
+
+  meeting Meeting @relation(fields: [workspaceId, meetingId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@id([workspaceId, meetingId, email])
+  @@map("meeting_participants")
 }
 
 model MeetingTranscriptArtifact {

@@ -76,6 +76,7 @@ export async function POST(
               observation: "description" in data ? data.description : undefined,
               taskPriority: "priority" in data ? data.priority : undefined,
               participantEmail: "participantEmail" in data ? data.participantEmail : undefined,
+              participantEmails: "participantEmails" in data ? data.participantEmails : undefined,
             })
           : await service.createTask(context, { ...data, leadId });
         break;

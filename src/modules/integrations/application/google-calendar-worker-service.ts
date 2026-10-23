@@ -11,6 +11,7 @@ import {
 import { loadGoogleCalendarConfiguration } from "@/modules/integrations/domain/google-calendar-contracts";
 import { calculateRetryDelaySeconds } from "@/modules/integrations/domain/integration-policy";
 import type { MeetingParticipantResponseStatusValue } from "@/modules/meetings/domain/meeting-contracts";
+import { MAX_MEETING_PARTICIPANTS, meetingGuests, type MeetingGuest } from "@/modules/meetings/domain/meeting-participants";
 
 type Options = Readonly<{ database: PrismaClient; now: () => Date; lockTimeoutSeconds?: number; backoffBaseSeconds?: number; fetcher?: typeof fetch; pullIntervalSeconds?: number }>;
 type Payload = Readonly<{ meetingId: string; meetingRevision: number; linkId: string }>;
@@ -54,7 +55,7 @@ function plainObject(value: unknown): Record<string, unknown> | null {
 
 export function googleEventParticipantPatch(
   currentEvent: unknown,
-  participantEmail: string | null,
+  participantEmail: string | readonly string[] | null,
 ) {
   const event = plainObject(currentEvent);
   const extendedProperties = plainObject(event?.extendedProperties);
@@ -62,7 +63,13 @@ export function googleEventParticipantPatch(
   const managedValue = typeof currentPrivate?.crmParticipantEmail === "string"
     ? currentPrivate.crmParticipantEmail.trim().toLowerCase()
     : null;
-  const previouslyManaged = managedValue && managedValue !== "none" ? managedValue : null;
+  const previouslyManaged = new Set([
+    ...(managedValue && managedValue !== "none" ? [managedValue] : []),
+    ...Array.from({ length: MAX_MEETING_PARTICIPANTS }, (_, index) => currentPrivate?.[`crmGuest${index}`])
+      .filter((value): value is string => typeof value === "string" && value !== "none")
+      .map((value) => value.trim().toLowerCase()),
+  ]);
+  const emails = typeof participantEmail === "string" ? [participantEmail] : participantEmail ?? [];
   const attendees = (Array.isArray(event?.attendees) ? event.attendees : []).flatMap((value) => {
     const attendee = plainObject(value);
     const email = typeof attendee?.email === "string" ? attendee.email.trim().toLowerCase() : null;
@@ -77,9 +84,9 @@ export function googleEventParticipantPatch(
       ...(typeof attendee?.displayName === "string" ? { displayName: attendee.displayName.slice(0, 300) } : {}),
     }];
   }).slice(0, 200);
-  const preserved = attendees.filter((attendee) => attendee.email !== previouslyManaged || attendee.email === participantEmail);
-  if (participantEmail && !preserved.some((attendee) => attendee.email === participantEmail)) {
-    preserved.push({ email: participantEmail });
+  const preserved = attendees.filter((attendee) => !previouslyManaged.has(attendee.email) || emails.includes(attendee.email));
+  for (const email of emails) {
+    if (!preserved.some((attendee) => attendee.email === email)) preserved.push({ email });
   }
   return Object.freeze({
     attendees: preserved,
@@ -87,6 +94,37 @@ export function googleEventParticipantPatch(
       Object.entries(currentPrivate ?? {}).filter(([, value]) => typeof value === "string"),
     ),
   });
+}
+
+async function syncGuestResponses(
+  tx: Prisma.TransactionClient,
+  meeting: Readonly<{
+    id: string; workspaceId: string; revision: number;
+    participantEmail: string | null;
+    participantResponseStatus: MeetingParticipantResponseStatusValue | null;
+    participantResponseUpdatedAt: Date | null;
+    participants: readonly MeetingGuest[];
+  }>,
+  attendees: unknown,
+  now: Date,
+) {
+  let changed = 0;
+  for (const guest of meetingGuests(meeting)) {
+    const responseStatus = googleParticipantResponseStatus(attendees, guest.email);
+    if (!responseStatus || responseStatus === guest.responseStatus) continue;
+    const updated = await tx.meetingParticipant.updateMany({
+      where: { workspaceId: meeting.workspaceId, meetingId: meeting.id, email: guest.email, meeting: { revision: meeting.revision } },
+      data: { responseStatus, responseUpdatedAt: now },
+    });
+    if (guest.email === meeting.participantEmail) {
+      await tx.meeting.updateMany({
+        where: { id: meeting.id, workspaceId: meeting.workspaceId, revision: meeting.revision, participantEmail: guest.email },
+        data: { participantResponseStatus: responseStatus, participantResponseUpdatedAt: now },
+      });
+    }
+    changed += updated.count;
+  }
+  return changed;
 }
 
 export function googleParticipantResponseStatus(
@@ -162,7 +200,7 @@ export function createGoogleCalendarWorkerService(options: Options) {
       where: { id: data.linkId, workspaceId: job.workspaceId },
       include: {
         account: true,
-        meeting: { include: { lead: { select: { fullName: true } }, owner: { select: { user: { select: { displayName: true } } } } } },
+        meeting: { include: { participants: { orderBy: { position: "asc" } }, lead: { select: { fullName: true } }, owner: { select: { user: { select: { displayName: true } } } } } },
       },
     });
     if (!link || link.meetingId !== data.meetingId) throw new GoogleCalendarWorkerError("GOOGLE_CALENDAR_LINK_MISSING", false);
@@ -196,7 +234,8 @@ export function createGoogleCalendarWorkerService(options: Options) {
         currentEvent = await googleJson(currentResponse);
         if (!currentResponse.ok) throw classify(currentResponse, currentEvent);
       }
-      const participantPatch = googleEventParticipantPatch(currentEvent, link.meeting.participantEmail);
+      const emails = meetingGuests(link.meeting).map((guest) => guest.email);
+      const participantPatch = googleEventParticipantPatch(currentEvent, emails);
       const body = {
         id: link.externalEventId,
         summary: link.meeting.title,
@@ -209,6 +248,7 @@ export function createGoogleCalendarWorkerService(options: Options) {
           crmMeetingId: link.meeting.id,
           crmWorkspaceId: link.meeting.workspaceId,
           crmParticipantEmail: link.meeting.participantEmail ?? "none",
+          ...Object.fromEntries(Array.from({ length: MAX_MEETING_PARTICIPANTS }, (_, index) => [`crmGuest${index}`, emails[index] ?? "none"])),
         } },
         ...(!exists ? { conferenceData: { createRequest: { requestId: `meet-${link.meeting.id}-r${link.meeting.revision}`, conferenceSolutionKey: { type: "hangoutsMeet" } } } } : {}),
       };
@@ -234,7 +274,6 @@ export function createGoogleCalendarWorkerService(options: Options) {
     const result = cancelled ? {} : await googleJson(response);
     const conference = result.conferenceData && typeof result.conferenceData === "object" ? result.conferenceData as { entryPoints?: Array<{ entryPointType?: string; uri?: string }> } : null;
     const conferenceUrl = conference?.entryPoints?.find((item) => item.entryPointType === "video")?.uri ?? link.conferenceUrl;
-    const participantResponseStatus = googleParticipantResponseStatus(result.attendees, link.meeting.participantEmail);
     const now = options.now();
     await options.database.$transaction(async (tx) => {
       const changed = await tx.job.updateMany({ where: { id: job.id, status: "RUNNING", lockedBy: workerId }, data: { status: "SUCCEEDED", finishedAt: now, lockedAt: null, lockedBy: null, lockExpiresAt: null, result: json({ externalEventId: link.externalEventId, cancelled }) } });
@@ -247,12 +286,7 @@ export function createGoogleCalendarWorkerService(options: Options) {
         conferenceUrl: conferenceUrl ?? null,
         lastPushedAt: now, lastErrorAt: null, lastErrorCode: null, lastErrorMessage: null,
       } });
-      if (participantResponseStatus && participantResponseStatus !== link.meeting.participantResponseStatus) {
-        await tx.meeting.update({
-          where: { id: link.meeting.id },
-          data: { participantResponseStatus, participantResponseUpdatedAt: now },
-        });
-      }
+      await syncGuestResponses(tx, link.meeting, result.attendees, now);
       await tx.googleCalendarAccount.update({ where: { id: link.account.id }, data: { lastSyncAt: now, lastErrorAt: null, lastErrorCode: null } });
       await tx.auditLog.create({ data: { workspaceId: job.workspaceId, actorId: job.updatedByActorId, action: cancelled ? "google_calendar.meeting.cancelled" : "google_calendar.meeting.synced", entityType: "Meeting", entityId: link.meeting.id, origin: "SYSTEM", changes: { meetingRevision: link.meeting.revision, ownerMemberId: link.memberId, externalEventId: link.externalEventId } } });
     });
@@ -356,6 +390,9 @@ export function createGoogleCalendarWorkerService(options: Options) {
         outcome: string | null;
         participantEmail: string | null;
         participantResponseStatus: MeetingParticipantResponseStatusValue | null;
+        participantResponseUpdatedAt: Date | null;
+        workspaceId: string;
+        participants: readonly MeetingGuest[];
         revision: number;
       };
     },
@@ -396,19 +433,14 @@ export function createGoogleCalendarWorkerService(options: Options) {
         lastPulledAt: now,
       },
     });
-    const participantResponseStatus = googleParticipantResponseStatus(event.attendees, link.meeting.participantEmail);
-    if (participantResponseStatus && participantResponseStatus !== link.meeting.participantResponseStatus) {
+    if (meetingGuests(link.meeting).some((guest) => {
+      const status = googleParticipantResponseStatus(event.attendees, guest.email);
+      return status && status !== guest.responseStatus;
+    })) {
       const operator = await resolveCalendarOperatorContext(options.database, account.workspaceId);
       await options.database.$transaction(async (tx) => {
-        const changed = await tx.meeting.updateMany({
-          where: {
-            id: link.meeting.id,
-            workspaceId: account.workspaceId,
-            participantEmail: link.meeting.participantEmail,
-          },
-          data: { participantResponseStatus, participantResponseUpdatedAt: now },
-        });
-        if (changed.count !== 1) return;
+        const changed = await syncGuestResponses(tx, link.meeting, event.attendees, now);
+        if (!changed) return;
         await tx.auditLog.create({
           data: {
             workspaceId: account.workspaceId,
@@ -417,7 +449,7 @@ export function createGoogleCalendarWorkerService(options: Options) {
             entityType: "Meeting",
             entityId: link.meeting.id,
             origin: "SYSTEM",
-            changes: { previousStatus: link.meeting.participantResponseStatus, newStatus: participantResponseStatus },
+            changes: { participantCount: changed },
           },
         });
       });
@@ -536,7 +568,7 @@ export function createGoogleCalendarWorkerService(options: Options) {
     });
     const links = ids.length > 0 ? await options.database.googleCalendarEventLink.findMany({
       where: { workspaceId: account.workspaceId, accountId: account.id, externalEventId: { in: ids } },
-      include: { meeting: true },
+      include: { meeting: { include: { participants: { orderBy: { position: "asc" } } } } },
     }) : [];
     const linkByExternalId = new Map(links.map((link) => [link.externalEventId, link]));
     let imported = 0;

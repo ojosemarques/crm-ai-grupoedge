@@ -22,6 +22,7 @@ export type MeetingListItem = Readonly<{
   participantEmail: string | null;
   participantResponseStatus: MeetingParticipantResponseStatusValue | null;
   participantResponseUpdatedAt: string | null;
+  participants: readonly Readonly<{ email: string; responseStatus: MeetingParticipantResponseStatusValue; responseUpdatedAt: string | null }>[];
   revision: number;
   canWrite: boolean;
   calendarSync: Readonly<{

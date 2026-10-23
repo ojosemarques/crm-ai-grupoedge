@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import type { LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
 import { MeetingActions } from "@/modules/meetings/ui/meeting-actions";
 import { MeetingParticipantField } from "@/modules/meetings/ui/meeting-participant-field";
+import { participantEmailsFromForm } from "@/modules/meetings/domain/meeting-participants";
 
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
 const statusLabels = {
@@ -75,12 +76,12 @@ export function LeadMeetingsWorkspace({
           startsAtLocal: data.get("startsAtLocal"),
           durationMinutes: Number(data.get("durationMinutes")),
           observation: data.get("observation") || null,
-          participantEmail: data.get("participantEmail") || null,
+          participantEmails: participantEmailsFromForm(data),
         }),
       });
       await readResponse(response);
       form.reset();
-      setNotice(data.get("participantEmail")
+      setNotice(participantEmailsFromForm(data).length
         ? "Reunião agendada. Convite e lembretes do participante foram enfileirados."
         : "Reunião agendada e contexto encaminhado ao closer.");
       await refresh();
@@ -120,7 +121,7 @@ export function LeadMeetingsWorkspace({
               <li className="rounded-md border p-4" key={meeting.id}>
                 <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{meeting.title}</p><p className="mt-1 text-sm">{meeting.closerName} · {formatDate(meeting.startsAt, screen.timeZone)} · {meeting.durationMinutes} min</p><p className="mt-1 text-xs text-muted-foreground">Calendário: {meeting.calendarSync.state === "NOT_LINKED" ? "não ligado" : meeting.calendarSync.state.toLowerCase().replaceAll("_", " ")}</p></div><span className="rounded-full border px-2.5 py-1 text-xs">{statusLabels[meeting.operationalStatus]}</span></div>
                 {meeting.observation ? <p className="mt-3 whitespace-pre-wrap text-sm">{meeting.observation}</p> : null}
-                {meeting.participantEmail ? <p className="mt-3 text-sm">Participante: {meeting.participantEmail}</p> : null}
+                {meeting.participants.map((guest) => <p className="mt-3 text-sm" key={guest.email}>Participante: {guest.email}</p>)}
                 {meeting.outcome ? <p className="mt-3 text-sm"><strong>Resultado:</strong> {meeting.outcome}</p> : null}
                 <div className="mt-3 flex flex-wrap gap-3 text-sm font-medium"><Link className="underline" href={`/agenda/reunioes/${meeting.id}`}>Ver detalhes e briefing</Link><Link className="underline" href={`/agenda?meetingId=${meeting.id}`}>Abrir na agenda</Link>{meeting.opportunityId ? <Link className="underline" href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
                 <MeetingActions meeting={meeting} onCommitted={refresh} />

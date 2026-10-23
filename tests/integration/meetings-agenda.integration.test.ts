@@ -351,7 +351,7 @@ describe("agenda interna e reuniões", () => {
       where: {
         workspaceId,
         type: "NOTIFICATION",
-        payload: { path: ["kind"], equals: "MEETING_PARTICIPANT_EMAIL_V1" },
+        payload: { path: ["kind"], equals: "MEETING_PARTICIPANT_EMAIL_V2" },
         idempotencyKey: { startsWith: `meeting-participant-email:${meeting.id}:r1:` },
       },
       orderBy: { runAt: "asc" },
@@ -413,6 +413,52 @@ describe("agenda interna e reuniões", () => {
       status: "SUCCEEDED",
       result: expect.objectContaining({ provider: "MILLIONSEND", providerMessageId: "millionsend-message-test" }),
     });
+  });
+
+  it("persiste vários convidados, envia individualmente e preserva respostas ao editar", async () => {
+    clock = new Date("2035-02-10T15:00:00.000Z");
+    const lead = await qualifyLead("CRM múltiplos convidados");
+    const input = { leadId: lead.leadId, closerId: closer1Id, title: "Reunião múltiplos convidados", startsAtLocal: "2035-02-12T10:00", durationMinutes: 30,
+      participantEmails: [" PRIMEIRO@example.test ", "segundo@example.test", "primeiro@example.test"] };
+    await expect(meetings().schedule(viewerContext, input)).rejects.toThrow(AccessDeniedError);
+    await expect(meetings().schedule(managerContext, { ...input, participantEmails: ["inválido"] })).rejects.toThrow();
+    await expect(meetings().schedule(managerContext, { ...input, participantEmails: Array.from({ length: 21 }, (_, i) => `p${i}@example.test`) })).rejects.toThrow();
+    const saved = await meetings().schedule(managerContext, input);
+    const guests = () => database.meetingParticipant.findMany({ where: { workspaceId, meetingId: saved.meetingId }, orderBy: { position: "asc" } });
+    expect((await guests()).map((guest) => guest.email)).toEqual(["primeiro@example.test", "segundo@example.test"]);
+    await expect(database.meetingParticipant.create({ data: { workspaceId: randomUUID(), meetingId: saved.meetingId, email: "outro@example.test", position: 0 } })).rejects.toThrow();
+    const jobs = await database.job.findMany({ where: { workspaceId, idempotencyKey: { startsWith: `meeting-participant-email:${saved.meetingId}:r1:` } } });
+    expect(jobs).toHaveLength(10);
+    for (const email of ["primeiro@example.test", "segundo@example.test"]) {
+      const recipientJobs = jobs.filter((job) => (job.payload as { recipientEmail?: string }).recipientEmail === email);
+      expect(recipientJobs).toHaveLength(5);
+      expect(new Set(recipientJobs.map((job) => job.idempotencyKey)).size).toBe(5);
+    }
+    const sent: string[][] = [];
+    const worker = createMeetingParticipantEmailWorker({ database, now: () => clock,
+      environment: { MILLIONSEND_ENABLED: "true", MILLIONSEND_API_KEY: "ms_integration_test_key" },
+      fetchImpl: async (_url, init) => {
+        sent.push((JSON.parse(String(init?.body)) as { to: string[] }).to);
+        return new Response(JSON.stringify({ id: `multi-${sent.length}` }), { status: 200, headers: { "Content-Type": "application/json" } });
+      },
+    });
+    await expect(worker.processNext("multi-1")).resolves.toMatchObject({ status: "SUCCEEDED" });
+    await expect(worker.processNext("multi-2")).resolves.toMatchObject({ status: "SUCCEEDED" });
+    expect(sent).toEqual(expect.arrayContaining([["primeiro@example.test"], ["segundo@example.test"]]));
+    await database.meetingParticipant.updateMany({ where: { workspaceId, meetingId: saved.meetingId, email: "segundo@example.test" }, data: { responseStatus: "ACCEPTED", responseUpdatedAt: clock } });
+    const edit = { action: "EDIT", meetingId: saved.meetingId, expectedRevision: 1, title: input.title, startsAtLocal: input.startsAtLocal, durationMinutes: 30,
+      status: "SCHEDULED", observation: null, outcome: null, reason: "Atualizar convidados com histórico preservado.", participantEmails: ["segundo@example.test", "terceiro@example.test"] };
+    await meetings().act(managerContext, edit);
+    expect(await guests()).toMatchObject([{ email: "segundo@example.test", responseStatus: "ACCEPTED" }, { email: "terceiro@example.test", responseStatus: "NEEDS_ACTION" }]);
+    expect(await database.meeting.findUniqueOrThrow({ where: { id: saved.meetingId } })).toMatchObject({ participantEmail: "segundo@example.test", participantResponseStatus: "ACCEPTED", revision: 2 });
+    expect(await database.job.count({ where: { id: { in: jobs.map((job) => job.id) }, status: "CANCELLED" } })).toBe(8);
+    // Older clients editing only the primary participant must not silently delete other guests.
+    const { participantEmails: _emails, ...legacyEdit } = edit;
+    expect(_emails).toHaveLength(2);
+    await meetings().act(managerContext, { ...legacyEdit, expectedRevision: 2, participantEmail: "segundo@example.test" });
+    expect((await guests()).map((guest) => guest.email)).toEqual(["segundo@example.test", "terceiro@example.test"]);
+    const screen = await meetings().getLeadMeetings(managerContext, { leadId: lead.leadId });
+    expect(screen.meetings.find((meeting) => meeting.id === saved.meetingId)?.participants).toMatchObject([{ email: "segundo@example.test", responseStatus: "ACCEPTED" }, { email: "terceiro@example.test", responseStatus: "NEEDS_ACTION" }]);
   });
 
   it("permite criar, editar e remarcar reuniões no mesmo horário para o mesmo vendedor", async () => {
@@ -1072,7 +1118,7 @@ describe("agenda interna e reuniões", () => {
       title: "Reunião Google com participante",
       startsAtLocal: "2035-02-22T10:00",
       durationMinutes: 30,
-      participantEmail: "participante-google@example.test",
+      participantEmails: ["participante-google@example.test", "segundo-google@example.test"],
     });
     const [link, job] = await Promise.all([
       database.googleCalendarEventLink.findFirst({ where: { workspaceId, meetingId: result.meetingId } }),
@@ -1086,7 +1132,7 @@ describe("agenda interna e reuniões", () => {
         expect(url.searchParams.get("sendUpdates")).toBe("all");
         expect(init?.method).toBe("POST");
         const body = JSON.parse(String(init?.body)) as { attendees?: unknown };
-        expect(body.attendees).toEqual([{ email: "participante-google@example.test" }]);
+        expect(body.attendees).toEqual([{ email: "participante-google@example.test" }, { email: "segundo-google@example.test" }]);
         return new Response(JSON.stringify({
           id: link!.externalEventId,
           etag: '"google-push-v1"',
@@ -1265,7 +1311,7 @@ describe("agenda interna e reuniões", () => {
             etag: '"linked-v2"',
             status: "confirmed",
             summary: "Título alterado no Google",
-            attendees: [{ email: "participante-google@example.test", responseStatus: "accepted" }],
+            attendees: [{ email: "participante-google@example.test", responseStatus: "accepted" }, { email: "segundo-google@example.test", responseStatus: "declined" }],
             start: { dateTime: "2035-02-24T14:00:00-03:00", timeZone: "America/Sao_Paulo" },
             end: { dateTime: "2035-02-24T14:30:00-03:00", timeZone: "America/Sao_Paulo" },
           }],
@@ -1283,6 +1329,8 @@ describe("agenda interna e reuniões", () => {
         participantResponseUpdatedAt: expect.any(Date),
       });
       expect(updated.startsAt.toISOString()).toBe("2035-02-24T17:00:00.000Z");
+      expect(await database.meetingParticipant.findMany({ where: { workspaceId, meetingId: updated.id }, orderBy: { position: "asc" } }))
+        .toMatchObject([{ email: "participante-google@example.test", responseStatus: "ACCEPTED" }, { email: "segundo-google@example.test", responseStatus: "DECLINED" }]);
       expect(await database.googleCalendarEventLink.findUniqueOrThrow({ where: { id: link.id } })).toMatchObject({
         externalEtag: '"linked-v2"',
         lastPulledAt: expect.any(Date),

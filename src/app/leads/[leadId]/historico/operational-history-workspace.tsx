@@ -17,6 +17,7 @@ import { LeadSalePanel } from "@/components/opportunities/lead-sale-preparation-
 import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
 import type { LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
 import { MeetingParticipantField } from "@/modules/meetings/ui/meeting-participant-field";
+import { participantEmailsFromForm } from "@/modules/meetings/domain/meeting-participants";
 import type { LeadOpportunityScreen } from "@/modules/opportunities/domain/opportunity-contracts";
 import type { FreeQualificationScreen } from "@/modules/qualification/domain/free-qualification-contracts";
 import type { LeadScoreView } from "@/modules/qualification/domain/scoring-contracts";
@@ -819,12 +820,12 @@ export function OperationalHistoryWorkspace({
             closerId: formText(form, "closerId"),
             startsAtLocal: formText(form, "dueAt"),
             durationMinutes: Number(form.get("durationMinutes")),
-            participantEmail: formText(form, "participantEmail") ?? null,
+            participantEmails: participantEmailsFromForm(form),
           }
         : { dueAt: isoDate(formText(form, "dueAt")) }),
     };
     const saved = await mutate("CREATE_TASK", task, undefined, kind === "MEETING"
-      ? formText(form, "participantEmail")
+      ? participantEmailsFromForm(form).length
         ? "Reunião criada na Agenda. Convite e lembretes do participante foram enfileirados."
         : "Reunião criada na Agenda. O Google Agenda será sincronizado se o closer tiver uma conta conectada."
       : "Tarefa criada com sucesso.");

@@ -96,10 +96,13 @@ test("agenda, ciclo da reunião e briefing funcionam sobre dados persistidos", a
   await panel.getByLabel("Data e horário").fill("2035-02-11T09:30");
   await panel.getByLabel("Duração").selectOption("40");
   await panel.getByLabel("E-mail do participante (opcional)").fill("convidado-aba-lead@example.test");
+  await panel.getByRole("button", { name: "Adicionar convidado" }).click();
+  await panel.getByLabel("E-mail do convidado 2", { exact: true }).fill("segundo-aba-lead@example.test");
   await panel.getByLabel("Observação").fill("Revisar PACTO antes da reunião.");
   await panel.getByRole("button", { name: "Agendar reunião" }).click();
   await expect(panel.getByText("Reunião agendada. Convite e lembretes do participante foram enfileirados.")).toBeVisible();
   await expect(panel.getByText("Participante: convidado-aba-lead@example.test")).toBeVisible();
+  await expect(panel.getByText("Participante: segundo-aba-lead@example.test")).toBeVisible();
   await expect(panel.getByText("Diagnóstico comercial E2E")).toBeVisible();
   await expect(panel.getByText("Agendada", { exact: true })).toBeVisible();
 
@@ -111,6 +114,16 @@ test("agenda, ciclo da reunião e briefing funcionam sobre dados persistidos", a
   await meetingCard.click();
   const meetingDialog = page.getByRole("dialog", { name: "Diagnóstico comercial E2E" });
   await expect(meetingDialog.getByText(/Participante: convidado-aba-lead@example.test/)).toBeVisible();
+  await expect(meetingDialog.getByText(/Participante: segundo-aba-lead@example.test/)).toBeVisible();
+  await meetingDialog.getByRole("button", { name: "Editar reunião" }).click();
+  await expect(meetingDialog.getByLabel("E-mail do convidado 2", { exact: true })).toHaveValue("segundo-aba-lead@example.test");
+  await meetingDialog.getByRole("button", { name: "Remover convidado 2" }).click();
+  await meetingDialog.getByRole("button", { name: "Adicionar convidado" }).click();
+  await meetingDialog.getByLabel("E-mail do convidado 2", { exact: true }).fill("novo-aba-lead@example.test");
+  await meetingDialog.getByLabel("Motivo da correção").fill("Troca de convidado para validar a edição persistida.");
+  await meetingDialog.getByRole("button", { name: "Salvar alterações" }).click();
+  await expect(meetingDialog.getByText(/Participante: novo-aba-lead@example.test/)).toBeVisible();
+  await expect(meetingDialog.getByText(/Participante: segundo-aba-lead@example.test/)).not.toBeVisible();
   const agendaUrl = page.url();
   const agendaDocumentId = randomUUID();
   await page.evaluate(value => { (window as Window & { agendaDocumentId?: string }).agendaDocumentId = value; }, agendaDocumentId);
@@ -212,6 +225,8 @@ test("cria tarefa de reunião no card com participante persistido na Agenda", as
   await task.getByRole("combobox", { name: "Closer", exact: true }).selectOption({ index: 1 });
   await task.getByLabel("Data e horário da reunião").fill("2035-02-12T14:00");
   await task.getByLabel("E-mail do participante (opcional)").fill("convidado-tarefa@example.test");
+  await task.getByRole("button", { name: "Adicionar convidado" }).click();
+  await task.getByLabel("E-mail do convidado 2", { exact: true }).fill("segundo-tarefa@example.test");
 
   const saved = page.waitForResponse((response) =>
     response.url().endsWith(`/api/leads/${leadId}/operations`) && response.request().method() === "POST");
@@ -220,7 +235,7 @@ test("cria tarefa de reunião no card com participante persistido na Agenda", as
   expect(response.ok()).toBe(true);
   expect(response.request().postDataJSON()).toMatchObject({
     action: "CREATE_TASK",
-    data: { kind: "MEETING", participantEmail: "convidado-tarefa@example.test" },
+    data: { kind: "MEETING", participantEmails: ["convidado-tarefa@example.test", "segundo-tarefa@example.test"] },
   });
   const body = await response.json() as { result: { meetingId: string; taskId: string } };
   await expect(page.getByRole("status")).toContainText("Reunião criada na Agenda. Convite e lembretes do participante foram enfileirados.");
@@ -236,4 +251,36 @@ test("cria tarefa de reunião no card com participante persistido na Agenda", as
   const meetingDialog = page.getByRole("dialog", { name: "Reunião com convidado pelo card" });
   await expect(meetingDialog).toBeVisible();
   await expect(meetingDialog.getByText(/Participante: convidado-tarefa@example.test/)).toBeVisible();
+  await expect(meetingDialog.getByText(/Participante: segundo-tarefa@example.test/)).toBeVisible();
+});
+
+test("agenda permite adicionar e remover convidados antes de salvar", async ({ page }) => {
+  await login(page);
+  const leadName = `Lead convidados agenda ${randomUUID().slice(0, 8)}`;
+  await page.goto("/leads/entrada");
+  await page.getByLabel("Nome", { exact: true }).fill(leadName);
+  await page.getByLabel("Telefone", { exact: true }).fill(uniquePhone(leadName));
+  await page.getByRole("button", { name: "Cadastrar lead" }).click();
+  await expect(page.getByRole("link", { name: "Abrir histórico operacional do lead" })).toBeVisible();
+  await page.goto("/agenda?view=day&date=2035-02-13");
+  await page.getByRole("button", { name: "Agendar reunião", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Agendar reunião" });
+  await dialog.getByRole("combobox", { name: "Pesquisar lead" }).fill(leadName);
+  await dialog.getByRole("option", { name: new RegExp(leadName) }).click();
+  await dialog.getByRole("combobox", { name: "Closer", exact: true }).selectOption({ index: 1 });
+  await dialog.getByLabel("Título", { exact: true }).fill("Reunião com dois convidados pela Agenda");
+  await dialog.getByLabel("E-mail do participante (opcional)").fill("primeiro-agenda@example.test");
+  await dialog.getByRole("button", { name: "Adicionar convidado" }).click();
+  await dialog.getByLabel("E-mail do convidado 2", { exact: true }).fill("removido-agenda@example.test");
+  await dialog.getByRole("button", { name: "Adicionar convidado" }).click();
+  await dialog.getByLabel("E-mail do convidado 3", { exact: true }).fill("segundo-agenda@example.test");
+  await dialog.getByRole("button", { name: "Remover convidado 2" }).click();
+  await expect(dialog.getByLabel("E-mail do convidado 2", { exact: true })).toHaveValue("segundo-agenda@example.test");
+  await dialog.getByRole("button", { name: "Confirmar agendamento" }).click();
+  await expect(dialog).not.toBeVisible();
+  await page.getByRole("button").filter({ hasText: "Reunião com dois convidados pela Agenda" }).click();
+  const saved = page.getByRole("dialog", { name: "Reunião com dois convidados pela Agenda" });
+  await expect(saved.getByText(/Participante: primeiro-agenda@example.test/)).toBeVisible();
+  await expect(saved.getByText(/Participante: segundo-agenda@example.test/)).toBeVisible();
+  await expect(saved.getByText(/removido-agenda@example.test/)).not.toBeVisible();
 });

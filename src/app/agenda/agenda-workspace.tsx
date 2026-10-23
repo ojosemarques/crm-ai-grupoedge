@@ -14,6 +14,7 @@ import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import type { AgendaScreen, LeadOption } from "@/modules/meetings/domain/meeting-contracts";
 import { MeetingActions } from "@/modules/meetings/ui/meeting-actions";
 import { MeetingParticipantField } from "@/modules/meetings/ui/meeting-participant-field";
+import { participantEmailsFromForm } from "@/modules/meetings/domain/meeting-participants";
 
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
 const statusLabels = {
@@ -193,7 +194,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
           startsAtLocal: data.get("startsAtLocal"),
           durationMinutes: Number(data.get("durationMinutes")),
           observation: data.get("observation") || null,
-          participantEmail: data.get("participantEmail") || null,
+          participantEmails: participantEmailsFromForm(data),
         }),
       });
       await responseMessage(response);
@@ -204,7 +205,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       setSelectedLeadOption(null);
       setLeadListOpen(false);
       setActiveLeadIndex(-1);
-      setNotice(data.get("participantEmail")
+      setNotice(participantEmailsFromForm(data).length
         ? "Reunião agendada. Convite e lembretes do participante foram enfileirados."
         : "Reunião agendada, tarefa criada e pipeline atualizado.");
       await refresh();
@@ -222,7 +223,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       <p><Icon name="agenda" size={16} />{formatDate(meeting.startsAt, screen.timeZone)}</p>
       <p><Icon name="leads" size={16} />{meeting.leadName} · {meeting.closerName}</p>
       <p><Icon name="equipe" size={16} />Agendada por: {meeting.scheduledByName}</p>
-      {meeting.participantEmail ? <p><Icon name="notificacoes" size={16} />Participante: {meeting.participantEmail} · {meeting.participantResponseStatus ? participantResponseLabels[meeting.participantResponseStatus] : "aguardando resposta"}</p> : null}
+      {meeting.participants.map((guest) => <p key={guest.email}><Icon name="notificacoes" size={16} />Participante: {guest.email} · {participantResponseLabels[guest.responseStatus]}</p>)}
       {meeting.observation ? <p className={styles.observation}>{meeting.observation}</p> : null}
       <StatusBadge tone={meeting.calendarSync.state === "SYNCED" ? "success" : meeting.calendarSync.state === "CONFLICT" || meeting.calendarSync.state === "FAILED" ? "danger" : "info"}>Calendário: {meeting.calendarSync.state === "NOT_LINKED" ? "não conectado" : meeting.calendarSync.state.toLowerCase().replaceAll("_", " ")}</StatusBadge>
       <div className={styles.detailLinks}><Link href={`/agenda/reunioes/${meeting.id}`}>Abrir briefing do closer →</Link>{meeting.calendarSync.conferenceUrl ? <a href={meeting.calendarSync.conferenceUrl} rel="noreferrer" target="_blank">Entrar no Google Meet</a> : <Link href="/integracoes/calendario">Conectar calendário</Link>}{meeting.opportunityId ? <Link href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
