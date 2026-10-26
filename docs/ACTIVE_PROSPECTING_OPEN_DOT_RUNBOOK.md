@@ -76,6 +76,22 @@ de 30.000 habitantes, contato inválido, fonte ausente ou URL não pública são
 rejeitados. `mandateStatus = INCONCLUSIVE` permanece em revisão e nunca vira
 Lead automaticamente.
 
+## Coleta nacional e calendário de entrega
+
+A pesquisa funciona todos os dias e grava somente no estoque. A reserva de
+alvos alterna as cinco regiões e, dentro de cada região, o estado menos
+recentemente pesquisado com fila disponível. O histórico no banco mantém o
+rodízio após reinícios, sem tentar compensar todo o volume histórico de uma
+região antes de atender as outras. Municípios não capitais continuam antes das
+capitais; dentro do estado escolhido, população crescente e vereador antes de
+prefeito. O DF não possui alvos municipais de prefeito/vereador.
+
+O worker libera candidatos aos vendedores apenas de segunda a sexta, no fuso
+do workspace e fora dos feriados cadastrados, inclusive quando processa um
+release atrasado. Estoque coletado no fim de semana aguarda o próximo dia útil,
+respeitando a capacidade existente. Essa regra não altera os gates de mandato,
+contatos públicos com fonte, consentimento, supressão ou envio de e-mail.
+
 ## Pré-flight de release
 
 1. Aplicar migration em homologação e executar o bootstrap/foundation.

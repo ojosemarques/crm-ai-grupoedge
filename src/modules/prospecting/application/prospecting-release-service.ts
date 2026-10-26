@@ -11,11 +11,13 @@ import { getAuthorizationService } from "@/modules/users/permissions/authorizati
 import {
   D1_GATE_STEP_KEYS,
   PROSPECTING_CADENCE_VERSION,
+  isBusinessDate,
   scheduleProspectingCadence,
 } from "@/modules/prospecting/domain/prospecting-cadence";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { logger } from "@/shared/core/logging/logger";
+import { workspaceDateAt } from "@/shared/core/time/workspace-time";
 
 type Options = Readonly<{ database: PrismaClient; now: () => Date }>;
 
@@ -105,6 +107,12 @@ export function createProspectingReleaseService(options: Options) {
       INNER JOIN "workspaces" AS workspace ON workspace."id" = release."workspaceId"
       WHERE release."status" IN ('PLANNED'::"ProspectReleaseStatus", 'CLAIMED'::"ProspectReleaseStatus")
         AND release."plannedDate" <= (${now}::timestamptz AT TIME ZONE workspace."timeZone")::date
+        AND EXTRACT(ISODOW FROM (${now}::timestamptz AT TIME ZONE workspace."timeZone")) BETWEEN 1 AND 5
+        AND NOT EXISTS (
+          SELECT 1 FROM "prospecting_calendar_holidays" AS holiday
+          WHERE holiday."workspaceId" = workspace."id"
+            AND holiday."localDate" = (${now}::timestamptz AT TIME ZONE workspace."timeZone")::date
+        )
         AND (release."leaseExpiresAt" IS NULL OR release."leaseExpiresAt" < ${now})
         AND (release."nextAttemptAt" IS NULL OR release."nextAttemptAt" <= ${now})
       ORDER BY release."plannedDate" ASC, release."id" ASC
@@ -116,6 +124,13 @@ export function createProspectingReleaseService(options: Options) {
         await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`prospect-release:${due.id}`}, 0))`;
         const release = await transaction.prospectRelease.findUnique({ where: { id: due.id } });
         if (!release || !["PLANNED", "CLAIMED"].includes(release.status)) return null;
+        const workspace = await transaction.workspace.findUniqueOrThrow({ where: { id: release.workspaceId }, select: { timeZone: true } });
+        const localDate = workspaceDateAt(options.now(), workspace.timeZone);
+        const holiday = await transaction.prospectingCalendarHoliday.findUnique({
+          where: { workspaceId_localDate: { workspaceId: release.workspaceId, localDate: new Date(`${localDate}T00:00:00.000Z`) } },
+          select: { id: true },
+        });
+        if (!isBusinessDate(localDate, new Set(holiday ? [localDate] : []))) return null;
         const settings = await transaction.prospectingSettings.findUnique({ where: { workspaceId: release.workspaceId } });
         if (!settings?.releaseEnabled) {
           await transaction.prospectRelease.update({ where: { id: release.id }, data: { status: "DEFERRED", reasonCode: "RELEASE_DISABLED" } });
@@ -256,7 +271,6 @@ export function createProspectingReleaseService(options: Options) {
           }
         }
         await transaction.lead.update({ where: { id: lead.id }, data: { accountId: account.id, ownerMemberId: member.id, queueId: null, updatedByActorId: actor.id } });
-        const workspace = await transaction.workspace.findUniqueOrThrow({ where: { id: release.workspaceId }, select: { timeZone: true } });
         const d1Date = release.plannedDate.toISOString().slice(0, 10);
         const holidays = new Set((await transaction.prospectingCalendarHoliday.findMany({ where: { workspaceId: release.workspaceId }, select: { localDate: true } })).map((item) => item.localDate.toISOString().slice(0, 10)));
         const schedule = scheduleProspectingCadence({ d1Date, timeZone: workspace.timeZone, holidays });

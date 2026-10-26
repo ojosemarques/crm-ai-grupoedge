@@ -27,7 +27,7 @@ describe("configuração de clientes OAuth do MCP Politizai", () => {
   });
 
   it("publica a política autônoma contínua sem depender de perguntas ao usuário", () => {
-    expect(POLITIZAI_MCP_SERVER_VERSION).toBe("1.4.3");
+    expect(POLITIZAI_MCP_SERVER_VERSION).toBe("1.5.0");
     expect(POLITIZAI_AUTONOMY_RULES).toEqual({
       executionMode: "CONTINUOUS_UNTIL_QUEUE_EMPTY",
       askUserForResearchInput: false,
@@ -37,5 +37,9 @@ describe("configuração de clientes OAuth do MCP Politizai", () => {
     expect(POLITIZAI_MCP_INSTRUCTIONS).toContain("sem pedir ao usuário links, contatos ou decisões de pesquisa");
     expect(POLITIZAI_MCP_INSTRUCTIONS).toContain("reserve imediatamente o próximo alvo");
     expect(POLITIZAI_MCP_INSTRUCTIONS).toContain("tente recuperar automaticamente");
+    expect(POLITIZAI_MCP_INSTRUCTIONS).toContain("inclusive sábado e domingo");
+    expect(POLITIZAI_MCP_INSTRUCTIONS).toContain("apenas de segunda a sexta");
+    expect(POLITIZAI_MCP_INSTRUCTIONS).toContain("alterna Norte, Nordeste, Centro-Oeste, Sudeste e Sul");
+    expect(POLITIZAI_MCP_INSTRUCTIONS).not.toContain("priorize as regiões nesta ordem");
   });
 });

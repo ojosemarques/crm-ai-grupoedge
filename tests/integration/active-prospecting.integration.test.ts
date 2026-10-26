@@ -214,6 +214,15 @@ describe("staging governado da Prospecção Ativa", () => {
     const releaseBeforeLocalDay = createProspectingReleaseService({ database, now: () => clock });
     clock = new Date("2026-10-05T00:30:00.000Z");
     await expect(releaseBeforeLocalDay.processNext("worker-before-local-day")).resolves.toMatchObject({ processed: false, outcome: "EMPTY" });
+    for (const instant of ["2026-10-10T15:00:00.000Z", "2026-10-11T15:00:00.000Z", "2026-10-12T01:00:00.000Z"]) {
+      clock = new Date(instant);
+      await expect(releaseBeforeLocalDay.processNext("worker-weekend-overdue")).resolves.toMatchObject({ processed: false, outcome: "EMPTY" });
+      await expect(database.prospectCandidate.findUniqueOrThrow({ where: { id: ingested.candidate.id }, select: { status: true } })).resolves.toEqual({ status: "PLANNED" });
+    }
+    clock = new Date("2026-10-12T15:00:00.000Z");
+    const holiday = await database.prospectingCalendarHoliday.create({ data: { workspaceId: principal.workspaceId, localDate: new Date("2026-10-12T00:00:00.000Z"), name: "Feriado de teste", createdByActorId: systemActorId } });
+    await expect(releaseBeforeLocalDay.processNext("worker-holiday-overdue")).resolves.toMatchObject({ processed: false, outcome: "EMPTY" });
+    await database.prospectingCalendarHoliday.delete({ where: { id: holiday.id } });
     clock = new Date("2026-10-05T15:00:00.000Z");
     let releaseClockOffsetMs = 0;
     const release = createProspectingReleaseService({ database, now: () => new Date(clock.getTime() + releaseClockOffsetMs++) });

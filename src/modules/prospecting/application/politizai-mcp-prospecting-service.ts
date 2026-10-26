@@ -13,20 +13,20 @@ import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const LEASE_MINUTES = 45;
-const AGENT_VERSION = "politizai-dot-mcp/1.5.3";
-const PROMPT_VERSION = "political-prospect-production/v9";
+const AGENT_VERSION = "politizai-dot-mcp/1.6.0";
+const PROMPT_VERSION = "political-prospect-production/v10";
 const BRAZILIAN_CAPITALS = [
   "Aracaju", "Belém", "Belo Horizonte", "Boa Vista", "Brasília", "Campo Grande", "Cuiabá", "Curitiba",
   "Florianópolis", "Fortaleza", "Goiânia", "João Pessoa", "Macapá", "Maceió", "Manaus",
   "Natal", "Palmas", "Porto Alegre", "Porto Velho", "Recife", "Rio Branco", "Rio de Janeiro",
   "Salvador", "São Luís", "São Paulo", "Teresina", "Vitória",
 ];
-const REGION_PRIORITY_STATE_CODES = [
-  ["PR", "RS", "SC"],
-  ["ES", "MG", "RJ", "SP"],
-  ["DF", "GO", "MS", "MT"],
+const REGION_STATE_CODES = [
   ["AC", "AM", "AP", "PA", "RO", "RR", "TO"],
   ["AL", "BA", "CE", "MA", "PB", "PE", "PI", "RN", "SE"],
+  ["DF", "GO", "MS", "MT"],
+  ["ES", "MG", "RJ", "SP"],
+  ["PR", "RS", "SC"],
 ] as const;
 
 const researchSourceSchema = z.object({
@@ -355,13 +355,42 @@ export function createPolitizaiMcpProspectingService(options: Options) {
         OR: [{ status: "PENDING" as const }, { status: "CLAIMED" as const, leaseExpiresAt: { lte: now } }],
       };
       const orderBy = [{ population: "asc" as const }, { role: "desc" as const }, { stateCode: "asc" as const }, { municipalityName: "asc" as const }, { politicianName: "asc" as const }];
+      // Persistent least-recently-visited rotation, not historical volume catch-up.
+      // Completion also counts as activity; restarts and expired leases keep the rotation.
+      const history = await transaction.prospectingResearchTarget.groupBy({
+        by: ["stateCode"],
+        where: { workspaceId: auth.workspaceId, batchId: batch.id, attemptCount: { gt: 0 } },
+        _max: { updatedAt: true },
+        _sum: { attemptCount: true },
+      });
+      const stateActivity = new Map(history.map((row) => [row.stateCode, {
+        last: row._max.updatedAt?.getTime() ?? 0,
+        attempts: row._sum.attemptCount ?? 0,
+      }]));
+      const activity = (states: readonly string[]) => ({
+        last: Math.max(0, ...states.map((state) => stateActivity.get(state)?.last ?? 0)),
+        attempts: states.reduce((total, state) => total + (stateActivity.get(state)?.attempts ?? 0), 0),
+      });
+      const compareActivity = (left: readonly string[], right: readonly string[]) => {
+        const a = activity(left);
+        const b = activity(right);
+        return a.last - b.last || a.attempts - b.attempts;
+      };
+      const regions = [...REGION_STATE_CODES].sort(compareActivity);
       let target = null as Awaited<ReturnType<typeof transaction.prospectingResearchTarget.findFirst>>;
       for (const capitalOnly of [false, true]) {
-        for (const stateCodes of REGION_PRIORITY_STATE_CODES) {
+        const availableStates = new Set((await transaction.prospectingResearchTarget.groupBy({
+          by: ["stateCode"],
+          where: { ...queueWhere, municipalityName: capitalOnly ? { in: BRAZILIAN_CAPITALS } : { notIn: BRAZILIAN_CAPITALS } },
+        })).map((row) => row.stateCode));
+        for (const stateCodes of regions) {
+          const stateCode = [...stateCodes].filter((state) => availableStates.has(state))
+            .sort((a, b) => compareActivity([a], [b]) || a.localeCompare(b))[0];
+          if (!stateCode) continue;
           target = await transaction.prospectingResearchTarget.findFirst({
             where: {
               ...queueWhere,
-              stateCode: { in: [...stateCodes] },
+              stateCode,
               municipalityName: capitalOnly ? { in: BRAZILIAN_CAPITALS } : { notIn: BRAZILIAN_CAPITALS },
             },
             orderBy,
@@ -385,7 +414,7 @@ export function createPolitizaiMcpProspectingService(options: Options) {
       const enrichmentInstruction = claimed.candidateId
         ? "Este alvo já existe no CRM e deve ser ENRIQUECIDO sem remover nenhum contato atual. Encontre e envie ao menos um novo telefone individual do político, assessor, gabinete/ramal exclusivo ou WhatsApp. Quando a fonte publicar um ramal individual, envie o telefone completo no formato `(DDD) NNNN-NNNN ramal NNN`; ramais diferentes da mesma central são contatos distintos. Não repita a central compartilhada já cadastrada; o Instagram continua obrigatório como frente de pesquisa, mas sozinho não conclui este enriquecimento."
         : "Este é um cadastro novo.";
-      return { target: { ...claimed, mode: claimed.candidateId ? "ENRICH_EXISTING_CANDIDATE" : "CREATE_CANDIDATE", existingContact, leaseOwner, leaseExpiresAt: leaseExpiresAt.toISOString(), instructions: `${enrichmentInstruction} A fila prioriza Sul, depois Sudeste, depois Centro-Oeste; Norte e Nordeste ficam para depois. Conclua obrigatoriamente todas as etapas antes de registrar, mesmo após encontrar o primeiro contato: (1) cruze o eleito no Resultados TSE 2024 e valide o mandato atual; (2) procure telefone/ramal e e-mail do gabinete individual ou assessor em página nominal da Prefeitura/Câmara; nunca grave central geral, protocolo, recepção ou número compartilhado como gabinete; (3) consulte sempre o candidato no DivulgaCandContas 2024 e capture todo telefone/e-mail que ainda esteja publicamente exibido; (4) pesquise sempre no Google por NOME + PREFEITO ou VEREADOR + MUNICÍPIO e valide o Instagram no próprio perfil por nome, município e cargo. Informe o resultado das três frentes em researchChecks. Google é somente descoberta, não evidência final. Cadastre quando houver telefone/WhatsApp público ou Instagram validado; e-mail isolado deve ser descartado. Nunca use dado vazado, restrito, oculto ou inferido; registre uma fonte específica para cada contato.` }, queueEmpty: false };
+      return { target: { ...claimed, mode: claimed.candidateId ? "ENRICH_EXISTING_CANDIDATE" : "CREATE_CANDIDATE", existingContact, leaseOwner, leaseExpiresAt: leaseExpiresAt.toISOString(), instructions: `${enrichmentInstruction} A fila alterna Norte, Nordeste, Centro-Oeste, Sudeste e Sul e também os estados de cada região, priorizando os menos recentemente pesquisados. Pesquise todos os dias, inclusive sábado e domingo; grave apenas no estoque. O CRM libera aos vendedores somente de segunda a sexta, respeitando o calendário útil e a capacidade. Conclua obrigatoriamente todas as etapas antes de registrar, mesmo após encontrar o primeiro contato: (1) cruze o eleito no Resultados TSE 2024 e valide o mandato atual; (2) procure telefone/ramal e e-mail do gabinete individual ou assessor em página nominal da Prefeitura/Câmara; nunca grave central geral, protocolo, recepção ou número compartilhado como gabinete; (3) consulte sempre o candidato no DivulgaCandContas 2024 e capture todo telefone/e-mail que ainda esteja publicamente exibido; (4) pesquise sempre no Google por NOME + PREFEITO ou VEREADOR + MUNICÍPIO e valide o Instagram no próprio perfil por nome, município e cargo. Informe o resultado das três frentes em researchChecks. Google é somente descoberta, não evidência final. Cadastre quando houver telefone/WhatsApp público ou Instagram validado; e-mail isolado deve ser descartado. Nunca use dado vazado, restrito, oculto ou inferido; registre uma fonte específica para cada contato.` }, queueEmpty: false };
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 20_000 });
   }
 
