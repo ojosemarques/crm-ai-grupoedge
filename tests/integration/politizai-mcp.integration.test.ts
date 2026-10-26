@@ -230,6 +230,12 @@ describe("MCP privado Politizai", () => {
       ...["AC", "PE", "GO", "MG", "SC"].map((stateCode) => ({ workspaceId: context.workspaceId, batchId, externalIdentityKey: `tse-2024:rotation-${stateCode}`, tseCandidateId: `rotation-${stateCode}`, role: "COUNCILOR" as const, politicianName: `Vereador ${stateCode}`, municipalityName: `Cidade ${stateCode}`, municipalityIbgeCode: "9999999", stateCode, population: 500_000 })),
     ] });
     await expect(prospecting.getBatch(auth)).resolves.toMatchObject({ batch: { id: batchId } });
+    await expect(prospecting.getContext(auth)).resolves.toMatchObject({ rules: {
+      queuePriority: ["allNonCapitalsBeforeCapitals", "leastRecentlyResearchedRegion", "leastRecentlyResearchedState", "smallerMunicipalityPopulation", "councilorBeforeMayor"],
+      regions: ["North", "Northeast", "CenterWest", "Southeast", "South"],
+      researchDays: "EVERY_DAY",
+      sellerReleaseDays: "MONDAY_TO_FRIDAY_EXCLUDING_WORKSPACE_HOLIDAYS",
+    } });
     const claimed = [];
     for (let index = 0; index < 13; index += 1) {
       const restarted = createPolitizaiMcpProspectingService({ database, now: () => clock });
