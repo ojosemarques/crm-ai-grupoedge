@@ -6,6 +6,10 @@ import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import type { ServiceActorContext } from "@/modules/auth/application/service-actor-context";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { createOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
+import { createFreeQualificationService } from "@/modules/qualification/application/free-qualification-service";
+import { createLeadScoringService } from "@/modules/qualification/application/lead-scoring-service";
+import { createOpportunityService } from "@/modules/opportunities/application/opportunity-service";
 import { encryptGoogleCalendarSecret } from "@/modules/integrations/application/google-calendar-crypto";
 import { createGoogleCalendarWorkerService } from "@/modules/integrations/application/google-calendar-worker-service";
 import { createMeetingPipelineReconciliationService } from "@/modules/meetings/application/meeting-pipeline-reconciliation-service";
@@ -1054,12 +1058,35 @@ describe("agenda interna e reuniões", () => {
     expect(sharedAgenda.canSchedule).toBe(true);
     expect(sharedAgenda.closerOptions.map((closer) => closer.id)).toEqual(expect.arrayContaining([closer1Id, closer2Id]));
     expect(sharedAgenda.meetings.map((meeting) => meeting.id)).toEqual(expect.arrayContaining([firstMeeting.meetingId, secondMeeting.meetingId]));
-    expect(sharedAgenda.meetings.every((meeting) => !meeting.canWrite)).toBe(true);
+    expect(sharedAgenda.meetings.every((meeting) => meeting.canWrite)).toBe(true);
     const filteredAgenda = await meetings().getAgenda(carlos, { view: "day", date: "2035-02-26", closerId: closer2Id });
     expect(filteredAgenda.meetings.map((meeting) => meeting.id)).toContain(secondMeeting.meetingId);
     expect(filteredAgenda.meetings.map((meeting) => meeting.id)).not.toContain(firstMeeting.meetingId);
     await expect(meetings().getBriefing(carlos, { meetingId: firstMeeting.meetingId })).resolves.toBeDefined();
-    await expect(meetings().act(carlos, { meetingId: firstMeeting.meetingId, expectedRevision: 1, action: "CONFIRM" })).rejects.toBeInstanceOf(AccessDeniedError);
+    const cardServices = { database, authorization, now: () => clock };
+    await expect(Promise.all([
+      createOperationalHistoryService(cardServices).getLeadOperations(carlos, { leadId: firstLead.leadId }),
+      createFreeQualificationService(cardServices).getScreen(carlos, { leadId: firstLead.leadId }),
+      createLeadScoringService(cardServices).getScore(carlos, { leadId: firstLead.leadId }),
+      createPreSalesPipelineService(cardServices).getLeadState(carlos, { leadId: firstLead.leadId }),
+      meetings().getLeadMeetings(carlos, { leadId: firstLead.leadId }),
+      createOpportunityService(cardServices).getLeadScreen(carlos, { leadId: firstLead.leadId }),
+    ])).resolves.toHaveLength(6);
+    const unlinkedLead = await qualifyLead("Lead fora da agenda compartilhada");
+    await database.lead.update({ where: { id: unlinkedLead.leadId }, data: { ownerMemberId: closer2Id } });
+    await expect(createOperationalHistoryService(cardServices).getLeadOperations(carlos, { leadId: unlinkedLead.leadId })).rejects.toBeInstanceOf(AccessDeniedError);
+    await expect(createFreeQualificationService(cardServices).create(carlos, { leadId: firstLead.leadId, content: "Escrita de lead alheio não autorizada" })).rejects.toBeInstanceOf(AccessDeniedError);
+    await expect(meetings().act(carlos, { meetingId: firstMeeting.meetingId, expectedRevision: 1, action: "CONFIRM" })).resolves.toBeDefined();
+    await expect(meetings().act(carlos, { meetingId: firstMeeting.meetingId, expectedRevision: 2, action: "RESCHEDULE", startsAtLocal: "2035-02-26T09:30", durationMinutes: 40, reason: "Remarcação feita pelo SDR Carlos." })).resolves.toBeDefined();
+    await expect(meetings().act(carlos, { meetingId: firstMeeting.meetingId, expectedRevision: 3, action: "EDIT", title: "Reunião revisada por Carlos", startsAtLocal: "2035-02-26T09:30", durationMinutes: 40, status: "SCHEDULED", observation: "Detalhes revisados", outcome: null, reason: "Correção de detalhes pelo Carlos." })).resolves.toBeDefined();
+    clock = new Date("2035-02-26T13:30:00.000Z");
+    await expect(meetings().act(carlos, { meetingId: firstMeeting.meetingId, expectedRevision: 4, action: "NO_SHOW", reason: "Participante não compareceu.", nextAction: { title: "Retomar contato", dueAtLocal: "2035-02-27T09:00" } })).resolves.toBeDefined();
+    await expect(meetings().act(carlos, { meetingId: secondMeeting.meetingId, expectedRevision: 1, action: "ATTENDED", outcome: "Reunião realizada com o participante.", nextAction: { title: "Enviar proposta", dueAtLocal: "2035-02-27T10:00" } })).resolves.toBeDefined();
+    const cancelLead = await qualifyLead("Cancelamento de reunião pelo Carlos");
+    const cancelMeeting = await schedule(cancelLead.leadId, managerContext, "2035-02-26T11:00", closer1Id);
+    await expect(meetings().act(carlos, { meetingId: cancelMeeting.meetingId, expectedRevision: 1, action: "CANCEL", reason: "Participante solicitou cancelar.", nextAction: { title: "Retomar agendamento", dueAtLocal: "2035-02-27T11:00" } })).resolves.toBeDefined();
+    await expect(database.meeting.findUniqueOrThrow({ where: { id: firstMeeting.meetingId }, select: { status: true } })).resolves.toEqual({ status: "NO_SHOW" });
+    await expect(database.meeting.findUniqueOrThrow({ where: { id: secondMeeting.meetingId }, select: { status: true } })).resolves.toEqual({ status: "COMPLETED" });
     const otherCloserAgenda = await meetings().getAgenda(await contextByMember(closer1Id), { view: "day", date: "2035-02-26" });
     expect(otherCloserAgenda.meetings.map((meeting) => meeting.id)).not.toContain(secondMeeting.meetingId);
   });

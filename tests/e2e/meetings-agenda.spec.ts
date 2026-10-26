@@ -9,6 +9,7 @@ import {
 } from "@/modules/settings/application/demo-seed-service";
 import { pactoDimensions } from "@/modules/qualification/domain/pacto-contracts";
 import { browserRequest } from "./support/browser-request";
+import { getDatabaseClient } from "@/shared/core/database/client";
 
 async function login(page: import("@playwright/test").Page) {
   await page.goto("/login");
@@ -23,6 +24,56 @@ function uniquePhone(label: string) {
   const suffix = (BigInt(`0x${hash.slice(0, 12)}`) % 100_000_000n).toString().padStart(8, "0");
   return `+55119${suffix}`;
 }
+
+test("Carlos gerencia reunião de outro vendedor e abre o lead na agenda", async ({ page, browser }) => {
+  expect(new URL(process.env.DATABASE_URL!).searchParams.get("schema")).toMatch(/^politizai_test_e2e_/);
+  const database = getDatabaseClient();
+  const user = await database.user.findUniqueOrThrow({ where: { normalizedEmail: DEMO_USERS[5].email } });
+  const workspace = await database.workspace.findUniqueOrThrow({ where: { slug: "politizai" } });
+  const closer = await database.workspaceMember.findFirstOrThrow({ where: { workspaceId: workspace.id, user: { normalizedEmail: DEMO_USERS[6].email } } });
+  const leadName = `Agenda Carlos ${randomUUID().slice(0, 8)}`;
+  await login(page);
+  const request = browserRequest(page);
+  const created = await request.post("/api/leads/manual", { data: { idempotencyKey: `agenda-carlos:${randomUUID()}`, lead: { fullName: leadName, phone: uniquePhone(leadName), priorityBandCode: "P2" } } });
+  expect(created.status(), JSON.stringify(await created.json())).toBe(201);
+  const lead = await database.lead.findFirstOrThrow({ where: { workspaceId: workspace.id, fullName: leadName } });
+  await database.lead.update({ where: { id: lead.id }, data: { ownerMemberId: closer.id } });
+  const title = `Reunião Carlos ${randomUUID().slice(0, 8)}`;
+  const scheduled = await request.post("/api/meetings", { data: { leadId: lead.id, closerId: closer.id, title, startsAtLocal: "2035-02-27T09:00", durationMinutes: 30 } });
+  expect(scheduled.status(), JSON.stringify(await scheduled.json())).toBe(201);
+  const carlosEmail = "carloshenrique@politizai.com";
+  const context = await browser.newContext();
+  try {
+    await database.user.update({ where: { id: user.id }, data: { email: carlosEmail, normalizedEmail: carlosEmail } });
+    const carlos = await context.newPage();
+    await carlos.goto("/login");
+    await carlos.getByLabel("E-mail").fill(carlosEmail);
+    await carlos.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
+    await carlos.getByRole("button", { name: "Entrar", exact: true }).click();
+    await enterDemoCompany(carlos);
+    await carlos.goto("/agenda?view=day&date=2035-02-27");
+    const card = carlos.locator('button[data-status="SCHEDULED"]').filter({ hasText: title });
+    await card.click();
+    const dialog = carlos.getByRole("dialog", { name: title, exact: true });
+    for (const name of ["Confirmar", "Remarcar", "Cancelar", "Compareceu", "No-show", "Editar reunião", "Ir ao lead"]) {
+      await expect(dialog.getByRole("button", { name, exact: true })).toBeVisible();
+    }
+    const agendaUrl = carlos.url();
+    await dialog.getByRole("button", { name: "Ir ao lead", exact: true }).click();
+    const leadDialog = carlos.getByRole("dialog", { name: "Ficha completa do lead", exact: true });
+    await expect(leadDialog.getByRole("heading", { name: leadName, exact: true })).toBeVisible();
+    await leadDialog.getByRole("button", { name: "Fechar ficha e voltar à agenda" }).click();
+    await expect(carlos).toHaveURL(agendaUrl);
+    await card.click();
+    await dialog.getByRole("button", { name: "Confirmar", exact: true }).click();
+    await expect(dialog.getByText("Confirmada", { exact: true })).toBeVisible();
+    await expect(database.meeting.findFirstOrThrow({ where: { workspaceId: workspace.id, leadId: lead.id, title }, select: { status: true } })).resolves.toEqual({ status: "CONFIRMED" });
+  } finally {
+    await context.close();
+    await database.user.update({ where: { id: user.id }, data: { email: user.email, normalizedEmail: user.normalizedEmail } });
+    await database.$disconnect();
+  }
+});
 
 test("agenda, ciclo da reunião e briefing funcionam sobre dados persistidos", async ({ page }) => {
   await login(page);

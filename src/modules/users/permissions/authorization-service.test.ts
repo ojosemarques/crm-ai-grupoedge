@@ -24,7 +24,7 @@ describe("authorization service", () => {
     { label: "outro vendedor", email: "outro@politizai.com", workspaceSlug: "politizai", identityMatches: true, permission: PermissionKeys.MEETINGS_READ, scope: null },
     { label: "outro workspace", email: "carloshenrique@politizai.com", workspaceSlug: "outro", identityMatches: true, permission: PermissionKeys.MEETINGS_READ, scope: null },
     { label: "identidade divergente", email: "carloshenrique@politizai.com", workspaceSlug: "politizai", identityMatches: false, permission: PermissionKeys.MEETINGS_READ, scope: null },
-    { label: "escrita de reunião", email: "carloshenrique@politizai.com", workspaceSlug: "politizai", identityMatches: true, permission: PermissionKeys.MEETINGS_WRITE, scope: null },
+    { label: "escrita de reunião", email: "carloshenrique@politizai.com", workspaceSlug: "politizai", identityMatches: true, permission: PermissionKeys.MEETINGS_WRITE, scope: "WORKSPACE" },
     { label: "leads alheios", email: "carloshenrique@politizai.com", workspaceSlug: "politizai", identityMatches: true, permission: PermissionKeys.LEADS_READ, scope: null },
     { label: "transcrições alheias", email: "carloshenrique@politizai.com", workspaceSlug: "politizai", identityMatches: true, permission: PermissionKeys.MEETING_TRANSCRIPTS_READ, scope: null },
   ])("restringe agenda compartilhada à identidade e permissão corretas: $label", async ({ email, workspaceSlug, identityMatches, permission, scope }) => {
@@ -50,6 +50,32 @@ describe("authorization service", () => {
       .resolves.toMatchObject({ allowed: false, reason: "MISSING_PERMISSION" });
     await expect(service.authorize(schedulerContext, PermissionKeys.MEETINGS_READ, { workspaceId: "another-workspace", resourceType: "MeetingAgenda" }))
       .resolves.toMatchObject({ allowed: false, reason: "WORKSPACE_MISMATCH" });
+  });
+
+  it.each([
+    { permission: PermissionKeys.LEADS_READ, resourceType: "Lead", linked: true, allowed: true },
+    { permission: PermissionKeys.LEADS_READ, resourceType: "LeadScore", linked: true, allowed: true },
+    { permission: PermissionKeys.LEADS_READ, resourceType: "LeadPipeline", linked: true, allowed: true },
+    { permission: PermissionKeys.TASKS_READ, resourceType: "Lead", linked: true, allowed: true },
+    { permission: PermissionKeys.LEADS_READ, resourceType: "Lead", linked: false, allowed: false },
+    { permission: PermissionKeys.LEADS_READ, resourceType: "LeadList", linked: true, allowed: false },
+    { permission: PermissionKeys.LEADS_WRITE, resourceType: "Lead", linked: true, allowed: false },
+    { permission: PermissionKeys.TASKS_WRITE, resourceType: "Lead", linked: true, allowed: false },
+    { permission: PermissionKeys.LEADS_ASSIGN, resourceType: "Lead", linked: true, allowed: false },
+  ])("restringe leitura do card vinculado: $permission/$resourceType/$linked", async ({ permission, resourceType, linked, allowed }) => {
+    const meetingLookup = vi.fn().mockResolvedValue(linked ? { id: "meeting-1" } : null);
+    const service = createAuthorizationService({ database: {
+      workspaceMember: { findFirst: vi.fn().mockResolvedValue({ id: context.memberId }) },
+      actor: { findFirst: vi.fn().mockResolvedValue({ id: context.actorId }) },
+      rolePermission: { findFirst: vi.fn().mockResolvedValue({ scope: "OWN" }) },
+      meeting: { findFirst: meetingLookup },
+    } as never });
+    const scheduler = { ...context, email: "carloshenrique@politizai.com", workspaceSlug: "politizai" };
+    const decision = await service.authorize(scheduler, permission, { workspaceId: context.workspaceId, resourceType, resourceId: "linked-lead", ownerMemberId: "other-member" });
+    expect(decision.allowed).toBe(allowed);
+    if (allowed) expect(meetingLookup).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      workspaceId: context.workspaceId, leadId: "linked-lead", deletedAt: null, lead: { deletedAt: null },
+    } }));
   });
 
   it("nega um contexto não validado que não existe no workspace", async () => {

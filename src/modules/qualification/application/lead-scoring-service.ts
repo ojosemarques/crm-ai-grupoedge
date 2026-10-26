@@ -372,6 +372,7 @@ function resourceForLead(workspaceId: string, lead: Awaited<ReturnType<typeof fi
   return {
     workspaceId,
     resourceType: "LeadScore",
+    resourceId: lead.id,
     ownerMemberId: lead.ownerMemberId,
     queueId: lead.queueId,
     teamId: lead.routingQueue?.teamId ?? lead.queue?.teamId ?? null,

@@ -39,6 +39,27 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
   const contextChecks = new WeakMap<AuthenticatedContext, Promise<boolean>>();
   const grants = new WeakMap<AuthenticatedContext, Map<PermissionKey, Promise<{ scope: PermissionScope } | null>>>();
   const teamIds = new WeakMap<AuthenticatedContext, Promise<string[]>>();
+  const meetingSchedulers = new WeakMap<AuthenticatedContext, Promise<boolean>>();
+
+  function isVerifiedMeetingScheduler(context: AuthenticatedContext): Promise<boolean> {
+    if (!isWorkspaceMeetingScheduler(context)) return Promise.resolve(false);
+    const cached = meetingSchedulers.get(context);
+    if (cached) return cached;
+    const lookup = options.database.workspaceMember.findFirst({
+      where: {
+        id: context.memberId,
+        workspaceId: context.workspaceId,
+        userId: context.userId,
+        user: { normalizedEmail: WORKSPACE_MEETING_SCHEDULER_EMAIL },
+      },
+      select: { id: true },
+    }).then(Boolean).catch((error: unknown) => {
+      meetingSchedulers.delete(context);
+      throw error;
+    });
+    meetingSchedulers.set(context, lookup);
+    return lookup;
+  }
 
   async function hasValidContext(context: AuthenticatedContext): Promise<boolean> {
     const cached = contextChecks.get(context);
@@ -118,18 +139,9 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
         },
         select: { scope: true },
       }).then(async (grant) => {
-        if (!grant || permissionKey !== PermissionKeys.MEETINGS_READ || !isWorkspaceMeetingScheduler(context)) return grant;
-        // Read-only scheduling visibility for Carlos, bound to the persisted identity.
-        // The base grant is still required; write and transcript scopes are unchanged.
-        const scheduler = await options.database.workspaceMember.findFirst({
-          where: {
-            id: context.memberId,
-            workspaceId: context.workspaceId,
-            userId: context.userId,
-            user: { normalizedEmail: WORKSPACE_MEETING_SCHEDULER_EMAIL },
-          },
-          select: { id: true },
-        });
+        if (!grant || (permissionKey !== PermissionKeys.MEETINGS_READ && permissionKey !== PermissionKeys.MEETINGS_WRITE)) return grant;
+        // Calendar management is nominal and still requires the persisted base grant.
+        const scheduler = await isVerifiedMeetingScheduler(context);
         return scheduler ? { scope: "WORKSPACE" as const } : grant;
       }).catch((error: unknown) => {
         contextGrants?.delete(permissionKey);
@@ -311,6 +323,22 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
     }
 
     if (!(await isWithinScope(context, grant.scope, resource))) {
+      const linkedLeadRead = resource.resourceId && (
+        (permissionKey === PermissionKeys.LEADS_READ && ["Lead", "LeadScore", "LeadPipeline"].includes(resource.resourceType))
+        || (permissionKey === PermissionKeys.TASKS_READ && resource.resourceType === "Lead")
+      );
+      if (linkedLeadRead && await isVerifiedMeetingScheduler(context)) {
+        const meeting = await options.database.meeting.findFirst({
+          where: {
+            workspaceId: context.workspaceId,
+            leadId: resource.resourceId,
+            deletedAt: null,
+            lead: { deletedAt: null },
+          },
+          select: { id: true },
+        });
+        if (meeting) return { allowed: true, scope: "WORKSPACE" };
+      }
       return {
         allowed: false,
         reason: "OUTSIDE_SCOPE",
