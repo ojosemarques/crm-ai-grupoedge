@@ -18,6 +18,40 @@ const context = {
 } satisfies AuthenticatedContext;
 
 describe("authorization service", () => {
+  it.each([
+    { label: "Carlos", email: "carloshenrique@politizai.com", workspaceSlug: "politizai", identityMatches: true, permission: PermissionKeys.MEETINGS_READ, scope: "WORKSPACE" },
+    { label: "e-mail normalizado", email: " CarlosHenrique@Politizai.com ", workspaceSlug: "politizai", identityMatches: true, permission: PermissionKeys.MEETINGS_READ, scope: "WORKSPACE" },
+    { label: "outro vendedor", email: "outro@politizai.com", workspaceSlug: "politizai", identityMatches: true, permission: PermissionKeys.MEETINGS_READ, scope: null },
+    { label: "outro workspace", email: "carloshenrique@politizai.com", workspaceSlug: "outro", identityMatches: true, permission: PermissionKeys.MEETINGS_READ, scope: null },
+    { label: "identidade divergente", email: "carloshenrique@politizai.com", workspaceSlug: "politizai", identityMatches: false, permission: PermissionKeys.MEETINGS_READ, scope: null },
+    { label: "escrita de reunião", email: "carloshenrique@politizai.com", workspaceSlug: "politizai", identityMatches: true, permission: PermissionKeys.MEETINGS_WRITE, scope: null },
+    { label: "leads alheios", email: "carloshenrique@politizai.com", workspaceSlug: "politizai", identityMatches: true, permission: PermissionKeys.LEADS_READ, scope: null },
+    { label: "transcrições alheias", email: "carloshenrique@politizai.com", workspaceSlug: "politizai", identityMatches: true, permission: PermissionKeys.MEETING_TRANSCRIPTS_READ, scope: null },
+  ])("restringe agenda compartilhada à identidade e permissão corretas: $label", async ({ email, workspaceSlug, identityMatches, permission, scope }) => {
+    const schedulerContext = { ...context, email, workspaceSlug };
+    const memberLookup = vi.fn().mockImplementation(async ({ where }) => where.user && !identityMatches ? null : { id: context.memberId });
+    const service = createAuthorizationService({ database: {
+      workspaceMember: { findFirst: memberLookup },
+      actor: { findFirst: vi.fn().mockResolvedValue({ id: context.actorId }) },
+      rolePermission: { findFirst: vi.fn().mockResolvedValue({ scope: "OWN" }) },
+    } as never });
+    const decision = await service.authorize(schedulerContext, permission, { workspaceId: context.workspaceId, resourceType: "Meeting", ownerMemberId: "another-member" });
+    expect(decision).toEqual(scope ? { allowed: true, scope } : { allowed: false, reason: "OUTSIDE_SCOPE", contextIsValid: true });
+  });
+
+  it("não cria permissão de agenda ausente nem permite cruzar workspaces", async () => {
+    const schedulerContext = { ...context, workspaceSlug: "politizai", email: "carloshenrique@politizai.com" };
+    const service = createAuthorizationService({ database: {
+      workspaceMember: { findFirst: vi.fn().mockResolvedValue({ id: context.memberId }) },
+      actor: { findFirst: vi.fn().mockResolvedValue({ id: context.actorId }) },
+      rolePermission: { findFirst: vi.fn().mockResolvedValue(null) },
+    } as never });
+    await expect(service.authorize(schedulerContext, PermissionKeys.MEETINGS_READ, { workspaceId: context.workspaceId, resourceType: "MeetingAgenda" }))
+      .resolves.toMatchObject({ allowed: false, reason: "MISSING_PERMISSION" });
+    await expect(service.authorize(schedulerContext, PermissionKeys.MEETINGS_READ, { workspaceId: "another-workspace", resourceType: "MeetingAgenda" }))
+      .resolves.toMatchObject({ allowed: false, reason: "WORKSPACE_MISMATCH" });
+  });
+
   it("nega um contexto não validado que não existe no workspace", async () => {
     const rolePermissionFindFirst = vi.fn();
     const service = createAuthorizationService({

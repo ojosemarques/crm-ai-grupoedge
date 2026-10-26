@@ -1042,6 +1042,26 @@ describe("agenda interna e reuniões", () => {
     await expect(schedule(lead.leadId, carlos, "2035-02-18T10:30", closer2Id)).resolves.toMatchObject({
       meetingId: expect.any(String),
     });
+
+    const firstLead = await qualifyLead("Agenda de outro vendedor para Carlos");
+    const secondLead = await qualifyLead("Agenda de segundo vendedor para Carlos");
+    await database.lead.update({ where: { id: firstLead.leadId }, data: { ownerMemberId: closer1Id } });
+    await database.lead.update({ where: { id: secondLead.leadId }, data: { ownerMemberId: closer2Id } });
+    const firstMeeting = await schedule(firstLead.leadId, managerContext, "2035-02-26T09:00", closer1Id);
+    const secondMeeting = await schedule(secondLead.leadId, managerContext, "2035-02-26T10:00", closer2Id);
+    const sharedAgenda = await meetings().getAgenda(carlos, { view: "day", date: "2035-02-26" });
+    expect(sharedAgenda.canFilterCloser).toBe(true);
+    expect(sharedAgenda.canSchedule).toBe(true);
+    expect(sharedAgenda.closerOptions.map((closer) => closer.id)).toEqual(expect.arrayContaining([closer1Id, closer2Id]));
+    expect(sharedAgenda.meetings.map((meeting) => meeting.id)).toEqual(expect.arrayContaining([firstMeeting.meetingId, secondMeeting.meetingId]));
+    expect(sharedAgenda.meetings.every((meeting) => !meeting.canWrite)).toBe(true);
+    const filteredAgenda = await meetings().getAgenda(carlos, { view: "day", date: "2035-02-26", closerId: closer2Id });
+    expect(filteredAgenda.meetings.map((meeting) => meeting.id)).toContain(secondMeeting.meetingId);
+    expect(filteredAgenda.meetings.map((meeting) => meeting.id)).not.toContain(firstMeeting.meetingId);
+    await expect(meetings().getBriefing(carlos, { meetingId: firstMeeting.meetingId })).resolves.toBeDefined();
+    await expect(meetings().act(carlos, { meetingId: firstMeeting.meetingId, expectedRevision: 1, action: "CONFIRM" })).rejects.toBeInstanceOf(AccessDeniedError);
+    const otherCloserAgenda = await meetings().getAgenda(await contextByMember(closer1Id), { view: "day", date: "2035-02-26" });
+    expect(otherCloserAgenda.meetings.map((meeting) => meeting.id)).not.toContain(secondMeeting.meetingId);
   });
 
   it("pesquisa leads da agenda sem escapar do escopo autorizado", async () => {

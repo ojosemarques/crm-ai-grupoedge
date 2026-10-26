@@ -1,7 +1,8 @@
 import type { ConversationChannel, PermissionScope, PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
-import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
+import { PermissionKeys, type PermissionKey } from "@/modules/users/permissions/permission-keys";
+import { isWorkspaceMeetingScheduler, WORKSPACE_MEETING_SCHEDULER_EMAIL } from "@/modules/users/permissions/meeting-scheduler-policy";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { isSameWorkspace } from "@/shared/core/workspace/workspace-context";
 
@@ -116,6 +117,20 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
           role: { deletedAt: null },
         },
         select: { scope: true },
+      }).then(async (grant) => {
+        if (!grant || permissionKey !== PermissionKeys.MEETINGS_READ || !isWorkspaceMeetingScheduler(context)) return grant;
+        // Read-only scheduling visibility for Carlos, bound to the persisted identity.
+        // The base grant is still required; write and transcript scopes are unchanged.
+        const scheduler = await options.database.workspaceMember.findFirst({
+          where: {
+            id: context.memberId,
+            workspaceId: context.workspaceId,
+            userId: context.userId,
+            user: { normalizedEmail: WORKSPACE_MEETING_SCHEDULER_EMAIL },
+          },
+          select: { id: true },
+        });
+        return scheduler ? { scope: "WORKSPACE" as const } : grant;
       }).catch((error: unknown) => {
         contextGrants?.delete(permissionKey);
         throw error;

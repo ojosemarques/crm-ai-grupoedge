@@ -50,6 +50,7 @@ import type {
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import type { PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { AccessRoleKeys, PermissionKeys } from "@/modules/users/permissions/permission-keys";
+import { isWorkspaceMeetingScheduler } from "@/modules/users/permissions/meeting-scheduler-policy";
 import { commercialMemberWhere } from "@/modules/users/application/commercial-member-eligibility";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
@@ -98,7 +99,6 @@ const agendaQuerySchema = z.object({
 const leadMeetingsQuerySchema = z.object({ leadId: z.string().uuid() }).strict();
 const meetingQuerySchema = z.object({ meetingId: z.string().uuid() }).strict();
 const leadOptionSearchSchema = z.object({ query: z.string().trim().min(2).max(80) }).strict();
-const WORKSPACE_MEETING_SCHEDULER_EMAILS = new Set(["carloshenrique@politizai.com"]);
 const scheduleSchema = z.object({
   leadId: z.string().uuid(),
   opportunityId: z.string().uuid().nullable().optional(),
@@ -526,8 +526,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
 
   function schedulingScope(context: AuthenticatedContext, decision: AuthorizationDecision): PermissionScope | null {
     if (!decision.allowed) return null;
-    const normalizedEmail = context.email?.trim().toLowerCase();
-    return context.roleKey === AccessRoleKeys.SDR || (normalizedEmail && WORKSPACE_MEETING_SCHEDULER_EMAILS.has(normalizedEmail))
+    return context.roleKey === AccessRoleKeys.SDR || isWorkspaceMeetingScheduler(context)
       ? "WORKSPACE"
       : decision.scope;
   }
