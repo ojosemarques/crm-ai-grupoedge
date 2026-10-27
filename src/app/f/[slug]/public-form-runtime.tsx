@@ -128,7 +128,20 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
       if (pixelId && metaEventId) {
         try { trackMetaLead(window, pixelId, metaEventId); } catch { /* O pixel opcional nunca bloqueia o lead. */ }
       }
-      if (body.result.redirect?.url) window.setTimeout(() => { void sendEvents([{ kind: "REDIRECT_OPENED" }]); window.location.assign(body.result!.redirect!.url); }, 900);
+      const redirect = body.result.redirect;
+      if (redirect?.url) window.setTimeout(() => {
+        void sendEvents([{ kind: "REDIRECT_OPENED" }]);
+        if (redirect.kind === "WHATSAPP" && window.top && window.top !== window) {
+          try {
+            // O WhatsApp deve abrir fora do iframe, sem tentar ler a página incorporadora.
+            window.top.location.href = redirect.url;
+          } catch {
+            setError("Cadastro salvo. Use o botão abaixo para abrir o WhatsApp.");
+          }
+        } else {
+          window.location.assign(redirect.url);
+        }
+      }, 900);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Não foi possível enviar agora. Tente novamente."); }
     finally { setSubmitting(false); }
   }
@@ -140,7 +153,7 @@ export function PublicFormRuntime({ form, nonce }: Readonly<{ form: PublicForm; 
     <div aria-hidden="true" className={styles.progress}><span /></div>
     {form.style.logoUrl ? <img alt={form.title} className={styles.logo} height={72} src={form.style.logoUrl} width={240} /> : null}
     {!done && question ? <section className={styles.question} key={question.stableKey}><p className={styles.counter}>{index + 1} → {form.questions.length}</p><h1 id="question-title" ref={headingRef} tabIndex={-1}>{question.title}{question.required ? <span aria-label="obrigatória"> *</span> : null}</h1>{question.description ? <p className={styles.description} id="question-description">{question.description}</p> : null}<QuestionInput answer={answer} autoAdvanceSingleChoice={shouldAutoAdvanceSingleChoice(question.type, index, form.questions.length)} error={error} question={question} setAnswer={setAnswer} /><div className={styles.actions}><button className={styles.primary} disabled={submitting} onClick={() => void advance()} type="button">{submitting ? "Enviando…" : index === form.questions.length - 1 ? "Enviar" : "Avançar"} <span aria-hidden="true">↵</span></button><small>pressione Enter</small></div>{error ? <p aria-live="polite" className={styles.error} id="question-error" role="alert">{error}</p> : null}</section> : null}
-    {done ? <section className={styles.thankYou}><p aria-hidden="true">✓</p><h1 ref={headingRef} tabIndex={-1}>{form.thankYou.title}</h1><div>{form.thankYou.message}</div>{done.redirect ? <a className={styles.primary} href={done.redirect.url}>{form.thankYou.ctaLabel ?? "Continuar"}</a> : null}</section> : null}
+    {done ? <section className={styles.thankYou}><p aria-hidden="true">✓</p><h1 ref={headingRef} tabIndex={-1}>{form.thankYou.title}</h1><div>{form.thankYou.message}</div>{error ? <div role="status">{error}</div> : null}{done.redirect ? <a className={styles.primary} href={done.redirect.url} target={done.redirect.kind === "WHATSAPP" ? "_blank" : undefined} rel={done.redirect.kind === "WHATSAPP" ? "noopener noreferrer" : undefined}>{form.thankYou.ctaLabel ?? (done.redirect.kind === "WHATSAPP" ? "Abrir WhatsApp" : "Continuar")}</a> : null}</section> : null}
     {!done ? <nav aria-label="Navegação entre perguntas" className={styles.arrows}><button aria-label="Pergunta anterior" disabled={index === 0 || submitting} onClick={() => { setIndex((current) => Math.max(0, current - 1)); setError(null); }} type="button">↑</button><button aria-label="Próxima pergunta" disabled={index === form.questions.length - 1 || submitting} onClick={() => void advance()} type="button">↓</button></nav> : null}
     <input aria-hidden="true" autoComplete="off" className={styles.honeypot} name="website" onChange={(event) => setHoneypot(event.target.value)} tabIndex={-1} value={honeypot} />
   </main>;

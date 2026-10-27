@@ -1,4 +1,6 @@
 import { enterDemoCompany } from "./helpers/company-hub";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 import { DEMO_SEED_PASSWORD, DEMO_USERS } from "@/modules/settings/application/demo-seed-service";
@@ -21,6 +23,75 @@ async function expectNoOverflow(page: Page, label: string) {
 
 async function capture(page: Page, testInfo: TestInfo, name: string) {
   await page.screenshot({ fullPage: true, path: testInfo.outputPath(`${name}.png`) });
+}
+
+for (const mode of ["direto", "iframe", "restrito"] as const) {
+  const embedded = mode !== "direto";
+  const restricted = mode === "restrito";
+  test(`formulário salva e abre WhatsApp ${mode}`, async ({ context, page, baseURL }) => {
+    test.setTimeout(45_000);
+    await login(page);
+    await page.goto("/formularios");
+    const suffix = `${Date.now().toString(36)}-${mode}`;
+    const slug = `qa-whatsapp-${suffix}`;
+    await page.getByRole("button", { name: "Novo formulário" }).click();
+    const dialog = page.getByRole("dialog", { name: "Comece pelo nome e endereço" });
+    await dialog.getByLabel("Nome").fill(`QA WhatsApp ${suffix}`);
+    await dialog.locator("input").nth(1).fill(slug);
+    await dialog.getByRole("button", { name: "Criar e editar" }).click();
+    await page.getByRole("button", { name: "Opções", exact: true }).click();
+    await page.getByRole("combobox", { name: "Redirecionamento", exact: true }).selectOption("WHATSAPP");
+    await page.getByLabel("Telefone E.164").fill("+5562982514665");
+    await page.getByLabel("Mensagem WhatsApp").fill("Opa, quero saber mais sobre a politizaí");
+    await page.getByRole("button", { name: "Publicar", exact: true }).click();
+    await expect(page.getByRole("status")).toHaveText("Nova versão publicada.");
+
+    const publicPage = await context.newPage();
+    await context.route("https://wa.me/**", route => route.fulfill({ contentType: "text/html", body: "<h1>Destino WhatsApp</h1>" }));
+    const publicUrl = `${baseURL}/f/${slug}`;
+    const wrapper = createServer((_request, response) => {
+      response.setHeader("Content-Type", "text/html");
+      response.end(`<iframe title="Forms Mandato" src="${publicUrl}" ${restricted ? 'sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"' : ""} style="width:100%;height:800px"></iframe>`);
+    });
+    try {
+      if (embedded) {
+        await new Promise<void>(resolve => wrapper.listen(0, "127.0.0.1", resolve));
+        await publicPage.goto(`http://127.0.0.1:${(wrapper.address() as AddressInfo).port}/mandato-embed-test`);
+      } else {
+        await publicPage.goto(publicUrl);
+      }
+      const form = embedded ? publicPage.frameLocator('iframe[title="Forms Mandato"]') : publicPage;
+      await form.getByRole("textbox").fill(`Pessoa QA WhatsApp ${suffix}`);
+      await form.getByRole("button", { name: /Avançar/ }).click();
+      await form.getByRole("textbox").fill("(62)99876-5432");
+      // A proteção pública exige pelo menos 800 ms de preenchimento.
+      await publicPage.waitForTimeout(850);
+      const submitted = publicPage.waitForResponse(response => response.url().endsWith(`/api/public/forms/${slug}/submit`));
+      await form.getByRole("button", { name: /Enviar/ }).click();
+      const response = await submitted;
+      expect(response.status()).toBe(201);
+      const result = (await response.json()).result;
+      expect(result.outcome).toBe("ACCEPTED");
+      const destination = new URL(result.redirect.url);
+      expect(destination.origin + destination.pathname).toBe("https://wa.me/5562982514665");
+      expect(destination.searchParams.get("text")).toBe("Opa, quero saber mais sobre a politizaí");
+      if (restricted) {
+        await expect(form.getByRole("status")).toHaveText("Cadastro salvo. Use o botão abaixo para abrir o WhatsApp.");
+        const popup = context.waitForEvent("page");
+        await form.getByRole("link", { name: "Abrir WhatsApp", exact: true }).click();
+        const destinationPage = await popup;
+        await expect(destinationPage).toHaveURL(result.redirect.url);
+        await expect(destinationPage.getByRole("heading", { name: "Destino WhatsApp" })).toBeVisible();
+      } else {
+        await expect(publicPage).toHaveURL(result.redirect.url);
+        await expect(publicPage.getByRole("heading", { name: "Destino WhatsApp" })).toBeVisible();
+      }
+      await page.getByRole("button", { name: "Respostas", exact: true }).click();
+      await expect(page.getByRole("cell", { name: `Pessoa QA WhatsApp ${suffix}`, exact: true })).toBeVisible();
+    } finally {
+      if (wrapper.listening) await new Promise<void>((resolve, reject) => wrapper.close(error => error ? reject(error) : resolve()));
+    }
+  });
 }
 
 test("gestor publica, recebe lead e consulta a resposta do formulário", async ({ context, page }, testInfo) => {
