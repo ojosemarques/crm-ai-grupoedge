@@ -1,18 +1,43 @@
 import { z } from "zod";
 
 export const salePaymentMethods = ["PIX", "BANK_TRANSFER", "CARD", "CASH", "OTHER"] as const;
-export const salePaymentPlans = ["CASH", "INSTALLMENTS", "UPFRONT_INSTALLMENTS"] as const;
+export const salePaymentPlans = ["CASH", "INSTALLMENTS", "UPFRONT_INSTALLMENTS", "CUSTOM_INSTALLMENTS"] as const;
 
 const cents = z.string().regex(/^\d{1,15}$/).refine((value) => /^\d{1,15}$/.test(value) && BigInt(value) <= BigInt(Number.MAX_SAFE_INTEGER), "Valor fora do limite seguro.");
-export const directSalePaymentPlans = ["UPFRONT_INSTALLMENTS", "CASH", "CARD_INSTALLMENTS"] as const;
+export const directSalePaymentPlans = ["UPFRONT_INSTALLMENTS", "CASH", "CARD_INSTALLMENTS", "CUSTOM_INSTALLMENTS"] as const;
+export const customInstallmentGroupsSchema = z.array(z.object({
+  count: z.number().int().min(1).max(60),
+  amountCents: cents.refine(value => /^\d{1,15}$/.test(value) && BigInt(value) > 0n, "Informe um valor positivo para a parcela."),
+}).strict()).min(1).max(60).refine(groups => groups.reduce((sum, group) => sum + group.count, 0) <= 60, "O limite é de 60 parcelas por venda.");
+export type CustomInstallmentGroup = z.infer<typeof customInstallmentGroupsSchema>[number];
 
-export function directSaleInstallmentCount(input: { totalCents: string; upfrontCents: string; installmentCents: string; installmentCount: number; paymentPlan: (typeof directSalePaymentPlans)[number] }): number | null {
+export function customInstallmentSummary(raw: unknown) {
+  const parsed = customInstallmentGroupsSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const count = parsed.data.reduce((sum, group) => sum + group.count, 0);
+  const total = parsed.data.reduce((sum, group) => sum + BigInt(group.amountCents) * BigInt(group.count), 0n);
+  if (total > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  // MRR normalizado em centavos; os recebíveis preservam cada valor negociado.
+  const monthly = (total + BigInt(Math.floor(count / 2))) / BigInt(count);
+  return { count, totalCents: total.toString(), monthlyCents: monthly.toString() };
+}
+
+export function customInstallmentDescription(groups: readonly CustomInstallmentGroup[]) {
+  return groups.map(group => `${group.count} parcela(s) de ${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(group.amountCents) / 100)}`).join(" + ");
+}
+
+export function directSaleInstallmentCount(input: { totalCents: string; upfrontCents: string; installmentCents: string; installmentCount: number; paymentPlan: (typeof directSalePaymentPlans)[number]; installmentGroups?: readonly CustomInstallmentGroup[] | undefined }): number | null {
   if (![input.totalCents, input.upfrontCents, input.installmentCents].every((value) => /^\d{1,15}$/.test(value))) return null;
   if (!Number.isInteger(input.installmentCount) || input.installmentCount < 1 || input.installmentCount > 60) return null;
   const total = BigInt(input.totalCents);
   const upfront = BigInt(input.upfrontCents);
   const installment = BigInt(input.installmentCents);
   if (total <= 0n || upfront > total) return null;
+  if (input.paymentPlan === "CUSTOM_INSTALLMENTS") {
+    const custom = customInstallmentSummary(input.installmentGroups);
+    return custom && installment === 0n && custom.count === input.installmentCount && upfront + BigInt(custom.totalCents) === total ? custom.count : null;
+  }
+  if (input.installmentGroups !== undefined) return null;
   if (input.paymentPlan === "CASH") return upfront === total && installment === 0n && input.installmentCount === 1 ? 1 : null;
   const balance = total - upfront;
   if (installment <= 0n || balance <= 0n || balance !== installment * BigInt(input.installmentCount)) return null;
@@ -28,6 +53,7 @@ export const completeLeadSaleSchema = z.object({
   paymentPlan: z.enum(directSalePaymentPlans),
   installmentCents: cents,
   installmentCount: z.number({ error: "Informe a quantidade de parcelas." }).int().min(1).max(60),
+  installmentGroups: customInstallmentGroupsSchema.optional(),
   upfrontCents: cents,
   paymentCondition: z.string().trim().min(2).max(500),
   confirmed: z.literal(true),
@@ -36,6 +62,7 @@ export const completeLeadSaleSchema = z.object({
   if (Boolean(input.opportunityId) !== Boolean(input.expectedRevision)) ctx.addIssue({ code: "custom", path: ["opportunityId"], message: "Recarregue os dados do negócio antes de fechar." });
   if (directSaleInstallmentCount(input) === null) ctx.addIssue({ code: "custom", path: ["totalCents"], message: input.paymentPlan === "CASH"
     ? "À vista exige entrada igual ao total e parcela zero."
+    : input.paymentPlan === "CUSTOM_INSTALLMENTS" ? "O valor total deve ser igual à entrada mais a soma dos grupos de parcelas personalizados."
     : "O valor total deve ser igual à entrada mais a quantidade de parcelas × valor de cada parcela." });
 });
 export const completeLeadSaleResultSchema = z.object({
@@ -57,6 +84,7 @@ const terms = z.object({
   receivedAt: z.string().datetime({ offset: true }).optional(),
   paymentReference: z.string().trim().min(3).max(180).optional(),
   durationMonths: z.number().int().min(1).max(60),
+  installmentGroups: customInstallmentGroupsSchema.optional(),
   startsAt: z.string().datetime({ offset: true }),
   templateVersionId: z.string().uuid(),
   customer: z.discriminatedUnion("mode", [
@@ -72,7 +100,12 @@ const terms = z.object({
 }).strict();
 
 function consistent(input: z.infer<typeof terms>, ctx: z.RefinementCtx) {
-  if (BigInt(input.totalCents) !== BigInt(input.upfrontCents) + BigInt(input.monthlyCents) * BigInt(input.durationMonths)) {
+  if (input.installmentGroups) {
+    const custom = customInstallmentSummary(input.installmentGroups);
+    if (!custom || custom.count !== input.durationMonths || BigInt(input.totalCents) !== BigInt(input.upfrontCents) + BigInt(custom.totalCents) || input.monthlyCents !== custom.monthlyCents) {
+      ctx.addIssue({ code: "custom", path: ["installmentGroups"], message: "Revise a quantidade, a soma e a média mensal das parcelas personalizadas." });
+    }
+  } else if (BigInt(input.totalCents) !== BigInt(input.upfrontCents) + BigInt(input.monthlyCents) * BigInt(input.durationMonths)) {
     ctx.addIssue({ code: "custom", path: ["totalCents"], message: "Total deve ser igual à entrada mais mensalidade × meses. Informe a diferença explicitamente." });
   }
   if (BigInt(input.monthlyCents) === 0n && input.durationMonths !== 1) {
@@ -103,6 +136,7 @@ const prepareLeadSaleTerms = z.object({
   upfrontCents: cents.default("0"),
   installmentCents: cents.default("0"),
   installmentCount: z.number().int().min(1).max(60),
+  installmentGroups: customInstallmentGroupsSchema.optional(),
   idempotencyKey: z.string().uuid(),
 }).strict();
 
@@ -110,6 +144,11 @@ export const prepareLeadSaleSchema = prepareLeadSaleTerms.superRefine((input, ct
   const total = BigInt(input.totalCents);
   const upfront = BigInt(input.upfrontCents);
   const installments = BigInt(input.installmentCents) * BigInt(input.installmentCount);
+  if (input.paymentPlan === "CUSTOM_INSTALLMENTS") {
+    if (directSaleInstallmentCount({ ...input, paymentPlan: "CUSTOM_INSTALLMENTS" }) === null) ctx.addIssue({ code: "custom", path: ["totalCents"], message: "O total deve corresponder à entrada mais as parcelas personalizadas." });
+  } else if (input.installmentGroups !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["installmentGroups"], message: "Selecione o plano personalizado para informar grupos de parcelas." });
+  }
   if (input.paymentPlan === "CASH" && (upfront !== total || BigInt(input.installmentCents) !== 0n || input.installmentCount !== 1)) {
     ctx.addIssue({ code: "custom", path: ["totalCents"], message: "À vista exige entrada igual ao valor total, sem parcelas." });
   }
@@ -134,9 +173,10 @@ export function saleMonth(at: string, months: number): Date {
 }
 
 export function saleSchedule(input: SaleCompletionInput) {
+  const installments = input.installmentGroups?.flatMap(group => Array.from({ length: group.count }, () => group.amountCents));
   return Array.from({ length: input.durationMonths }, (_, index) => ({
     installment: index + 1,
-    amountCents: (BigInt(input.monthlyCents) + (index === 0 ? BigInt(input.upfrontCents) : 0n)).toString(),
+    amountCents: (BigInt(installments?.[index] ?? input.monthlyCents) + (index === 0 ? BigInt(input.upfrontCents) : 0n)).toString(),
     dueAt: saleMonth(input.startsAt, index).toISOString(),
     periodEnd: saleMonth(input.startsAt, index + 1).toISOString(),
   }));

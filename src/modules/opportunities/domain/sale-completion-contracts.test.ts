@@ -4,6 +4,24 @@ import { completeLeadSaleSchema, directSaleInstallmentCount, executeSaleCompleti
 const input = { opportunityId: "00000000-0000-4000-8000-000000000001", sellerMemberId: "00000000-0000-4000-8000-000000000002", templateVersionId: "00000000-0000-4000-8000-000000000003", expectedRevision: 1, totalCents: "2500000", monthlyCents: "300000", upfrontCents: "700000", receivedCents: "0", paymentMethod: "PIX", paymentCondition: "Entrada e seis parcelas mensais", durationMonths: 6, startsAt: "2026-01-31T12:00:00.000Z", acceptance: { acceptedByName: "Cliente", acceptedByRole: "Diretor", evidenceText: "Aceite documentado." } } as const;
 
 describe("fechamento integrado", () => {
+  it("valida entrada e grupos personalizados, preservando ordem e centavos", () => {
+    const installmentGroups = [{ count: 3, amountCents: "120000" }, { count: 3, amountCents: "250000" }, { count: 3, amountCents: "250000" }];
+    const command = { leadId: input.opportunityId, sellerMemberId: input.sellerMemberId, totalCents: "1960000", upfrontCents: "100000",
+      installmentCents: "0", installmentCount: 9, installmentGroups, paymentPlan: "CUSTOM_INSTALLMENTS", paymentCondition: "Entrada e parcelas personalizadas", confirmed: true, idempotencyKey: input.opportunityId };
+    expect(completeLeadSaleSchema.safeParse(command).success).toBe(true);
+    for (const changes of [{ totalCents: "1959999" }, { installmentCount: 8 }, { installmentCents: "120000" }, { installmentGroups: [] },
+      { installmentGroups: [{ count: 61, amountCents: "1" }] }, { installmentGroups: [{ count: 0, amountCents: "120000" }] },
+      { installmentGroups: [{ count: 9, amountCents: "0" }] }, { installmentGroups: [{ count: 9, amountCents: "1.00" }] },
+      { paymentPlan: "UPFRONT_INSTALLMENTS" }, { receivedCents: "100000" }]) {
+      expect(completeLeadSaleSchema.safeParse({ ...command, ...changes }).success).toBe(false);
+    }
+    const terms = saleCompletionSchema.parse({ ...input, totalCents: command.totalCents, upfrontCents: command.upfrontCents, monthlyCents: "206667", durationMonths: 9, installmentGroups });
+    const schedule = saleSchedule(terms);
+    expect(schedule.map(row => row.amountCents)).toEqual(["220000", "120000", "120000", "250000", "250000", "250000", "250000", "250000", "250000"]);
+    expect(schedule.reduce((sum, row) => sum + BigInt(row.amountCents), 0n)).toBe(1960000n);
+    expect(schedule[1]!.dueAt).toBe("2026-02-28T12:00:00.000Z");
+    expect(saleCompletionSchema.safeParse({ ...terms, monthlyCents: "206666" }).success).toBe(false);
+  });
   it("exige quantidade explícita de parcelas coerente com os valores e não aceita baixa de recebimento", () => {
     const command = { leadId: input.opportunityId, sellerMemberId: input.sellerMemberId,
       totalCents: "765432", upfrontCents: "65432", installmentCents: "100000", installmentCount: 7,

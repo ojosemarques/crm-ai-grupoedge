@@ -331,27 +331,34 @@ export function createPaymentService(options: Options) {
     return { invoice, lines, attempts, payments, events, issues, financialAccounts, permissions: { manage: permissions[0].allowed, recordReceipt: canRecordReceipt, reprocess: permissions[1].allowed, reconcile: permissions[2].allowed }, mode: "MANUAL_RECEIPTS" as const, sandboxEnabled: process.env.NODE_ENV !== "production", externalEgress: false as const };
   }
 
-  async function createInvoice(context: AuthenticatedContext, raw: unknown) {
+  // O preço variável vem do cronograma validado do fechamento, não do payload da API de cobranças.
+  async function createInvoice(context: AuthenticatedContext, raw: unknown, saleInstallment?: Readonly<{ unitPriceCents: bigint }>) {
     const input = createInvoiceSchema.parse(raw);
+    if (saleInstallment && (typeof saleInstallment.unitPriceCents !== "bigint" || saleInstallment.unitPriceCents <= 0n || saleInstallment.unitPriceCents > BigInt(Number.MAX_SAFE_INTEGER))) {
+      fail("Valor da parcela personalizada inválido.", "PAYMENT_AMOUNT_TOO_LARGE", 400);
+    }
     return options.database.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`invoice-create:${context.workspaceId}:${input.subscriptionId}:${input.billingPeriodStart.toISOString()}:${input.billingPeriodEnd.toISOString()}`}, 0))`;
       const subscription = await tx.subscription.findFirst({ where: { id: input.subscriptionId, workspaceId: context.workspaceId } });
       if (!subscription) fail("Assinatura não encontrada.", "PAYMENT_SUBSCRIPTION_NOT_FOUND", 404);
       await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_MANAGE, resource(context, undefined, subscription.ownerMemberId));
+      const unitPriceCents = saleInstallment?.unitPriceCents ?? subscription.recurringPriceCents;
+      const subtotal = BigInt(subscription.quantity) * unitPriceCents + input.upfrontCents;
       if (!["ACTIVE", "CANCELLATION_SCHEDULED"].includes(subscription.status)) fail("Somente assinatura ativa pode originar cobrança.", "PAYMENT_SUBSCRIPTION_NOT_BILLABLE");
       const replay = await tx.paymentEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey: input.idempotencyKey } } });
       if (replay?.invoiceId) {
         const replayInvoice = await tx.invoice.findFirstOrThrow({ where: { id: replay.invoiceId, workspaceId: context.workspaceId } });
         await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_MANAGE, resource(context, replayInvoice.id, replayInvoice.ownerMemberId));
         if (replay.type !== "INVOICE_CREATED" || replayInvoice.subscriptionId !== input.subscriptionId) fail("A chave já pertence a outra operação de cobrança.", "PAYMENT_INVOICE_IDEMPOTENCY_CONFLICT");
+        if (saleInstallment && replayInvoice.totalCents !== subtotal) fail("A parcela já foi criada com outro valor.", "PAYMENT_INVOICE_IDEMPOTENCY_CONFLICT");
         return replayInvoice;
       }
       const existing = await tx.invoice.findFirst({ where: { workspaceId: context.workspaceId, subscriptionId: subscription.id, billingPeriodStart: input.billingPeriodStart, billingPeriodEnd: input.billingPeriodEnd } });
       if (existing) {
         await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_MANAGE, resource(context, existing.id, existing.ownerMemberId));
+        if (saleInstallment && existing.totalCents !== subtotal) fail("A competência já possui uma cobrança com outro valor.", "PAYMENT_INVOICE_IDEMPOTENCY_CONFLICT");
         return existing;
       }
-      const subtotal = BigInt(subscription.quantity) * subscription.recurringPriceCents + input.upfrontCents;
       const total = invoiceTotalCents(subtotal, 0n);
       if (total > BigInt(Number.MAX_SAFE_INTEGER)) fail("O valor da cobrança excede o limite seguro do sandbox local.", "PAYMENT_AMOUNT_TOO_LARGE");
       const invoice = await tx.invoice.create({ data: {
@@ -375,7 +382,7 @@ export function createPaymentService(options: Options) {
         createdByActorId: context.actorId,
         updatedByActorId: context.actorId,
       } });
-      await tx.invoiceLine.create({ data: { workspaceId: context.workspaceId, invoiceId: invoice.id, position: 1, descriptionSnapshot: invoice.descriptionSnapshot, quantity: subscription.quantity, unitPriceCents: subscription.recurringPriceCents, discountCents: 0n, totalCents: BigInt(subscription.quantity) * subscription.recurringPriceCents, currency: subscription.currency } });
+      await tx.invoiceLine.create({ data: { workspaceId: context.workspaceId, invoiceId: invoice.id, position: 1, descriptionSnapshot: invoice.descriptionSnapshot, quantity: subscription.quantity, unitPriceCents, discountCents: 0n, totalCents: BigInt(subscription.quantity) * unitPriceCents, currency: subscription.currency } });
       if (input.upfrontCents > 0n) await tx.invoiceLine.create({ data: { workspaceId: context.workspaceId, invoiceId: invoice.id, position: 2, descriptionSnapshot: "Entrada contratual", quantity: 1, unitPriceCents: input.upfrontCents, discountCents: 0n, totalCents: input.upfrontCents, currency: subscription.currency } });
       await appendPaymentEventInTransaction(tx, { workspaceId: context.workspaceId, invoiceId: invoice.id, type: "INVOICE_CREATED", actorId: context.actorId, reason: "Cobrança criada explicitamente a partir da assinatura.", idempotencyKey: input.idempotencyKey, correlationId: input.idempotencyKey, occurredAt: options.now(), safeMetadata: { subscriptionId: subscription.id, totalCents: total.toString(), currency: subscription.currency } });
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "payment.invoice.created", entityType: "Invoice", entityId: invoice.id, origin: "DOMAIN", changes: { subscriptionId: subscription.id, totalCents: total.toString(), currency: subscription.currency, status: "DRAFT" } } });

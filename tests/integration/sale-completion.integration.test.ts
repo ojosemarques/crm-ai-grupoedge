@@ -54,6 +54,42 @@ async function fixture(pipelineId?: string) {
 
 describe("venda integrada atômica", () => {
   for (const profile of ["administrator", "closer"] as const) {
+    it(`persiste grupos personalizados, recebíveis exatos e MRR médio (${profile})`, async () => {
+      await database.$executeRawUnsafe(readFileSync("scripts/sql/configure-politizai-sales.sql", "utf8"));
+      const seller = await context("closer1@demo.politizai.local");
+      const actor = profile === "administrator" ? admin : seller;
+      const previous = await fixture();
+      const original = await database.opportunity.update({ where: { id: previous.opportunityId }, data: { deletedAt: now } });
+      await database.lead.update({ where: { id: original.leadId }, data: { ownerMemberId: seller.memberId } });
+      const installmentGroups = [{ count: 3, amountCents: "120000" }, { count: 3, amountCents: "250000" }, { count: 3, amountCents: "250000" }];
+      const command = { leadId: original.leadId, sellerMemberId: seller.memberId, totalCents: "1960000", upfrontCents: "100000",
+        installmentCents: "0", installmentCount: 9, installmentGroups, paymentPlan: "CUSTOM_INSTALLMENTS", paymentCondition: "Entrada de mil reais e nove parcelas em três grupos.", confirmed: true, idempotencyKey: randomUUID() };
+      await expect(service.completeLeadSale(viewer, command)).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+      await expect(service.completeLeadSale(actor, { ...command, totalCents: "1960001" })).rejects.toThrow();
+      expect(await database.opportunity.count({ where: { leadId: original.leadId, deletedAt: null } })).toBe(0);
+      const result = await service.completeLeadSale(actor, command);
+      expect(result).toMatchObject({ receivedCents: "0", outstandingCents: "1960000", replayed: false });
+      expect(result.invoiceIds).toHaveLength(9);
+      const invoices = await database.invoice.findMany({ where: { contractId: result.contractId }, orderBy: { dueAt: "asc" } });
+      expect(invoices.map(invoice => invoice.totalCents)).toEqual([220000n, 120000n, 120000n, 250000n, 250000n, 250000n, 250000n, 250000n, 250000n]);
+      expect(invoices.reduce((sum, invoice) => sum + invoice.totalCents, 0n)).toBe(1960000n);
+      expect(invoices.every(invoice => invoice.status === "OPEN" && invoice.paidCents === 0n)).toBe(true);
+      const lines = await database.invoiceLine.findMany({ where: { invoiceId: { in: result.invoiceIds } } });
+      for (const invoice of invoices) expect(lines.filter(line => line.invoiceId === invoice.id).reduce((sum, line) => sum + line.totalCents, 0n)).toBe(invoice.totalCents);
+      expect(await database.opportunity.findUniqueOrThrow({ where: { id: result.opportunityId } })).toMatchObject({ status: "WON", tcvCents: 1960000n, mrrCents: 206667n });
+      expect(await database.subscription.findFirstOrThrow({ where: { contractId: result.contractId } })).toMatchObject({ recurringPriceCents: 206667n, currentMrrCents: 206667n });
+      const contract = await database.contractVersion.findFirstOrThrow({ where: { contractId: result.contractId } });
+      expect(contract.paymentTerms).toContain("3 parcela(s) de");
+      expect(contract.paymentTerms).not.toContain("9 mensalidade(s) de 206667");
+      const audit = await database.auditLog.findFirstOrThrow({ where: { action: "lead.sale.completed", entityId: result.opportunityId } });
+      expect(audit.metadata).toMatchObject({ salePayload: { installmentGroups } });
+      expect(await service.completeLeadSale(actor, command)).toEqual({ ...result, replayed: true });
+      await expect(service.completeLeadSale(actor, { ...command, installmentGroups: [...installmentGroups].reverse() })).rejects.toMatchObject({ code: "SALE_IDEMPOTENCY_CONFLICT" });
+      expect(await database.payment.count({ where: { invoiceId: { in: result.invoiceIds } } })).toBe(0);
+      expect(await database.commercialContract.count({ where: { opportunityId: result.opportunityId } })).toBe(1);
+    });
+  }
+  for (const profile of ["administrator", "closer"] as const) {
     it(`fecha em um envio com parcelas explícitas, sem baixa ou gravação parcial (${profile})`, async () => {
       await database.$executeRawUnsafe(readFileSync("scripts/sql/configure-politizai-sales.sql", "utf8"));
       const seller = await context("closer1@demo.politizai.local");

@@ -3,7 +3,7 @@
 import { useRef, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
-import { completeLeadSaleSchema, directSaleInstallmentCount, type CompleteLeadSaleResult, type directSalePaymentPlans, type salePaymentMethods } from "@/modules/opportunities/domain/sale-completion-contracts";
+import { completeLeadSaleSchema, customInstallmentDescription, customInstallmentSummary, directSaleInstallmentCount, type CompleteLeadSaleResult, type directSalePaymentPlans, type salePaymentMethods } from "@/modules/opportunities/domain/sale-completion-contracts";
 import type { LeadOpportunityScreen, OpportunityListItem } from "@/modules/opportunities/domain/opportunity-contracts";
 
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
@@ -47,13 +47,22 @@ export function LeadSalePanel({ screen, opportunity, onCommitted, onBusyChange }
   const [upfront, setUpfront] = useState("0,00");
   const [installmentValue, setInstallmentValue] = useState(opportunity ? reais(opportunity.mrrCents) : "0,00");
   const [installments, setInstallments] = useState("");
+  const [groups, setGroups] = useState([{ id: "primeiro", count: "", value: "" }]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [completed, setCompleted] = useState<CompleteLeadSaleResult | null>(null);
   const idempotency = useRef<{ fingerprint: string; key: string } | null>(null);
-  const amounts = { totalCents: cents(total) ?? "", upfrontCents: cents(upfront) ?? "", installmentCents: cents(installmentValue) ?? "", installmentCount: paymentPlan === "CASH" ? 1 : Number(installments), paymentPlan };
+  const custom = paymentPlan === "CUSTOM_INSTALLMENTS";
+  const installmentGroups = groups.map(group => ({ count: Number(group.count), amountCents: cents(group.value) ?? "" }));
+  const customSummary = customInstallmentSummary(installmentGroups);
+  const upfrontCents = cents(upfront) ?? "";
+  const customTotal = customSummary && /^\d{1,15}$/.test(upfrontCents) ? (BigInt(upfrontCents) + BigInt(customSummary.totalCents)).toString() : null;
+  const amounts = { totalCents: custom ? customTotal ?? "" : cents(total) ?? "", upfrontCents,
+    installmentCents: custom ? "0" : cents(installmentValue) ?? "", installmentCount: custom ? customSummary?.count ?? 0 : paymentPlan === "CASH" ? 1 : Number(installments), paymentPlan,
+    ...(custom ? { installmentGroups } : {}),
+  };
   const installmentCount = directSaleInstallmentCount(amounts);
-  const calculatedTotal = /^\d{1,15}$/.test(amounts.upfrontCents) && /^\d{1,15}$/.test(amounts.installmentCents)
+  const calculatedTotal = custom ? customTotal : /^\d{1,15}$/.test(amounts.upfrontCents) && /^\d{1,15}$/.test(amounts.installmentCents)
     && Number.isInteger(amounts.installmentCount) && amounts.installmentCount >= 1 && amounts.installmentCount <= 60
     ? (BigInt(amounts.upfrontCents) + BigInt(amounts.installmentCents) * BigInt(amounts.installmentCount)).toString() : null;
 
@@ -74,7 +83,9 @@ export function LeadSalePanel({ screen, opportunity, onCommitted, onBusyChange }
       ...(opportunity ? { opportunityId: opportunity.id, expectedRevision: opportunity.revision } : {}),
       sellerMemberId: form.get("sellerMemberId"),
       ...amounts,
-      paymentCondition: form.get("paymentCondition"),
+      paymentCondition: custom && !String(form.get("paymentCondition") ?? "").trim()
+        ? `Entrada de ${money(upfrontCents)} e ${amounts.installmentCount} parcelas personalizadas, conforme os grupos informados.`
+        : form.get("paymentCondition"),
       confirmed: true,
     };
     const fingerprint = JSON.stringify(command);
@@ -112,14 +123,24 @@ export function LeadSalePanel({ screen, opportunity, onCommitted, onBusyChange }
     <form className="grid gap-3 sm:grid-cols-2" onSubmit={submit}>
       <fieldset className="contents" disabled={pending}>
         <label className="text-sm">Vendedor<select className={inputClass} defaultValue={opportunity?.ownerMemberId ?? screen.suggestedSaleSellerId ?? ""} name="sellerMemberId" required><option value="">Selecione</option>{screen.saleSellerOptions.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}</select></label>
-        <label className="text-sm">Valor total (R$)<input className={inputClass} inputMode="decimal" onChange={(event) => { setTotal(event.target.value); if (paymentPlan === "CASH") setUpfront(event.target.value); }} required value={total} /></label>
-        <label className="text-sm">Condição de pagamento<select className={inputClass} onChange={(event) => changePlan(event.target.value as PaymentPlan)} value={paymentPlan}><option value="UPFRONT_INSTALLMENTS">Entrada + parcelas</option><option value="CASH">Valor total à vista</option><option value="CARD_INSTALLMENTS">Cartão: entrada + parcelas</option></select></label>
-        <label className="text-sm">Valor de cada parcela (R$)<input className={inputClass} inputMode="decimal" onChange={(event) => setInstallmentValue(event.target.value)} readOnly={paymentPlan === "CASH"} required value={installmentValue} /></label>
+        <div className="text-sm"><label>Valor total (R$)<input className={inputClass} inputMode="decimal" onChange={(event) => { setTotal(event.target.value); if (paymentPlan === "CASH") setUpfront(event.target.value); }} readOnly={custom} required value={custom ? customTotal ? reais(customTotal) : "" : total} /></label>{custom ? <small>Calculado automaticamente pela entrada e pelos grupos.</small> : null}</div>
+        <label className="text-sm">Condição de pagamento<select className={inputClass} onChange={(event) => changePlan(event.target.value as PaymentPlan)} value={paymentPlan}><option value="UPFRONT_INSTALLMENTS">Entrada + parcelas</option><option value="CASH">Valor total à vista</option><option value="CARD_INSTALLMENTS">Cartão: entrada + parcelas</option><option value="CUSTOM_INSTALLMENTS">Entrada + personalizado</option></select></label>
+        {!custom ? <label className="text-sm">Valor de cada parcela (R$)<input className={inputClass} inputMode="decimal" onChange={(event) => setInstallmentValue(event.target.value)} readOnly={paymentPlan === "CASH"} required value={installmentValue} /></label> : null}
         <label className="text-sm">Entrada (R$)<input className={inputClass} inputMode="decimal" onChange={(event) => setUpfront(event.target.value)} readOnly={paymentPlan === "CASH"} required value={upfront} /></label>
-        {paymentPlan !== "CASH" ? <label className="text-sm">Número de parcelas<input className={inputClass} inputMode="numeric" min={1} max={60} name="installmentCount" onChange={(event) => setInstallments(event.target.value)} required step={1} type="number" value={installments} /></label> : null}
-        <label className="text-sm sm:col-span-2">Condição de pagamento detalhada<textarea className={inputClass} minLength={2} maxLength={500} name="paymentCondition" required /></label>
+        {paymentPlan !== "CASH" && !custom ? <label className="text-sm">Número de parcelas<input className={inputClass} inputMode="numeric" min={1} max={60} name="installmentCount" onChange={(event) => setInstallments(event.target.value)} required step={1} type="number" value={installments} /></label> : null}
+        {custom ? <div className="space-y-3 sm:col-span-2">
+          {groups.map((group, index) => <fieldset className="grid gap-3 rounded-md border p-3 sm:grid-cols-2" key={group.id}>
+            <legend className="px-1 text-sm font-semibold">Grupo de parcelas {index + 1}</legend>
+            <label className="text-sm">Quantidade de parcelas do grupo {index + 1}<input className={inputClass} type="number" inputMode="numeric" min={1} max={60} step={1} required value={group.count} onChange={event => setGroups(current => current.map(item => item.id === group.id ? { ...item, count: event.target.value } : item))} /></label>
+            <label className="text-sm">Valor de cada parcela do grupo {index + 1} (R$)<input className={inputClass} inputMode="decimal" required value={group.value} onChange={event => setGroups(current => current.map(item => item.id === group.id ? { ...item, value: event.target.value } : item))} /></label>
+            <Button aria-label={`Remover grupo ${index + 1}`} disabled={groups.length === 1} onClick={() => setGroups(current => current.filter(item => item.id !== group.id))} type="button" variant="secondary">Remover grupo</Button>
+          </fieldset>)}
+          <Button disabled={groups.length >= 60} onClick={() => setGroups(current => [...current, { id: crypto.randomUUID(), count: "", value: "" }])} type="button" variant="secondary">Adicionar grupo de parcelas</Button>
+          <p className="text-xs text-muted-foreground">Parcelas mensais, na ordem dos grupos. Limite de 60 parcelas por venda.</p>
+        </div> : null}
+        <label className="text-sm sm:col-span-2">Condição de pagamento detalhada<textarea className={inputClass} minLength={2} maxLength={500} name="paymentCondition" required={!custom} placeholder={custom ? "Opcional: complemente as condições dos grupos informados." : undefined} /></label>
       </fieldset>
-      {installmentCount !== null ? <p className="rounded-md border p-3 text-sm sm:col-span-2" role="status">{paymentPlan === "CASH" ? `À vista: ${money(amounts.totalCents)}.` : `Entrada de ${money(amounts.upfrontCents)} + ${installmentCount} parcelas de ${money(amounts.installmentCents)}. Total: ${money(amounts.totalCents)}.`}</p> : <p className="text-sm text-muted-foreground sm:col-span-2" role="status">Informe de 1 a 60 parcelas. O total deve ser igual à entrada + número de parcelas × valor de cada parcela.{calculatedTotal !== null ? ` Total calculado: ${money(calculatedTotal)}. Revise os valores antes de confirmar.` : ""}</p>}
+      {installmentCount !== null ? <p className="rounded-md border p-3 text-sm sm:col-span-2" role="status">{paymentPlan === "CASH" ? `À vista: ${money(amounts.totalCents)}.` : custom ? `Entrada de ${money(amounts.upfrontCents)} + ${customInstallmentDescription(installmentGroups)}. Total: ${money(amounts.totalCents)}. ${installmentCount} parcelas; MRR médio: ${money(customSummary!.monthlyCents)}.` : `Entrada de ${money(amounts.upfrontCents)} + ${installmentCount} parcelas de ${money(amounts.installmentCents)}. Total: ${money(amounts.totalCents)}.`}</p> : <p className="text-sm text-muted-foreground sm:col-span-2" role="status">{custom ? "Informe a entrada e grupos válidos, totalizando de 1 a 60 parcelas." : "Informe de 1 a 60 parcelas. O total deve ser igual à entrada + número de parcelas × valor de cada parcela."}{calculatedTotal !== null ? ` Total calculado: ${money(calculatedTotal)}. Revise os valores antes de confirmar.` : ""}</p>}
       <Button className="sm:col-span-2" disabled={pending || installmentCount === null} type="submit">{pending ? "Registrando…" : "Confirmar e marcar vendido"}</Button>
     </form>
   </section>;

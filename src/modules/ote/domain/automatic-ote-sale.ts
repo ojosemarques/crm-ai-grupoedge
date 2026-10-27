@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { customInstallmentDescription, customInstallmentGroupsSchema, customInstallmentSummary } from "@/modules/opportunities/domain/sale-completion-contracts";
 import type { SaleKind } from "./ote-calculator";
 
 type Sale = {
@@ -27,12 +28,19 @@ export function automaticOteSale(sale: Sale, version?: Version) {
 const cents = z.string().regex(/^\d{1,15}$/);
 const termsSchema = z.object({ totalCents: cents, upfrontCents: cents, monthlyCents: cents,
   durationMonths: z.number().int().min(1).max(60), paymentCondition: z.string().max(500),
-}).refine((v) => BigInt(v.totalCents) === BigInt(v.upfrontCents) + BigInt(v.monthlyCents) * BigInt(v.durationMonths));
+  installmentGroups: customInstallmentGroupsSchema.optional(),
+}).refine((v) => {
+  if (![v.totalCents, v.upfrontCents, v.monthlyCents].every(value => /^\d{1,15}$/.test(value))) return false;
+  const custom = customInstallmentSummary(v.installmentGroups);
+  return v.installmentGroups ? Boolean(custom && custom.count === v.durationMonths && custom.monthlyCents === v.monthlyCents && BigInt(v.totalCents) === BigInt(v.upfrontCents) + BigInt(custom.totalCents))
+    : BigInt(v.totalCents) === BigInt(v.upfrontCents) + BigInt(v.monthlyCents) * BigInt(v.durationMonths);
+});
 
 export function oteSaleTerms(sale: Sale, version?: Version, snapshot?: unknown): OteSaleTerms {
   const parsed = termsSchema.safeParse(snapshot);
   if (parsed.success) return { totalCents: parsed.data.totalCents, upfrontCents: parsed.data.upfrontCents,
-    installmentCents: parsed.data.monthlyCents, installmentCount: parsed.data.durationMonths, paymentCondition: parsed.data.paymentCondition };
+    installmentCents: parsed.data.installmentGroups ? null : parsed.data.monthlyCents, installmentCount: parsed.data.durationMonths,
+    paymentCondition: parsed.data.installmentGroups ? `${parsed.data.paymentCondition} Parcelas mensais, na ordem: ${customInstallmentDescription(parsed.data.installmentGroups)}.` : parsed.data.paymentCondition };
   const count = version?.durationMonths ?? null;
   const upfront = version && count !== null ? version.totalCents - version.mrrCents * BigInt(count) : null;
   return { totalCents: (version?.totalCents ?? (sale.tcvCents > 0n ? sale.tcvCents : sale.amountCents)).toString(),

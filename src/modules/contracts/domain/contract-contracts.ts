@@ -16,7 +16,7 @@ export const createContractInputSchema = z.object({
   proposedStartsAt: dateTime.nullable().optional(),
   proposedEndsAt: dateTime.nullable().optional(),
   renewalExpected: z.boolean().default(false),
-  paymentTerms: trimmed.min(3).max(1000),
+  paymentTerms: trimmed.min(3).max(4000),
   commercialNotes: trimmed.max(4000).nullable().optional(),
   zeroValueJustification: trimmed.min(5).max(1000).nullable().optional(),
   idempotencyKey: trimmed.min(8).max(200),

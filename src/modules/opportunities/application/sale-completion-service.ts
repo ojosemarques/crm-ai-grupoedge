@@ -12,7 +12,7 @@ import { createOnboardingService } from "@/modules/onboarding/application/onboar
 import { assertOriginCapability, createOpportunityService } from "@/modules/opportunities/application/opportunity-service";
 import { assertConsultativeSalesGates, assertRequiredStageActivitiesComplete } from "@/modules/opportunities/application/sales-gate-service";
 import { assertPipelineRequiredFields } from "@/modules/pipeline-templates/application/opportunity-required-fields";
-import { completeLeadSaleSchema, completeLeadSaleResultSchema, directSaleInstallmentCount, executeSaleCompletionSchema, prepareLeadSaleSchema, saleCompletionSchema, saleMonth, salePaymentMethods, saleSchedule, type CompleteLeadSaleResult, type SaleCompletionInput } from "@/modules/opportunities/domain/sale-completion-contracts";
+import { completeLeadSaleSchema, completeLeadSaleResultSchema, customInstallmentDescription, customInstallmentSummary, directSaleInstallmentCount, executeSaleCompletionSchema, prepareLeadSaleSchema, saleCompletionSchema, saleMonth, salePaymentMethods, saleSchedule, type CompleteLeadSaleResult, type SaleCompletionInput } from "@/modules/opportunities/domain/sale-completion-contracts";
 import { createPaymentService } from "@/modules/payments/application/payment-service";
 import { syncActiveProspectingCommercialStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createRevenueService } from "@/modules/revenue/application/revenue-service";
@@ -219,7 +219,7 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
         interestDescription: input.description,
         status: "OPEN",
         amountCents: BigInt(input.totalCents),
-        mrrCents: BigInt(input.installmentCents),
+        mrrCents: BigInt(customInstallmentSummary(input.installmentGroups)?.monthlyCents ?? input.installmentCents),
         tcvCents: BigInt(input.totalCents),
         probabilityBps: 10000,
         commercialNotes: input.description,
@@ -325,7 +325,10 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
       const won = await createOpportunityService({ database, authorization: state.authorization, now: options.now, automationPublisher }).transition(context, { action: "TRANSITION", opportunityId: input.opportunityId, expectedRevision, targetStageId: state.stage!.id, reason: "Fechamento integrado confirmado pelo usuário.", origin: "OPPORTUNITY_CARD", confirmed: true });
       const contracts = createContractService({ database, authorization: state.authorization, now: options.now });
       const endsAt = saleMonth(input.startsAt, input.durationMonths).toISOString();
-      const contract = await contracts.create(context, { opportunityId: input.opportunityId, offerId: state.offer!.id, templateVersionId: input.templateVersionId, billingFrequency: BigInt(input.monthlyCents) > 0n ? "MONTHLY" : "ONE_TIME", durationMonths: input.durationMonths, proposedStartsAt: input.startsAt, proposedEndsAt: endsAt, paymentTerms: `Forma: ${input.paymentMethod}. Condição: ${input.paymentCondition}. Entrada: ${input.upfrontCents} centavos; ${input.durationMonths} mensalidade(s) de ${input.monthlyCents} centavos. Recebido no fechamento: ${input.receivedCents} centavos.`, idempotencyKey: `sale:${idempotencyKey}:contract` });
+      const installmentTerms = input.installmentGroups
+        ? `Parcelas mensais, na ordem: ${customInstallmentDescription(input.installmentGroups)}.`
+        : `${input.durationMonths} mensalidade(s) de ${input.monthlyCents} centavos.`;
+      const contract = await contracts.create(context, { opportunityId: input.opportunityId, offerId: state.offer!.id, templateVersionId: input.templateVersionId, billingFrequency: BigInt(input.monthlyCents) > 0n ? "MONTHLY" : "ONE_TIME", durationMonths: input.durationMonths, proposedStartsAt: input.startsAt, proposedEndsAt: endsAt, paymentTerms: `Forma: ${input.paymentMethod}. Condição: ${input.paymentCondition}. Entrada: ${input.upfrontCents} centavos; ${installmentTerms} Recebido no fechamento: ${input.receivedCents} centavos.`, idempotencyKey: `sale:${idempotencyKey}:contract` });
       let subscriptionId: string | null = null;
       let handoffId: string | null = null;
       const invoiceIds: string[] = [];
@@ -342,7 +345,9 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
         const payments = createPaymentService({ database, now: options.now, authorization: state.authorization });
         let remainingReceived = BigInt(input.receivedCents);
         for (const installment of saleSchedule(input)) {
-          const invoice = await payments.createInvoice(context, { subscriptionId, billingPeriodStart: installment.dueAt, billingPeriodEnd: installment.periodEnd, dueAt: installment.dueAt, description: `${state.opportunity.name} — parcela ${installment.installment}/${input.durationMonths}`, upfrontCents: installment.installment === 1 ? input.upfrontCents : "0", idempotencyKey: `sale:${idempotencyKey}:invoice:${installment.installment}` });
+          const invoice = await payments.createInvoice(context, { subscriptionId, billingPeriodStart: installment.dueAt, billingPeriodEnd: installment.periodEnd, dueAt: installment.dueAt, description: `${state.opportunity.name} — parcela ${installment.installment}/${input.durationMonths}`, upfrontCents: installment.installment === 1 ? input.upfrontCents : "0", idempotencyKey: `sale:${idempotencyKey}:invoice:${installment.installment}` }, input.installmentGroups ? {
+            unitPriceCents: BigInt(installment.amountCents) - (installment.installment === 1 ? BigInt(input.upfrontCents) : 0n),
+          } : undefined);
           const issued = await payments.act(context, invoice.id, { action: "ISSUE", expectedRevision: invoice.revision, reason: "Recebível emitido a partir do fechamento confirmado." });
           invoiceIds.push(invoice.id);
           if (remainingReceived > 0n) {
@@ -419,6 +424,7 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
       const version = template && await tx.contractTemplateVersion.findFirst({ where: { workspaceId: context.workspaceId, templateId: template.id, version: template.currentVersion } });
       if (!version) fail("O registro comercial do SISTEMA POLITIZAI não está disponível.");
       const durationMonths = directSaleInstallmentCount(input)!;
+      const monthlyCents = customInstallmentSummary(input.installmentGroups)?.monthlyCents ?? input.installmentCents;
       const paymentMethod = input.paymentPlan === "CARD_INSTALLMENTS" ? "CARD" as const : "OTHER" as const;
       let opportunityId = input.opportunityId;
       if (!opportunityId) {
@@ -426,7 +432,8 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
           leadId: lead.id, sellerMemberId: input.sellerMemberId, productId: product.id,
           description: input.paymentCondition, totalCents: input.totalCents,
           upfrontCents: input.upfrontCents, installmentCents: input.installmentCents, installmentCount: durationMonths,
-          paymentPlan: input.paymentPlan === "CASH" ? "CASH" : BigInt(input.upfrontCents) === 0n ? "INSTALLMENTS" : "UPFRONT_INSTALLMENTS",
+          paymentPlan: input.paymentPlan === "CUSTOM_INSTALLMENTS" ? "CUSTOM_INSTALLMENTS" : input.paymentPlan === "CASH" ? "CASH" : BigInt(input.upfrontCents) === 0n ? "INSTALLMENTS" : "UPFRONT_INSTALLMENTS",
+          ...(input.installmentGroups ? { installmentGroups: input.installmentGroups } : {}),
           paymentMethod, idempotencyKey,
         })).opportunityId;
       }
@@ -446,7 +453,8 @@ export function createSaleCompletionService(options: { database: PrismaClient; n
       }
       const salePayload = saleCompletionSchema.parse({
         opportunityId, expectedRevision: opportunity.revision, sellerMemberId: input.sellerMemberId,
-        totalCents: input.totalCents, monthlyCents: input.installmentCents, upfrontCents: input.upfrontCents,
+        totalCents: input.totalCents, monthlyCents, upfrontCents: input.upfrontCents,
+        ...(input.installmentGroups ? { installmentGroups: input.installmentGroups } : {}),
         receivedCents: "0", paymentMethod, paymentCondition: input.paymentCondition, durationMonths,
         startsAt: now.toISOString(), templateVersionId: version.id,
         ...(!opportunity.accountId && !lead.accountId ? { customer: { mode: "CREATE", name: lead.organizationName?.trim() || lead.fullName } } : {}),

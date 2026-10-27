@@ -3,6 +3,13 @@ import { automaticOteSale, oteSaleTerms } from "./automatic-ote-sale";
 
 const sale = { amountCents: 1800000n, tcvCents: 1800000n, mrrCents: 150000n, product: { sku: "SISTEMA-POLITIZAI", kind: "LICENSE", revenueCategory: "SOFTWARE" } };
 describe("regra automática a partir da venda", () => {
+  it("mostra grupos personalizados sem inventar parcelas iguais à média do MRR", () => {
+    const terms = oteSaleTerms(sale, undefined, { totalCents: "1960000", upfrontCents: "100000", monthlyCents: "206667", durationMonths: 9,
+      installmentGroups: [{ count: 3, amountCents: "120000" }, { count: 3, amountCents: "250000" }, { count: 3, amountCents: "250000" }], paymentCondition: "Condições personalizadas" });
+    expect(terms).toMatchObject({ totalCents: "1960000", upfrontCents: "100000", installmentCents: null, installmentCount: 9 });
+    expect(terms.paymentCondition).toMatch(/3 parcela\(s\) de R\$\s*1\.200,00 \+ 3 parcela\(s\) de R\$\s*2\.500,00 \+ 3 parcela\(s\) de R\$\s*2\.500,00/);
+    expect(automaticOteSale({ ...sale, tcvCents: 1960000n, mrrCents: 206667n })).toMatchObject({ acvCents: 1960000n, kind: "ANNUAL_MONTHLY" });
+  });
   it("usa o valor da licença negociada sem confundir prazo de parcelas com ACV", () => {
     expect(automaticOteSale(sale)).toMatchObject({ kind: "ANNUAL_MONTHLY", acvCents: 1800000n, selfSourced: false });
     expect(automaticOteSale({ ...sale, mrrCents: 300000n })).toMatchObject({ acvCents: 1800000n });

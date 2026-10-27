@@ -6,8 +6,11 @@ import { DEMO_SEED_PASSWORD, DEMO_USERS } from "@/modules/settings/application/d
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { enterDemoCompany } from "./helpers/company-hub";
 
-for (const { role, existing } of [{ role: "administrator", existing: false }, { role: "closer", existing: false }, { role: "administrator", existing: true }] as const) {
-test(`marca vendido no card em um envio (${role}, negócio ${existing ? "preparado" : "novo"})`, async ({ page }) => {
+for (const { role, existing, custom } of [
+  { role: "administrator", existing: false, custom: false }, { role: "closer", existing: false, custom: false }, { role: "administrator", existing: true, custom: false },
+  { role: "administrator", existing: false, custom: true }, { role: "closer", existing: false, custom: true }, { role: "administrator", existing: true, custom: true },
+] as const) {
+test(`marca vendido no card em um envio (${role}, negócio ${existing ? "preparado" : "novo"}${custom ? ", personalizado" : ""})`, async ({ page }) => {
   test.setTimeout(120_000);
   if (!/^politizai_test_/.test(new URL(process.env.DATABASE_URL!).searchParams.get("schema") ?? "")) {
     throw new Error("Este cenário exige banco temporário de testes.");
@@ -68,11 +71,31 @@ test(`marca vendido no card em um envio (${role}, negócio ${existing ? "prepara
   await expect(completion.locator("form input, form select, form textarea")).toHaveCount(7);
   if (existing) await expect(completion.getByLabel("Valor total (R$)", { exact: true })).toHaveValue("7654,32");
   await completion.getByRole("combobox", { name: "Vendedor", exact: true }).selectOption({ index: 1 });
+  const confirm = completion.getByRole("button", { name: "Confirmar e marcar vendido" });
+  await completion.getByRole("combobox", { name: "Condição de pagamento", exact: true }).selectOption(custom ? "CUSTOM_INSTALLMENTS" : role === "closer" ? "CARD_INSTALLMENTS" : "UPFRONT_INSTALLMENTS");
+  if (custom) {
+    await expect(confirm).toBeDisabled();
+    await completion.getByLabel("Entrada (R$)", { exact: true }).fill("1.000,00");
+    for (const [index, value] of ["1.200,00", "2.500,00", "2.500,00"].entries()) {
+      if (index > 0) await completion.getByRole("button", { name: "Adicionar grupo de parcelas", exact: true }).click();
+      await completion.getByLabel(`Quantidade de parcelas do grupo ${index + 1}`, { exact: true }).fill("3");
+      await completion.getByLabel(`Valor de cada parcela do grupo ${index + 1} (R$)`, { exact: true }).fill(value);
+    }
+    await expect(completion.getByLabel("Valor total (R$)", { exact: true })).toHaveValue("19600,00");
+    await expect(completion.getByLabel("Valor total (R$)", { exact: true })).toHaveAttribute("readonly", "");
+    await completion.getByRole("button", { name: "Adicionar grupo de parcelas", exact: true }).click();
+    await expect(confirm).toBeDisabled();
+    await completion.getByRole("button", { name: "Remover grupo 4", exact: true }).click();
+    await completion.getByLabel("Quantidade de parcelas do grupo 1", { exact: true }).fill("61");
+    await expect(confirm).toBeDisabled();
+    await completion.getByLabel("Quantidade de parcelas do grupo 1", { exact: true }).fill("3");
+    await expect(completion.getByRole("status")).toContainText(/9 parcelas; MRR médio: R\$\s*2\.066,67/);
+    await expect(confirm).toBeEnabled();
+    await completion.screenshot({ path: test.info().outputPath("parcelas-personalizadas.png") });
+  } else {
   await completion.getByLabel("Valor total (R$)", { exact: true }).fill("7.654,32");
-  await completion.getByRole("combobox", { name: "Condição de pagamento", exact: true }).selectOption(role === "closer" ? "CARD_INSTALLMENTS" : "UPFRONT_INSTALLMENTS");
   await completion.getByLabel("Entrada (R$)", { exact: true }).fill("654,32");
   await completion.getByLabel("Valor de cada parcela (R$)").fill("1.000,00");
-  const confirm = completion.getByRole("button", { name: "Confirmar e marcar vendido" });
   await expect(confirm).toBeDisabled();
   await completion.getByLabel("Número de parcelas", { exact: true }).fill("6");
   await expect(confirm).toBeDisabled();
@@ -80,21 +103,28 @@ test(`marca vendido no card em um envio (${role}, negócio ${existing ? "prepara
   await completion.getByLabel("Número de parcelas", { exact: true }).fill("7");
   await completion.getByLabel("Condição de pagamento detalhada").fill("Entrada de R$ 654,32 e 7 parcelas de R$ 1.000,00, negociadas pelo vendedor.");
   await expect(completion.getByText(/7 parcelas/).first()).toBeVisible();
+  }
   await expect(completion.getByLabel("Valor já recebido (R$)")).toHaveCount(0);
   await expect(completion.getByRole("button", { name: "Continuar fechamento" })).toHaveCount(0);
   const response = page.waitForResponse((res) => res.url().endsWith("/api/opportunities/close-sale") && res.request().postDataJSON()?.action === "COMPLETE_LEAD");
   await completion.getByRole("button", { name: "Confirmar e marcar vendido" }).click();
   const closed = await response;
-  expect(closed.request().postDataJSON().payload.installmentCount).toBe(7);
-  expect(await closed.json()).toMatchObject({ result: { receivedCents: "0", outstandingCents: "765432" } });
+  expect(closed.request().postDataJSON().payload.installmentCount).toBe(custom ? 9 : 7);
+  if (custom) expect(closed.request().postDataJSON().payload.installmentGroups).toEqual([{ count: 3, amountCents: "120000" }, { count: 3, amountCents: "250000" }, { count: 3, amountCents: "250000" }]);
+  expect(await closed.json()).toMatchObject({ result: { receivedCents: "0", outstandingCents: custom ? "1960000" : "765432" } });
   expect(closed.ok()).toBe(true);
   await expect(page.getByRole("status").filter({ hasText: "Venda registrada" })).toBeVisible();
   await expect(completion.locator("form")).toHaveCount(0);
   const opportunity = await database.opportunity.findFirstOrThrow({ where: { workspaceId: workspace.id, leadId, deletedAt: null } });
-  expect(opportunity).toMatchObject({ productId: product.id, status: "WON", tcvCents: 765432n });
+  expect(opportunity).toMatchObject({ productId: product.id, status: "WON", tcvCents: custom ? 1960000n : 765432n });
   const contracts = await database.commercialContract.findMany({ where: { opportunityId: opportunity.id } });
   expect(contracts).toHaveLength(1);
   const invoices = await database.invoice.aggregate({ where: { contractId: contracts[0]!.id }, _sum: { totalCents: true } });
-  expect(invoices._sum.totalCents).toBe(765432n);
+  expect(invoices._sum.totalCents).toBe(custom ? 1960000n : 765432n);
+  if (custom) {
+    const rows = await database.invoice.findMany({ where: { contractId: contracts[0]!.id }, orderBy: { dueAt: "asc" } });
+    expect(rows.map(row => row.totalCents)).toEqual([220000n, 120000n, 120000n, 250000n, 250000n, 250000n, 250000n, 250000n, 250000n]);
+    expect(opportunity.mrrCents).toBe(206667n);
+  }
 });
 }
