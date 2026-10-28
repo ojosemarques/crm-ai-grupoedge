@@ -46,9 +46,13 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
   const strategy = strategies.find((row) => row.key === strategyKey) ?? strategies[0];
   const mediaAvailable = initial.missingInformation.length === 0;
   const advertisingRows = initial.advertisingFunnel.byDimension.source;
+  const scheduledLeads = advertisingRows.reduce((sum, row) => sum + row.scheduled, 0);
+  const costPerScheduledLead = mediaAvailable && !initial.advertisingFunnel.truncated && scheduledLeads > 0
+    ? Math.round(initial.totals.spendCents / scheduledLeads)
+    : null;
   const advertisingStages = [
     { key: "received", label: "Leads recebidos", value: initial.advertisingFunnel.cohortSize },
-    { key: "scheduled", label: "Agendaram reunião", value: advertisingRows.reduce((sum, row) => sum + row.scheduled, 0) },
+    { key: "scheduled", label: "Agendaram reunião", value: scheduledLeads },
     { key: "completed", label: "Realizaram reunião", value: advertisingRows.reduce((sum, row) => sum + row.completed, 0) },
     { key: "buyers", label: "Compraram", value: advertisingRows.reduce((sum, row) => sum + row.buyers, 0) },
   ];
@@ -99,6 +103,8 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
       { label: "Leads reportados", value: mediaAvailable ? initial.totals.reportedLeads.toLocaleString("pt-BR") : "Sem dados", hint: "Volume informado pela mídia", icon: "leads" as const },
       { label: "Leads recebidos no CRM", value: initial.advertisingFunnel.cohortSize.toLocaleString("pt-BR"), hint: `${initial.advertisingFunnel.registeredLeadCount} cadastros · ${initial.advertisingFunnel.incompleteCount} ${initial.advertisingFunnel.incompleteCount === 1 ? "resposta incompleta" : "respostas incompletas"}`, icon: "leads" as const },
       { label: "CPC", value: metricValue(initial.metrics.find((metric) => metric.key === "cpc")?.value ?? null, "BRL_CENTS"), hint: "Investimento / cliques reportados", icon: "receita" as const },
+      { label: "CPL · custo por lead", value: metricValue(initial.metrics.find((metric) => metric.key === "cpl")?.value ?? null, "BRL_CENTS"), hint: `${initial.totals.reportedLeads.toLocaleString("pt-BR")} leads reportados · Investimento / leads da mídia`, icon: "leads" as const },
+      { label: "MQL · custo por reunião marcada", value: metricValue(costPerScheduledLead, "BRL_CENTS"), hint: initial.advertisingFunnel.truncated ? "Contagem parcial: reduza o período para calcular" : `${scheduledLeads.toLocaleString("pt-BR")} ${scheduledLeads === 1 ? "lead agendou" : "leads agendaram"} reunião · Investimento / agendamentos`, icon: "agenda" as const },
     ].map((metric) => <article className={styles.stat} key={metric.label}><div><span>{metric.label}</span><Icon name={metric.icon} size={16} /></div><strong>{metric.value}</strong><small>{metric.hint}</small></article>)}</section>
 
     <div className={styles.primaryGrid}><Surface className={styles.panel}><SectionHeader title="Evolução da performance" description="Compare o comportamento dos seus indicadores ao longo dos dias." /><div aria-label="Indicador do gráfico" className={styles.chartTabs} role="group">{chartOptions.map((option) => <button aria-pressed={chartMetric === option.key} key={option.key} onClick={() => setChartMetric(option.key)} type="button">{option.label}</button>)}</div>{chartData.length ? <AnalyticsChart label={`Evolução diária de ${chartOptions.find((option) => option.key === chartMetric)?.label}`} points={chartData.map((point) => ({ label: point.date.slice(5).split("-").reverse().join("/"), values: { value: point.value } }))} series={[{ key: "value", label: chartOptions.find((option) => option.key === chartMetric)?.label ?? "Indicador", color: "#ff6b2c" }]} formatValue={(value) => chartMetric === "spendCents" ? money(value * 100) : value.toLocaleString("pt-BR")} /> : <div className={styles.chartEmpty}><Icon name="tendencia" size={28} /><strong>Acompanhe a evolução das campanhas</strong><span>Importe os dados de performance para visualizar o gráfico diário.</span></div>}<details className={styles.dataDetails}><summary>Ver dados em tabela</summary><DataTableShell className="mt-3"><table><thead><tr><th>Data</th><th>Investimento</th><th>Impressões</th><th>Cliques</th><th>Leads</th></tr></thead><tbody>{initial.trend.map((point) => <tr key={point.date}><td>{point.date}</td><td>{money(point.spendCents)}</td><td>{point.impressions}</td><td>{point.clicks}</td><td>{point.reportedLeads}</td></tr>)}</tbody></table></DataTableShell></details></Surface>
