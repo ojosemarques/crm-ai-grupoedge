@@ -10,7 +10,7 @@ Pedido: specs, implementação, validação e produção diretamente na main. Ba
 | M3 | implementado e testado | timeline comum paginada; criação manual e bulk auditáveis |
 | M4 | implementado e testado | cenário 30/10/5/5/3/4; coortes, duração/amostras/ausências; servidor impede closer de agendar Anúncios |
 | M5 | implementado e testado | duas sessões no navegador atualizam sem reload; classificador append-only idempotente com cutoff |
-| M6 | integração e publicação em andamento | verificar resultados finais e produção abaixo antes de concluir |
+| M6 | núcleo publicado, dados reconciliados e smoke administrativo conferido; rollout do ajuste final acompanhado até READY | adendos finais e SHA/deployment confirmados na entrega |
 
 ## Validação local
 
@@ -38,3 +38,25 @@ Sessão administrativa existente encontrada no navegador Dia. Nenhuma credencial
 Índice separado com 70 arquivos próprios sobre abc4319, sem arquivos novos/alterados da entrega concorrente. Snapshot em /private/tmp; nenhum secret copiado para Git. Unitários completos: 210 arquivos/1113 testes aprovados. Integração dirigida: 5 arquivos/36 testes aprovados (commercial-fronts, commercial-metrics, advertising-workspace, lead-intake, entry-automations). Scanner oficial: aprovado, 1898 arquivos rastreados. Build e dois testes Chromium aprovados; essa cópia temporária inicialmente resolveu Node 24 e emitiu aviso de engine, então o typecheck e a validação final serão conferidos com PATH fixado no Node 22 exigido. No workspace original, build/E2E já passaram com Node 22. Revisão dos 70 arquivos não encontrou bloqueio de correção/segurança pendente. Suíte global de integração mantém limitações anteriores documentadas acima.
 
 Correção final comprovada por teste vermelho/verde: uma ocorrência anulada por quantidade negativa deixa de integrar pessoas/atribuições/coortes distintas e seu drilldown, preservando os fatos de origem. Após o ajuste: 1114 unitários e 36 integrações aprovados no snapshot; build e dois E2E Node 22 aprovados (24,6 s); scanner aprovado. Typecheck Node 22 aprovado. Base main avançou para 7810c3e por alterações independentes de Meta em nove arquivos, inspecionadas e preservadas; a composição final recebe unidade/typecheck/lint antes do commit.
+
+## Resultado da publicação e reconciliação de produção
+
+- Commit funcional bfd33cbfc3dc52d31d9ada6e2962ca6aba464320 integrado na main; deployment dpl_ALuN87wmKMSY2cg8JM91Euc7utFS READY com alias crm-ai-grupoedge.vercel.app confirmado pela API Vercel. Sem migration física.
+- Grant persistido: exatamente um metrics.read OWN para closer e uma auditoria; scope conferido novamente após a carga. Outros grants preservados.
+- Classificação concluída: 30.983 fontes, 62 lotes de até 500, 61.966 linhas aditivas. Advisory lock, seleção/conferência de contagem no lote, cutoff fixo, chaves idempotentes e auditorias por lote. O conector SQL usou a mesma seleção e o SQL versionado do produtor, com checkpoint por UUID; nenhuma credencial de produção foi extraída.
+- Reconciliação final: 0 fontes elegíveis restantes e 0 fontes com par/saldo divergente; 62 auditorias somam 30.983 fontes. Originais continuam 54.343, com o mesmo hash d06010d7e2b64fc72b71e707ef10c5d71b0311876468bbbad17c19f4d071d1a7. Saldos técnicos do snapshot permanecem quantity=54.197 e valueCents=21.325.000; estes totais misturam tipos e não são receita. Nenhum UPDATE/DELETE de fato, lead ou contato.
+- Consulta efetiva após a carga: Hash Join/anti-join, 54.379 linhas efetivas, 284,693 ms de execução/3,14 ms de planejamento no EXPLAIN ANALYZE. Não foi criado índice especulativo.
+- Smoke administrativo no Dia: as três visões carregaram com títulos e navegação exclusivos; Anúncios exibiu 19 entradas e seu drilldown abriu 19 evidências, mantendo modo, pipeline e instantes exatos no retorno. Prospecção mostrou custo de mídia não aplicável. Cobertura parcial e identidades sem vínculo confirmado aparecem explicitamente; não houve fusão histórica. Custo de Anúncios usou os fatos confirmados que já existem no módulo de mídia, em moedas separadas.
+- Atualização: E2E comprovou alteração por outra sessão sem reload, replay sem nova entrada e filtros preservados. Em produção foram observados GETs adicionais 200 para /dashboard/prospeccao, sem navegação manual adicional no intervalo; isso comprova requisições automáticas, mas não estabelece SLA externo de 15s. O componente espera 15s e evita sobreposição; a duração do servidor integra a convergência. Escritas sintéticas permaneceram somente no banco local.
+- Logs consultados do deployment: nenhum registro de erro dos dashboards/worker; houve um registro de nível error em /api/auth/login com HTTP 200, sem detalhes pessoais reproduzidos. A navegação autenticada funcionou. A consulta de logs não substitui monitoramento contínuo.
+- Não foram instalados MCPs de Meta, criadas cadências/campanhas nem enviadas comunicações por esta entrega. Integrações e alterações concorrentes foram preservadas.
+
+## Rodada ampla final e ajuste de compatibilidade
+
+No snapshot final, a suíte ampla teve 19 arquivos com falhas/70 aprovados no conjunto principal, 511 testes aprovados/33 falhos/10 skipped. O conjunto isolado copilot-actions teve 16 aprovados/2 falhos; demais conjuntos isolados passaram. Os 7 cenários novos passaram dentro da rodada ampla. Não considerar a suíte completa verde.
+
+A rodada expôs uma regressão própria: from/to explícitos eram validados, mas mantinham datas/preset do mês corrente para comparação. O ajuste normaliza para CUSTOM e deriva datas civis dos mesmos instantes no fuso do workspace, rejeitando limite sem o outro. Após o ajuste: copilot-actions + commercial-fronts = 2 arquivos/25 testes aprovados; build e dois E2E Node 22 aprovados (23,1s); 210 arquivos/1119 unitários aprovados e lint sem avisos. O último rollout de main inclui esse ajuste; seu SHA/deployment final são confirmados na entrega da execução.
+
+Demais falhas da rodada ampla: cadeia/fixtures antigas já reproduzidas no baseline, expectativas de nove etapas versus onze, contagens antigas de grants, schema estrito do manager-copilot incompatível com o DTO anterior e buscas aleatórias de formulário. Esta última foi reproduzida no baseline 536c860 fixando apenas o telefone sintético da fixture em 87661154: a busca que contém o dígito 1 encontra o telefone e contradiz a expectativa zero. O código do baseline não foi alterado; a fixture temporária foi restaurada depois do ensaio. Não desabilitar testes nem alterar serviços alheios para mascarar essas falhas.
+
+Limites de cobertura: smoke de produção administrativo; OWN/TEAM/WORKSPACE, negações e transferência foram ensaiados localmente. Não se usou a sessão real de outro funcionário para simular seu perfil. Fontes históricas sem intervalo comprovado continuam com cobertura parcial, por decisão explícita de não fabricar atribuição.

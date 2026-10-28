@@ -109,6 +109,9 @@ describe("frentes comerciais integradas", () => {
     const dashboard = createDashboardMetricsService({ database, authorization, now: () => now });
     const exact = await dashboard.parseQuery(admin, { mode: "ADVERTISING", preset: "CUSTOM", fromDate: "2058-05-20", toDate: "2058-05-20", from: query.from, to: now.toISOString() });
     expect(exact).toMatchObject({ from: query.from, to: now.toISOString() });
+    const explicit = await dashboard.getScreen(admin, { from: "2057-01-03T03:00:00.000Z", to: "2057-01-08T03:00:00.000Z" });
+    expect(explicit.query).toMatchObject({ preset: "CUSTOM", fromDate: "2057-01-03", toDate: "2057-01-07" });
+    expect(new Date(explicit.comparisonPeriod.from).getTime()).toBeLessThan(new Date(explicit.comparisonPeriod.to).getTime());
     const screen = await dashboard.getScreen(admin, { mode: "ADVERTISING", preset: "TODAY" });
     expect(screen.query.filters.pipelineIds).toEqual([ads.id]);
     expect(screen.commercialSummary?.total.entries).toBe(30);

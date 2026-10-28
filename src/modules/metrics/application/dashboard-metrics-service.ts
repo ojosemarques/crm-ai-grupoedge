@@ -46,6 +46,7 @@ import {
 } from "@/modules/users/application/commercial-member-eligibility";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { workspaceDateAt } from "@/shared/core/time/workspace-time";
 import { z } from "zod";
 import { commercialFrontModes, commercialFrontPipelineIds } from "@/modules/metrics/domain/commercial-front";
 
@@ -257,6 +258,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
   ): Promise<DashboardQuery> {
     const parsed = inputSchema.safeParse(input);
     if (!parsed.success) invalidInput(parsed.error);
+    if (Boolean(parsed.data.from) !== Boolean(parsed.data.to)) invalidInput("Informe os dois limites do intervalo explícito.");
     const workspace = await options.database.workspace.findFirst({
       where: { id: context.workspaceId, status: "ACTIVE", deletedAt: null },
       select: { timeZone: true },
@@ -297,6 +299,11 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     });
     return Object.freeze({
       ...period,
+      ...(parsed.data.from && parsed.data.to ? {
+        preset: "CUSTOM" as const,
+        fromDate: workspaceDateAt(new Date(normalized.from), workspace.timeZone),
+        toDate: workspaceDateAt(new Date(new Date(normalized.to).getTime() - 1), workspace.timeZone),
+      } : {}),
       from: normalized.from,
       to: normalized.to,
       ...(parsed.data.mode ? { mode: parsed.data.mode, selectedPipelineIds: parsed.data.pipeline } : {}),
