@@ -41,15 +41,29 @@ describe("CRM-40 adaptador Meta Ads somente leitura", () => {
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input)); calls.push({ url, ...(init ? { init } : {}) });
       if (url.pathname.endsWith("/me")) return ok({ id: "123456", name: "Usuário teste" });
-      if (!url.searchParams.has("after")) return ok({ data: [{ id: "act_123456", account_id: "123456", name: "Conta A", currency: "BRL", timezone_name: "America/Sao_Paulo" }], paging: { cursors: { after: "cursor-safe" } } });
-      return ok({ data: [{ id: "act_654321", account_id: "654321", name: "Conta B", currency: "BRL", timezone_name: "America/Sao_Paulo" }] });
+      if (!url.searchParams.has("after")) return ok({ data: [{ id: "act_123456", account_id: "123456", name: "Conta A", currency: "BRL", timezone_name: "America/Sao_Paulo" }], paging: { next: "https://untrusted.example/?access_token=must-not-follow", cursors: { after: "cursor-safe" } } });
+      return ok({ data: [{ id: "act_654321", account_id: "654321", name: "Conta B", currency: "BRL", timezone_name: "America/Sao_Paulo" }], paging: { cursors: { after: "terminal-cursor" } } });
     });
     const result = await new MetaAdsReadAdapter({ fetcher }).testConnection({ ...config, selectedAccountIds: [] }, credentials);
     expect(result.accounts).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls.every(({ url }) => url.origin === "https://graph.facebook.com" && url.pathname.startsWith("/v26.0/"))).toBe(true);
     expect(calls.every(({ init }) => init?.method === "GET")).toBe(true);
     expect(calls[0]?.init?.headers).toMatchObject({ Authorization: "Bearer test-only-token" });
     expect(JSON.stringify(result)).not.toContain("test-only-token");
+  });
+
+  it("interrompe paginação cíclica ou sem cursor sem seguir paging.next", async () => {
+    for (const missing of [false, true]) {
+      let calls = 0;
+      const adapter = new MetaAdsReadAdapter({ fetcher: async (input) => {
+        calls += 1;
+        if (new URL(String(input)).pathname.endsWith("/me")) return ok({ id: "123456" });
+        return ok({ data: [], paging: { next: "https://untrusted.example", ...(missing ? {} : { cursors: { after: "same-cursor" } }) } });
+      } });
+      await expect(adapter.testConnection(config, credentials)).rejects.toMatchObject({ failure: { code: missing ? "META_CURSOR_MISSING" : "META_CURSOR_LOOP" } });
+      expect(calls).toBe(missing ? 2 : 3);
+    }
   });
 
   it("respeita Retry-After e não devolve segredo no erro", async () => {
@@ -76,16 +90,53 @@ describe("CRM-40 adaptador Meta Ads somente leitura", () => {
   it("normaliza hierarquia e insights sem executar escrita externa", async () => {
     const methods: string[] = [];
     const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
-      methods.push(String(init?.method)); const path = new URL(String(input)).pathname;
+      methods.push(String(init?.method)); const url = new URL(String(input)); const path = url.pathname;
+      const batch = init?.body ? JSON.parse(new URLSearchParams(String(init.body)).get("batch")!) as { method: string; relative_url: string }[] : [];
+      const ids = batch.map((operation) => operation.relative_url.split("?")[0]);
       if (path.endsWith("/act_123456")) return ok({ id: "act_123456", account_id: "123456", name: "Conta A", account_status: 1, currency: "BRL", timezone_name: "America/Sao_Paulo" });
-      if (path.endsWith("/campaigns")) return ok({ data: [{ id: "200001", name: "Campanha", status: "ACTIVE" }] });
-      if (path.endsWith("/adsets")) return ok({ data: [{ id: "300001", campaign_id: "200001", name: "Conjunto", status: "PAUSED" }] });
-      if (path.endsWith("/ads")) return ok({ data: [{ id: "400001", adset_id: "300001", name: "Anúncio", status: "ACTIVE", creative: { id: "500001", name: "Criativo" } }] });
+      if (ids.join(",") === "200001") return ok([{ code: 200, body: JSON.stringify({ id: "200001", account_id: "123456", name: "Campanha", status: "ACTIVE", start_time: "2026-09-01T00:00:00-0300" }) }]);
+      if (ids.join(",") === "300001") return ok([{ code: 200, body: JSON.stringify({ id: "300001", campaign_id: "200001", name: "Conjunto", status: "PAUSED" }) }]);
+      if (ids.join(",") === "400001") return ok([{ code: 200, body: JSON.stringify({ id: "400001", adset_id: "300001", name: "Anúncio", status: "ACTIVE", creative: { id: "500001", name: "Criativo" } }) }]);
+      if (!path.endsWith("/insights")) throw new Error("Unexpected full catalog request");
       return ok({ data: [{ account_id: "123456", account_name: "Conta A", account_currency: "BRL", campaign_id: "200001", campaign_name: "Campanha", adset_id: "300001", adset_name: "Conjunto", ad_id: "400001", ad_name: "Anúncio", date_start: "2026-09-01", date_stop: "2026-09-01", spend: "10.25", impressions: "100", clicks: "8", actions: [{ action_type: "lead", value: "2" }] }] });
     };
     const result = await new MetaAdsReadAdapter({ fetcher }).pull(config, credentials, { since: "2026-09-01", until: "2026-09-02" });
     expect(result.hierarchy).toMatchObject({ accounts: [{ id: "act_123456" }], campaigns: [{ id: "200001" }], adSets: [{ id: "300001" }], ads: [{ id: "400001" }] });
     expect(result.insights[0]).toMatchObject({ spend: "10.25", actions: [{ action_type: "lead", value: "2" }] });
-    expect(methods.every((method) => method === "GET")).toBe(true);
+    expect(methods).toEqual(["GET", "GET", "POST", "POST", "POST"]);
+  });
+
+  it("não varre catálogo em período sem entrega e rejeita insights de outra conta", async () => {
+    for (const foreign of [false, true]) {
+      const calls: string[] = [];
+      const adapter = new MetaAdsReadAdapter({ fetcher: async (input) => {
+        const path = new URL(String(input)).pathname; calls.push(path);
+        if (path.endsWith("/act_123456")) return ok({ id: "act_123456", name: "Conta" });
+        return ok({ data: foreign ? [{ account_id: "654321", campaign_id: "200001", adset_id: "300001", ad_id: "400001", date_start: "2026-09-01", date_stop: "2026-09-01" }] : [] });
+      } });
+      const result = adapter.pull(config, credentials, { since: "2026-09-01", until: "2026-09-01" });
+      if (foreign) await expect(result).rejects.toMatchObject({ failure: { code: "META_ACCOUNT_ID_MISMATCH" } });
+      else await expect(result).resolves.toMatchObject({ insights: [], hierarchy: { campaigns: [], adSets: [], ads: [] }, requestCount: 2 });
+      expect(calls).toHaveLength(2);
+    }
+  });
+
+  it("deduplica IDs e lê lotes de até 50 objetos referenciados no período", async () => {
+    const batches: string[][] = [];
+    const ads = Array.from({ length: 51 }, (_, index) => ({ id: String(400001 + index), adset_id: "300001", name: "Anúncio" }));
+    const objects = new Map<string, unknown>([["200001", { id: "200001", name: "Campanha", account_id: "123456" }], ["300001", { id: "300001", name: "Conjunto", campaign_id: "200001" }], ...ads.map((ad) => [ad.id, ad] as [string, unknown])]);
+    const adapter = new MetaAdsReadAdapter({ fetcher: async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/act_123456")) return ok({ id: "act_123456", name: "Conta" });
+      if (url.pathname.endsWith("/insights")) return ok({ data: [...ads, ads[0]!].map((ad) => ({ account_id: "123456", campaign_id: "200001", adset_id: "300001", ad_id: ad.id, date_start: "2026-09-01", date_stop: "2026-09-01" })) });
+      const batch = JSON.parse(new URLSearchParams(String(init?.body)).get("batch")!) as { method: string; relative_url: string }[];
+      expect(batch.every((operation) => operation.method === "GET")).toBe(true);
+      const ids = batch.map((operation) => operation.relative_url.split("?")[0]!); batches.push(ids);
+      return ok(ids.map((id) => ({ code: 200, body: JSON.stringify(objects.get(id)) })));
+    } });
+    const result = await adapter.pull(config, credentials, { since: "2026-09-01", until: "2026-09-01" });
+    expect(batches.map((batch) => batch.length)).toEqual([1, 1, 50, 1]);
+    expect(result.hierarchy.ads).toHaveLength(51);
+    expect(result.requestCount).toBe(6);
   });
 });

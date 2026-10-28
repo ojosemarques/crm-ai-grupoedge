@@ -19,15 +19,18 @@ sem URL arbitrária.
 
 ## Limite e segurança
 
-- somente `GET` para `https://graph.facebook.com`;
-- rotas internas allowlisted: identidade, contas de anúncios, campanhas,
-  conjuntos, anúncios e insights;
+- somente operações de leitura para `https://graph.facebook.com`: `GET` direto
+  e envelope `POST` do Graph Batch contendo exclusivamente suboperações `GET`;
+- rotas internas allowlisted: identidade, contas de anúncios e insights;
+  a leitura múltipla de objetos aceita apenas IDs numéricos obtidos dos
+  insights da conta selecionada, em lotes de até 50;
 - token e app secret são resolvidos apenas no servidor a partir de referências
   fixas; o banco guarda alias, nome da variável, versão e presença, nunca valor;
 - `appsecret_proof` é calculado em memória quando o app secret existe;
 - respostas têm limite de 2 MiB e timeout configurável entre 1 e 30 segundos;
 - redirects externos, URL fornecida pelo usuário e paginação por `paging.next`
-  são rejeitados; a próxima página é reconstruída com o cursor `after`;
+  não são seguidos; a presença de `paging.next` sinaliza continuação e a próxima
+  página é reconstruída com o cursor `after`, com detecção de ciclos;
 - payload bruto não é persistido; evidência guarda somente IDs externos,
   versão, cobertura de métricas e ID da execução;
 - logs, respostas, auditoria e tentativas não incluem token ou app secret;
@@ -98,10 +101,20 @@ atualizado e testar novamente a conexão; o valor nunca vai para o MCP.
 
 ## Sincronização e idempotência
 
-`INITIAL` lê de `initialSince` até a data corrente de São Paulo.
+`INITIAL` aceita `date: YYYY-MM-DD` para importar um dia entre `initialSince`
+e hoje. A interface usa essa opção para manter o histórico em janelas pequenas.
+Pela API, omitir `date` solicita toda a janela até hoje e pode exceder o tempo
+de execução em contas grandes; prefira importar cada dia com correlação própria.
+Importar um dia antigo não regride o watermark da coleta incremental.
 `INCREMENTAL` relê a partir do último watermark menos `lookbackDays` (padrão 7)
 para capturar ajustes tardios da plataforma. Cada execução possui correlação
 única, janela, tentativas, contagens, erro classificado e auditoria.
+
+A hierarquia importada corresponde aos IDs que tiveram insights na janela.
+O conector consulta primeiro esses insights e depois os objetos por ID, usando
+Graph Batch (a API v26 removeu o parâmetro de leitura múltipla `ids`); não
+varre todo o catálogo histórico de campanhas da conta a cada sincronização.
+Datas Graph com offset `-0300` são normalizadas para `-03:00` antes da validação.
 
 O cursor só avança na mesma transação que persiste hierarquia, fatos, ações e
 tentativa de sucesso. Falha de rede ou contrato mantém o cursor anterior. Repetir

@@ -281,7 +281,7 @@ export function createMetaAdsService(options: Options) {
     await tx.externalObjectMapping.upsert({ where: { workspaceId_connectionId_externalObjectType_externalId: { workspaceId: context.workspaceId, connectionId, externalObjectType, externalId } }, create: { workspaceId: context.workspaceId, connectionId, externalObjectType, externalId, internalEntityType, internalEntityId, externalVersion: apiVersion, externalHash: factHash({ externalId, internalEntityId }), firstRecognizedAt: now, lastRecognizedAt: now, createdByActorId: context.actorId, updatedByActorId: context.actorId }, update: { internalEntityType, internalEntityId, externalVersion: apiVersion, lastRecognizedAt: now, version: { increment: 1 }, updatedByActorId: context.actorId } });
   }
 
-  async function runSync(context: AuthenticatedContext, input: Readonly<{ mode: "INITIAL" | "INCREMENTAL"; correlationId: string }>) {
+  async function runSync(context: AuthenticatedContext, input: Readonly<{ mode: "INITIAL" | "INCREMENTAL"; correlationId: string; date?: string }>) {
     await authorize(context, PermissionKeys.INTEGRATIONS_EXECUTE);
     await authorize(context, PermissionKeys.MARKETING_MEDIA_IMPORT);
     const connection = await findConnection(context); if (!connection) fail("Configure a conexão Meta Ads antes de sincronizar.", "META_CONNECTION_NOT_CONFIGURED", 404);
@@ -291,9 +291,12 @@ export function createMetaAdsService(options: Options) {
     const existing = await options.database.integrationSyncRun.findUnique({ where: { workspaceId_connectionId_direction_objectType_correlationId: { workspaceId: context.workspaceId, connectionId: connection.id, direction: "PULL", objectType: OBJECT_TYPE, correlationId: input.correlationId } } });
     if (existing?.status === "SUCCEEDED") return existing;
     const cursor = await options.database.integrationSyncCursor.findUnique({ where: { workspaceId_connectionId_direction_objectType: { workspaceId: context.workspaceId, connectionId: connection.id, direction: "PULL", objectType: OBJECT_TYPE } } });
-    const until = localDate(options.now());
+    const today = localDate(options.now());
+    if (input.date && (input.mode !== "INITIAL" || !metaAdsConfigurationSchema.shape.initialSince.safeParse(input.date).success || input.date < config.initialSince || input.date > today)) fail("A data histórica deve estar entre o início configurado e hoje, no modo inicial.", "META_SYNC_DATE_INVALID", 422);
+    const until = input.date ?? today;
     const watermarkDate = cursor?.watermark ? localDate(cursor.watermark) : null;
-    const since = input.mode === "INITIAL" || !watermarkDate ? config.initialSince : subtractDays(watermarkDate, config.lookbackDays);
+    const since = input.date ?? (input.mode === "INITIAL" || !watermarkDate ? config.initialSince : subtractDays(watermarkDate, config.lookbackDays));
+    const nextWatermark = cursor?.watermark && cursor.watermark > endInstant(until) ? cursor.watermark : endInstant(until);
     const run = await options.database.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`meta-ads-sync:${context.workspaceId}:${connection.id}`}, 0))`;
       const running = await tx.integrationSyncRun.findFirst({ where: { workspaceId: context.workspaceId, connectionId: connection.id, objectType: OBJECT_TYPE, status: "RUNNING" } });
@@ -337,7 +340,7 @@ export function createMetaAdsService(options: Options) {
         }
         const finishedAt = options.now();
         const updated = await tx.integrationSyncRun.update({ where: { id: run.id }, data: { status: "SUCCEEDED", candidateCursor: until, watermark: endInstant(until), readCount: payload.insights.length, createdCount, updatedCount, ignoredCount, finishedAt } });
-        await tx.integrationSyncCursor.upsert({ where: { workspaceId_connectionId_direction_objectType: { workspaceId: context.workspaceId, connectionId: connection.id, direction: "PULL", objectType: OBJECT_TYPE } }, create: { workspaceId: context.workspaceId, connectionId: connection.id, direction: "PULL", objectType: OBJECT_TYPE, cursor: until, watermark: endInstant(until), lastSyncRunId: run.id, updatedByActorId: context.actorId }, update: { cursor: until, watermark: endInstant(until), lastSyncRunId: run.id, version: { increment: 1 }, updatedByActorId: context.actorId } });
+        await tx.integrationSyncCursor.upsert({ where: { workspaceId_connectionId_direction_objectType: { workspaceId: context.workspaceId, connectionId: connection.id, direction: "PULL", objectType: OBJECT_TYPE } }, create: { workspaceId: context.workspaceId, connectionId: connection.id, direction: "PULL", objectType: OBJECT_TYPE, cursor: localDate(nextWatermark), watermark: nextWatermark, lastSyncRunId: run.id, updatedByActorId: context.actorId }, update: { cursor: localDate(nextWatermark), watermark: nextWatermark, lastSyncRunId: run.id, version: { increment: 1 }, updatedByActorId: context.actorId } });
         await tx.integrationDeliveryAttempt.create({ data: { workspaceId: context.workspaceId, kind: "SYNC", syncRunId: run.id, attemptNumber: run.attempts, status: "SUCCEEDED", startedAt: run.startedAt ?? finishedAt, finishedAt, resultMetadata: json({ graphApiVersion: config.graphApiVersion, requestCount: payload.requestCount, insightCount: payload.insights.length, createdCount, updatedCount, ignoredCount, readOnly: true, secretIncluded: false }) } });
         await tx.integrationConnection.update({ where: { id: connection.id }, data: { status: "CONNECTED", capabilityLevel: "CONNECTED", enabled: true, lastSucceededAt: finishedAt, lastErroredAt: null, currentErrorClass: null, currentErrorCode: null, currentErrorMessage: null, revision: { increment: 1 }, updatedByActorId: context.actorId } });
         await audit(tx, context, { action: "integration.meta_ads.sync_completed", entityId: connection.id, requestId: input.correlationId, changes: { runId: run.id, mode: input.mode, since, until, graphApiVersion: config.graphApiVersion, selectedAccountCount: config.selectedAccountIds.length, readCount: payload.insights.length, createdCount, updatedCount, ignoredCount, rawPayloadPersisted: false, automaticAttribution: false } });

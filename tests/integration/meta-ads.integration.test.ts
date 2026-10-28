@@ -79,12 +79,14 @@ function fixtureAdapter(businessId?: string) {
   const calls: string[] = [];
   const adapter = new MetaAdsReadAdapter({ sleep: async () => undefined, random: () => 0, fetcher: async (input, init) => {
     const url = new URL(String(input)); calls.push(`${init?.method}:${url.pathname}`);
+    const batch = init?.body ? JSON.parse(new URLSearchParams(String(init.body)).get("batch")!) as { method: string; relative_url: string }[] : [];
+    const ids = batch.map((operation) => operation.relative_url.split("?")[0]);
     if (url.pathname.endsWith("/me")) return Response.json({ id: "123456", name: "Conta técnica fixture" });
     if (url.pathname.endsWith("/me/adaccounts")) return Response.json({ data: [{ id: "act_123456", account_id: "123456", name: "Politizai Fixture", account_status: 1, currency: "BRL", timezone_name: "America/Sao_Paulo", ...(businessId ? { business: { id: businessId, name: "BM Fixture" } } : {}) }] });
     if (url.pathname.endsWith("/act_123456")) return Response.json({ id: "act_123456", account_id: "123456", name: "Politizai Fixture", account_status: 1, currency: "BRL", timezone_name: "America/Sao_Paulo", ...(businessId ? { business: { id: businessId, name: "BM Fixture" } } : {}) });
-    if (url.pathname.endsWith("/campaigns")) return Response.json({ data: [{ id: "200001", account_id: "123456", name: "Campanha Fixture", status: "ACTIVE" }] });
-    if (url.pathname.endsWith("/adsets")) return Response.json({ data: [{ id: "300001", campaign_id: "200001", name: "Conjunto Fixture", status: "ACTIVE" }] });
-    if (url.pathname.endsWith("/ads")) return Response.json({ data: [{ id: "400001", adset_id: "300001", name: "Anúncio Fixture", status: "ACTIVE", creative: { id: "500001", name: "Criativo Fixture" } }] });
+    if (ids.join(",") === "200001") return Response.json([{ code: 200, body: JSON.stringify({ id: "200001", account_id: "123456", name: "Campanha Fixture", status: "ACTIVE", start_time: "2046-04-19T00:00:00-0300" }) }]);
+    if (ids.join(",") === "300001") return Response.json([{ code: 200, body: JSON.stringify({ id: "300001", campaign_id: "200001", name: "Conjunto Fixture", status: "ACTIVE" }) }]);
+    if (ids.join(",") === "400001") return Response.json([{ code: 200, body: JSON.stringify({ id: "400001", adset_id: "300001", name: "Anúncio Fixture", status: "ACTIVE", creative: { id: "500001", name: "Criativo Fixture" } }) }]);
     return Response.json({ data: [{ account_id: "123456", account_name: "Politizai Fixture", account_currency: "BRL", campaign_id: "200001", campaign_name: "Campanha Fixture", adset_id: "300001", adset_name: "Conjunto Fixture", ad_id: "400001", ad_name: "Anúncio Fixture", date_start: "2046-04-19", date_stop: "2046-04-19", spend, impressions: "1000", clicks: "100", inline_link_clicks: "80", actions: [{ action_type: "lead", value: "10" }, { action_type: "custom.future_action", value: "2" }, { action_type: "video_view", value: videoViews }], action_values: [{ action_type: "purchase", value: "500.00" }] }] });
   } });
   return { adapter, calls, updateSpend: (value: string) => { spend = value; }, updateVideoViews: (value: string) => { videoViews = value; } };
@@ -113,7 +115,14 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     expect(await database.externalObjectMapping.count({ where: { workspaceId, connectionId: configured.id } })).toBe(5);
     const cursor = await database.integrationSyncCursor.findFirstOrThrow({ where: { workspaceId, connectionId: configured.id, objectType: "meta_ads_daily_insights" } });
     expect(cursor.cursor).toBe("2046-04-20");
-    expect(fixture.calls.every((call) => call.startsWith("GET:https://graph.facebook.com") === false && call.startsWith("GET:/v26.0/"))).toBe(true);
+    expect(fixture.calls.every((call) => call.startsWith("GET:/v26.0/") || call === "POST:/v26.0/")).toBe(true);
+
+    for (const input of [{ mode: "INITIAL" as const, date: "2046-03-31" }, { mode: "INITIAL" as const, date: "2046-04-21" }, { mode: "INCREMENTAL" as const, date: "2046-04-19" }]) {
+      await expect(service.runSync(admin, { ...input, correlationId: `meta-invalid-date-${randomUUID()}` })).rejects.toMatchObject({ code: "META_SYNC_DATE_INVALID" });
+    }
+    const historical = await service.runSync(admin, { mode: "INITIAL", date: "2046-04-19", correlationId: "meta-history-day-fixture-001" });
+    expect(historical).toMatchObject({ status: "SUCCEEDED", windowStart: new Date("2046-04-19T03:00:00Z"), windowEnd: new Date("2046-04-20T02:59:59.999Z"), ignoredCount: 1 });
+    expect((await database.integrationSyncCursor.findUniqueOrThrow({ where: { id: cursor.id } })).watermark).toEqual(cursor.watermark);
 
     await expect(service.runSync(admin, { mode: "INITIAL", correlationId: "meta-initial-fixture-001" })).resolves.toMatchObject({ id: first.id, status: "SUCCEEDED" });
     expect(await database.marketingPerformanceFact.count({ where: { workspaceId, grainKey: fact.grainKey } })).toBe(1);
@@ -124,7 +133,7 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     const revisions = await database.marketingPerformanceFact.findMany({ where: { workspaceId, grainKey: fact.grainKey }, orderBy: { revision: "asc" } });
     expect(revisions.map((item) => item.spendCents)).toEqual([1025n, 1200n]);
     expect(revisions[1]?.supersedesFactId).toBe(revisions[0]?.id);
-    expect(await database.auditLog.count({ where: { workspaceId, action: "integration.meta_ads.sync_completed" } })).toBe(2);
+    expect(await database.auditLog.count({ where: { workspaceId, action: "integration.meta_ads.sync_completed" } })).toBe(3);
 
     const media = createMediaPerformanceService({ database, now: () => now });
     const beforeVideoChange = await media.getScreen(admin, { periodStart: "2046-04-19", periodEnd: "2046-04-19" });

@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
       : command.action === "TEST_CONNECTION"
         ? await service.testConnection(context)
         : command.action === "RUN_SYNC"
-          ? await service.runSync(context, { mode: command.mode, correlationId: command.correlationId })
+          ? await service.runSync(context, { mode: command.mode, correlationId: command.correlationId, ...(command.date ? { date: command.date } : {}) })
           : await service.setPaused(context, command.revision, command.action === "PAUSE");
     return NextResponse.json({ result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return handleRouteError(error); }

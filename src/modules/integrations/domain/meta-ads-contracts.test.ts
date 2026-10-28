@@ -7,10 +7,18 @@ import {
   metaActionValue,
   metaVideoComparable,
   metaAdsConfigurationSchema,
+  metaAdsCampaignSchema,
   normalizeMetaMediaStatus,
 } from "@/modules/integrations/domain/meta-ads-contracts";
 
 describe("CRM-40 contratos do Meta Ads", () => {
+  it("normaliza o offset ISO da Graph API sem aceitar datas inválidas", () => {
+    const campaign = { id: "123456", name: "Campanha", start_time: "2026-10-28T09:15:00-0300", stop_time: "2026-10-29T09:15:00+0530" };
+    expect(metaAdsCampaignSchema.parse(campaign)).toMatchObject({ start_time: "2026-10-28T09:15:00-03:00", stop_time: "2026-10-29T09:15:00+05:30" });
+    expect(metaAdsCampaignSchema.parse({ ...campaign, start_time: "2026-10-28T12:15:00Z" }).start_time).toBe("2026-10-28T12:15:00Z");
+    expect(() => metaAdsCampaignSchema.parse({ ...campaign, start_time: "2026-13-28T09:15:00-0300" })).toThrow();
+    expect(() => metaAdsCampaignSchema.parse({ ...campaign, start_time: "not-a-date" })).toThrow();
+  });
   it("considera somente video_view como visualização de 3s e detecta atualização sem mudança de custo", () => {
     expect(metaVideoComparable([{ action_type: "video_view", value: "0" }])).toEqual({ videoMetricVersion: "meta-3s-v1", videoViews3s: "0" });
     expect(metaVideoComparable([{ action_type: "video_continuous_2_sec_watched_actions", value: "100" }]).videoViews3s).toBeNull();

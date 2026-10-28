@@ -15,6 +15,7 @@ export function MetaAdsWorkspace({ initial }: Readonly<{ initial: Screen }>) {
   const [businessId, setBusinessId] = useState(initial.config?.businessId ?? "");
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(initial.config?.autoSyncEnabled ?? false);
   const [initialSince, setInitialSince] = useState(initial.config?.initialSince ?? initial.suggestedInitialSince);
+  const [historyDate, setHistoryDate] = useState(initial.config?.initialSince ?? initial.suggestedInitialSince);
   const [lookbackDays, setLookbackDays] = useState(initial.config?.lookbackDays ?? 7);
   const [pending, setPending] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -33,7 +34,7 @@ export function MetaAdsWorkspace({ initial }: Readonly<{ initial: Screen }>) {
   }
 
   async function configure() {
-    const result = await post("CONFIGURE", { action: "CONFIGURE", data: { displayName: "Meta Ads", ...(initial.connection ? { revision: initial.connection.revision } : {}), config: { graphApiVersion: initial.config?.graphApiVersion ?? "v26.0", selectedAccountIds, ...(businessId.trim() ? { businessId: businessId.trim() } : {}), autoSyncEnabled, initialSince, lookbackDays, pageSize: 100, requestTimeoutMs: 12_000 } } });
+    const result = await post("CONFIGURE", { action: "CONFIGURE", data: { displayName: "Meta Ads", ...(initial.connection ? { revision: initial.connection.revision } : {}), config: { graphApiVersion: initial.config?.graphApiVersion ?? "v26.0", selectedAccountIds, ...(businessId.trim() ? { businessId: businessId.trim() } : {}), autoSyncEnabled, initialSince, lookbackDays, pageSize: 100, requestTimeoutMs: initial.config?.requestTimeoutMs ?? 12_000 } } });
     if (result) setFeedback(result.credentialsPending ? "Configuração versionada. Aguardando a referência server-side do token Meta." : "Configuração versionada. Execute o teste de conexão antes da sincronização.");
   }
 
@@ -43,8 +44,8 @@ export function MetaAdsWorkspace({ initial }: Readonly<{ initial: Screen }>) {
   }
 
   async function sync(mode: "INITIAL" | "INCREMENTAL") {
-    const result = await post(`SYNC_${mode}`, { action: "RUN_SYNC", mode, correlationId: `meta-${crypto.randomUUID()}` });
-    if (result) setFeedback(`Sincronização ${mode === "INITIAL" ? "inicial" : "incremental"} concluída e auditada.`);
+    const result = await post(`SYNC_${mode}`, { action: "RUN_SYNC", mode, ...(mode === "INITIAL" ? { date: historyDate } : {}), correlationId: `meta-${crypto.randomUUID()}` });
+    if (result) setFeedback(mode === "INITIAL" ? `Histórico de ${historyDate} importado e auditado.` : "Sincronização incremental concluída e auditada.");
   }
 
   async function pauseOrResume() {
@@ -62,7 +63,7 @@ export function MetaAdsWorkspace({ initial }: Readonly<{ initial: Screen }>) {
   return <div className="space-y-5">
     <Surface tone={connected ? "accent" : "critical"}>
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <SectionHeader title={connected ? "Coleta Meta disponível" : "Integração aguardando configuração segura"} description="Somente GET em rotas oficiais allowlisted. O conector não cria campanhas, não altera leads e não atribui vendas automaticamente." />
+        <SectionHeader title={connected ? "Coleta Meta disponível" : "Integração aguardando configuração segura"} description="Leitura de contas, campanhas e métricas da Meta. O conector não cria campanhas, não altera leads e não atribui vendas automaticamente." />
         <span className="status-badge" data-tone={connected ? "success" : "warning"}>{statusLabels[initial.readiness] ?? initial.readiness}</span>
       </div>
       {initial.missingInformation.length ? <ul className="mt-3 list-disc pl-5 text-sm">{initial.missingInformation.map((item) => <li key={item}>{item}</li>)}</ul> : null}
@@ -94,7 +95,8 @@ export function MetaAdsWorkspace({ initial }: Readonly<{ initial: Screen }>) {
         <SectionHeader title="Credenciais e segurança" description="O banco armazena somente referências fixas. O processo do servidor resolve os valores no ambiente." />
         <dl className="mt-4 space-y-3 text-sm"><div className="flex justify-between gap-3"><dt>Token de acesso</dt><dd className="font-semibold">{initial.connection?.credentials.accessTokenReferencePresent ? "Referência disponível" : "Pendente"}</dd></div><div className="flex justify-between gap-3"><dt>App secret</dt><dd className="font-semibold">{initial.connection?.credentials.appSecretReferencePresent ? "Referência disponível" : "Opcional / pendente"}</dd></div><div className="flex justify-between gap-3"><dt>Validação externa</dt><dd className="font-semibold">{initial.externalValidation ? "Executada" : "Não executada"}</dd></div></dl>
         <p className="mt-4 text-sm text-muted-foreground">Nunca cole token ou app secret nesta tela. Configure-os somente no ambiente local do servidor e reinicie a aplicação.</p>
-        <div className="mt-5 flex flex-wrap gap-2"><Button disabled={!connected || selectedAccountIds.length === 0 || pending !== null} onClick={() => sync("INITIAL")}>Sincronização inicial</Button><Button disabled={!connected || selectedAccountIds.length === 0 || pending !== null} onClick={() => sync("INCREMENTAL")} variant="secondary">Sincronização incremental</Button></div>
+        <label className="mt-5 block space-y-1 text-sm"><span className="font-semibold">Dia do histórico</span><input type="date" min={initialSince} value={historyDate} onChange={(event) => setHistoryDate(event.target.value)} className="block rounded-[var(--radius-control)] border border-border bg-card px-3 py-2" /></label>
+        <div className="mt-3 flex flex-wrap gap-2"><Button disabled={!connected || !historyDate || selectedAccountIds.length === 0 || pending !== null} onClick={() => sync("INITIAL")}>Importar dia do histórico</Button><Button disabled={!connected || selectedAccountIds.length === 0 || pending !== null} onClick={() => sync("INCREMENTAL")} variant="secondary">Sincronização incremental</Button></div>
       </Surface>
     </div>
 

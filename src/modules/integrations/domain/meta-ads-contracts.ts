@@ -36,6 +36,7 @@ export const metaAdsCommandSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("RUN_SYNC"),
     mode: z.enum(["INITIAL", "INCREMENTAL"]),
+    date: isoDate.optional(),
     correlationId: z.string().trim().regex(/^meta-[A-Za-z0-9_-]{8,100}$/),
   }).strict(),
   z.object({ action: z.literal("PAUSE"), revision: z.number().int().positive() }).strict(),
@@ -44,6 +45,8 @@ export const metaAdsCommandSchema = z.discriminatedUnion("action", [
 
 const graphId = z.string().regex(/^[0-9]{3,40}$/);
 const metaStatus = z.string().trim().min(1).max(40);
+// Graph uses ISO 8601 offsets without a colon, e.g. -0300.
+const graphDateTime = z.string().transform((value) => value.replace(/([+-][0-9]{2})([0-9]{2})$/, "$1:$2")).pipe(z.string().datetime({ offset: true }));
 
 export const metaAdsIdentitySchema = z.object({
   id: graphId,
@@ -65,8 +68,8 @@ export const metaAdsCampaignSchema = z.object({
   account_id: graphId.optional(),
   name: z.string().trim().min(1).max(255),
   status: metaStatus.optional(),
-  start_time: z.string().datetime({ offset: true }).optional(),
-  stop_time: z.string().datetime({ offset: true }).optional(),
+  start_time: graphDateTime.optional(),
+  stop_time: graphDateTime.optional(),
 }).passthrough();
 
 export const metaAdsAdSetSchema = z.object({
