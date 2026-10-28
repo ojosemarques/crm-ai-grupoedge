@@ -139,6 +139,10 @@ pelo Git e com permissão 0600. Não cole tokens em prompts, logs ou commits.
 | `buscar_crm` | Busca global de contas, contatos, leads e oportunidades; `q` | `crm:read` |
 | `consultar_auditoria` | Auditoria mascarada e achados de processo; filtros `audit*`, `violation*` | `audit:read` |
 | `consultar_integracoes` | Conexões, estado e capacidades sem credenciais | `integrations:read` |
+| `consultar_meta_ads` | Contas conectadas/selecionadas, última sincronização e falhas seguras | `integrations:read` |
+| `consultar_aquisicao` | Investimento, impressões, cliques, eficiência e funil da tela de aquisição | `metrics:read` |
+| `consultar_leads_anuncios` | Estoque paginado e etapas do pipeline Trabalho > Anúncios | `crm:read` |
+| `consultar_metricas_anuncios` | Indicadores comerciais dos leads de anúncios por período e vendedor | `metrics:read` |
 | `consultar_logs_operacionais` | Telemetria persistida: operação, resultado, duração, correlação, período e paginação | `operations:read` |
 | `consultar_alertas_incidentes` | Alertas e incidentes persistidos, com paginação | `operations:read` |
 

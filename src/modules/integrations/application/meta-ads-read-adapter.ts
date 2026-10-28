@@ -106,7 +106,11 @@ export class MetaAdsReadAdapter {
 
   classifyError(error: unknown): MetaAdsFailure {
     if (error instanceof MetaAdsAdapterError) return error.failure;
-    if (error instanceof z.ZodError) return { classification: "INVALID_PAYLOAD", code: "META_INVALID_PAYLOAD", safeMessage: "A Meta retornou dados fora do contrato esperado. Nenhum dado foi persistido." };
+    if (error instanceof z.ZodError) {
+      const knownFields = new Set(["id", "name", "account_id", "account_status", "currency", "timezone_name", "data", "paging", "cursors", "after", "campaign_id", "adset_id", "ad_id", "date_start", "date_stop", "spend", "impressions", "clicks", "reach", "actions", "value", "action_type"]);
+      const fields = [...new Set(error.issues.flatMap((issue) => issue.path.filter((part): part is string => typeof part === "string" && knownFields.has(part))))].slice(0, 4);
+      return { classification: "INVALID_PAYLOAD", code: "META_INVALID_PAYLOAD", safeMessage: `A Meta retornou dados fora do contrato esperado.${fields.length ? ` Campos: ${fields.join(", ")}.` : ""} Nenhum dado foi persistido.` };
+    }
     if (error instanceof DOMException && error.name === "AbortError") return { classification: "TRANSIENT", code: "META_TIMEOUT", safeMessage: "A consulta à Meta excedeu o tempo seguro. Nenhum cursor foi avançado." };
     return { classification: "INTERNAL", code: "META_INTERNAL", safeMessage: "A sincronização Meta falhou de forma controlada." };
   }

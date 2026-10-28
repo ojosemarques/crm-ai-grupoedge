@@ -8,12 +8,15 @@ import { assertCrmMcpPeriod, createCrmMcpServer, sanitizeCrmMcpResult, summarize
 
 const mocks = vi.hoisted(() => ({
   overview: vi.fn(), revenueDrilldown: vi.fn(), authorize: vi.fn(), audit: vi.fn(),
-  logs: vi.fn(), count: vi.fn(),
+  logs: vi.fn(), count: vi.fn(), media: vi.fn(), advertising: vi.fn(), pipeline: vi.fn(), meta: vi.fn(),
 }));
 vi.mock("@/modules/metrics/application/metrics-service", () => ({ getMetricsService: () => ({ getIntegratedOverview: mocks.overview }) }));
 vi.mock("@/modules/metrics/application/revenue-metrics-service", () => ({ getRevenueMetricsService: () => ({ getDrilldown: mocks.revenueDrilldown }) }));
+vi.mock("@/modules/marketing/application/media-performance-service", () => ({ getMediaPerformanceService: () => ({ getScreen: mocks.media }) }));
+vi.mock("@/modules/advertising/application/advertising-workspace-service", () => ({ getAdvertisingWorkspaceService: () => ({ getScreen: mocks.advertising }) }));
+vi.mock("@/modules/integrations/application/meta-ads-service", () => ({ getMetaAdsService: () => ({ screen: mocks.meta }) }));
 vi.mock("@/modules/users/permissions/authorization-service", () => ({ getAuthorizationService: () => ({ assertAuthorized: mocks.authorize }) }));
-vi.mock("@/shared/core/database/client", () => ({ getDatabaseClient: () => ({ auditLog: { create: mocks.audit }, telemetryRecord: { findMany: mocks.logs, count: mocks.count } }) }));
+vi.mock("@/shared/core/database/client", () => ({ getDatabaseClient: () => ({ auditLog: { create: mocks.audit }, telemetryRecord: { findMany: mocks.logs, count: mocks.count }, pipeline: { findFirst: mocks.pipeline } }) }));
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const memberId = "22222222-2222-4222-8222-222222222222";
@@ -80,14 +83,44 @@ describe("CRM MCP protocol and read tools", () => {
     const response = await rpc("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } });
     expect(response.result.serverInfo).toEqual({ name: "Grupo Edge CRM", version: "1.0.0" });
   });
-  it("lists 20 read-only tools and valid JSON schemas", async () => {
+  it("lists 24 read-only tools and valid JSON schemas", async () => {
     const response = await rpc("tools/list");
-    expect(response.result.tools).toHaveLength(20);
+    expect(response.result.tools).toHaveLength(24);
     for (const tool of response.result.tools) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.inputSchema.additionalProperties).toBe(false);
     }
+  });
+  it("reads acquisition from the canonical media service with a bounded local period", async () => {
+    mocks.media.mockResolvedValue({ totals: { spendCents: 1250, clicks: 10 }, metrics: [{ key: "cpc", value: 125 }] });
+    const input = { periodStart: "2026-10-28", periodEnd: "2026-10-28" };
+    const response = await rpc("tools/call", { name: "consultar_aquisicao", arguments: input });
+    expect(response.result.structuredContent.data.totals.spendCents).toBe(1250);
+    expect(mocks.media).toHaveBeenCalledWith(identity.context, input);
+    mocks.media.mockClear();
+    const denied = await rpc("tools/call", { name: "consultar_aquisicao", arguments: { periodStart: "2020-01-01", periodEnd: "2026-10-28" } });
+    expect(denied.result.isError).toBe(true);
+    expect(mocks.media).not.toHaveBeenCalled();
+  });
+  it("pins advertising to the workspace pipeline and keeps lead stock out of metric responses", async () => {
+    mocks.pipeline.mockResolvedValue({ id: roleId });
+    mocks.advertising.mockResolvedValue({ pipeline: { id: roleId }, stock: { page: 2, items: [{ id: userId }] }, metrics: { totals: { leadsReceived: 7 } }, timeZone: "America/Sao_Paulo" });
+    const response = await rpc("tools/call", { name: "consultar_leads_anuncios", arguments: { page: 2 } });
+    expect(response.result.structuredContent.data.stock.page).toBe(2);
+    expect(mocks.pipeline).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId, name: "Anúncios", deletedAt: null }) }));
+    expect(mocks.advertising).toHaveBeenCalledWith(identity.context, { page: 2, pipelineId: roleId });
+    const metrics = await rpc("tools/call", { name: "consultar_metricas_anuncios", arguments: { metricsPreset: "TODAY" } });
+    expect(metrics.result.structuredContent.data.metrics.totals.leadsReceived).toBe(7);
+    expect(metrics.result.structuredContent.data).not.toHaveProperty("stock");
+    const denied = await rpc("tools/call", { name: "consultar_leads_anuncios", arguments: {} }, ["metrics:read"]);
+    expect(denied.result?.isError || denied.error).toBeTruthy();
+  });
+  it("applies canonical marketing RBAC and does not expose internal errors", async () => {
+    mocks.media.mockRejectedValue(new Error("private-access-token"));
+    const response = await rpc("tools/call", { name: "consultar_aquisicao", arguments: { periodStart: "2026-10-28", periodEnd: "2026-10-28" } });
+    expect(response.result.isError).toBe(true);
+    expect(JSON.stringify(response)).not.toContain("private-access-token");
   });
   it("limits discovery and execution to credential scopes", async () => {
     const response = await rpc("tools/list", {}, ["metrics:read"]);

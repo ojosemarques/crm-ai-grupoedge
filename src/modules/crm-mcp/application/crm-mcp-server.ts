@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { getOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
+import { getAdvertisingWorkspaceService } from "@/modules/advertising/application/advertising-workspace-service";
 import { auditOrigins, actorTypes, processViolationSeverities, processViolationStatuses, processViolationTypes } from "@/modules/audit/domain/audit-contracts";
 import type { CrmMcpIdentity } from "@/modules/crm-mcp/application/crm-mcp-authentication";
 import { readCrmMcpAudit } from "@/modules/crm-mcp/application/crm-mcp-audit";
@@ -9,8 +10,12 @@ import { crmMcpToolScopes } from "@/modules/crm-mcp/domain/crm-mcp-tool-scopes";
 import { getForecastService } from "@/modules/forecast/application/forecast-service";
 import { getGoalService } from "@/modules/goals/application/goal-service";
 import { getIntegrationPlatformService } from "@/modules/integrations/application/integration-platform-service";
+import { getMetaAdsService } from "@/modules/integrations/application/meta-ads-service";
 import { getLeadListService } from "@/modules/leads/application/lead-list-service";
 import { getMeetingService } from "@/modules/meetings/application/meeting-service";
+import { getMediaPerformanceService } from "@/modules/marketing/application/media-performance-service";
+import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
+import { prospectingMetricsPeriodPresets } from "@/modules/prospecting/domain/prospecting-metrics-period";
 import { getDashboardMetricsService } from "@/modules/metrics/application/dashboard-metrics-service";
 import { getMetricsService } from "@/modules/metrics/application/metrics-service";
 import { getRevenueMetricsService } from "@/modules/metrics/application/revenue-metrics-service";
@@ -137,6 +142,25 @@ export function createCrmMcpServer(identity: CrmMcpIdentity) {
   add("buscar_crm", "crm:read", "Busca global autorizada de contas, contatos, leads e oportunidades; dados de contato seguem as máscaras do CRM.", z.object({ q: text.min(2) }).strict(), (input) => getWorkspaceExperienceService().search(context, input));
   add("consultar_auditoria", "audit:read", "Trilha auditável e achados persistidos de saúde do processo, com máscaras canônicas. Não executa varredura. Pagine com auditPage e violationPage.", z.object({ auditSearch: text.max(100).optional(), auditActorType: z.enum(actorTypes).optional(), auditActorId: uuid.optional(), auditOrigin: z.enum(auditOrigins).optional(), auditAction: text.optional(), auditEntityType: text.optional(), auditFrom: timestamp.optional(), auditTo: timestamp.optional(), auditPage: paging.page, violationPage: paging.page, violationType: z.enum(processViolationTypes).optional(), violationSeverity: z.enum(processViolationSeverities).optional(), violationStatus: z.enum(processViolationStatuses).optional() }).strict(), async (input) => { assertCrmMcpPeriod({ from: input.auditFrom, to: input.auditTo }); return readCrmMcpAudit(context, input); });
   add("consultar_integracoes", "integrations:read", "Conexões, capacidades e situação das integrações; credenciais nunca são retornadas.", z.object({}).strict(), () => getIntegrationPlatformService().list(context));
+  add("consultar_meta_ads", "integrations:read", "Contas Meta Ads conectadas, seleção da coleta, última sincronização e erros seguros. Não retorna credenciais nem executa sincronização.", z.object({}).strict(), () => getMetaAdsService().screen(context));
+  add("consultar_aquisicao", "metrics:read", "Métricas da tela Marketing > Aquisição: investimento em centavos, impressões, cliques, CPC, leads da mídia e funil observado no CRM. Datas locais inclusivas, até 93 dias. Ausência de dado não representa zero.", z.object({ periodStart: date, periodEnd: date }).strict(), async (input) => {
+    assertCrmMcpPeriod({ fromDate: input.periodStart, toDate: input.periodEnd });
+    return getMediaPerformanceService().getScreen(context, input);
+  });
+  async function advertising(input: { page?: number | undefined; metricsPreset?: typeof prospectingMetricsPeriodPresets[number] | undefined; metricsFrom?: string | undefined; metricsTo?: string | undefined }) {
+    assertCrmMcpPeriod({ preset: input.metricsPreset, fromDate: input.metricsFrom, toDate: input.metricsTo });
+    const pipeline = await getDatabaseClient().pipeline.findFirst({ where: { workspaceId: context.workspaceId, entityType: "LEAD", name: ADVERTISING_PIPELINE_NAME, deletedAt: null }, select: { id: true } });
+    if (!pipeline) throw new ApplicationError("O pipeline de Anúncios ainda não está configurado neste workspace.", { code: "CRM_MCP_ADVERTISING_NOT_CONFIGURED", statusCode: 404, expose: true });
+    return getAdvertisingWorkspaceService().getScreen(context, { ...input, pipelineId: pipeline.id });
+  }
+  add("consultar_leads_anuncios", "crm:read", "Leads e etapas de Trabalho > Anúncios, com respostas dos formulários e visibilidade do membro delegado. Páginas de 25 registros; total refere-se ao estoque atual.", z.object({ page: paging.page }).strict(), async (input) => {
+    const screen = await advertising(input);
+    return { pipeline: screen.pipeline, stock: screen.stock };
+  });
+  add("consultar_metricas_anuncios", "metrics:read", "Indicadores comerciais de Trabalho > Anúncios: leads recebidos, contatos, reuniões, propostas, vendas e receita por vendedor no período. Não representa métricas reportadas pela Meta.", z.object({ metricsPreset: z.enum(prospectingMetricsPeriodPresets).default("LAST_30_DAYS"), metricsFrom: date.optional(), metricsTo: date.optional() }).strict(), async (input) => {
+    const screen = await advertising(input);
+    return { pipeline: screen.pipeline, metrics: screen.metrics, timeZone: screen.timeZone };
+  });
   add("consultar_logs_operacionais", "operations:read", "Telemetria persistida pelo CRM, paginada e sanitizada; não inclui stdout/stderr da hospedagem.", z.object({ ...rangeShape, operation: text.optional(), ...paging }).strict(), async (input) => {
     assertCrmMcpPeriod(input);
     await getAuthorizationService().assertAuthorized(context, PermissionKeys.OPERATIONS_READ, { workspaceId: context.workspaceId, resourceType: "Operations" });

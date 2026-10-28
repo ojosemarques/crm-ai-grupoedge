@@ -1,11 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { MetaAdsReadAdapter } from "@/modules/integrations/application/meta-ads-read-adapter";
+import { z } from "zod";
 
 const config = { graphApiVersion: "v26.0" as const, selectedAccountIds: ["act_123456"], initialSince: "2026-09-01", lookbackDays: 7, pageSize: 100, requestTimeoutMs: 2_000 };
 const credentials = { accessToken: "test-only-token", appSecret: "test-only-secret" };
 const ok = (value: unknown, headers?: HeadersInit) => new Response(JSON.stringify(value), { status: 200, ...(headers ? { headers } : {}) });
 
 describe("CRM-40 adaptador Meta Ads somente leitura", () => {
+  it("reports only known contract fields without returning rejected values", () => {
+    const parsed = z.object({ name: z.number(), access_token: z.number() }).safeParse({ name: "private-name", access_token: "private-token" });
+    if (parsed.success) throw new Error("Expected invalid fixture");
+    const failure = new MetaAdsReadAdapter().classifyError(parsed.error);
+    expect(failure.safeMessage).toContain("Campos: name.");
+    expect(JSON.stringify(failure)).not.toMatch(/private-name|private-token|access_token/);
+  });
   it("usa origem fixa, GET, bearer server-side e paginação por cursor", async () => {
     const calls: Array<{ url: URL; init?: RequestInit }> = [];
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {

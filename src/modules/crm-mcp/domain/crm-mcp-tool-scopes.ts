@@ -6,5 +6,7 @@ export const crmMcpToolScopes: Readonly<Record<string, string>> = Object.freeze(
   consultar_indicadores_integrados: "metrics:read", detalhar_indicador_integrado: "metrics:read",
   consultar_receita: "metrics:read", detalhar_receita: "metrics:read",
   consultar_auditoria: "audit:read", consultar_integracoes: "integrations:read",
+  consultar_meta_ads: "integrations:read", consultar_aquisicao: "metrics:read",
+  consultar_leads_anuncios: "crm:read", consultar_metricas_anuncios: "metrics:read",
   consultar_logs_operacionais: "operations:read", consultar_alertas_incidentes: "operations:read",
 });
