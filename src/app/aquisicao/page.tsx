@@ -16,6 +16,7 @@ export default async function AcquisitionPage({ searchParams }: Readonly<{ searc
   const context = await requirePageAuthentication();
   const raw = await searchParams;
   const query = Object.fromEntries(Object.entries(raw).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  delete query.periodPreset;
   const workspace = await getDatabaseClient().workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
   for (const [name, boundary] of [["periodStart", "start"], ["periodEnd", "end"]] as const) {
     const value = query[name];
