@@ -83,6 +83,38 @@ test("consulta a cada cinco segundos e retoma imediatamente no foco, visibilidad
   expect(requests).toBe(before + 4);
 });
 
+test("recupera a atualização quando uma requisição fica sem resposta", async ({ page }) => {
+  const now = new Date("2026-10-22T18:00:00Z");
+  await page.clock.install({ time: now });
+  let requests = 0;
+  let stalled = false;
+  let quantity = 1;
+  const pending: (() => Promise<void>)[] = [];
+  await page.route("**/api/public/tempo-real?*", async route => {
+    requests += 1;
+    if (stalled) { pending.push(() => route.abort().catch(() => {})); return; }
+    const result = aggregateRealtimeDashboard([{ id: "call", eventType: "CALL_ATTEMPTED", occurredAt: "2026-10-22T17:00:00Z", sourceEntityType: "Task", leadId: null, creditedMemberId: "seller", performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, quantity, valueCents: null }], [{ id: "seller", name: "Carlos" }], resolveRealtimeDashboardPeriods(now, "America/Sao_Paulo"));
+    await route.fulfill({ json: { result: { ...result, workspaceName: "Empresa", timeZone: "America/Sao_Paulo", generatedAt: now.toISOString(), freshnessAt: now.toISOString(), quality: { state: "LIVE", reason: "Fixture" }, week: { ...result.week, salesGoal: weeklySalesGoal(0, null, null) } } } });
+  });
+  try {
+    await page.goto(`/tempo-real-publico#${"v".repeat(43)}`);
+    const calls = page.getByRole("article", { name: "Ligações feitas hoje", exact: true }).locator(":scope > strong");
+    await expect(calls).toHaveText("1");
+    stalled = true;
+    await page.clock.runFor(5_100);
+    await expect.poll(() => requests).toBe(4);
+    await page.clock.runFor(30_100);
+    await expect(page.getByText("Reconectando", { exact: true })).toBeVisible({ timeout: 1_000 });
+    await expect(calls).toHaveText("1");
+    stalled = false;
+    quantity = 2;
+    await page.clock.runFor(6_500);
+    await expect(calls).toHaveText("2", { timeout: 1_000 });
+    await expect(page.getByText("Conexão interrompida.", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("Ao vivo", { exact: true })).toBeVisible();
+  } finally { await Promise.all(pending.map(abort => abort())); }
+});
+
 test("Tempo Real acompanha outro cliente alterando tarefas, card e reunião sem recarregar a página", async ({ page, playwright, baseURL }) => {
   test.setTimeout(120_000);
   const databaseUrl = new URL(process.env.DATABASE_URL!);

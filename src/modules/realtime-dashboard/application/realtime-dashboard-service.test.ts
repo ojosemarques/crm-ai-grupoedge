@@ -47,7 +47,6 @@ describe("serviço do dashboard tempo real", () => {
     expect(advertising.week.ranking[0]).toMatchObject({ sales: 2, tasksCompleted: 7, calls: 2 });
     expect(database.commercialMetricFact.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId: "workspace", AND: expect.arrayContaining([
       { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } },
-      { corrections: { none: { eventKey: { endsWith: ":front-classification:replacement:v1" } } } },
     ]) }) }));
   });
   it("aceita somente bearer estrito e produz fingerprint sem preservar o segredo", () => {

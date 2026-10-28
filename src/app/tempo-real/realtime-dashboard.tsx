@@ -14,6 +14,7 @@ import {
   REALTIME_DASHBOARD_SLIDE_COUNT,
   REALTIME_DASHBOARD_SLIDE_DURATION_MS,
   REALTIME_DASHBOARD_STALE_AFTER_MS,
+  REALTIME_DASHBOARD_REQUEST_TIMEOUT_MS,
   REALTIME_TV_PAGE_RELOAD_INTERVAL_MS,
 } from "@/modules/realtime-dashboard/domain/realtime-dashboard-polling";
 import { Avatar, BrandMark, Icon } from "./realtime-dashboard-icons";
@@ -98,6 +99,11 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
     }
     const controller = new AbortController();
     inFlight.current = controller;
+    let timedOut = false;
+    const requestTimeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, REALTIME_DASHBOARD_REQUEST_TIMEOUT_MS);
     try {
       const endpoint = tvMode ? "/api/public/tempo" : publicMode ? "/api/public/tempo-real" : "/api/tempo-real";
       const fetchFront = async (selectedFront: RealtimeDashboardFront) => {
@@ -118,7 +124,7 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
         return payload.result;
       };
       const [prospecting, advertising] = await Promise.all([fetchFront("PROSPECTING"), fetchFront("ADVERTISING")]);
-      if (controller.signal.aborted) return false;
+      if (controller.signal.aborted) throw new Error("REQUEST_ABORTED");
       if (publicMode) setSnapshots({ PROSPECTING: prospecting as RealtimeDashboardSnapshot, ADVERTISING: advertising as RealtimeDashboardSnapshot });
       else {
         const screen = prospecting as RealtimeDashboardScreen;
@@ -133,12 +139,13 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
       setLoadState("LIVE");
       return true;
     } catch {
-      if (controller.signal.aborted) return false;
+      if (controller.signal.aborted && !timedOut) return false;
       controller.abort();
       failureCount.current += 1;
       setLoadState(lastSuccessAt.current ? "STALE" : "ERROR");
       return false;
     } finally {
+      window.clearTimeout(requestTimeout);
       if (inFlight.current === controller) inFlight.current = null;
     }
   }, [publicMode, publicToken, tvMode]);

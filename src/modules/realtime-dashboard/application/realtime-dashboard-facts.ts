@@ -8,7 +8,7 @@ import { advertisingMessageActivities } from "./realtime-advertising-activities"
 export type RealtimeFactScope = Readonly<{ where: Prisma.CommercialMetricFactWhereInput; leadWhere: Prisma.LeadWhereInput; memberIds: readonly string[] | null }>;
 
 export async function readRealtimeDashboardFacts(database: PrismaClient, workspaceId: string, from: Date, to: Date, front: RealtimeDashboardFront, scope?: RealtimeFactScope) {
-  const [allFactRows, pipelines] = await Promise.all([
+  const [candidateRows, pipelines] = await Promise.all([
     database.commercialMetricFact.findMany({
         where: {
           workspaceId,
@@ -17,7 +17,6 @@ export async function readRealtimeDashboardFacts(database: PrismaClient, workspa
           AND: [
             ...(scope ? [scope.where] : []),
             { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } },
-            { corrections: { none: { eventKey: { endsWith: ":front-classification:replacement:v1" } } } },
           ],
         },
         orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
@@ -46,6 +45,14 @@ export async function readRealtimeDashboardFacts(database: PrismaClient, workspa
       }),
     database.pipeline.findMany({ where: { workspaceId, entityType: "LEAD", deletedAt: null }, select: { id: true, name: true } }),
   ]);
+  // Resolve replacements in one batch. A correlated anti-join scans historical
+  // corrections for every refresh and stalls the production polling queries.
+  const replacements = candidateRows.length ? await database.commercialMetricFact.findMany({
+    where: { workspaceId, correctionOfFactId: { in: candidateRows.map(fact => fact.id) }, eventKey: { endsWith: ":front-classification:replacement:v1" } },
+    select: { correctionOfFactId: true },
+  }) : [];
+  const replacedIds = new Set(replacements.map(fact => fact.correctionOfFactId));
+  const allFactRows = candidateRows.filter(fact => !replacedIds.has(fact.id));
   const selectedPipelineIds = new Set(commercialFrontPipelineIds(front, pipelines));
   const knownPipelineIds = new Set(commercialFrontPipelineIds("ALL", pipelines));
   const manualMessages = front === "ADVERTISING" ? await advertisingMessageActivities(database, workspaceId, from, to, selectedPipelineIds,
