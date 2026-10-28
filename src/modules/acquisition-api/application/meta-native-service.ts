@@ -106,6 +106,7 @@ export function createMetaNativeService(options: Options) {
     const floor = new Date(Math.max(start.getTime(), new Date(native.importFrom).getTime()));
     let processed = 0;
     let replayed = 0;
+    let ignored = 0;
     if (importToday && floor < end) for (const form of forms) {
       const leads = await graphList(`${form.id}/leads`, token, { fields: "id,created_time,form_id", filtering: JSON.stringify([{ field: "time_created", operator: "GREATER_THAN", value: Math.floor(floor.getTime() / 1000) - 1 }, { field: "time_created", operator: "LESS_THAN", value: Math.floor(end.getTime() / 1000) }]) }, signingSecret);
       for (const lead of leads) {
@@ -115,11 +116,13 @@ export function createMetaNativeService(options: Options) {
         const id = metaIdSchema.parse(String(lead.id));
         const rawBody = canonicalJson({ object: "page", entry: [{ id: native.pageId, changes: [{ field: "leadgen", value: { page_id: native.pageId, form_id: form.id, leadgen_id: id, created_time: Math.floor(at.getTime() / 1000) } }] }] });
         const result = await options.webhooks.receive({ workspaceSlug: context.workspaceSlug, connectionKey: connection.key, rawBody, headers: { signature: `sha256=${createHmac("sha256", signingSecret).update(rawBody).digest("hex")}` } });
-        if (result.status === "PROCESSED" || result.status === "IGNORED") { if (result.idempotentReplay) replayed++; else processed++; }
+        if (result.idempotentReplay) replayed++;
+        else if (result.status === "PROCESSED") processed++;
+        else if (result.status === "IGNORED") ignored++;
       }
     }
-    await options.database.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "acquisition.meta_native.synchronized", entityType: "IntegrationConnection", entityId: connection.id, changes: { forms: forms.length, processed, replayed, importToday, start: floor.toISOString(), end: end.toISOString() } } });
-    return { forms: forms.length, processed, replayed, start: floor.toISOString(), end: end.toISOString() };
+    await options.database.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "acquisition.meta_native.synchronized", entityType: "IntegrationConnection", entityId: connection.id, changes: { forms: forms.length, processed, replayed, ignored, importToday, start: floor.toISOString(), end: end.toISOString() } } });
+    return { forms: forms.length, processed, replayed, ignored, start: floor.toISOString(), end: end.toISOString() };
   }
   return Object.freeze({ list, sync });
 }

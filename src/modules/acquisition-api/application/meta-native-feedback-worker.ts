@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { metaNativeConfigurationSchema } from "../domain/meta-native-contracts";
-import { privacyEvidence } from "@/modules/conversion-feedback/application/conversion-feedback-service";
+import { nativeFeedbackPrivacyEvidence } from "./meta-native-privacy";
 import { createOutboxEventInTransaction } from "@/modules/integrations/application/integration-platform-service";
 import { environmentSecretResolver, type SecretResolver } from "@/modules/integrations/application/secret-resolver";
 import { sha256 } from "@/modules/integrations/domain/integration-policy";
@@ -80,7 +80,7 @@ export function createMetaNativeFeedbackWorker(options: Options) {
     if (!fact || !lead?.contactId || !mapping) return finish(false, "META_NATIVE_IDENTITY_UNAVAILABLE");
     if ((fact.eventType === "MEETING_SCHEDULED" ? "Schedule" : "Purchase") !== payload.eventName || payload.factId !== fact.id) return finish(false, "META_NATIVE_EVENT_MISMATCH");
     if (options.now().getTime() - fact.occurredAt.getTime() > 7 * 86_400_000 || fact.occurredAt > options.now()) return finish(false, "META_NATIVE_EVENT_EXPIRED");
-    const allowed = await options.database.$transaction((tx) => privacyEvidence(tx, { workspaceId: item.workspaceId, actorId: item.createdByActorId, contactId: lead.contactId!, now: options.now() }));
+    const allowed = await options.database.$transaction((tx) => nativeFeedbackPrivacyEvidence(tx, { workspaceId: item.workspaceId, actorId: item.createdByActorId, contactId: lead.contactId!, now: options.now() }));
     if (!allowed.allowed) return finish(false, "META_NATIVE_PRIVACY_BLOCKED");
     const reference = connection.secrets.find((ref) => ref.alias === "conversion-token");
     const token = reference ? await options.secrets.resolve(reference.referenceKey) : null;

@@ -11,7 +11,7 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 import { META_ADS_DEFAULT_API_VERSION } from "@/modules/integrations/domain/meta-ads-contracts";
 import { metaNativeConfigurationSchema } from "@/modules/acquisition-api/domain/meta-native-contracts";
 import { assertMetaNativeTarget } from "./meta-native-target";
-import { metaNativeAnswers } from "../domain/meta-native-answers";
+import { isMetaNativeTestLead, metaNativeAnswers } from "../domain/meta-native-answers";
 
 type Options = Readonly<{ database: PrismaClient; secrets: SecretResolver; now: () => Date; intake: ReturnType<typeof getLeadIntakeService>; fetcher: typeof fetch }>;
 type Headers = Readonly<{ signature?: string; timestamp?: string }>;
@@ -109,6 +109,10 @@ export function createAcquisitionWebhookService(options: Options) {
       const fields = providerFields.fields as Record<string, unknown>;
       const questions = Array.isArray(nativeForm.questions) ? nativeForm.questions as { type?: string; key?: string }[] : [];
       const phoneKey = questions.find((question) => question.type === "PHONE")?.key;
+      if (isMetaNativeTestLead(fields, phoneKey)) {
+        await options.database.webhookInbox.update({ where: { id: inbox.row.id }, data: { status: "IGNORED", attempts: { increment: 1 }, processedAt: options.now(), errorClass: null, errorCode: "META_NATIVE_TEST_LEAD", errorMessage: "Entrada sintética da ferramenta de testes Meta; excluída dos leads e métricas." } });
+        return { inboxId: inbox.row.id, status: "IGNORED" as const, idempotentReplay: inbox.replay, reason: "META_NATIVE_TEST_LEAD" as const };
+      }
       if (!mapped.phone && phoneKey) mapped.phone = fields[phoneKey];
       for (const [canonical, key] of Object.entries(native.fieldMapping)) if (key && fields[key] !== undefined) mapped[canonical] = fields[key];
     }

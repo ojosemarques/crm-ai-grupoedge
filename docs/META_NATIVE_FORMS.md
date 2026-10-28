@@ -52,13 +52,29 @@ Sincroniza o catálogo e importa exclusivamente o dia atual em São Paulo, respe
 
 Novos leads chegam pelo webhook, sem depender da importação manual ou de polling. A entrega e a latência dependem da Meta; em indisponibilidade, sua política de reentrega e a fila auditável permitem identificar pendências. A importação inicial e a entrega posterior do mesmo lead compartilham a identidade sem gerar outra entrada. Novos formulários da Página são reconhecidos quando o primeiro lead é recebido. Não são importados leads anteriores ao início configurado.
 
-O inbox guarda somente IDs e data. Identidade fica nas entidades canônicas; respostas de qualificação ficam na submissão, com limites de tamanho e sem campos de autenticação. A conexão não presume consentimento porque um lead preencheu um formulário.
+O inbox guarda somente IDs e data. Identidade fica nas entidades canônicas; respostas de qualificação ficam na submissão, com limites de tamanho e sem campos de autenticação. A conexão não presume consentimento porque um lead preencheu um formulário. Entradas da ferramenta de testes da Meta com o marcador explícito de telefone fictício são registradas como `IGNORED/META_NATIVE_TEST_LEAD`, sem criar lead, contato ou sinal comercial. A sincronização distingue processados, replays e ignorados.
 
 ## Retorno de reuniões e vendas
 
-O worker `meta-native-feedback` usa os fatos canônicos `MEETING_SCHEDULED` (evento `Schedule`) e `SALE_WON` (`Purchase`), com ID de evento estável e `user_data.lead_id` da Meta. Backfills, marcações sem reunião e correções/reversões não produzem sinais. A entrega exige recibo `events_received`, tem tentativas limitadas e revalida conexão, identidade, finalidade, base legal e consentimento antes de cada envio.
+O worker `meta-native-feedback` usa os fatos canônicos `MEETING_SCHEDULED` (evento `Schedule`) e `SALE_WON` (`Purchase`), com ID de evento estável e `user_data.lead_id` da Meta. Backfills, marcações sem reunião e correções/reversões não produzem sinais. A entrega exige recibo `events_received`, tem tentativas limitadas e revalida conexão, identidade e a política abaixo antes de cada envio.
 
-Para habilitar, configurar `metaNative.datasetId` no dataset correto e adicionar à conexão uma referência `conversion-token` própria para esse dataset. Não reutilizar automaticamente o token de relatórios ou o token de uma outra BM. A finalidade `marketing-conversion-feedback`, sua versão/base legal ativas e o consentimento `OTHER/GRANTED` do contato são requisitos do controle existente. Ausência ou revogação bloqueia o envio, com evidência de privacidade; não fabricar consentimentos.
+Para habilitar, configurar `metaNative.datasetId` no dataset correto e adicionar à conexão uma referência `conversion-token` própria para esse dataset. Não reutilizar automaticamente o token de relatórios ou o token de uma outra BM.
+
+### Política do retorno comercial nativo — v1
+
+Por decisão do responsável pelo CRM em 28/10/2026, esse fluxo usa finalidade própria `meta-native-commercial-feedback`, com base `LEGITIMATE_INTEREST`, sem solicitar um novo aceite individual nem escrever estados `GRANTED`. A instrução administrativa é a origem da configuração da finalidade; não é prova de consentimento do titular. O fluxo legado `marketing-conversion-feedback` mantém sua regra anterior de consentimento.
+
+O cadastro exige finalidade e base ativas, aprovadas por ator identificado, referência de aprovação, canal `OTHER` e vigência válidos. A configuração pode ser revogada tornando a finalidade/base inativa, vencida ou revogando a conexão. Cada decisão é auditada, inclusive quando o consentimento está `UNKNOWN`.
+
+Delimitação e balanceamento desta versão:
+
+- **Finalidade:** medir reuniões efetivamente agendadas e vendas do software solicitado por leads que enviaram o formulário nativo, na mesma Página/BM/dataset. Não abrange prospecção externa, mensagens, listas de público ou publicidade política.
+- **Necessidade:** a Meta já emitiu o `lead_id`; o retorno precisa apenas dele, ID/data do evento e resultado comercial genérico. `Purchase` inclui moeda/valor quando disponível. Nome, telefone, e-mail, cargo, partido, opinião política, respostas de qualificação e nomes de etapas não são exportados.
+- **Expectativa e risco:** enviar um formulário comercial estabelece uma relação com a empresa, mas visualizar o criativo não comprova consentimento nem comprova que um aviso foi apresentado. O responsável deve manter o aviso de privacidade do formulário coerente com a mensuração. Esta configuração técnica não certifica a adequação jurídica de anúncios/avisos externos.
+- **Salvaguardas:** somente contatos ativos e leads nativos vinculados; eventos com até sete dias; idempotência; credencial restrita ao alvo; auditoria sem payload pessoal. Recusas, revogações, oposição ou revisão pendente no canal `OTHER` desta finalidade ou da finalidade legada bloqueiam a entrega. Também bloqueiam `DO_NOT_CONTACT` no lead e `doNotContact` em ponto de contato.
+- **Limite material:** esta avaliação se restringe ao resultado de uma relação comercial do software. Não autoriza exportar ou inferir dados sensíveis, construir audiência política ou reutilizar respostas do formulário para outras finalidades. Se o uso mudar, a política precisa ser revista antes do envio.
+
+Referência para a avaliação e seus limites: [Guia de legítimo interesse da ANPD](https://www.gov.br/anpd/pt-br/centrais-de-conteudo/materiais-educativos-e-publicacoes/guia_legitimo_interesse.pdf). O registro da política não substitui um aviso publicado aos titulares, nem declara que eles o aceitaram.
 
 **Limite:** o recebimento de eventos na Conversions API é um recurso distinto da alteração visual de etapas na Central de Leads. Não foi confirmado um endpoint público de atualização dessas colunas; o SDK oficial de `Lead` oferece leitura e exclusão, sem operação para definir `Qualificado`/`Convertido`. Não usar chamadas internas da interface como contrato de integração nem anunciar essa movimentação como validada.
 

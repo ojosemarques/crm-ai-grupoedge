@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { metaNativeAnswers, metaNativeResponseSchema } from "./meta-native-answers";
+import { isMetaNativeTestLead, metaNativeAnswers, metaNativeResponseSchema } from "./meta-native-answers";
 
 describe("respostas nativas", () => {
+  it("identifica somente o marcador explícito de telefone sintético da Meta", () => {
+    expect(isMetaNativeTestLead({ phone_number: "<test lead: dummy data for phone_number>" })).toBe(true);
+    expect(isMetaNativeTestLead({ celular: "<test lead: dummy data for celular>" }, "celular")).toBe(true);
+    expect(isMetaNativeTestLead({ phone: "+5511999999999" })).toBe(false);
+    expect(isMetaNativeTestLead({ phone: "incompleto" })).toBe(false);
+    expect(isMetaNativeTestLead({ phone: "", comentario: "<test lead: dummy data for comentario>" })).toBe(false);
+  });
   it("preserva perguntas de qualificação e evita duplicar identidade ou copiar segredos", () => {
     const form = { name: "Mandato", questions: [{ key: "full_name", type: "FULL_NAME", label: "Nome" }, { key: "phone", type: "PHONE", label: "Telefone" }, { key: "qual_é_o_desafio/atual?", type: "CUSTOM", label: "Qual é o desafio?" }, { key: "access_token", type: "CUSTOM", label: "Token" }] };
     const result = metaNativeAnswers(form, { full_name: "Nome privado", phone: "+5511999999999", "qual_é_o_desafio/atual?": "Organizar gabinete", access_token: "secret-fixture" }, "Forms Nativo");

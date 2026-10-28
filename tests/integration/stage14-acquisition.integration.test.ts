@@ -329,25 +329,28 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
     const configured = await createAcquisitionConnectionService(database, nativeSecrets).configure(admin, { key, displayName: "Forms Nativo fixture", provider: "META_LEAD_ADS", sourceKey: key, secretReferenceKey: "META_ADS_STAGE14_WEBHOOK_SECRET", verificationTokenReferenceKey: "META_ADS_STAGE14_VERIFY_TOKEN", enrichmentTokenReferenceKey: "META_ADS_STAGE14_ENRICHMENT_TOKEN", mapping: { fullName: "fields.full_name", phone: "fields.phone_number" }, metaNative: native });
     await connections.command(admin, { action: "ACTIVATE", connectionId: configured.id, revision: 1 });
     const leadId = "1234567890123456";
+    const testLeadId = "1234567890123466";
     const capturedAt = "2048-06-01T14:00:00.000Z";
     let wrongForm = false;
     const providerCalls: string[] = [];
     const fetcher: typeof fetch = async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: "Bearer stage14-meta-enrichment-token" });
       const url = new URL(String(input)); providerCalls.push(url.pathname);
+      if (url.pathname.endsWith(`/` + testLeadId)) return Response.json({ id: testLeadId, form_id: formId, created_time: capturedAt, field_data: [{ name: "full_name", values: ["Test Lead"] }, { name: "phone", values: ["<test lead: dummy data for phone>"] }] });
       if (url.pathname.endsWith(`/` + leadId) || url.pathname.endsWith("/1234567890123499")) return Response.json({ id: url.pathname.split("/").at(-1), form_id: wrongForm ? "999999999" : formId, created_time: capturedAt, field_data: [{ name: "full_name", values: ["Lead nativo integrado"] }, { name: "phone", values: ["+5511999981919"] }, { name: "qual_é_o_desafio/atual?", values: ["Organizar o gabinete"] }] });
       if (url.pathname.endsWith(`/` + formId)) return Response.json({ id: formId, page_id: pageId, name: "Mandato nativo", questions: [{ key: "phone", type: "PHONE" }, { key: "qual_é_o_desafio/atual?", type: "CUSTOM", label: "Qual é o desafio?" }] });
       if (url.pathname.endsWith("/leadgen_forms")) return Response.json({ data: [{ id: formId, name: "Formulário nativo fixture", status: "ACTIVE", page_id: pageId }] });
       if (url.pathname.endsWith("/leads")) {
         expect(JSON.parse(url.searchParams.get("filtering")!)[0]).toMatchObject({ field: "time_created", operator: "GREATER_THAN" });
-        return Response.json({ data: [{ id: leadId, form_id: formId, created_time: capturedAt }, { id: "1234567890123457", form_id: formId, created_time: "2048-05-31T23:00:00Z" }] });
+        return Response.json({ data: [{ id: testLeadId, form_id: formId, created_time: capturedAt }, { id: leadId, form_id: formId, created_time: capturedAt }, { id: "1234567890123457", form_id: formId, created_time: "2048-05-31T23:00:00Z" }] });
       }
       return Response.json({ id: pageId });
     };
     const nativeWebhooks = createAcquisitionWebhookService({ database, secrets: nativeSecrets, intake, now: () => now, fetcher });
     const nativeService = createMetaNativeService({ database, secrets: nativeSecrets, now: () => now, fetcher, webhooks: nativeWebhooks });
     const result = await nativeService.sync(admin, configured.id, true);
-    expect(result).toMatchObject({ forms: 1, processed: 1, replayed: 0 });
+    expect(result).toMatchObject({ forms: 1, processed: 1, replayed: 0, ignored: 1 });
+    expect(await database.webhookInbox.findFirst({ where: { connectionId: configured.id, providerEventId: testLeadId } })).toMatchObject({ status: "IGNORED", errorCode: "META_NATIVE_TEST_LEAD" });
     const body = (id = leadId, page = pageId, at = capturedAt) => JSON.stringify({ object: "page", entry: [{ id: page, time: 123, changes: [{ field: "leadgen", value: { page_id: page, form_id: formId, leadgen_id: id, ad_id: "987654321", created_time: new Date(at).getTime() / 1000 } }] }] });
     const receive = (rawBody: string, signature = metaSignature(rawBody)) => nativeWebhooks.receive({ workspaceSlug: admin.workspaceSlug, connectionKey: key, rawBody, headers: { signature } });
     expect(await receive(body())).toMatchObject({ status: "PROCESSED", idempotentReplay: true });
@@ -364,7 +367,7 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
     expect(await database.leadSource.findUniqueOrThrow({ where: { id: submission.sourceId! } })).toMatchObject({ key, type: "PAID_MEDIA" });
     expect(JSON.stringify(await database.webhookInbox.findMany({ where: { connectionId: configured.id } }))).not.toContain("+5511999981919");
     expect((await nativeService.list(admin)).find((row) => row.id === configured.id)?.forms[0]).toMatchObject({ id: formId, total: 1, today: 1 });
-    expect(await nativeService.sync(admin, configured.id, true)).toMatchObject({ processed: 0, replayed: 1 });
+    expect(await nativeService.sync(admin, configured.id, true)).toMatchObject({ processed: 0, replayed: 2 });
 
     const feedbackCalls: unknown[] = [];
     await database.integrationSecretReference.create({ data: { workspaceId: admin.workspaceId, connectionId: configured.id, alias: "conversion-token", referenceKey: "META_ADS_STAGE14_CONVERSION_TOKEN", present: true, createdByActorId: admin.actorId } });
@@ -375,17 +378,27 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
     expect(await feedback.processNext("native-blocked")).toMatchObject({ status: "DEAD_LETTER" });
     expect(feedbackCalls).toHaveLength(0);
     expect(await database.outboxEvent.count({ where: { connectionId: configured.id, eventType: "meta.native.lifecycle" } })).toBe(1);
-    const purpose = await database.processingPurpose.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, code: "marketing-conversion-feedback" } });
-    await database.consentState.create({ data: { workspaceId: admin.workspaceId, contactId: submission.contactId!, purposeId: purpose.id, channel: "OTHER", state: "GRANTED", effectiveFrom: new Date("2048-06-01T14:40:00Z"), policyVersion: "stage14-v1", reasonCode: "NATIVE_TEST_EXPLICIT_CONSENT" } });
+    const nativeBasis = await database.legalBasis.create({ data: { workspaceId: admin.workspaceId, code: `native-feedback-${randomUUID()}`, basisType: "LEGITIMATE_INTEREST", name: "Retorno comercial nativo", description: "Fixture de finalidade comercial mínima", status: "ACTIVE", validFrom: new Date("2048-01-01T00:00:00Z"), approvalReference: "integration-native-policy-v1", approvedByActorId: admin.actorId, approvedAt: now, createdByActorId: admin.actorId } });
+    const nativePurpose = await database.processingPurpose.create({ data: { workspaceId: admin.workspaceId, code: "meta-native-commercial-feedback", name: "Retorno nativo mínimo", description: "Fixture", createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
+    await database.purposeVersion.create({ data: { workspaceId: admin.workspaceId, purposeId: nativePurpose.id, legalBasisId: nativeBasis.id, version: 1, description: "Fixture", audience: "Leads nativos", allowedChannels: ["OTHER"], noticeText: "Medição comercial", noticeVersion: "native-v1", status: "ACTIVE", validFrom: new Date("2048-01-01T00:00:00Z"), approvedByActorId: admin.actorId, approvedAt: now, createdByActorId: admin.actorId } });
     await makeFact("SALE_WON");
     expect(await feedback.processNext("native-delivery")).toMatchObject({ status: "DELIVERED_EXTERNAL" });
     expect(feedbackCalls).toEqual([{ data: [expect.objectContaining({ event_name: "Purchase", user_data: { lead_id: leadId }, custom_data: { event_source: "crm", lead_event_source: "PolitizAI CRM", currency: "BRL", value: 199 } })] }]);
+    expect(await database.consentState.count({ where: { workspaceId: admin.workspaceId, contactId: submission.contactId!, state: "GRANTED" } })).toBe(0);
+    expect(await database.privacyDecision.findFirst({ where: { workspaceId: admin.workspaceId, contactId: submission.contactId!, intendedAction: "META_NATIVE_CONVERSION_SIGNAL", outcome: "ALLOW" } })).toMatchObject({ consentState: "UNKNOWN" });
     expect(await feedback.processNext("native-replay")).toMatchObject({ status: "IDLE" });
+    await makeFact("MEETING_SCHEDULED");
+    expect(await feedback.processNext("native-meeting")).toMatchObject({ status: "DELIVERED_EXTERNAL" });
+    expect(feedbackCalls[1]).toMatchObject({ data: [{ event_name: "Schedule", user_data: { lead_id: leadId } }] });
+    await database.consentState.create({ data: { workspaceId: admin.workspaceId, contactId: submission.contactId!, purposeId: nativePurpose.id, channel: "OTHER", state: "OPTED_OUT", effectiveFrom: now, policyVersion: "native-v1", reasonCode: "TEST_EXPLICIT_OPPOSITION" } });
+    await makeFact("SALE_WON");
+    expect(await feedback.processNext("native-opposition")).toMatchObject({ status: "DEAD_LETTER" });
+    expect(feedbackCalls).toHaveLength(2);
     await makeFact("MEETING_SCHEDULED");
     await feedback.scan();
     await connections.command(admin, { action: "REVOKE", connectionId: configured.id, revision: (await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).revision, reason: "Revogação integrada nativa" });
     expect(await feedback.processNext("native-revoked")).toMatchObject({ status: "DEAD_LETTER" });
-    expect(feedbackCalls).toHaveLength(1);
+    expect(feedbackCalls).toHaveLength(2);
     await expect(receive(body())).rejects.toMatchObject({ code: "ACQUISITION_WEBHOOK_NOT_FOUND" });
     expect(providerCalls.some((url) => url.endsWith(`/` + leadId))).toBe(true);
   });

@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+export function isMetaNativeTestLead(fields: Record<string, unknown>, phoneKey?: string) {
+  return ["phone_number", "phone", ...(phoneKey ? [phoneKey] : [])].some((key) => typeof fields[key] === "string" && /^<test lead: dummy data for [^<>]+>$/.test(fields[key]));
+}
+
 export const metaNativeResponseSchema = z.object({
   formName: z.string().min(1).max(200),
   answers: z.array(z.object({ questionKey: z.string().min(1).max(300), question: z.string().min(1).max(500), displayValue: z.string().max(2000) }).strict()).max(100),
