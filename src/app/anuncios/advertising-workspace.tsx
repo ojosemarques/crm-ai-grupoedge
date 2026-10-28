@@ -93,41 +93,54 @@ export function AdvertisingActivities({ screen }: Readonly<{ screen: Screen }>) 
   );
 }
 
+const commercialMetrics = [
+  ["effectiveContacts", "Contatos efetivos"], ["calls", "Ligações"], ["messages", "Mensagens enviadas"],
+  ["meetingsScheduled", "Reuniões marcadas"], ["meetingsCompleted", "Reuniões realizadas"], ["sales", "Vendas"],
+] as const;
+
 export function AdvertisingMetrics({ screen }: Readonly<{ screen: Screen }>) {
   const selected = screen.metrics.period;
   const metrics = screen.metrics.totals;
+  const live = screen.metrics.live;
+  const goal = live.week.goals.sales;
   const cards = [
-    ["Leads recebidos", metrics.leadsReceived],
-    ["Ligações realizadas", metrics.calls],
-    ["Ligações atendidas", metrics.callsConnected],
-    ["Ligações sem atendimento", metrics.callsUnanswered],
-    ["Falhas no número", metrics.callsFailed],
-    ["Mensagens WhatsApp", metrics.whatsappSent],
-    ["Sem WhatsApp", metrics.whatsappUnavailable],
-    ["Mensagens Instagram", metrics.instagramMessages],
-    ["Perfis seguidos", metrics.instagramFollows],
-    ["Reuniões agendadas", metrics.meetingsScheduled],
-    ["Reuniões realizadas", metrics.meetingsCompleted],
-    ["Propostas", metrics.proposals],
-    ["Vendas", metrics.sales],
-    ["Receita vendida", money(metrics.revenueCents)],
+    ["Leads Anúncios", metrics.leadsReceived], ["Contatos efetivos", metrics.effectiveContacts],
+    ["Ligações", metrics.calls], ["Mensagens enviadas", metrics.messages],
+    ["Reuniões agendadas", metrics.meetingsScheduled], ["Reuniões feitas", metrics.meetingsCompleted],
+    ["Vendas", metrics.sales], ["Receita vendida", money(metrics.revenueCents)],
+  ] as const;
+  const summary = [
+    ["Leads hoje", live.today.leadsReceived ?? 0, "Leads únicos recebidos de anúncios hoje"],
+    ["Reuniões agendadas", live.today.totals.meetingsScheduled, `${live.week.totals.meetingsScheduled} na semana`],
+    ["Reuniões feitas", live.today.totals.meetingsCompleted, `${live.week.totals.meetingsCompleted} na semana`],
+    ["Meta semanal de vendas", `${live.week.totals.sales} / ${goal.targetValue ?? "não definida"}`, goal.label],
   ] as const;
   return (
     <>
-      <div className={styles.sectionHeader}><div><h2>Indicadores de Anúncios</h2><p>Fatos comerciais restritos aos leads deste pipeline.</p></div><Link className={styles.link} href="/dashboard/anuncios">Abrir Visão Geral — Anúncios</Link></div>
+      <div className={styles.sectionHeader}><div><h2>Indicadores de Anúncios</h2><p>Entradas e atividades de anúncios, atualizadas automaticamente.</p></div><Link className={styles.link} href="/dashboard/anuncios">Abrir Visão Geral — Anúncios</Link></div>
+      <section className={styles.grid} aria-label="Resumo ao vivo de Anúncios">{summary.map(([label, value, detail]) => <article className={styles.card} key={label}><h2>{label}</h2><div className={styles.metric}>{value}</div><p>{detail}</p></article>)}</section>
       <section aria-label="Filtro de período das métricas" className={`${styles.card} ${styles.periodFilter}`}>
         <div><strong>Período das métricas</strong><p>{periodLabels[selected.preset] ?? "Período"} · {localDate(selected.fromDate)} a {localDate(selected.toDate)}</p></div>
         <nav aria-label="Atalhos de período" className={styles.periodNav}>{periodShortcuts.map(([preset, label]) => <Link aria-current={selected.preset === preset ? "page" : undefined} className={styles.periodLink} data-active={selected.preset === preset} href={`/anuncios?view=metrics&metricsPreset=${preset}`} key={preset}>{label}</Link>)}</nav>
         <form className={styles.customPeriodForm} method="get"><input name="view" type="hidden" value="metrics" /><input name="metricsPreset" type="hidden" value="CUSTOM" /><label>De<input defaultValue={selected.fromDate} max={screen.today} name="metricsFrom" required type="date" /></label><label>Até<input defaultValue={selected.toDate} max={screen.today} name="metricsTo" required type="date" /></label><button className={styles.button} type="submit">Personalizar</button></form>
       </section>
-      <div className={styles.grid}>{cards.map(([label, value]) => <article className={styles.card} key={label}><h2>{label}</h2><div className={styles.metric}>{value}</div><p>No período selecionado</p></article>)}</div>
-      <section className={styles.section}>
-        <div className={styles.sectionHeader}><div><h2>Produção por responsável</h2><p>Métricas atribuídas aos vendedores no período selecionado.</p></div></div>
+
+      <section className={styles.grid} aria-label="Métricas do período de Anúncios">{cards.map(([label, value]) => <article className={styles.card} key={label}><h2>{label}</h2><div className={styles.metric}>{value}</div><p>No período selecionado</p></article>)}</section>
+      <p>Contatos, ligações e mensagens consideram os leads recebidos no período selecionado. Mensagens somam os registros de envio; contatos contam cada lead uma única vez.</p>
+      {(["today", "week"] as const).map(period => <section className={styles.section} aria-label={period === "today" ? "Metas diárias de Anúncios" : "Metas semanais de Anúncios"} key={period}>
+        <div className={styles.sectionHeader}><div><h2>{period === "today" ? "Meta diária" : "Acumulado semanal"}</h2><p>{period === "today" ? "Leads recebidos hoje e resultados do dia." : "Leads recebidos na semana e resultados acumulados."}</p></div></div>
+        <div className={styles.grid}>{commercialMetrics.map(([key, label]) => {
+          const progress = live[period].goals[key];
+          return <article className={styles.card} key={key}><h3>{label}</h3><div className={styles.metric}>{live[period].totals[key]}</div><p>{progress.targetValue === null ? progress.label : `${progress.actualValue} / ${progress.targetValue} · ${progress.label}`}</p></article>;
+        })}</div>
+      </section>)}
+      <section className={styles.section} aria-label="Ranking e metas de Anúncios">
+        <div className={styles.sectionHeader}><div><h2>Ranking e metas por responsável</h2><p>Carlos: agendar 50% dos leads recebidos. Jhon e Ede: realizar 60% das reuniões atribuídas a cada um. Frações são arredondadas para cima.</p></div></div>
         <div className={styles.tableWrap}>
-          <table className={styles.table}><thead><tr><th>Responsável</th><th>Leads</th><th>Ligações</th><th>Atendidas</th><th>WhatsApp</th><th>Instagram</th><th>Seguidos</th><th>Reuniões</th><th>Realizadas</th><th>Propostas</th><th>Vendas</th></tr></thead><tbody>
-            {screen.metrics.bySeller.map((row) => <tr key={row.memberId}><td>{row.memberName}</td><td>{row.leadsReceived}</td><td>{row.calls}</td><td>{row.callsConnected}</td><td>{row.whatsappSent}</td><td>{row.instagramMessages}</td><td>{row.instagramFollows}</td><td>{row.meetingsScheduled}</td><td>{row.meetingsCompleted}</td><td>{row.proposals}</td><td>{row.sales}</td></tr>)}
+          <table className={styles.table}><thead><tr><th>Responsável</th>{commercialMetrics.map(([key, label]) => <th key={key}>{label}</th>)}</tr></thead><tbody>
+            {live.week.ranking.map(row => <tr key={row.position}><td>{row.name}<br /><small>{row.advertisingRole === "BOOKER" ? "Pré-vendas" : "Fechamento"}</small></td>{commercialMetrics.map(([key]) => <td key={key}>Hoje: {row.today[key]}{row.goals.today[key].targetValue !== null ? ` / ${row.goals.today[key].targetValue}` : ""}<br /><small>Semana: {row[key]}{row.goals.week[key].targetValue !== null ? ` / ${row.goals.week[key].targetValue}` : ""}</small></td>)}</tr>)}
           </tbody></table>
-          {screen.metrics.bySeller.length === 0 ? <p className={styles.empty}>Nenhuma métrica registrada no pipeline de Anúncios.</p> : null}
+          {live.week.ranking.length === 0 ? <p className={styles.empty}>Nenhum profissional comercial neste período.</p> : null}
         </div>
       </section>
     </>

@@ -145,12 +145,21 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
 
   useEffect(() => {
     let active = true;
+    let loadStartedHidden = false;
+    let wakeAfterLoad = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = async () => {
-      if (!active || inFlight.current) return;
+      if (!active) return;
+      if (inFlight.current) {
+        if (loadStartedHidden && !document.hidden) wakeAfterLoad = true;
+        return;
+      }
+      loadStartedHidden = document.hidden;
+      wakeAfterLoad = false;
       if (timer) clearTimeout(timer);
       const ok = await load();
       if (!active) return;
+      if (wakeAfterLoad) { void schedule(); return; }
       timer = setTimeout(schedule, nextRealtimePollDelay({
         succeeded: ok,
         failureCount: failureCount.current,

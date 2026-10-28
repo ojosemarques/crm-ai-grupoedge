@@ -7,7 +7,7 @@ const workedEvents = new Set([
   "MEETING_SCHEDULED", "MEETING_COMPLETED", "SALE_WON",
 ]);
 
-export function buildRealtimeSalesFunnel(facts: readonly IntegratedActivityFact[], totals: RealtimeDashboardTotals): RealtimeSalesFunnel {
+export function buildRealtimeSalesFunnel(facts: readonly IntegratedActivityFact[], totals: RealtimeDashboardTotals, leadsReceived?: number): RealtimeSalesFunnel {
   const balances = new Map<string, { leadId: string; quantity: number }>();
   for (const fact of facts) {
     if (!fact.leadId || !workedEvents.has(fact.eventType)) continue;
@@ -20,7 +20,7 @@ export function buildRealtimeSalesFunnel(facts: readonly IntegratedActivityFact[
   return Object.freeze({
     leadsWorked, meetingsScheduled: totals.meetingsScheduled, meetingsCompleted: totals.meetingsCompleted,
     sales: totals.sales, salesValueCents: totals.salesValueCents,
-    scheduledRateBasisPoints: rate(totals.meetingsScheduled, leadsWorked),
+    scheduledRateBasisPoints: rate(totals.meetingsScheduled, leadsReceived ?? leadsWorked),
     completedRateBasisPoints: rate(totals.meetingsCompleted, totals.meetingsScheduled),
     salesRateBasisPoints: rate(totals.sales, totals.meetingsCompleted),
   });

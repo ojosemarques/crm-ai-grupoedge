@@ -20,12 +20,14 @@ describe("separação das frentes no tempo real", () => {
     const user = await database.user.create({ data: { email: "carloshenrique@politizai.com", normalizedEmail: "carloshenrique@politizai.com", displayName: "Vendedor" } });
     const role = await database.role.create({ data: { ...audit, key: "closer", name: "Closer" } });
     const member = await database.workspaceMember.create({ data: { ...audit, userId: user.id, roleId: role.id, status: "ACTIVE" } });
+    const leadId = randomUUID();
     const occurredAt = new Date("2026-10-22T14:00:00Z");
-    const fact = (eventType: CommercialMetricEventType, quantity: number, pipelineId: string | null, frontId?: string) => database.commercialMetricFact.create({ data: {
-      workspaceId: workspace.id, eventKey: randomUUID(), eventType, occurredAt, sourceEntityType: "Task", sourceEntityId: randomUUID(), creditedMemberId: member.id,
+    const fact = (eventType: CommercialMetricEventType, quantity: number, pipelineId: string | null, frontId?: string, dimensions: { creditedMemberId?: string; meetingOwnerMemberIdAtEvent?: string } = {}) => database.commercialMetricFact.create({ data: {
+      workspaceId: workspace.id, leadId, eventKey: randomUUID(), eventType, occurredAt, sourceEntityType: "Task", sourceEntityId: randomUUID(), creditedMemberId: member.id,
       pipelineId, quantity, valueCents: eventType === "SALE_WON" ? BigInt(quantity * 10000) : null,
-      inputFingerprint: "fixture", ...(frontId ? { safeMetadata: { _commercialFrontPipelineId: frontId } } : {}),
+      inputFingerprint: "fixture", ...dimensions, ...(frontId ? { safeMetadata: { _commercialFrontPipelineId: frontId } } : {}),
     } });
+    await fact("LEAD_CREATED", 1, ads.id);
     for (const eventType of ["TASK_COMPLETED", "CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT", "MEETING_SCHEDULED", "MEETING_COMPLETED", "SALE_WON"] as const) {
       await fact(eventType, 2, opportunities.id, ads.id);
       await fact(eventType, 3, pros.id);
@@ -53,6 +55,29 @@ describe("separação das frentes no tempo real", () => {
     expect((await service.screen({ workspaceId: workspace.id } as never, "ADVERTISING")).snapshot).toEqual(advertising);
     expect(await service.publicTvSnapshot("ADVERTISING")).toEqual(advertising);
     expect(advertising.quality.reason).toContain("1 fatos sem frente comercial identificada");
+    const closer = async (email: string, name: string) => {
+      const user = await database.user.upsert({ where: { normalizedEmail: email }, update: {}, create: { email, normalizedEmail: email, displayName: name } });
+      return { ...await database.workspaceMember.create({ data: { ...audit, userId: user.id, roleId: role.id, status: "ACTIVE" } }), name: user.displayName };
+    };
+    const jhon = await closer("jhoncunha@politizai.com", "Jhon");
+    const ede = await closer("ederafael@politizai.com", "Ede");
+    for (const [memberId, assigned, completed] of [[jhon.id, 5, 3], [ede.id, 3, 1]] as const) {
+      await fact("MEETING_SCHEDULED", assigned, ads.id, undefined, { meetingOwnerMemberIdAtEvent: memberId });
+      await fact("MEETING_COMPLETED", completed, ads.id, undefined, { creditedMemberId: memberId });
+    }
+    const dynamic = await service.publicSnapshot(token, "ADVERTISING");
+    expect(dynamic.today.leadsReceived).toBe(1);
+    expect(dynamic.today.goals.meetingsScheduled.targetValue).toBe("1");
+    expect(dynamic.week.ranking.find(row => row.name === jhon.name)!.goals.today.meetingsCompleted).toMatchObject({ actualValue: "3", targetValue: "3" });
+    expect(dynamic.week.ranking.find(row => row.name === ede.name)!.goals.today.meetingsCompleted).toMatchObject({ actualValue: "1", targetValue: "2" });
+    const scopedService = createRealtimeDashboardService({ database, authorization: { assertAuthorized: vi.fn(), authorize: vi.fn().mockResolvedValue({ allowed: true, scope: "WORKSPACE" }) }, now: () => new Date("2026-10-22T15:00:00Z") });
+    expect(await scopedService.advertisingSnapshot({ workspaceId: workspace.id, memberId: member.id } as never)).toEqual(dynamic);
+    const ownService = createRealtimeDashboardService({ database, authorization: { assertAuthorized: vi.fn(), authorize: vi.fn().mockResolvedValue({ allowed: true, scope: "OWN" }) }, now: () => new Date("2026-10-22T15:00:00Z") });
+    const own = await ownService.advertisingSnapshot({ workspaceId: workspace.id, memberId: member.id } as never);
+    expect(own.week.ranking.map(row => row.name)).toEqual(["Vendedor"]);
+    expect(own.today.totals.meetingsCompleted).toBe(2);
+    const denied = createRealtimeDashboardService({ database, authorization: { assertAuthorized: vi.fn().mockRejectedValue(new Error("Acesso negado")), authorize: vi.fn().mockResolvedValue({ allowed: false, scope: null }) }, now: () => new Date("2026-10-22T15:00:00Z") });
+    await expect(denied.advertisingSnapshot({ workspaceId: workspace.id, memberId: member.id } as never)).rejects.toThrow("Acesso negado");
     await database.pipeline.update({ where: { id: ads.id }, data: { deletedAt: occurredAt } });
     expect((await service.publicSnapshot(token, "ADVERTISING")).today.totals).toMatchObject({ tasksCompleted: 0, sales: 0 });
     expect((await service.publicSnapshot(token)).today.totals).toEqual(prospecting.today.totals);

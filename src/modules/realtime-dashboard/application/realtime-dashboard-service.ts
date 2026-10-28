@@ -3,9 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { commercialMetricQuality } from "@/modules/metrics/domain/commercial-metric-quality";
-import { commercialFrontPipelineIds } from "@/modules/metrics/domain/commercial-front";
-import { realtimeFactPipelineId, type RealtimeDashboardFront } from "@/modules/realtime-dashboard/domain/realtime-dashboard-front";
-import type { IntegratedActivityFact } from "@/modules/metrics/domain/metrics-contracts";
+import { type RealtimeDashboardFront } from "@/modules/realtime-dashboard/domain/realtime-dashboard-front";
 import type {
   RealtimeDashboardScreen,
   RealtimeDashboardSnapshot,
@@ -13,7 +11,6 @@ import type {
 } from "@/modules/realtime-dashboard/domain/realtime-dashboard-contracts";
 import {
   aggregateRealtimeDashboard,
-  realtimeDashboardEventTypes,
   resolveRealtimeDashboardPeriods,
   weeklySalesGoal,
 } from "@/modules/realtime-dashboard/domain/realtime-dashboard-domain";
@@ -25,6 +22,8 @@ import {
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { readRealtimeDashboardFacts, realtimeActivityFact, type RealtimeFactScope } from "./realtime-dashboard-facts";
+import { resolveIntegratedActivityReadScope } from "@/modules/metrics/application/metrics-service";
 
 const realtimeTokenPattern = /^[A-Za-z0-9_-]{43}$/;
 // The TV ranking has an explicit roster; account identity avoids display-name collisions.
@@ -90,30 +89,8 @@ function publicShareUrl(origin: string, token: string): string {
   return url.toString();
 }
 
-function asActivityFact(row: Readonly<{
-  id: string;
-  eventType: string;
-  sourceEntityType: string;
-  occurredAt: Date;
-  leadId: string | null;
-  creditedMemberId: string | null;
-  performedByMemberId: string | null;
-  bookedByMemberId: string | null;
-  taskKind: string | null;
-  result: string | null;
-  cadenceStepKey: string | null;
-  quantity: number;
-  valueCents: bigint | null;
-}>): IntegratedActivityFact {
-  return Object.freeze({
-    ...row,
-    occurredAt: row.occurredAt.toISOString(),
-    valueCents: row.valueCents?.toString() ?? null,
-  });
-}
-
 export function createRealtimeDashboardService(options: RealtimeDashboardServiceOptions) {
-  async function snapshotForWorkspace(workspaceId: string, front: RealtimeDashboardFront): Promise<RealtimeDashboardSnapshot> {
+  async function snapshotForWorkspace(workspaceId: string, front: RealtimeDashboardFront, scope?: RealtimeFactScope): Promise<RealtimeDashboardSnapshot> {
     const now = options.now();
     const workspace = await options.database.workspace.findFirst({
       where: { id: workspaceId, status: "ACTIVE", deletedAt: null },
@@ -122,40 +99,10 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     if (!workspace) publicNotFound();
 
     const periods = resolveRealtimeDashboardPeriods(now, workspace.timeZone);
-    const [allFactRows, activeMembers, latestBackfill, latestReconciliation, goalPlan, profiles, pipelines] = await Promise.all([
-      options.database.commercialMetricFact.findMany({
-        where: {
-          workspaceId,
-          eventType: { in: [...realtimeDashboardEventTypes] },
-          occurredAt: { gte: periods.queryFrom, lt: periods.queryTo },
-          AND: [
-            { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } },
-            { corrections: { none: { eventKey: { endsWith: ":front-classification:replacement:v1" } } } },
-          ],
-        },
-        orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
-        select: {
-          id: true,
-          eventType: true,
-          sourceEntityType: true,
-          pipelineId: true,
-          safeMetadata: true,
-          correctionSource: { select: { pipelineId: true, safeMetadata: true } },
-          occurredAt: true,
-          recordedAt: true,
-          leadId: true,
-          creditedMemberId: true,
-          performedByMemberId: true,
-          bookedByMemberId: true,
-          taskKind: true,
-          result: true,
-          cadenceStepKey: true,
-          quantity: true,
-          valueCents: true,
-        },
-      }),
+    const [{ factRows, unclassified }, activeMembers, latestBackfill, latestReconciliation, goalPlan, profiles] = await Promise.all([
+      readRealtimeDashboardFacts(options.database, workspaceId, periods.queryFrom, periods.queryTo, front, scope),
       options.database.workspaceMember.findMany({
-        where: commercialMemberWhere({ workspaceId, functions: ["SDR", "CLOSER"] }),
+        where: { ...commercialMemberWhere({ workspaceId, functions: ["SDR", "CLOSER"] }), ...(scope?.memberIds ? { id: { in: [...scope.memberIds] } } : {}) },
         orderBy: [{ user: { displayName: "asc" } }, { id: "asc" }],
         select: { id: true, user: { select: { displayName: true, normalizedEmail: true } }, role: { select: { key: true } }, teamMemberships: { where: { deletedAt: null, team: { deletedAt: null } }, select: { teamId: true, function: true } } },
       }),
@@ -191,16 +138,7 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
         where: { workspaceId },
         select: { memberId: true, callsTarget: true, messagesTarget: true, effectiveContactsTarget: true, meetingsScheduledTarget: true, meetingsCompletedTarget: true, weeklySalesTarget: true, salesValueTargetCents: true },
       }),
-      options.database.pipeline.findMany({
-        where: { workspaceId, entityType: "LEAD", deletedAt: null },
-        select: { id: true, name: true },
-      }),
     ]);
-
-    const selectedPipelineIds = new Set(commercialFrontPipelineIds(front, pipelines));
-    const knownPipelineIds = new Set(commercialFrontPipelineIds("ALL", pipelines));
-    const factRows = allFactRows.filter((fact) => selectedPipelineIds.has(realtimeFactPipelineId(fact) ?? ""));
-    const unclassified = allFactRows.filter((fact) => !knownPipelineIds.has(realtimeFactPipelineId(fact) ?? "")).length;
 
     const historicalMemberIds = new Set<string>();
     for (const fact of factRows) {
@@ -211,20 +149,20 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     }
     for (const member of activeMembers) historicalMemberIds.delete(member.id);
     const historicalMembers = historicalMemberIds.size === 0 ? [] : await options.database.workspaceMember.findMany({
-      where: { workspaceId, id: { in: [...historicalMemberIds] } },
+      where: { workspaceId, id: { in: [...historicalMemberIds].filter(id => !scope?.memberIds || scope.memberIds.includes(id)) } },
       orderBy: [{ user: { displayName: "asc" } }, { id: "asc" }],
       select: { id: true, user: { select: { displayName: true, normalizedEmail: true } } },
     });
 
     const sellers = [
-      ...activeMembers.map((member) => ({ id: member.id, name: member.user.displayName, active: true, rankingVisible: rankingAccounts.has(member.user.normalizedEmail), functions: [...new Set([commercialFunctionForRole(member.role.key), ...member.teamMemberships.map((team) => team.function)].filter((value): value is NonNullable<typeof value> => value !== null))], teamIds: member.teamMemberships.map((team) => team.teamId) })),
-      ...historicalMembers.map((member) => ({ id: member.id, name: member.user.displayName, active: false, rankingVisible: rankingAccounts.has(member.user.normalizedEmail), functions: [], teamIds: [] })),
+      ...activeMembers.map((member) => ({ id: member.id, name: member.user.displayName, active: true, rankingVisible: rankingAccounts.has(member.user.normalizedEmail), ...(member.user.normalizedEmail === "carloshenrique@politizai.com" ? { advertisingRole: "BOOKER" as const } : rankingAccounts.has(member.user.normalizedEmail) ? { advertisingRole: "CLOSER" as const } : {}), functions: [...new Set([commercialFunctionForRole(member.role.key), ...member.teamMemberships.map((team) => team.function)].filter((value): value is NonNullable<typeof value> => value !== null))], teamIds: member.teamMemberships.map((team) => team.teamId) })),
+      ...historicalMembers.map((member) => ({ id: member.id, name: member.user.displayName, active: false, rankingVisible: rankingAccounts.has(member.user.normalizedEmail), ...(member.user.normalizedEmail === "carloshenrique@politizai.com" ? { advertisingRole: "BOOKER" as const } : rankingAccounts.has(member.user.normalizedEmail) ? { advertisingRole: "CLOSER" as const } : {}), functions: [], teamIds: [] })),
     ];
-    const facts = factRows.map(asActivityFact);
-    const aggregation = aggregateRealtimeDashboard(facts, sellers, periods, { profiles, quotas: goalPlan?.quotas ?? [], eligibleMemberIds: sellers.filter((seller) => seller.rankingVisible).map((seller) => seller.id), ...(goalPlan ? { planName: goalPlan.name } : {}) });
+    const facts = factRows.map(realtimeActivityFact);
+    const aggregation = aggregateRealtimeDashboard(facts, sellers, periods, { front, profiles, quotas: (goalPlan?.quotas ?? []).filter(quota => !scope?.memberIds || quota.targetType === "MEMBER" && scope.memberIds.includes(quota.memberId ?? "")), eligibleMemberIds: sellers.filter((seller) => seller.rankingVisible).map((seller) => seller.id), ...(goalPlan ? { planName: goalPlan.name } : {}) });
     const quality = commercialMetricQuality(latestBackfill, latestReconciliation);
     const knownMembers = new Set(sellers.map((seller) => seller.id));
-    const unattributed = factRows.filter((fact) => !knownMembers.has((fact.eventType === "MEETING_SCHEDULED" ? fact.bookedByMemberId ?? fact.creditedMemberId : fact.creditedMemberId) ?? "")).length;
+    const unattributed = factRows.filter((fact) => !["LEAD_CREATED", "LEAD_SUBMISSION_ATTACHED"].includes(fact.eventType) && !knownMembers.has((fact.eventType === "MEETING_SCHEDULED" ? fact.bookedByMemberId ?? fact.creditedMemberId : fact.creditedMemberId) ?? "")).length;
     const newestRecordedAt = factRows.reduce<Date | null>(
       (latest, fact) => !latest || fact.recordedAt > latest ? fact.recordedAt : latest,
       null,
@@ -254,6 +192,13 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
         ),
       }),
     });
+  }
+
+  async function advertisingSnapshot(context: AuthenticatedContext): Promise<RealtimeDashboardSnapshot> {
+    const workspace = await options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
+    const periods = resolveRealtimeDashboardPeriods(options.now(), workspace.timeZone);
+    const scope = await resolveIntegratedActivityReadScope(options, context, periods.queryFrom, periods.queryTo);
+    return snapshotForWorkspace(context.workspaceId, "ADVERTISING", scope);
   }
 
   async function screen(context: AuthenticatedContext, front: RealtimeDashboardFront = "PROSPECTING"): Promise<RealtimeDashboardScreen> {
@@ -412,7 +357,7 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     return Object.freeze({ sharing: shareState(share) });
   }
 
-  return Object.freeze({ publicSnapshot, publicTvSnapshot, revoke, rotate, screen });
+  return Object.freeze({ advertisingSnapshot, publicSnapshot, publicTvSnapshot, revoke, rotate, screen });
 }
 
 export const getRealtimeDashboardService = () => {

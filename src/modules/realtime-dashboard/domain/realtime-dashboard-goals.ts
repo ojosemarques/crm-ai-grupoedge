@@ -1,19 +1,20 @@
 import { summarizeDashboardSellerActivity } from "@/modules/metrics/domain/dashboard-seller-activity";
-import type { IntegratedActivityFact } from "@/modules/metrics/domain/metrics-contracts";
+import { advertisingAssignedMeetings, advertisingLeadArrivals, type RealtimeActivityFact } from "./realtime-advertising-metrics";
+import type { RealtimeDashboardFront } from "./realtime-dashboard-front";
 import type { RealtimeDashboardGoals, RealtimeGoalMetric, RealtimeGoalProgress } from "./realtime-dashboard-contracts";
 import { addLocalDays, workspaceDayRange } from "@/shared/core/time/workspace-time";
 import { summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
 
-export type RealtimeSeller = Readonly<{ id: string; name: string; active?: boolean; rankingVisible?: boolean; functions?: readonly string[]; teamIds?: readonly string[] }>;
+export type RealtimeSeller = Readonly<{ id: string; name: string; active?: boolean; rankingVisible?: boolean; advertisingRole?: "BOOKER" | "CLOSER"; functions?: readonly string[]; teamIds?: readonly string[] }>;
 export type RealtimeDailyProfile = Readonly<{ memberId: string; callsTarget: number; messagesTarget: number; effectiveContactsTarget: number; meetingsScheduledTarget: number; meetingsCompletedTarget?: number | null; weeklySalesTarget?: number | null; salesValueTargetCents: bigint }>;
 export type RealtimeWeeklyQuota = Readonly<{ targetType: string; memberId: string | null; teamId: string | null; function: string | null; metricKey: string; targetValue: bigint }>;
-export type RealtimeGoalConfiguration = Readonly<{ profiles: readonly RealtimeDailyProfile[]; quotas: readonly RealtimeWeeklyQuota[]; planName?: string; eligibleMemberIds?: readonly string[] }>;
+export type RealtimeGoalConfiguration = Readonly<{ front?: RealtimeDashboardFront; profiles: readonly RealtimeDailyProfile[]; quotas: readonly RealtimeWeeklyQuota[]; planName?: string; eligibleMemberIds?: readonly string[] }>;
 export const realtimeGoalMetrics: readonly RealtimeGoalMetric[] = ["calls", "messages", "effectiveContacts", "meetingsScheduled", "meetingsCompleted", "sales", "salesValueCents"];
 
 const profileFields = { calls: "callsTarget", messages: "messagesTarget", effectiveContacts: "effectiveContactsTarget", meetingsScheduled: "meetingsScheduledTarget", meetingsCompleted: "meetingsCompletedTarget", salesValueCents: "salesValueTargetCents" } as const;
 const quotaMetrics: Partial<Record<RealtimeGoalMetric, string>> = { meetingsCompleted: "MEETINGS_HELD", sales: "OPPORTUNITIES_WON", salesValueCents: "REVENUE_WON_CENTS" };
 
-function actuals(facts: readonly IntegratedActivityFact[], sellers: readonly RealtimeSeller[]) {
+function actuals(facts: readonly RealtimeActivityFact[], sellers: readonly RealtimeSeller[]) {
   return new Map(summarizeDashboardSellerActivity(facts, sellers).map((row) => [row.id, {
     calls: BigInt(row.calls), messages: BigInt(row.whatsappMessages + row.instagramMessages), effectiveContacts: BigInt(row.effectiveContacts),
     meetingsScheduled: BigInt(row.meetingsBooked), meetingsCompleted: BigInt(row.meetingsCompleted), sales: BigInt(row.sales), salesValueCents: BigInt(row.salesValueCents),
@@ -26,8 +27,8 @@ function progress(actual: bigint, target: bigint | null, coveredMembers: number,
 
 export function buildRealtimeDashboardGoals(input: Readonly<{
   sellers: readonly RealtimeSeller[];
-  todayFacts: readonly IntegratedActivityFact[];
-  weekFacts: readonly IntegratedActivityFact[];
+  todayFacts: readonly RealtimeActivityFact[];
+  weekFacts: readonly RealtimeActivityFact[];
   weekFromDate: string;
   timeZone: string;
   configuration: RealtimeGoalConfiguration;
@@ -50,7 +51,7 @@ export function buildRealtimeDashboardGoals(input: Readonly<{
     const eligible = field ? members.filter((member) => member.active !== false && profiles.has(member.id) && BigInt(profiles.get(member.id)![field] ?? 0) > 0n) : [];
     const target = eligible.length ? eligible.reduce((sum, seller) => sum + BigInt(profiles.get(seller.id)![field!] ?? 0) * (weekly ? 5n : 1n), 0n) : null;
     const eligibleIds = new Set(eligible.map((member) => member.id));
-    const contacts = (facts: readonly IntegratedActivityFact[]) => BigInt(summarizeEffectiveContacts(facts.filter((fact) => fact.creditedMemberId !== null && eligibleIds.has(fact.creditedMemberId))).total);
+    const contacts = (facts: readonly RealtimeActivityFact[]) => BigInt(summarizeEffectiveContacts(facts.filter((fact) => fact.creditedMemberId !== null && eligibleIds.has(fact.creditedMemberId))).total);
     // O consolidado conta a mesma pessoa uma vez por dia, como o Meu Dia;
     // os cartões individuais continuam usando somente os fatos de cada vendedor.
     const achieved = metric === "effectiveContacts"
@@ -90,8 +91,35 @@ export function buildRealtimeDashboardGoals(input: Readonly<{
     return progress(achieved, covered.size ? target : null, covered.size, members.filter((member) => member.active !== false).length, covered.size ? "WEEKLY_PLAN" : null, covered.size ? input.configuration.planName ?? "Meta semanal publicada" : "Sem meta ativa");
   }
 
+  function advertisingGoal(metric: RealtimeGoalMetric, members: readonly RealtimeSeller[], weekly: boolean, individual: boolean): RealtimeGoalProgress {
+    const facts = weekly ? input.weekFacts : input.todayFacts;
+    const rows = weekly ? week : day;
+    const actual = (scope: readonly RealtimeSeller[]) => metric === "effectiveContacts"
+      ? BigInt(summarizeEffectiveContacts(facts.filter(fact => scope.some(member => member.id === fact.creditedMemberId))).total)
+      : scope.reduce((sum, member) => sum + (rows.get(member.id)?.[metric] ?? 0n), 0n);
+    const bookers = members.filter(member => member.active !== false && member.advertisingRole === "BOOKER");
+    const closers = members.filter(member => member.active !== false && member.advertisingRole === "CLOSER");
+    if (metric === "meetingsScheduled" || metric === "effectiveContacts") {
+      if (!bookers.length) return progress(actual(members), null, 0, 0, null, "Não se aplica à função");
+      const leads = advertisingLeadArrivals(facts).size;
+      const target = BigInt(metric === "meetingsScheduled" ? Math.ceil(leads / 2) : leads);
+      return progress(actual(bookers), target, bookers.length, bookers.length, "ADVERTISING_ARRIVALS", metric === "meetingsScheduled" ? "50% dos leads recebidos" : "100% dos leads recebidos");
+    }
+    if (metric === "meetingsCompleted") {
+      if (!closers.length) return progress(actual(members), null, 0, 0, null, "Não se aplica à função");
+      const target = closers.reduce((sum, member) => sum + BigInt(Math.ceil(advertisingAssignedMeetings(facts, member.id) * 3 / 5)), 0n);
+      return progress(actual(closers), target, closers.length, closers.length, "ADVERTISING_BOOKINGS", "60% das reuniões atribuídas");
+    }
+    if (metric === "calls" || metric === "messages") {
+      if (!bookers.length) return progress(actual(members), null, 0, 0, null, "Não se aplica à função");
+      const goal = profileGoal(metric, bookers, weekly);
+      return metric === "messages" ? { ...goal, label: weekly ? "Meta diária de mensagens × 5" : "Meta de mensagens" } : goal;
+    }
+    return weekly ? weeklyGoal(metric, members, individual) : profileGoal(metric, members, false);
+  }
+
   function goals(members: readonly RealtimeSeller[], weekly: boolean, individual = false): RealtimeDashboardGoals {
-    return Object.freeze(Object.fromEntries(realtimeGoalMetrics.map((metric) => [metric, weekly ? weeklyGoal(metric, members, individual) : profileGoal(metric, members, false)])) as Record<RealtimeGoalMetric, RealtimeGoalProgress>);
+    return Object.freeze(Object.fromEntries(realtimeGoalMetrics.map((metric) => [metric, input.configuration.front === "ADVERTISING" ? advertisingGoal(metric, members, weekly, individual) : weekly ? weeklyGoal(metric, members, individual) : profileGoal(metric, members, false)])) as Record<RealtimeGoalMetric, RealtimeGoalProgress>);
   }
   return Object.freeze({
     today: goals(active, false), week: goals(active, true),

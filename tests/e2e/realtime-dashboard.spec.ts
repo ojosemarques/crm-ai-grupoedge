@@ -137,6 +137,10 @@ test("gestor opera modos unificados e TV sem login em /tempo com revogação e r
     await expect(board(publicPage)).toBeVisible();
     await expect(board(publicPage)).toHaveAttribute("data-appearance", "light");
   } finally { await anonymous.close(); }
+  await page.goto("/anuncios?view=metrics&metricsPreset=TODAY");
+  await expect(page.getByRole("region", { name: "Resumo ao vivo de Anúncios" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Metas diárias de Anúncios" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Metas semanais de Anúncios" })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -155,12 +159,51 @@ function visualSnapshot(): RealtimeDashboardSnapshot {
   return { workspaceName: "Grupo Edge", timeZone, generatedAt: now.toISOString(), freshnessAt: now.toISOString(), quality: { state: "LIVE", reason: "Fixture visual isolada" }, ...result, week: { ...result.week, salesGoal: { target: "200", achieved: 160, progressBasisPoints: 8000, label: "Vendas da semana" } } };
 }
 
+test("anúncios recalcula metas de 50% e 60% ao receber entradas e agendamentos novos", async ({ page }) => {
+  const base = visualSnapshot();
+  const now = new Date("2026-10-28T18:00:00Z");
+  let leads = 30, assigned = 10;
+  const sellers = [{ id: "c", name: "Carlos Henrique", advertisingRole: "BOOKER" as const }, { id: "j", name: "Jhon Cunha", advertisingRole: "CLOSER" as const }, { id: "e", name: "Ede Rafael", advertisingRole: "CLOSER" as const }];
+  const fact = (id: string, eventType: string, memberId = "c", quantity = 1) => ({ id, eventType, leadId: id, creditedMemberId: memberId, quantity, occurredAt: "2026-10-28T14:00:00Z", sourceEntityType: "Activity", performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, valueCents: null });
+  const snapshot = (): RealtimeDashboardSnapshot => {
+    const result = aggregateRealtimeDashboard([...Array.from({ length: leads }, (_, index) => fact(`lead-${index}`, "LEAD_CREATED")), { ...fact("book", "MEETING_SCHEDULED", "c", assigned), meetingOwnerMemberIdAtEvent: "j" }, fact("held", "MEETING_COMPLETED", "j", 6)], sellers, resolveRealtimeDashboardPeriods(now, "America/Sao_Paulo"), { front: "ADVERTISING", profiles: [], quotas: [] });
+    return { ...base, ...result, week: { ...result.week, salesGoal: base.week.salesGoal } };
+  };
+  await page.clock.install({ time: now });
+  await page.route("**/api/public/tempo?*", route => route.fulfill({ json: { result: new URL(route.request().url()).searchParams.get("front") === "ADVERTISING" ? snapshot() : base } }));
+  await page.goto("/tempo");
+  await page.getByRole("button", { name: "Pausar apresentação", exact: true }).click();
+  await page.getByRole("button", { name: "Anúncios", exact: true }).click();
+  const today = page.getByRole("region", { name: "Métricas de hoje", exact: true });
+  await expect(page.getByRole("article", { name: "Leads hoje", exact: true }).locator(":scope > strong")).toHaveText("30");
+  await expect(today.locator('[data-metric="meetingsScheduled"]')).toContainText("/ 15");
+  await expect(today.locator('[data-metric="meetingsCompleted"]')).toContainText("/ 6");
+  leads = 34; assigned = 12;
+  await page.clock.runFor(5_100);
+  await expect(page.getByRole("article", { name: "Leads hoje", exact: true }).locator(":scope > strong")).toHaveText("34");
+  await expect(today.locator('[data-metric="meetingsScheduled"]')).toContainText("/ 17");
+  await expect(today.locator('[data-metric="meetingsCompleted"]')).toContainText("/ 8");
+  await page.getByRole("button", { name: "Ranking", exact: true }).click();
+  const jhon = page.getByRole("table").getByRole("row").filter({ hasText: "Jhon Cunha" });
+  await expect(jhon).toContainText("Meta 60%");
+  await expect(jhon).toContainText("/ 8");
+  const closer = page.locator('[class*="leaderCard"]').filter({ has: page.getByRole("heading", { name: "Jhon Cunha" }) });
+  await expect(closer).toContainText("reuniões feitas hoje");
+  for (const size of [{ width: 1366, height: 768 }, { width: 1920, height: 720 }]) {
+    await page.setViewportSize(size);
+    for (const view of ["Geral", "Ranking"]) {
+      await page.getByRole("button", { name: view, exact: true }).click();
+      await expectPanelLayout(page, true);
+    }
+  }
+});
+
 test("TV alterna as quatro telas a cada 60 segundos e mantém dados de anúncios separados", async ({ page }, testInfo) => {
   const original = visualSnapshot();
   const snapshot = (sales: number, tasks: number): RealtimeDashboardSnapshot => ({
     ...original,
-    today: { ...original.today, totals: { ...original.today.totals, sales, tasksCompleted: tasks } },
-    week: { ...original.week, totals: { ...original.week.totals, sales, tasksCompleted: tasks }, ranking: original.week.ranking.slice(0, 3).map(row => ({ ...row, sales, tasksCompleted: tasks, today: { ...row.today, sales, tasksCompleted: tasks } })) },
+    today: { ...original.today, leadsReceived: 30, totals: { ...original.today.totals, sales, tasksCompleted: tasks } },
+    week: { ...original.week, leadsReceived: 60, totals: { ...original.week.totals, sales, tasksCompleted: tasks }, ranking: original.week.ranking.slice(0, 3).map(row => ({ ...row, sales, tasksCompleted: tasks, today: { ...row.today, sales, tasksCompleted: tasks } })) },
   });
   await page.clock.install({ time: new Date(original.generatedAt) });
   await page.clock.pauseAt(new Date(Date.parse(original.generatedAt) + 1_000));
@@ -184,7 +227,11 @@ test("TV alterna as quatro telas a cada 60 segundos e mantém dados de anúncios
     await expect(board(page)).toHaveAttribute("data-front", index < 3 ? "PROSPECTING" : "ADVERTISING");
     if (index === 3) {
       await expect(sales()).toHaveText("2");
-      await expect(page.getByRole("article", { name: "Tarefas concluídas", exact: true }).locator(":scope > strong")).toHaveText("4");
+      await expect(page.getByRole("article", { name: "Leads hoje", exact: true }).locator(":scope > strong")).toHaveText("30");
+      await expect(page.getByRole("article", { name: "Reuniões agendadas", exact: true })).toBeVisible();
+      await expect(page.getByRole("article", { name: "Reuniões feitas", exact: true })).toBeVisible();
+      await expect(page.locator('[data-funnel-stage="leads"]')).toContainText("Leads Anúncios");
+      await expect(page.locator('[data-funnel-stage="leads"]')).toContainText("60");
     }
     if (index === 4) await expect(page.getByRole("table")).toContainText("4 tarefas hoje · 4 na semana");
   }
@@ -207,7 +254,7 @@ test("TV alterna as quatro telas a cada 60 segundos e mantém dados de anúncios
   }
   await page.getByRole("button", { name: "Prospecção Ativa", exact: true }).click();
   await expect(sales()).toHaveText("7");
-  await expect(page.getByRole("article", { name: "Tarefas concluídas", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Leads hoje", exact: true })).toHaveCount(0);
 });
 
 test("resumo preserva os totais consolidados mesmo com profissionais fora do ranking", async ({ page }) => {

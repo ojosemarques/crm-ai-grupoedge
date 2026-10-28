@@ -1,4 +1,8 @@
-import { createMetricsService } from "@/modules/metrics/application/metrics-service";
+import { createRealtimeDashboardService } from "@/modules/realtime-dashboard/application/realtime-dashboard-service";
+import { readRealtimeDashboardFacts, realtimeActivityFact } from "@/modules/realtime-dashboard/application/realtime-dashboard-facts";
+import { advertisingLeadArrivals, advertisingPeriodFacts } from "@/modules/realtime-dashboard/domain/realtime-advertising-metrics";
+import { summarizeRealtimeDashboardTotals } from "@/modules/realtime-dashboard/domain/realtime-dashboard-domain";
+import { createMetricsService, resolveIntegratedActivityReadScope } from "@/modules/metrics/application/metrics-service";
 import { Prisma, type CommercialMetricEventType, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import {
@@ -140,6 +144,14 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
       from: period.start.toISOString(), to: new Date(period.end.getTime() + 1).toISOString(),
       filters: { pipelineIds: [pipeline.id] },
     });
+    const to = new Date(Math.min(period.end.getTime() + 1, now.getTime() + 1));
+    const [live, metricScope] = await Promise.all([
+      createRealtimeDashboardService(options).advertisingSnapshot(context),
+      resolveIntegratedActivityReadScope(options, context, period.start, to),
+    ]);
+    const selected = await readRealtimeDashboardFacts(options.database, context.workspaceId, period.start, to, "ADVERTISING", metricScope);
+    const selectedFacts = advertisingPeriodFacts(selected.factRows.map(realtimeActivityFact));
+    const selectedTotals = summarizeRealtimeDashboardTotals(selectedFacts, []);
     const memberIds = [...new Set(metricRows.flatMap((row) => row.creditedMemberId ? [row.creditedMemberId] : []))];
     const members = memberIds.length
       ? await options.database.workspaceMember.findMany({
@@ -210,7 +222,8 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
           toDate: period.toDate,
           timeZone: period.timeZone,
         },
-        totals: { ...totals, revenueCents: totals.revenueCents.toString() },
+        live,
+        totals: { ...totals, ...selectedTotals, leadsReceived: advertisingLeadArrivals(selectedFacts).size, revenueCents: selectedTotals.salesValueCents },
         bySeller: memberIds.map((memberId) => {
           const rows = metricRows.filter((row) => row.creditedMemberId === memberId);
           return {

@@ -26,7 +26,9 @@ describe("serviço do dashboard tempo real", () => {
     const database = {
       workspace: { findFirst: vi.fn().mockResolvedValue({ name: "Empresa", timeZone: "America/Sao_Paulo" }) },
       pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "ads", name: "Anúncios" }, { id: "pros", name: "Prospecção Ativa" }]) },
+      activity: { findMany: vi.fn().mockResolvedValue([]) },
       commercialMetricFact: { findMany: vi.fn().mockResolvedValue([
+        ...["CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT"].map(event => ({ ...fact(`entry-${event}`, "LEAD_CREATED", "ads", 1), leadId: `ads-${event}` })),
         ...["SALE_WON", "TASK_COMPLETED", "CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT", "MEETING_SCHEDULED"].flatMap((event) => [fact(`ads-${event}`, event, "opportunity", 2, { _commercialFrontPipelineId: "ads" }), fact(`pros-${event}`, event, "pros", 3)]),
         fact("conflicting", "TASK_COMPLETED", "pros", 5, { _commercialFrontPipelineId: "ads" }),
         fact("unknown", "TASK_COMPLETED", null, 99),

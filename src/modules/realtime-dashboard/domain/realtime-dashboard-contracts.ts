@@ -27,7 +27,7 @@ export type RealtimeGoalProgress = Readonly<{
   progressBasisPoints: number | null;
   coveredMembers: number;
   totalMembers: number;
-  source: "DAILY_PROFILE" | "DAILY_PROFILE_X5" | "WEEKLY_PROFILE" | "WEEKLY_PLAN" | null;
+  source: "DAILY_PROFILE" | "DAILY_PROFILE_X5" | "WEEKLY_PROFILE" | "WEEKLY_PLAN" | "ADVERTISING_ARRIVALS" | "ADVERTISING_BOOKINGS" | null;
   label: string;
 }>;
 export type RealtimeDashboardGoals = Readonly<Record<RealtimeGoalMetric, RealtimeGoalProgress>>;
@@ -42,6 +42,7 @@ export type RealtimeDashboardPeriod = Readonly<{
 }>;
 
 export type RealtimeDashboardRankingRow = Readonly<{
+  advertisingRole?: "BOOKER" | "CLOSER";
   position: number;
   name: string;
   initials: string;
@@ -68,11 +69,13 @@ export type RealtimeDashboardSnapshot = Readonly<{
     reason: string;
   }>;
   today: Readonly<{
+    leadsReceived?: number;
     period: RealtimeDashboardPeriod;
     totals: RealtimeDashboardTotals;
     goals: RealtimeDashboardGoals;
   }>;
   week: Readonly<{
+    leadsReceived?: number;
     period: RealtimeDashboardPeriod;
     funnel: RealtimeSalesFunnel;
     endsAt: string;

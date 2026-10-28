@@ -116,5 +116,18 @@ describe("workspace de Anúncios", () => {
     expect(populated.metrics.totals.sales).toBe(1);
     expect(populated.metrics.totals.revenueCents).toBe("1800000");
     expect(populated.stock.items.some((lead) => lead.fullName.includes("Prospecção"))).toBe(false);
+    const message = (subject: string) => database.activity.create({ data: {
+      workspaceId, leadId: intake.leadId, type: "MESSAGE_SENT", direction: "OUTBOUND", result: "SENT", subject, occurredAt: now,
+      createdByActorId: context.actorId, updatedByActorId: context.actorId,
+    } });
+    await message("Mensagem manual sem fato de canal");
+    const withChannel = await message("Mensagem manual já contada no canal");
+    await database.$transaction(transaction => recordCommercialMetricFactInTransaction(transaction, {
+      workspaceId, eventKey: `activity:${withChannel.id}:instagram-message-sent:v1`, eventType: "INSTAGRAM_MESSAGE_SENT", occurredAt: now,
+      sourceEntityType: "Activity", sourceEntityId: withChannel.id, activityId: withChannel.id, leadId: intake.leadId,
+      pipelineId: pipeline.id, creditedMemberId: context.memberId,
+    }));
+    const messages = await service.getScreen(context, { pipelineId: pipeline.id, metricsPreset: "MONTH" });
+    expect(messages.metrics.totals).toMatchObject({ leadsReceived: 1, messages: 2, effectiveContacts: 1 });
   });
 });

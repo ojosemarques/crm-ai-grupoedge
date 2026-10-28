@@ -189,6 +189,18 @@ async function resolveMetricsScope(
   });
 }
 
+export async function resolveIntegratedActivityReadScope(options: MetricsServiceOptions, context: AuthenticatedContext, from: Date, to: Date) {
+  const scope = await resolveMetricsScope(options.database, options.authorization, context);
+  const teams = scope.scope === "TEAM" ? await options.database.teamMember.findMany({ where: { workspaceId: context.workspaceId, teamId: { in: [...scope.teamIds] }, deletedAt: null }, select: { workspaceMemberId: true } }) : [];
+  const memberIds = scope.scope === "WORKSPACE" ? null : uniqueSorted([context.memberId, ...teams.map(member => member.workspaceMemberId)]);
+  const query = parseMetricsQuery({ from: from.toISOString(), to: to.toISOString() });
+  return {
+    where: await integratedFactWhere(options.database, context, scope, query),
+    leadWhere: relationalVisibility(context, scope.scope, scope.teamIds, memberIds ?? []),
+    memberIds,
+  };
+}
+
 function relationalVisibility(
   context: AuthenticatedContext,
   scope: PermissionScope,

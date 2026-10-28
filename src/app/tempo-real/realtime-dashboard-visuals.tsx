@@ -20,10 +20,12 @@ function percent(goal: RealtimeGoalProgress) { return Math.max(0, Math.min(100, 
 function goalValue(value: string, metric?: RealtimeGoalMetric) { return metric === "salesValueCents" ? formatCents(value) : number.format(Number(value)); }
 
 export function GoalMeter({ goal, metric, compact = false }: Readonly<{ goal: RealtimeGoalProgress; metric?: RealtimeGoalMetric; compact?: boolean }>) {
-  const configured = goal.targetValue !== null && BigInt(goal.targetValue) > 0n;
-  const compactLabel = metric === "messages" ? "Meta WA/IG" : goal.source === "DAILY_PROFILE_X5" ? metric === "effectiveContacts" ? "Contatos-dia" : "Meta × 5" : "Meta";
+  const automatic = goal.source === "ADVERTISING_ARRIVALS" || goal.source === "ADVERTISING_BOOKINGS";
+  const configured = goal.targetValue !== null && (BigInt(goal.targetValue) > 0n || automatic);
+  const emptyLabel = goal.label === "Não se aplica à função" ? compact ? "Não se aplica" : goal.label : "Sem meta cadastrada";
+  const compactLabel = automatic ? goal.source === "ADVERTISING_BOOKINGS" ? "Meta 60%" : metric === "meetingsScheduled" ? "Meta 50%" : "Leads recebidos" : metric === "messages" ? goal.label.includes("WA/IG") ? "Meta WA/IG" : "Meta mensagens" : goal.source === "DAILY_PROFILE_X5" ? metric === "effectiveContacts" ? "Contatos-dia" : "Meta × 5" : "Meta";
   return <div className={styles.goalMeter} data-compact={compact || undefined} data-configured={configured} title={configured ? `${goal.label} · ${goal.coveredMembers}/${goal.totalMembers} vendedores com meta` : goal.label}>
-    <div><span>{configured ? compact ? compactLabel : goal.label : "Sem meta cadastrada"}</span>{configured ? <b>{goalValue(goal.actualValue, metric)} <i>/ {goalValue(goal.targetValue!, metric)}</i></b> : <b>—</b>}</div>
+    <div><span>{configured ? compact ? compactLabel : goal.label : emptyLabel}</span>{configured ? <b>{goalValue(goal.actualValue, metric)} <i>/ {goalValue(goal.targetValue!, metric)}</i></b> : <b>—</b>}</div>
     {configured ? <div className={styles.progressTrack} role="meter" aria-label={`${goal.label}${metric ? ` · ${metric}` : ""}`} aria-valuenow={percent(goal)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${percent(goal)}%` }} /></div> : <div className={styles.progressTrack}><i /></div>}
     {!compact && configured && goal.coveredMembers < goal.totalMembers ? <small>Cobertura parcial · {goal.coveredMembers}/{goal.totalMembers} vendedores com meta</small> : null}
   </div>;
@@ -36,18 +38,18 @@ export function DashboardSummary({ snapshot, front }: Readonly<{ snapshot: Realt
   const callsToday = snapshot.today.totals.calls;
   const callsWeek = snapshot.week.totals.calls;
   return <div className={styles.summaryStrip}>
-    <article aria-label="Contatos de hoje"><span>Contatos de hoje</span><strong>{number.format(contactsToday)}<Icon name="people" /></strong><small>Pessoas únicas contatadas hoje</small></article>
-    {front === "ADVERTISING" ? <article aria-label="Tarefas concluídas"><span>Tarefas concluídas hoje</span><strong>{number.format(snapshot.today.totals.tasksCompleted)}<Icon name="check" /></strong><small>{number.format(snapshot.week.totals.tasksCompleted)} na semana · Anúncios</small></article> : <article aria-label="Contatos da semana"><span>Contatos da semana</span><strong>{number.format(contactsWeek)}<Icon name="people" /></strong><small>Pessoas únicas · segunda a sexta</small></article>}
-    <article aria-label="Ligações feitas hoje"><span>Ligações feitas hoje</span><strong>{number.format(callsToday)}<Icon name="phone" /></strong><small>{number.format(callsWeek)} na semana · ligações registradas</small></article>
+    <article aria-label={front === "ADVERTISING" ? "Leads hoje" : "Contatos de hoje"}><span>{front === "ADVERTISING" ? "Leads hoje" : "Contatos de hoje"}</span><strong>{number.format(front === "ADVERTISING" ? snapshot.today.leadsReceived ?? 0 : contactsToday)}<Icon name={front === "ADVERTISING" ? "target" : "people"} /></strong><small>{front === "ADVERTISING" ? "Leads únicos recebidos de anúncios hoje" : "Pessoas únicas contatadas hoje"}</small></article>
+    {front === "ADVERTISING" ? <article aria-label="Reuniões agendadas"><span>Reuniões agendadas</span><strong>{number.format(snapshot.today.totals.meetingsScheduled)}<Icon name="calendar" /></strong><small>{number.format(snapshot.week.totals.meetingsScheduled)} na semana · Anúncios</small></article> : <article aria-label="Contatos da semana"><span>Contatos da semana</span><strong>{number.format(contactsWeek)}<Icon name="people" /></strong><small>Pessoas únicas · segunda a sexta</small></article>}
+    {front === "ADVERTISING" ? <article aria-label="Reuniões feitas"><span>Reuniões feitas</span><strong>{number.format(snapshot.today.totals.meetingsCompleted)}<Icon name="check" /></strong><small>{number.format(snapshot.week.totals.meetingsCompleted)} na semana · Anúncios</small></article> : <article aria-label="Ligações feitas hoje"><span>Ligações feitas hoje</span><strong>{number.format(callsToday)}<Icon name="phone" /></strong><small>{number.format(callsWeek)} na semana · ligações registradas</small></article>}
     <article className={styles.summaryGoal}><span>Meta semanal de vendas</span><strong>{goal.targetValue === null ? number.format(snapshot.week.totals.sales) : goalValue(goal.actualValue)}<small>/ {goal.targetValue === null ? "não definida" : goalValue(goal.targetValue)}</small><Icon name="sale" /></strong><small>{goal.targetValue === null ? "Cadastre uma meta semanal em Metas" : goal.label}</small></article>
   </div>;
 }
 
-function PeriodPanel({ period, totals, goals, title, dates }: Readonly<{ period: "today" | "week"; totals: RealtimeDashboardTotals; goals: RealtimeDashboardGoals; title: string; dates: string }>) {
+function PeriodPanel({ period, totals, goals, title, dates, front }: Readonly<{ front: RealtimeDashboardFront; period: "today" | "week"; totals: RealtimeDashboardTotals; goals: RealtimeDashboardGoals; title: string; dates: string }>) {
   return <section className={styles.periodPanel} data-period={period} aria-label={`Métricas ${period === "today" ? "de hoje" : "da semana"}`}>
     <header><div><span className={styles.eyebrow}>{period === "today" ? "META DIÁRIA" : "ACUMULADO SEMANAL"}</span><h2>{title}</h2></div><span className={styles.periodDate}><Icon name="calendar" />{dates}</span></header>
     <div className={styles.metricGrid}>{metrics.map((metric) => <article className={styles.metricTile} key={metric.key} data-metric={metric.key}>
-      <div className={styles.metricLabel}><Icon name={metric.icon} /><span>{metric.label}</span></div><strong className={styles.metricNumber}>{number.format(totals[metric.key])}</strong><p>{metric.detail}</p>
+      <div className={styles.metricLabel}><Icon name={metric.icon} /><span>{metric.label}</span></div><strong className={styles.metricNumber}>{number.format(totals[metric.key])}</strong><p>{front === "ADVERTISING" ? metric.key === "effectiveContacts" ? `Leads recebidos ${period === "today" ? "hoje" : "na semana"} contatados` : metric.key === "calls" ? `Ligações aos leads ${period === "today" ? "de hoje" : "da semana"}` : metric.key === "messages" ? "Atividades de mensagem enviada" : metric.detail : metric.detail}</p>
       <GoalMeter goal={goals[metric.key]} metric={metric.key} />
     </article>)}</div>
     <div className={styles.revenueRow}><div><span>Valor vendido</span><strong>{formatCents(totals.salesValueCents)}</strong></div><GoalMeter goal={goals.salesValueCents} metric="salesValueCents" compact /></div>
@@ -61,7 +63,7 @@ const funnelRate = (basisPoints: number | null) => basisPoints === null ? "—" 
 function SalesFunnel({ snapshot, front }: Readonly<{ snapshot: RealtimeDashboardSnapshot; front: RealtimeDashboardFront }>) {
   const funnel = snapshot.week.funnel;
   const stages = [
-    { key: "leads", label: "Leads trabalhados", value: funnel.leadsWorked, rate: funnel.leadsWorked > 0 ? 10000 : null, basis: "base do funil", icon: "people" },
+    { key: "leads", label: front === "ADVERTISING" ? "Leads Anúncios" : "Leads trabalhados", value: front === "ADVERTISING" ? snapshot.week.leadsReceived ?? 0 : funnel.leadsWorked, rate: (front === "ADVERTISING" ? snapshot.week.leadsReceived ?? 0 : funnel.leadsWorked) > 0 ? 10000 : null, basis: "base do funil", icon: "people" },
     { key: "scheduled", label: "Reuniões agendadas", value: funnel.meetingsScheduled, rate: funnel.scheduledRateBasisPoints, basis: "dos leads", icon: "calendar" },
     { key: "completed", label: "Reuniões realizadas", value: funnel.meetingsCompleted, rate: funnel.completedRateBasisPoints, basis: "das agendadas", icon: "check" },
     { key: "sales", label: "Vendas", value: funnel.sales, rate: funnel.salesRateBasisPoints, basis: "das realizadas", icon: "sale" },
@@ -76,12 +78,12 @@ function SalesFunnel({ snapshot, front }: Readonly<{ snapshot: RealtimeDashboard
       </div>
     </li>)}</ol>
     <div className={styles.funnelRevenue}><span>Valor vendido</span><strong>{funnelMoney.format(Number(BigInt(funnel.salesValueCents)) / 100)}</strong><small>Vendas registradas nesta semana</small></div>
-    <p className={styles.funnelNote} title="Leads únicos com atividade registrada na semana. As taxas comparam volumes do período, não a evolução de uma mesma coorte. Reuniões realizadas podem ter sido agendadas antes. Um traço indica ausência de denominador.">Volumes da semana · taxas sobre a etapa anterior.</p>
+    <p className={styles.funnelNote} title={`${front === "ADVERTISING" ? "Leads únicos recebidos de anúncios na semana, inclusive sem atividade." : "Leads únicos com atividade registrada na semana."} As taxas comparam volumes do período, não a evolução de uma mesma coorte. Reuniões realizadas podem ter sido agendadas antes. Um traço indica ausência de denominador.`}>Volumes da semana · taxas sobre a etapa anterior.</p>
   </article>;
 }
 
 export function Overview({ snapshot, front }: Readonly<{ snapshot: RealtimeDashboardSnapshot; front: RealtimeDashboardFront }>) {
-  return <div className={styles.overview}><PeriodPanel period="today" totals={snapshot.today.totals} goals={snapshot.today.goals} title="Hoje" dates={date(snapshot.today.period.fromDate)} /><PeriodPanel period="week" totals={snapshot.week.totals} goals={snapshot.week.goals} title="Esta semana" dates={`${date(snapshot.week.period.fromDate)} — ${date(snapshot.week.period.toDate)}`} /><aside className={styles.overviewAside}><SalesFunnel snapshot={snapshot} front={front} /></aside></div>;
+  return <div className={styles.overview}><PeriodPanel front={front} period="today" totals={snapshot.today.totals} goals={snapshot.today.goals} title="Hoje" dates={date(snapshot.today.period.fromDate)} /><PeriodPanel front={front} period="week" totals={snapshot.week.totals} goals={snapshot.week.goals} title="Esta semana" dates={`${date(snapshot.week.period.fromDate)} — ${date(snapshot.week.period.toDate)}`} /><aside className={styles.overviewAside}><SalesFunnel snapshot={snapshot} front={front} /></aside></div>;
 }
 
 function SellerMetric({ row, metric }: Readonly<{ row: RealtimeDashboardRankingRow; metric: typeof metrics[number] }>) {
@@ -93,11 +95,12 @@ export function Leaderboard({ snapshot, page, front }: Readonly<{ snapshot: Real
   const pages = Math.max(1, Math.ceil(rows.length / 4));
   const currentPage = page % pages;
   return <div className={styles.rankingView}><div className={styles.leaderGrid}>{rows.slice(0, 3).map((row) => {
+    const closer = front === "ADVERTISING" && row.advertisingRole === "CLOSER";
     const goals = Object.values(row.goals.today).filter((goal) => goal.targetValue !== null && BigInt(goal.targetValue) > 0n);
-    return <article className={styles.leaderCard} key={row.position} data-position={row.position}><span className={styles.podiumPosition}>0{row.position}</span><Avatar initials={row.initials} position={row.position} /><div className={styles.leaderName}><h3>{row.name}</h3><span>{number.format(row.meetingsScheduled)} agendamentos na semana</span></div><div className={styles.leaderResult}><strong>{number.format(row.today.meetingsScheduled)}</strong><span>reuniões agendadas hoje</span></div><div className={styles.leaderGoals}><Icon name="check" /><span>{goals.length ? `${goals.filter((goal) => (goal.progressBasisPoints ?? 0) >= 10_000).length}/${goals.length} metas diárias atingidas` : "Metas diárias não configuradas"}</span></div></article>;
+    return <article className={styles.leaderCard} key={row.position} data-position={row.position}><span className={styles.podiumPosition}>0{row.position}</span><Avatar initials={row.initials} position={row.position} /><div className={styles.leaderName}><h3>{row.name}</h3><span>{number.format(closer ? row.meetingsCompleted : row.meetingsScheduled)} {closer ? "reuniões feitas" : "agendamentos"} na semana</span></div><div className={styles.leaderResult}><strong>{number.format(closer ? row.today.meetingsCompleted : row.today.meetingsScheduled)}</strong><span>{closer ? "reuniões feitas hoje" : "reuniões agendadas hoje"}</span></div><div className={styles.leaderGoals}><Icon name="check" /><span>{goals.length ? `${goals.filter((goal) => (goal.progressBasisPoints ?? 0) >= 10_000).length}/${goals.length} metas diárias atingidas` : "Metas diárias não configuradas"}</span></div></article>;
   })}</div><section className={styles.rankingPanel} aria-label="Ranking de atividade"><header><div><span className={styles.eyebrow}>RESULTADO INDIVIDUAL</span><h2>Ranking de atividade</h2></div><div><span>{rows.length} profissionais</span><span>Página {currentPage + 1}/{pages}</span></div></header>
-    <div className={styles.rankingTable} role="table" aria-label="Ranking semanal da equipe"><div className={styles.rankingHeader} role="row"><span role="columnheader">#</span><span role="columnheader">Profissional</span>{metrics.map((metric) => <span role="columnheader" key={metric.key}>{metric.label}</span>)}</div>
+    <div className={styles.rankingTable} role="table" aria-label="Ranking semanal da equipe" style={front === "ADVERTISING" ? { gridTemplateRows: `1.6em repeat(${Math.max(1, Math.min(4, rows.length))}, minmax(0, 1fr))` } : undefined}><div className={styles.rankingHeader} role="row"><span role="columnheader">#</span><span role="columnheader">Profissional</span>{metrics.map((metric) => <span role="columnheader" key={metric.key}>{metric.label}</span>)}</div>
       {rows.slice(currentPage * 4, currentPage * 4 + 4).map((row) => <div className={styles.rankingRow} role="row" key={row.position}><b role="cell" className={styles.rankNumber}>{row.position}</b><div role="cell" className={styles.tablePerson}><Avatar initials={row.initials} position={row.position} /><div><strong>{row.name}</strong><span>{number.format(row.meetingsScheduled)} agendamentos na semana</span><small>{front === "ADVERTISING" ? `${number.format(row.today.tasksCompleted)} tarefas hoje · ${number.format(row.tasksCompleted)} na semana · ` : ""}{formatCents(row.salesValueCents)} vendidos</small></div></div>{metrics.map((metric) => <SellerMetric key={metric.key} row={row} metric={metric} />)}</div>)}
       {rows.length === 0 ? <div className={styles.noRanking}>Nenhum profissional comercial neste período.</div> : null}
-    </div><footer><span>Ordem: agendamentos de hoje · desempate: semana e nome.</span><span>Metas sem configuração aparecem como “—”.</span></footer></section></div>;
+    </div><footer><span>{front === "ADVERTISING" ? "Ordem: atingimento da meta da função hoje · desempate: resultado e semana." : "Ordem: agendamentos de hoje · desempate: semana e nome."}</span><span>Metas sem configuração aparecem como “—”.</span></footer></section></div>;
 }
