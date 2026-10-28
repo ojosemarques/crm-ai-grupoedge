@@ -69,10 +69,10 @@ export async function LeadHistoryContent({
       readOptional(async () => {
         const identity = await getContactIdentityService().getLeadContact(context, { leadId });
         const contactJourney = identity.contact
-          ? await getLifecycleService().getJourney(context, {
+          ? (await readOptional(() => getLifecycleService().getJourney(context, {
               entityType: "CONTACT",
-              entityId: identity.contact.id,
-            })
+              entityId: identity.contact!.id,
+            }))).value
           : null;
         return { identity, journey: contactJourney };
       }),

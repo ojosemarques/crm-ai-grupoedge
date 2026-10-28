@@ -52,6 +52,12 @@ test("Carlos vê todos os leads de Anúncios e entrega o card ao vendedor que re
   await expect(page.locator("article").filter({ hasText: prefix })).toHaveCount(2);
   await page.locator("article").filter({ hasText: `${prefix} FORM` }).click();
   const profile = page.getByRole("dialog");
+  await profile.getByRole("tab", { name: "Contato", exact: true }).click();
+  await expect(profile.getByText("Contato canônico", { exact: true })).toBeVisible();
+  const channels = profile.getByRole("form", { name: "Adicionar WhatsApp e Instagram" });
+  await channels.getByLabel("Instagram", { exact: true }).fill(`@handoff_${randomUUID().slice(0, 8)}`);
+  await channels.getByRole("button", { name: "Salvar contatos", exact: true }).click();
+  await expect(profile.getByText("Pontos de contato salvos.", { exact: true })).toBeVisible();
   await profile.getByRole("tab", { name: "Reuniões", exact: true }).click();
   const panel = profile.getByRole("tabpanel", { name: "Reuniões" });
   await panel.getByLabel("Closer").selectOption(seller.id);
