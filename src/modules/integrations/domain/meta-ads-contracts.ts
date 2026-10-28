@@ -16,6 +16,8 @@ const accountId = z.string().regex(/^act_[0-9]{3,40}$/);
 export const metaAdsConfigurationSchema = z.object({
   graphApiVersion: z.enum(META_ADS_SUPPORTED_API_VERSIONS).default(META_ADS_DEFAULT_API_VERSION),
   selectedAccountIds: z.array(accountId).max(25).default([]),
+  businessId: z.string().regex(/^[0-9]{3,40}$/).optional(),
+  autoSyncEnabled: z.boolean().optional(),
   initialSince: isoDate,
   lookbackDays: z.number().int().min(1).max(37).default(7),
   pageSize: z.number().int().min(1).max(100).default(100),
@@ -55,6 +57,7 @@ export const metaAdsAccountSchema = z.object({
   account_status: z.number().int().optional(),
   currency: z.string().trim().regex(/^[A-Z]{3}$/).optional(),
   timezone_name: z.string().trim().min(1).max(100).optional(),
+  business: z.object({ id: graphId, name: z.string().max(255).optional() }).nullable().optional(),
 }).passthrough();
 
 export const metaAdsCampaignSchema = z.object({

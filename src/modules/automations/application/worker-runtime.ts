@@ -1,4 +1,5 @@
 import { getMediaPerformanceService } from "@/modules/marketing/application/media-performance-service";
+import { getMetaAdsService } from "@/modules/integrations/application/meta-ads-service";
 import { createDefaultAutomationActionRegistry } from "@/modules/automations/application/predefined-entry-automation-actions";
 import { getAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
 import { createLifecycleAutomationScanner } from "@/modules/automations/application/lifecycle-automation-scheduler";
@@ -60,6 +61,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
     runner: createWorkerBatchRunner({
       scanDue: lifecycleScanner.scanDue,
       processors: [
+        { key: "meta-ads", processNext: getMetaAdsService().processDue },
         { key: "millionsend-prospecting-email", processNext: millionSendProspectingWorker.processNext },
         { key: "prospecting-reconciliation", processNext: prospectingReconciliationWorker.processNext },
         { key: "prospecting-planner", processNext: prospectingPlannerWorker.processNext },

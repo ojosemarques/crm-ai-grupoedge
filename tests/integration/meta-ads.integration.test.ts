@@ -73,15 +73,15 @@ afterAll(async () => {
   await database.$disconnect();
 });
 
-function fixtureAdapter() {
+function fixtureAdapter(businessId?: string) {
   let spend = "10.25";
   let videoViews = "100";
   const calls: string[] = [];
   const adapter = new MetaAdsReadAdapter({ sleep: async () => undefined, random: () => 0, fetcher: async (input, init) => {
     const url = new URL(String(input)); calls.push(`${init?.method}:${url.pathname}`);
     if (url.pathname.endsWith("/me")) return Response.json({ id: "123456", name: "Conta técnica fixture" });
-    if (url.pathname.endsWith("/me/adaccounts")) return Response.json({ data: [{ id: "act_123456", account_id: "123456", name: "Politizai Fixture", account_status: 1, currency: "BRL", timezone_name: "America/Sao_Paulo" }] });
-    if (url.pathname.endsWith("/act_123456")) return Response.json({ id: "act_123456", account_id: "123456", name: "Politizai Fixture", account_status: 1, currency: "BRL", timezone_name: "America/Sao_Paulo" });
+    if (url.pathname.endsWith("/me/adaccounts")) return Response.json({ data: [{ id: "act_123456", account_id: "123456", name: "Politizai Fixture", account_status: 1, currency: "BRL", timezone_name: "America/Sao_Paulo", ...(businessId ? { business: { id: businessId, name: "BM Fixture" } } : {}) }] });
+    if (url.pathname.endsWith("/act_123456")) return Response.json({ id: "act_123456", account_id: "123456", name: "Politizai Fixture", account_status: 1, currency: "BRL", timezone_name: "America/Sao_Paulo", ...(businessId ? { business: { id: businessId, name: "BM Fixture" } } : {}) });
     if (url.pathname.endsWith("/campaigns")) return Response.json({ data: [{ id: "200001", account_id: "123456", name: "Campanha Fixture", status: "ACTIVE" }] });
     if (url.pathname.endsWith("/adsets")) return Response.json({ data: [{ id: "300001", campaign_id: "200001", name: "Conjunto Fixture", status: "ACTIVE" }] });
     if (url.pathname.endsWith("/ads")) return Response.json({ data: [{ id: "400001", adset_id: "300001", name: "Anúncio Fixture", status: "ACTIVE", creative: { id: "500001", name: "Criativo Fixture" } }] });
@@ -162,4 +162,30 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     await expect(noCredentialService.testConnection(admin)).rejects.toMatchObject({ code: "META_CREDENTIALS_PENDING" });
     await expect(noCredentialService.screen(admin)).resolves.toMatchObject({ readiness: "PENDING_CREDENTIALS", externalValidation: false });
   });
+  it("isolates reporting credentials, verifies BM ownership and syncs automatically with current delegation", async () => {
+    const fixture = fixtureAdapter("777777");
+    let clock = new Date(now.getTime() + 3_600_000);
+    const service = createMetaAdsService({ database, adapter: fixture.adapter, secrets: new EphemeralSecretResolver({ META_ADS_ACCESS_TOKEN: "capi-only", META_ADS_REPORTING_ACCESS_TOKEN: "reporting-only", META_ADS_REPORTING_WORKSPACE_ID: workspaceId }), now: () => clock });
+    const existing = await database.integrationConnection.findUnique({ where: { workspaceId_key: { workspaceId, key: "meta-ads" } } });
+    const configured = await service.configure(admin, { ...(existing ? { revision: existing.revision } : {}), config: { selectedAccountIds: ["act_123456"], businessId: "777777", autoSyncEnabled: true, initialSince: "2046-04-19" } });
+    expect(await database.integrationSecretReference.findFirstOrThrow({ where: { workspaceId, connectionId: configured.id, alias: "access-token", disabledAt: null } })).toMatchObject({ referenceKey: "META_ADS_REPORTING_ACCESS_TOKEN" });
+    await service.testConnection(admin);
+    expect((await service.screen(admin)).config).toMatchObject({ businessId: "777777", autoSyncEnabled: true });
+    expect((await service.screen(admin)).accounts[0]).toMatchObject({ selected: true });
+    expect(await service.processDue()).toEqual({ status: "IDLE" });
+    clock = new Date(clock.getTime() + 16 * 60_000);
+    expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
+    expect(await service.processDue()).toEqual({ status: "IDLE" });
+    const callsBeforeSuspension = fixture.calls.length;
+    await database.workspaceMember.update({ where: { id: admin.memberId }, data: { status: "INACTIVE" } });
+    try {
+      clock = new Date(clock.getTime() + 16 * 60_000);
+      expect(await service.processDue()).toEqual({ status: "BLOCKED" });
+      expect(fixture.calls).toHaveLength(callsBeforeSuspension);
+      expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({ status: "NEEDS_ATTENTION", enabled: false });
+    } finally {
+      await database.workspaceMember.update({ where: { id: admin.memberId }, data: { status: "ACTIVE" } });
+    }
+  });
+
 });

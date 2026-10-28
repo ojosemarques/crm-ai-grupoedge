@@ -7,6 +7,17 @@ const credentials = { accessToken: "test-only-token", appSecret: "test-only-secr
 const ok = (value: unknown, headers?: HeadersInit) => new Response(JSON.stringify(value), { status: 200, ...(headers ? { headers } : {}) });
 
 describe("CRM-40 adaptador Meta Ads somente leitura", () => {
+  it("filters discovered accounts to the chosen BM and rejects an account moved to another BM", async () => {
+    const adapter = new MetaAdsReadAdapter({ fetcher: async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/me")) return ok({ id: "123456" });
+      if (path.endsWith("/me/adaccounts")) return ok({ data: [{ id: "act_123456", name: "Selecionada", business: { id: "777777" } }, { id: "act_654321", name: "Outra", business: { id: "888888" } }] });
+      return ok({ id: "act_123456", name: "Selecionada", business: { id: "888888" } });
+    } });
+    const scoped = { ...config, businessId: "777777" };
+    expect((await adapter.testConnection(scoped, credentials)).accounts.map((item) => item.id)).toEqual(["act_123456"]);
+    await expect(adapter.pull(scoped, credentials, { since: "2026-10-01", until: "2026-10-01" })).rejects.toMatchObject({ failure: { code: "META_ACCOUNT_BUSINESS_MISMATCH" } });
+  });
   it("accepts a system identity without a public profile name and still validates account access", async () => {
     const fetcher = vi.fn(async (input: string | URL | Request) => new URL(String(input)).pathname.endsWith("/me")
       ? ok({ id: "61595619636279" })

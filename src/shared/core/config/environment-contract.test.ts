@@ -62,6 +62,12 @@ describe("contrato de ambiente PROD-03", () => {
     expect(() => loadEnvironmentContract({ ...environment, META_ADS_ACCESS_TOKEN: "unconfigured-adapter-test" })).toThrow(/META_ADS_ACCESS_TOKEN/);
   });
 
+  it("requires a workspace-bound reporting token with explicit server opt-in", () => {
+    const reporting = { ...staging, APP_ENV: "production" as const, META_ADS_SERVER_CREDENTIALS_ENABLED: "true" as const, META_ADS_REPORTING_ACCESS_TOKEN: "reporting-only-token", META_ADS_REPORTING_WORKSPACE_ID: "11111111-1111-4111-8111-111111111111" };
+    expect(loadEnvironmentContract(reporting).isRemote).toBe(true);
+    expect(() => loadEnvironmentContract({ ...reporting, META_ADS_SERVER_CREDENTIALS_ENABLED: "false" })).toThrow(/META_ADS_REPORTING_ACCESS_TOKEN/);
+    expect(() => loadEnvironmentContract({ ...reporting, META_ADS_REPORTING_WORKSPACE_ID: "" })).toThrow(/META_ADS_REPORTING_WORKSPACE_ID/);
+  });
   it("libera credenciais Meta server-side somente com opt-in explícito", () => {
     const environment = {
       ...staging,

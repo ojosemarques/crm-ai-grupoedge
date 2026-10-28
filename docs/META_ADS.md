@@ -2,11 +2,12 @@
 
 ## Estado real
 
-O conector está implementado e validado localmente com fixtures determinísticas.
-Por decisão explícita, a validação externa foi adiada: nenhuma chamada externa,
-conta real ou dado da Meta foi validado. O checkpoint correto é
-`CONCLUÍDA E VALIDADA LOCALMENTE — VALIDAÇÃO EXTERNA ADIADA`; as pendências
-externas permanecem registradas em [`EXTERNAL_VALIDATIONS.md`](./EXTERNAL_VALIDATIONS.md).
+O conector possui testes locais e validação externa iniciada. Em 28/10/2026,
+o teste da credencial existente identificou um nome de perfil ausente na
+identidade de sistema; o contrato foi corrigido. A chamada seguinte recebeu
+403 da Meta por falta de permissão de anúncios. Isso não comprova conexão nem
+importação de métricas: uma credencial com `ads_read` ainda precisa ser
+autorizada e validada no workspace e na conta escolhida.
 
 O conector usa a Graph API `v26.0` por padrão e aceita apenas as versões
 explicitamente allowlisted `v25.0` e `v26.0`. A versão deve ser revista antes do
@@ -33,6 +34,14 @@ sem URL arbitrária.
 - logs, respostas, auditoria e tentativas não incluem token ou app secret;
 - a interface nunca recebe campo para colar credencial.
 
+Para relatórios, prefira `META_ADS_REPORTING_ACCESS_TOKEN`, separado do
+`META_ADS_ACCESS_TOKEN` usado pela Conversions API. A credencial de relatórios
+exige `META_ADS_REPORTING_WORKSPACE_ID` com o UUID exato do workspace; o serviço
+recusa configuração e uso em outro workspace. Os valores ficam somente como
+Secrets do servidor. A configuração troca a referência versionada, sem copiar
+o token para o banco. Conexões legadas continuam usando a referência anterior
+até serem reconfiguradas.
+
 Não existem comandos de escrita em campanhas, conjuntos, anúncios, criativos,
 leads ou conversões. O conector não cria públicos, não envia eventos e não
 altera dados comerciais do CRM.
@@ -48,6 +57,24 @@ altera dados comerciais do CRM.
 7. salve a nova versão da configuração;
 8. execute a sincronização inicial;
 9. use a incremental nas execuções seguintes.
+
+O campo Business Manager aceita o ID do portfólio escolhido. A descoberta
+filtra as contas pelo `business.id` informado pela Meta, e a coleta verifica
+novamente essa propriedade antes de ler campanhas e métricas. Uma conta que
+mudou de BM é recusada.
+
+Ative **Atualizar métricas automaticamente a cada 15 minutos** e salve/teste a
+conexão para optar pela coleta periódica. O worker existente revalida o membro
+humano que autorizou a conexão e suas permissões de executar integrações e
+importar mídia. Suspensão ou perda de permissão interrompe a coleta. Conexões
+pausadas ou sem essa opção não são coletadas automaticamente.
+
+Marketing > Aquisição mostra os mesmos fatos de mídia de `/aquisicao/midia`,
+com seleção de datas locais inclusivas e botão Hoje. Os leads reportados pela
+Meta permanecem separados dos leads observados no CRM. As ferramentas
+`consultar_meta_ads`, `consultar_aquisicao`, `consultar_leads_anuncios` e
+`consultar_metricas_anuncios` expõem essas leituras pelo MCP existente,
+preservando escopos e RBAC; elas não acionam coleta nem alteram o CRM.
 
 A credencial deve ter apenas leitura de anúncios e acesso explícito às contas
 selecionadas. Se a identidade, a permissão ou a conta falhar, o estado muda para

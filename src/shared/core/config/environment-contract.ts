@@ -14,6 +14,8 @@ const DISABLED_ADAPTER_MODES = new Set(["disabled", "local", "mock", "simulated"
 const DATABASE_PROTOCOLS = new Set(["postgres:", "postgresql:"]);
 const EXTERNAL_CREDENTIAL_NAMES = new Set([
   "META_ADS_ACCESS_TOKEN",
+  "META_ADS_REPORTING_ACCESS_TOKEN",
+  "META_ADS_REPORTING_APP_SECRET",
   "META_ADS_APP_SECRET",
   "GOOGLE_ADS_OAUTH_CLIENT_ID",
   "GOOGLE_ADS_OAUTH_CLIENT_SECRET",
@@ -189,7 +191,8 @@ export function loadEnvironmentContract(
       if (!explicitlyEnabledMetaCredential) invalidVariables.add(name);
     }
   }
-  if (remote && values.META_ADS_SERVER_CREDENTIALS_ENABLED === "true" && !source.META_ADS_ACCESS_TOKEN?.trim()) invalidVariables.add("META_ADS_ACCESS_TOKEN");
+  if (remote && values.META_ADS_SERVER_CREDENTIALS_ENABLED === "true" && !source.META_ADS_ACCESS_TOKEN?.trim() && !source.META_ADS_REPORTING_ACCESS_TOKEN?.trim()) invalidVariables.add("META_ADS_ACCESS_TOKEN");
+  if (source.META_ADS_REPORTING_ACCESS_TOKEN?.trim() && !z.string().uuid().safeParse(source.META_ADS_REPORTING_WORKSPACE_ID).success) invalidVariables.add("META_ADS_REPORTING_WORKSPACE_ID");
   if (values.PROCESS_ROLE === "worker" && values.AUTOMATION_WORKER_ENABLED !== "true") invalidVariables.add("AUTOMATION_WORKER_ENABLED");
   if (values.PROCESS_ROLE !== "bootstrap" && values.ADMIN_BOOTSTRAP_ENABLED === "true") invalidVariables.add("ADMIN_BOOTSTRAP_ENABLED");
 

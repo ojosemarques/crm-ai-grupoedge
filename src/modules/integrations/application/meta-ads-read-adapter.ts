@@ -168,8 +168,8 @@ export class MetaAdsReadAdapter {
 
   async testConnection(config: MetaAdsConfiguration, credentials: MetaAdsCredentials): Promise<{ identity: MetaAdsIdentity; accounts: readonly MetaAdsAccount[]; requestCount: number }> {
     const identity = metaAdsIdentitySchema.parse(await this.#request(config, credentials, "/me", { fields: "id,name" }));
-    const accounts = await this.#all(config, credentials, "/me/adaccounts", "id,account_id,name,account_status,currency,timezone_name", metaAdsAccountSchema);
-    return { identity, accounts: accounts.rows, requestCount: accounts.requests + 1 };
+    const accounts = await this.#all(config, credentials, "/me/adaccounts", "id,account_id,name,account_status,currency,timezone_name,business{id,name}", metaAdsAccountSchema);
+    return { identity, accounts: config.businessId ? accounts.rows.filter((account) => account.business?.id === config.businessId) : accounts.rows, requestCount: accounts.requests + 1 };
   }
 
   async pull(config: MetaAdsConfiguration, credentials: MetaAdsCredentials, window: Readonly<{ since: string; until: string }>): Promise<MetaAdsSyncPayload> {
@@ -180,7 +180,8 @@ export class MetaAdsReadAdapter {
     const insights: MetaAdsInsight[] = [];
     let requestCount = 0;
     for (const accountId of config.selectedAccountIds) {
-      const account = metaAdsAccountSchema.parse(await this.#request(config, credentials, `/${accountId}`, { fields: "id,account_id,name,account_status,currency,timezone_name" }));
+      const account = metaAdsAccountSchema.parse(await this.#request(config, credentials, `/${accountId}`, { fields: "id,account_id,name,account_status,currency,timezone_name,business{id,name}" }));
+      if (config.businessId && account.business?.id !== config.businessId) throw new MetaAdsAdapterError({ classification: "ACCOUNT_INACCESSIBLE", code: "META_ACCOUNT_BUSINESS_MISMATCH", safeMessage: "A conta de anúncios não pertence à BM selecionada. Nenhum dado foi importado." });
       const campaignPage = await this.#all(config, credentials, `/${accountId}/campaigns`, "id,account_id,name,status,start_time,stop_time", metaAdsCampaignSchema);
       const adSetPage = await this.#all(config, credentials, `/${accountId}/adsets`, "id,campaign_id,name,status", metaAdsAdSetSchema);
       const adPage = await this.#all(config, credentials, `/${accountId}/ads`, "id,adset_id,name,status,creative{id,name}", metaAdsAdSchema);

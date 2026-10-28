@@ -3,9 +3,9 @@ import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { MetaAdsReadAdapter, metaAdsReadAdapter, type MetaAdsCredentials, type MetaAdsSyncPayload } from "@/modules/integrations/application/meta-ads-read-adapter";
 import { environmentSecretResolver, type SecretResolver } from "@/modules/integrations/application/secret-resolver";
+import { assertMetaAdsCredentialWorkspace, META_ADS_REPORTING_APP_SECRET_REFERENCE, META_ADS_REPORTING_TOKEN_REFERENCE, resolveMetaAdsTokenReference } from "./meta-ads-credentials";
 import {
   META_ADS_ACCESS_TOKEN_ALIAS,
-  META_ADS_ACCESS_TOKEN_REFERENCE,
   META_ADS_ADAPTER_KEY,
   META_ADS_APP_SECRET_ALIAS,
   META_ADS_APP_SECRET_REFERENCE,
@@ -85,7 +85,7 @@ function errorStatus(failure: MetaAdsFailure): "AWAITING_CREDENTIAL" | "NEEDS_AT
   return "DEGRADED";
 }
 
-async function audit(tx: Tx, context: AuthenticatedContext, input: Readonly<{ action: string; entityId: string; requestId?: string; changes?: unknown }>) {
+async function audit(tx: Tx, context: Pick<AuthenticatedContext, "workspaceId" | "actorId">, input: Readonly<{ action: string; entityId: string; requestId?: string; changes?: unknown }>) {
   await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: input.action, entityType: "IntegrationConnection", entityId: input.entityId, requestId: input.requestId ?? null, changes: input.changes === undefined ? Prisma.JsonNull : json(input.changes) } });
 }
 
@@ -136,6 +136,7 @@ export function createMetaAdsService(options: Options) {
   async function credentialsOrFail(connection: NonNullable<Awaited<ReturnType<typeof findConnection>>>): Promise<MetaAdsCredentials> {
     const tokenReference = connection.secrets.find((item) => item.alias === META_ADS_ACCESS_TOKEN_ALIAS);
     const appSecretReference = connection.secrets.find((item) => item.alias === META_ADS_APP_SECRET_ALIAS);
+    if (tokenReference) await assertMetaAdsCredentialWorkspace(options.secrets, tokenReference.referenceKey, connection.workspaceId);
     const accessToken = tokenReference ? await options.secrets.resolve(tokenReference.referenceKey) : null;
     const appSecret = appSecretReference ? await options.secrets.resolve(appSecretReference.referenceKey) : null;
     if (!accessToken) fail("A referência server-side do token Meta ainda não está disponível.", "META_CREDENTIALS_PENDING", 409);
@@ -171,8 +172,10 @@ export function createMetaAdsService(options: Options) {
     await authorize(context, PermissionKeys.INTEGRATIONS_MANAGE);
     await authorize(context, PermissionKeys.INTEGRATIONS_SECRETS_MANAGE);
     const input = metaAdsConfigureSchema.parse(raw);
-    const accessPresent = Boolean(await options.secrets.resolve(META_ADS_ACCESS_TOKEN_REFERENCE));
-    const appSecretPresent = Boolean(await options.secrets.resolve(META_ADS_APP_SECRET_REFERENCE));
+    const accessReference = await resolveMetaAdsTokenReference(options.secrets, context.workspaceId);
+    const accessPresent = accessReference.present;
+    const appSecretReferenceKey = accessReference.referenceKey === META_ADS_REPORTING_TOKEN_REFERENCE ? META_ADS_REPORTING_APP_SECRET_REFERENCE : META_ADS_APP_SECRET_REFERENCE;
+    const appSecretPresent = Boolean(await options.secrets.resolve(appSecretReferenceKey));
     return options.database.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`meta-ads-config:${context.workspaceId}`}, 0))`;
       const existing = await tx.integrationConnection.findUnique({ where: { workspaceId_key: { workspaceId: context.workspaceId, key: CONNECTION_KEY } } });
@@ -185,17 +188,20 @@ export function createMetaAdsService(options: Options) {
         : await tx.integrationConnection.create({ data: { workspaceId: context.workspaceId, key: CONNECTION_KEY, providerKey: META_ADS_PROVIDER_KEY, adapterKey: META_ADS_ADAPTER_KEY, displayName: input.displayName, environment: "SANDBOX", status: accessPresent ? "DRAFT" : "AWAITING_CREDENTIAL", capabilityLevel: "IMPLEMENTED", enabled: false, currentErrorClass: accessPresent ? null : "CONFIGURATION", currentErrorCode: accessPresent ? null : "META_CREDENTIALS_PENDING", currentErrorMessage: accessPresent ? null : "A referência server-side do token Meta ainda não está disponível.", createdByActorId: context.actorId, updatedByActorId: context.actorId } });
       await tx.integrationConnectionConfigVersion.create({ data: { workspaceId: context.workspaceId, connectionId: connection.id, version, schemaVersion: "meta-ads-read/1.0", config: serialized, configHash: sha256(canonicalJson(serialized)), createdByActorId: context.actorId } });
       await tx.integrationConnectionCapability.createMany({ data: ["SYNC_PULL", "OBJECT_MAPPING"].map((capability) => ({ workspaceId: context.workspaceId, connectionId: connection.id, capability: capability as "SYNC_PULL" | "OBJECT_MAPPING" })), skipDuplicates: true });
-      for (const reference of [{ alias: META_ADS_ACCESS_TOKEN_ALIAS, referenceKey: META_ADS_ACCESS_TOKEN_REFERENCE, present: accessPresent }, { alias: META_ADS_APP_SECRET_ALIAS, referenceKey: META_ADS_APP_SECRET_REFERENCE, present: appSecretPresent }]) {
+      for (const reference of [{ alias: META_ADS_ACCESS_TOKEN_ALIAS, referenceKey: accessReference.referenceKey, present: accessPresent }, { alias: META_ADS_APP_SECRET_ALIAS, referenceKey: appSecretReferenceKey, present: appSecretPresent }]) {
         const current = await tx.integrationSecretReference.findFirst({ where: { workspaceId: context.workspaceId, connectionId: connection.id, alias: reference.alias, disabledAt: null }, orderBy: { version: "desc" } });
         if (!current) await tx.integrationSecretReference.create({ data: { workspaceId: context.workspaceId, connectionId: connection.id, ...reference, createdByActorId: context.actorId } });
-        else if (current.present !== reference.present) await tx.integrationSecretReference.update({ where: { id: current.id }, data: { present: reference.present } });
+        else if (current.referenceKey !== reference.referenceKey) {
+          await tx.integrationSecretReference.update({ where: { id: current.id }, data: { disabledAt: options.now() } });
+          await tx.integrationSecretReference.create({ data: { workspaceId: context.workspaceId, connectionId: connection.id, ...reference, version: current.version + 1, createdByActorId: context.actorId } });
+        } else if (current.present !== reference.present) await tx.integrationSecretReference.update({ where: { id: current.id }, data: { present: reference.present } });
       }
       await audit(tx, context, { action: existing ? "integration.meta_ads.configuration_versioned" : "integration.meta_ads.created", entityId: connection.id, changes: { configVersion: version, graphApiVersion: config.graphApiVersion, selectedAccountCount: config.selectedAccountIds.length, accessTokenReferencePresent: accessPresent, appSecretReferencePresent: appSecretPresent, readOnly: true } });
       return { id: connection.id, revision: connection.revision, status: connection.status, capabilityLevel: connection.capabilityLevel, credentialsPending: !accessPresent };
     }, { isolationLevel: "Serializable" });
   }
 
-  async function persistFailure(context: AuthenticatedContext, connectionId: string, failure: MetaAdsFailure, requestId?: string) {
+  async function persistFailure(context: Pick<AuthenticatedContext, "workspaceId" | "actorId">, connectionId: string, failure: MetaAdsFailure, requestId?: string) {
     const now = options.now();
     await options.database.$transaction(async (tx) => {
       await tx.integrationConnection.update({ where: { id: connectionId }, data: { status: errorStatus(failure), enabled: false, lastErroredAt: now, currentErrorClass: failure.classification, currentErrorCode: failure.code, currentErrorMessage: failure.safeMessage, revision: { increment: 1 }, updatedByActorId: context.actorId } });
@@ -214,6 +220,7 @@ export function createMetaAdsService(options: Options) {
     try {
       const result = await options.adapter.testConnection(config, credentials);
       const selected = new Set(config.selectedAccountIds);
+      if (result.accounts.length === 0) throw new Error("SELECTED_ACCOUNT_INACCESSIBLE");
       if ([...selected].some((id) => !result.accounts.some((account) => account.id === id))) throw new Error("SELECTED_ACCOUNT_INACCESSIBLE");
       const now = options.now();
       await options.database.$transaction(async (tx) => {
@@ -222,7 +229,7 @@ export function createMetaAdsService(options: Options) {
           const internal = await tx.marketingAdAccount.upsert({ where: { workspaceId_channelId_key: { workspaceId: context.workspaceId, channelId: channel.id, key: account.id } }, create: { workspaceId: context.workspaceId, channelId: channel.id, key: account.id, name: account.name, currency: account.currency ?? "BRL", timeZone: account.timezone_name ?? "America/Sao_Paulo", status: accountStatus(account.account_status), createdByActorId: context.actorId, updatedByActorId: context.actorId }, update: { name: account.name, currency: account.currency ?? "BRL", timeZone: account.timezone_name ?? "America/Sao_Paulo", status: accountStatus(account.account_status), updatedByActorId: context.actorId } });
           await tx.externalObjectMapping.upsert({ where: { workspaceId_connectionId_externalObjectType_externalId: { workspaceId: context.workspaceId, connectionId: connection.id, externalObjectType: "meta_ad_account", externalId: account.id } }, create: { workspaceId: context.workspaceId, connectionId: connection.id, externalObjectType: "meta_ad_account", externalId: account.id, internalEntityType: "MARKETING_AD_ACCOUNT", internalEntityId: internal.id, externalVersion: config.graphApiVersion, externalHash: factHash({ id: account.id, name: account.name }), firstRecognizedAt: now, lastRecognizedAt: now, createdByActorId: context.actorId, updatedByActorId: context.actorId }, update: { lastRecognizedAt: now, externalVersion: config.graphApiVersion, updatedByActorId: context.actorId } });
         }
-        await tx.integrationConnection.update({ where: { id: connection.id }, data: { status: "CONNECTED", capabilityLevel: "CONNECTED", enabled: true, lastTestedAt: now, lastSucceededAt: now, lastErroredAt: null, currentErrorClass: null, currentErrorCode: null, currentErrorMessage: null, revision: { increment: 1 }, updatedByActorId: context.actorId } });
+        await tx.integrationConnection.update({ where: { id: connection.id }, data: { status: "CONNECTED", capabilityLevel: "CONNECTED", enabled: true, disabledAt: null, lastTestedAt: now, lastSucceededAt: now, lastErroredAt: null, currentErrorClass: null, currentErrorCode: null, currentErrorMessage: null, revision: { increment: 1 }, updatedByActorId: context.actorId } });
         await audit(tx, context, { action: "integration.meta_ads.connection_tested", entityId: connection.id, changes: { accessibleAccountCount: result.accounts.length, selectedAccountCount: selected.size, graphApiVersion: config.graphApiVersion, requestCount: result.requestCount, readOnly: true, secretIncluded: false } });
       });
       return { connected: true as const, accessibleAccounts: result.accounts.map((account) => ({ id: account.id, name: account.name, currency: account.currency ?? null, timeZone: account.timezone_name ?? null })), graphApiVersion: config.graphApiVersion };
@@ -358,7 +365,34 @@ export function createMetaAdsService(options: Options) {
     });
   }
 
-  return Object.freeze({ screen, configure, testConnection, runSync, setPaused });
+  async function processDue() {
+    const dueBefore = new Date(options.now().getTime() - 15 * 60_000);
+    const connections = await options.database.integrationConnection.findMany({ where: { key: CONNECTION_KEY, providerKey: META_ADS_PROVIDER_KEY, enabled: true, status: "CONNECTED", capabilityLevel: "CONNECTED", disabledAt: null, OR: [{ lastSucceededAt: null }, { lastSucceededAt: { lt: dueBefore } }] }, include, orderBy: { lastSucceededAt: "asc" }, take: 50 });
+    for (const connection of connections) {
+      const config = await currentConfig(connection);
+      if (!config.autoSyncEnabled || config.selectedAccountIds.length === 0) continue;
+      const actor = await options.database.actor.findFirst({ where: { id: connection.updatedByActorId, workspaceId: connection.workspaceId, type: "HUMAN" }, select: { id: true, userId: true } });
+      const member = actor?.userId ? await options.database.workspaceMember.findFirst({ where: { workspaceId: connection.workspaceId, userId: actor.userId, status: "ACTIVE", deletedAt: null, user: { status: "ACTIVE", deletedAt: null }, workspace: { status: "ACTIVE", deletedAt: null }, role: { deletedAt: null } }, select: { id: true, userId: true, roleId: true, role: { select: { key: true, name: true } }, user: { select: { displayName: true } }, workspace: { select: { slug: true } } } }) : null;
+      if (!actor || !member) {
+        await persistFailure({ workspaceId: connection.workspaceId, actorId: connection.updatedByActorId }, connection.id, { classification: "PERMISSION", code: "META_SYNC_DELEGATION_INACTIVE", safeMessage: "O membro que autorizou a coleta Meta está inativo. Um administrador deve revalidar a conexão." });
+        return { status: "BLOCKED" };
+      }
+      const context: AuthenticatedContext = { workspaceId: connection.workspaceId, workspaceSlug: member.workspace.slug, sessionId: `meta-sync:${connection.id}`, userId: member.userId, memberId: member.id, actorId: actor.id, roleId: member.roleId, roleKey: member.role.key, roleName: member.role.name, displayName: member.user.displayName };
+      try {
+        const result = await runSync(context, { mode: "INCREMENTAL", correlationId: `meta-auto-${Math.floor(options.now().getTime() / 900_000)}-${connection.id}` });
+        return { status: result.status };
+      } catch (error) {
+        if (error instanceof ApplicationError && error.code === "META_SYNC_ALREADY_RUNNING") return { status: "IDLE" };
+        if (!(error instanceof ApplicationError)) throw error;
+        const current = await options.database.integrationConnection.findUnique({ where: { workspaceId_id: { workspaceId: connection.workspaceId, id: connection.id } }, select: { currentErrorCode: true } });
+        if (current && !current.currentErrorCode) await persistFailure(context, connection.id, { classification: error.statusCode === 403 ? "PERMISSION" : "CONFIGURATION", code: error.code, safeMessage: "A coleta automática Meta foi interrompida. Revalide a conexão antes de retomar." });
+        return { status: "FAILED" };
+      }
+    }
+    return { status: "IDLE" };
+  }
+
+  return Object.freeze({ screen, configure, testConnection, runSync, setPaused, processDue });
 }
 
 let service: ReturnType<typeof createMetaAdsService> | undefined;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { DataTableShell, SectionHeader, StatCard, Surface } from "@/components/ui/surface";
@@ -12,10 +12,17 @@ const statusLabels: Record<string, string> = { NOT_CONFIGURED: "Não configurada
 export function MetaAdsWorkspace({ initial }: Readonly<{ initial: Screen }>) {
   const router = useRouter();
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>(initial.config?.selectedAccountIds ?? []);
+  const [businessId, setBusinessId] = useState(initial.config?.businessId ?? "");
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(initial.config?.autoSyncEnabled ?? false);
   const [initialSince, setInitialSince] = useState(initial.config?.initialSince ?? initial.suggestedInitialSince);
   const [lookbackDays, setLookbackDays] = useState(initial.config?.lookbackDays ?? 7);
   const [pending, setPending] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  useEffect(() => {
+    if (!initial.config?.autoSyncEnabled) return;
+    const timer = setInterval(() => router.refresh(), 60_000);
+    return () => clearInterval(timer);
+  }, [initial.config?.autoSyncEnabled, router]);
 
   async function post(action: string, body: unknown) {
     setPending(action); setFeedback(null);
@@ -26,7 +33,7 @@ export function MetaAdsWorkspace({ initial }: Readonly<{ initial: Screen }>) {
   }
 
   async function configure() {
-    const result = await post("CONFIGURE", { action: "CONFIGURE", data: { displayName: "Meta Ads", ...(initial.connection ? { revision: initial.connection.revision } : {}), config: { graphApiVersion: initial.config?.graphApiVersion ?? "v26.0", selectedAccountIds, initialSince, lookbackDays, pageSize: 100, requestTimeoutMs: 12_000 } } });
+    const result = await post("CONFIGURE", { action: "CONFIGURE", data: { displayName: "Meta Ads", ...(initial.connection ? { revision: initial.connection.revision } : {}), config: { graphApiVersion: initial.config?.graphApiVersion ?? "v26.0", selectedAccountIds, ...(businessId.trim() ? { businessId: businessId.trim() } : {}), autoSyncEnabled, initialSince, lookbackDays, pageSize: 100, requestTimeoutMs: 12_000 } } });
     if (result) setFeedback(result.credentialsPending ? "Configuração versionada. Aguardando a referência server-side do token Meta." : "Configuração versionada. Execute o teste de conexão antes da sincronização.");
   }
 
@@ -75,6 +82,8 @@ export function MetaAdsWorkspace({ initial }: Readonly<{ initial: Screen }>) {
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <label className="space-y-1 text-sm"><span className="font-semibold">Versão Graph API</span><input className="w-full rounded-[var(--radius-control)] border border-border bg-card px-3 py-2" readOnly value={initial.config?.graphApiVersion ?? "v26.0"} /></label>
           <label className="space-y-1 text-sm"><span className="font-semibold">Data inicial</span><input className="w-full rounded-[var(--radius-control)] border border-border bg-card px-3 py-2" type="date" value={initialSince} onChange={(event) => setInitialSince(event.target.value)} /></label>
+          <label className="space-y-1 text-sm"><span className="font-semibold">Business Manager (ID)</span><input className="w-full rounded-[var(--radius-control)] border border-border bg-card px-3 py-2" inputMode="numeric" value={businessId} onChange={(event) => setBusinessId(event.target.value)} placeholder="Selecione o portfólio empresarial" /></label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={autoSyncEnabled} onChange={(event) => setAutoSyncEnabled(event.target.checked)} /><span>Atualizar métricas automaticamente a cada 15 minutos</span></label>
           <label className="space-y-1 text-sm"><span className="font-semibold">Releitura incremental</span><select className="w-full rounded-[var(--radius-control)] border border-border bg-card px-3 py-2" value={lookbackDays} onChange={(event) => setLookbackDays(Number(event.target.value))}><option value={3}>3 dias</option><option value={7}>7 dias</option><option value={14}>14 dias</option><option value={28}>28 dias</option></select></label>
         </div>
         <fieldset className="mt-5"><legend className="font-semibold">Contas autorizadas para coleta</legend>{initial.accounts.length ? <div className="mt-3 space-y-2">{initial.accounts.map((account) => <label className="flex items-start gap-3 rounded-[var(--radius-control)] bg-muted/50 p-3" key={account.id}><input checked={selectedAccountIds.includes(account.key)} className="mt-1" type="checkbox" onChange={() => toggleAccount(account.key)} /><span><strong className="block">{account.name}</strong><span className="text-sm text-muted-foreground">{account.key} · {account.currency} · {account.timeZone}</span></span></label>)}</div> : <p className="mt-2 text-sm text-muted-foreground">As contas aparecem aqui somente depois de um teste real bem-sucedido.</p>}</fieldset>
