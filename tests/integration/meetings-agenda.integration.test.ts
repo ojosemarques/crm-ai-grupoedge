@@ -6,6 +6,10 @@ import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import type { ServiceActorContext } from "@/modules/auth/application/service-actor-context";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { leadVisibilitySql, resolveLeadVisibilityScope } from "@/modules/leads/application/lead-list-service";
+import { createContactIdentityService } from "@/modules/contacts/application/contact-identity-service";
+import { ensureAdvertisingPipeline } from "@/modules/settings/application/production-foundation-service";
+import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { createOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
 import { createFreeQualificationService } from "@/modules/qualification/application/free-qualification-service";
 import { createLeadScoringService } from "@/modules/qualification/application/lead-scoring-service";
@@ -618,6 +622,8 @@ describe("agenda interna e reuniões", () => {
       "Reunião marcada",
       "Noshow",
       "Reunião feita",
+      "Proposta",
+      "Cliente",
       "Encerrado — sem retorno",
       "Descartado",
     ]);
@@ -1089,6 +1095,53 @@ describe("agenda interna e reuniões", () => {
     await expect(database.meeting.findUniqueOrThrow({ where: { id: secondMeeting.meetingId }, select: { status: true } })).resolves.toEqual({ status: "COMPLETED" });
     const otherCloserAgenda = await meetings().getAgenda(await contextByMember(closer1Id), { view: "day", date: "2035-02-26" });
     expect(otherCloserAgenda.meetings.map((meeting) => meeting.id)).not.toContain(secondMeeting.meetingId);
+
+    await ensureAdvertisingPipeline(database, workspaceId, managerContext.actorId);
+    const ads = await database.pipeline.findFirstOrThrow({ where: { workspaceId, name: "Anúncios" }, include: { stages: true } });
+    const initial = ads.stages.find((stage) => stage.leadStageCode === "NEW")!;
+    const label = `Handoff Ads ${randomUUID().slice(0, 8)}`;
+    const advertisingLeads: string[] = [];
+    for (const channel of ["FORM", "AD", "MANUAL"] as const) {
+      const intake = await createLeadIntakeService({ database, authorization, now: () => clock }).intake({
+        channel, fullName: `${label} ${channel}`, phone: `+55119${(++sequence).toString().slice(-8)}`, idempotencyKey: randomUUID(), sourceKey: "manual",
+        pipelineId: ads.id, initialStageId: initial.id, priorityBandCode: "P3", rawPayload: { test: "advertising-handoff" },
+      }, systemContext);
+      if (intake.outcome === "REJECTED") throw new Error(intake.code);
+      await database.lead.update({ where: { id: intake.leadId }, data: { ownerMemberId: managerContext.memberId, queueId: null } });
+      advertisingLeads.push(intake.leadId);
+    }
+    const pipeline = createPreSalesPipelineService(cardServices);
+    const visible = await pipeline.getScreen(carlos, { pipelineId: ads.id, q: label });
+    expect(visible.stages.flatMap((stage) => stage.leads.map((lead) => lead.id)).sort()).toEqual([...advertisingLeads].sort());
+    const visibility = await resolveLeadVisibilityScope(database, authorization, carlos, PermissionKeys.LEADS_READ);
+    expect(visibility).toMatchObject({ scope: "OWN", additionalLeadPipelineIds: [ads.id] });
+    const sqlVisible = await database.$queryRaw<{ id: string }[]>`SELECT l.id FROM leads l WHERE l."workspaceId"=${workspaceId}::uuid AND l."deletedAt" IS NULL AND ${leadVisibilitySql(carlos, visibility)}`;
+    expect(sqlVisible.map((lead) => lead.id)).toEqual(expect.arrayContaining(advertisingLeads));
+    expect(sqlVisible.map((lead) => lead.id)).not.toContain(unlinkedLead.leadId);
+    await expect(createContactIdentityService(cardServices).getLeadContact(carlos, { leadId: advertisingLeads[0]! })).resolves.toBeDefined();
+    for (const [index, closerId] of [closer2Id, closer1Id].entries()) {
+      const leadId = advertisingLeads[index]!;
+      await expect(createFreeQualificationService(cardServices).create(carlos, { leadId, content: "Contato e agendamento conduzidos pelo pré-vendedor." })).resolves.toBeDefined();
+      const booking = await schedule(leadId, carlos, `2035-03-02T${index === 0 ? "13:30" : "14:30"}`, closerId);
+      expect(await database.lead.findUniqueOrThrow({ where: { id: leadId }, include: { currentStage: true } })).toMatchObject({ ownerMemberId: closerId, queueId: null, currentStage: { leadStageCode: "MEETING_SCHEDULED" } });
+      const seller = await contextByMember(closerId);
+      expect((await createOperationalHistoryService(cardServices).getLeadOperations(seller, { leadId })).permissions.canWrite).toBe(true);
+      expect((await createOperationalHistoryService(cardServices).getLeadOperations(carlos, { leadId })).permissions.canWrite).toBe(true);
+      await expect(pipeline.getLeadState(await contextByMember(closerId === closer1Id ? closer2Id : closer1Id), { leadId })).rejects.toBeInstanceOf(AccessDeniedError);
+      const credit = await database.commercialMetricFact.findMany({ where: { workspaceId, leadId, eventType: "MEETING_SCHEDULED" } });
+      expect(credit.reduce((sum, fact) => sum + fact.quantity, 0)).toBe(1);
+      expect(credit.filter((fact) => fact.quantity > 0)).toEqual(expect.arrayContaining([expect.objectContaining({ meetingId: booking.meetingId, bookedByMemberId: carlos.memberId, creditedMemberId: carlos.memberId, meetingOwnerMemberIdAtEvent: closerId })]));
+      expect(await database.leadAssignment.count({ where: { workspaceId, leadId, createdByActorId: carlos.actorId, toMemberId: closerId } })).toBe(1);
+    }
+    const failedLeadId = advertisingLeads[2]!;
+    await expect(meetings({ beforeCommit: async () => { throw new Error("handoff rollback"); } }).schedule(carlos, { leadId: failedLeadId, closerId: closer2Id, title: "Rollback Ads", startsAtLocal: "2035-03-03T13:30", durationMinutes: 30 })).rejects.toThrow("handoff rollback");
+    expect((await database.lead.findUniqueOrThrow({ where: { id: failedLeadId } })).ownerMemberId).toBe(managerContext.memberId);
+    expect(await database.meeting.count({ where: { workspaceId, leadId: failedLeadId } })).toBe(0);
+    expect(await database.leadAssignment.count({ where: { workspaceId, leadId: failedLeadId, createdByActorId: carlos.actorId } })).toBe(0);
+    const race = await Promise.allSettled([closer1Id, closer2Id].map((closerId) => schedule(failedLeadId, carlos, "2035-03-04T13:30", closerId)));
+    expect(race.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const onlyMeeting = await database.meeting.findFirstOrThrow({ where: { workspaceId, leadId: failedLeadId } });
+    expect((await database.lead.findUniqueOrThrow({ where: { id: failedLeadId } })).ownerMemberId).toBe(onlyMeeting.ownerMemberId);
   });
 
   it("pesquisa leads da agenda sem escapar do escopo autorizado", async () => {

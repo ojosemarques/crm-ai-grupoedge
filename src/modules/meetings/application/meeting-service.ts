@@ -1,5 +1,6 @@
 import { assertAdvertisingSchedulingAccess, getAdvertisingSchedulingAccess } from "@/modules/meetings/application/advertising-scheduling-access";
 import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
+import { reassignLeadInTransaction } from "@/modules/leads/application/lead-assignment-operation";
 import type {
   MeetingHistoryAction,
   MeetingStatus,
@@ -789,6 +790,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
 
     return options.database.$transaction(async (transaction) => {
       await lockCloser(transaction, context.workspaceId, parsed.data.closerId);
+      // Booking and ownership must serialize even when two different closers are selected.
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`lead-distribution:${context.workspaceId}:${lead.id}`}, 0))`;
       const closer = await transaction.workspaceMember.findFirst({
         where: {
           id: parsed.data.closerId,
@@ -1005,6 +1008,14 @@ export function createMeetingService(options: MeetingServiceOptions) {
             updatedByActorId: context.actorId,
             updatedAt: occurredAt,
           },
+        });
+      }
+      if (currentLead.pipeline.name === ADVERTISING_PIPELINE_NAME && currentLead.ownerMemberId !== closer.id) {
+        await reassignLeadInTransaction(transaction, {
+          workspaceId: context.workspaceId, actorId: context.actorId, leadId: currentLead.id, targetMemberId: closer.id,
+          ...(currentLead.ownerMemberId ? { expectedOwnerMemberId: currentLead.ownerMemberId } : {}),
+          reason: `Reunião ${meeting.id} agendada: lead de Anúncios atribuído ao vendedor responsável pela reunião.`,
+          type: "REDISTRIBUTION", requireGeneralQueueOrigin: false, requireTargetAvailability: false, assignedAt: occurredAt,
         });
       }
       await stopColdCadenceInTransaction(transaction, {

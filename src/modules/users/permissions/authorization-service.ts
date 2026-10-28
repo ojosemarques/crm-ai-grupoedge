@@ -5,6 +5,9 @@ import { PermissionKeys, type PermissionKey } from "@/modules/users/permissions/
 import { isWorkspaceMeetingScheduler, WORKSPACE_MEETING_SCHEDULER_EMAIL } from "@/modules/users/permissions/meeting-scheduler-policy";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { isSameWorkspace } from "@/shared/core/workspace/workspace-context";
+import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
+
+const advertisingLeadPermissions: readonly PermissionKey[] = [PermissionKeys.LEADS_READ, PermissionKeys.LEADS_WRITE, PermissionKeys.TASKS_READ, PermissionKeys.TASKS_WRITE, PermissionKeys.CONTACTS_READ];
 
 export type ResourceScope = Readonly<{
   workspaceId: string;
@@ -27,7 +30,7 @@ type DenialReason =
   | "WORKSPACE_MISMATCH";
 
 export type AuthorizationDecision = Readonly<
-  | { allowed: true; scope: PermissionScope }
+  | { allowed: true; scope: PermissionScope; additionalLeadPipelineIds?: readonly string[] }
   | { allowed: false; reason: DenialReason; contextIsValid: boolean }
 >;
 
@@ -51,6 +54,7 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
         workspaceId: context.workspaceId,
         userId: context.userId,
         user: { normalizedEmail: WORKSPACE_MEETING_SCHEDULER_EMAIL },
+        workspace: { slug: "politizai" },
       },
       select: { id: true },
     }).then(Boolean).catch((error: unknown) => {
@@ -323,6 +327,15 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
     }
 
     if (!(await isWithinScope(context, grant.scope, resource))) {
+      if (resource.resourceId && ["Lead", "LeadScore", "LeadPipeline", "Contact"].includes(resource.resourceType)
+        && advertisingLeadPermissions.includes(permissionKey) && await isVerifiedMeetingScheduler(context)) {
+        const advertisingLead = await options.database.lead.findFirst({
+          where: { id: resource.resourceId, workspaceId: context.workspaceId, deletedAt: null,
+            pipeline: { workspaceId: context.workspaceId, name: ADVERTISING_PIPELINE_NAME, entityType: "LEAD", deletedAt: null } },
+          select: { id: true },
+        });
+        if (advertisingLead) return { allowed: true, scope: "WORKSPACE" };
+      }
       const linkedLeadRead = resource.resourceId && (
         (permissionKey === PermissionKeys.LEADS_READ && ["Lead", "LeadScore", "LeadPipeline"].includes(resource.resourceType))
         || (permissionKey === PermissionKeys.TASKS_READ && resource.resourceType === "Lead")
@@ -346,6 +359,13 @@ export function createAuthorizationService(options: AuthorizationServiceOptions)
       };
     }
 
+    if (grant.scope !== "WORKSPACE" && resource.resourceType === "LeadList" && advertisingLeadPermissions.includes(permissionKey)
+      && await isVerifiedMeetingScheduler(context)) {
+      const pipelines = await options.database.pipeline.findMany({
+        where: { workspaceId: context.workspaceId, name: ADVERTISING_PIPELINE_NAME, entityType: "LEAD", deletedAt: null }, select: { id: true },
+      });
+      return { allowed: true, scope: grant.scope, additionalLeadPipelineIds: pipelines.map((pipeline) => pipeline.id) };
+    }
     return { allowed: true, scope: grant.scope };
   }
 

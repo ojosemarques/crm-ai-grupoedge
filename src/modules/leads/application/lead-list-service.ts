@@ -168,6 +168,7 @@ type LeadListServiceOptions = Readonly<{
 export type LeadVisibilityScope = Readonly<{
   scope: PermissionScope;
   teamIds: readonly string[];
+  additionalLeadPipelineIds?: readonly string[];
 }>;
 
 type RawLeadListRow = Omit<
@@ -397,6 +398,7 @@ export function leadVisibilitySql(
 
   return Prisma.sql`(
     l."ownerMemberId" = ${context.memberId}::uuid
+    ${scope.additionalLeadPipelineIds?.length ? Prisma.sql`OR l."pipelineId" IN ${uuidInSql(scope.additionalLeadPipelineIds)}` : Prisma.empty}
     ${teamConditions.length > 0 ? Prisma.sql`OR ${Prisma.join(teamConditions, " OR ")}` : Prisma.empty}
   )`;
 }
@@ -456,7 +458,8 @@ export function leadVisibilityWhere(
           : []),
       ]
     : [];
-  return { OR: [{ ownerMemberId: context.memberId }, ...teamOr] };
+  return { OR: [{ ownerMemberId: context.memberId }, ...teamOr,
+    ...(scope.additionalLeadPipelineIds?.length ? [{ pipelineId: { in: [...scope.additionalLeadPipelineIds] } }] : [])] };
 }
 
 function effectiveSourceSql(): Prisma.Sql {
@@ -901,7 +904,8 @@ export async function resolveLeadVisibilityScope(
       },
       select: { teamId: true },
     });
-    return { scope: decision.scope, teamIds: teamIds.map((item) => item.teamId) };
+    return { scope: decision.scope, teamIds: teamIds.map((item) => item.teamId),
+      ...(decision.additionalLeadPipelineIds ? { additionalLeadPipelineIds: decision.additionalLeadPipelineIds } : {}) };
 }
 
 export function createLeadListService(options: LeadListServiceOptions) {

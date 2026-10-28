@@ -9,9 +9,16 @@ Casos de uso administrativos chamam esse serviço antes de ler ou alterar dados.
 Na Politizai, Carlos Henrique possui uma exceção nominal de agendamento:
 `meetings.read` e `meetings.write` usam escopo `WORKSPACE` após validar a identidade
 persistida e a permissão-base. Isso permite consultar e gerenciar reuniões de todos
-os vendedores. A ficha do lead vinculado a uma reunião não excluída também pode ser
+os vendedores. Fora de Anúncios, a ficha do lead vinculado a uma reunião não excluída também pode ser
 consultada, sem liberar escrita em leads alheios, leitura de transcrições ou acesso
 a leads alheios sem reunião. A política fica em `permissions/meeting-scheduler-policy.ts`.
+
+No pipeline Anúncios, a mesma identidade nominal verificada pode ler e editar
+leads e suas tarefas, mesmo após atribuição a outro vendedor, desde que tenha a
+permissão-base persistida. Listagens incluem esse pipeline além do escopo normal;
+Prospecção e outros workspaces mantêm suas restrições. Ao agendar uma reunião em
+Anúncios, o lead é atribuído ao vendedor escolhido na mesma transação, pela rotina
+auditada de atribuição. O agendador original continua creditado pelo agendamento.
 
 `Role` é acesso técnico. `TeamMember.function` é função comercial. Essa separação
 deve ser preservada em toda evolução do módulo.

@@ -68,6 +68,7 @@ describe("authorization service", () => {
       workspaceMember: { findFirst: vi.fn().mockResolvedValue({ id: context.memberId }) },
       actor: { findFirst: vi.fn().mockResolvedValue({ id: context.actorId }) },
       rolePermission: { findFirst: vi.fn().mockResolvedValue({ scope: "OWN" }) },
+      lead: { findFirst: vi.fn().mockResolvedValue(null) },
       meeting: { findFirst: meetingLookup },
     } as never });
     const scheduler = { ...context, email: "carloshenrique@politizai.com", workspaceSlug: "politizai" };
@@ -76,6 +77,51 @@ describe("authorization service", () => {
     if (allowed) expect(meetingLookup).toHaveBeenCalledWith(expect.objectContaining({ where: {
       workspaceId: context.workspaceId, leadId: "linked-lead", deletedAt: null, lead: { deletedAt: null },
     } }));
+  });
+
+  it.each([
+    { permission: PermissionKeys.LEADS_READ, resourceType: "Lead", advertising: true, verified: true, allowed: true },
+    { permission: PermissionKeys.LEADS_WRITE, resourceType: "LeadPipeline", advertising: true, verified: true, allowed: true },
+    { permission: PermissionKeys.TASKS_WRITE, resourceType: "Lead", advertising: true, verified: true, allowed: true },
+    { permission: PermissionKeys.CONTACTS_READ, resourceType: "Contact", advertising: true, verified: true, allowed: true },
+    { permission: PermissionKeys.LEADS_WRITE, resourceType: "Lead", advertising: false, verified: true, allowed: false },
+    { permission: PermissionKeys.LEADS_ASSIGN, resourceType: "Lead", advertising: true, verified: true, allowed: false },
+    { permission: PermissionKeys.LEADS_WRITE, resourceType: "Lead", advertising: true, verified: false, allowed: false },
+  ])("Carlos opera somente leads de Anúncios com identidade verificada: $permission/$resourceType/$advertising/$verified", async ({ permission, resourceType, advertising, verified, allowed }) => {
+    const leadLookup = vi.fn().mockResolvedValue(advertising ? { id: "lead-ad" } : null);
+    const service = createAuthorizationService({ database: {
+      workspaceMember: { findFirst: vi.fn().mockImplementation(async ({ where }) => where.user && !verified ? null : { id: context.memberId }) },
+      actor: { findFirst: vi.fn().mockResolvedValue({ id: context.actorId }) },
+      rolePermission: { findFirst: vi.fn().mockResolvedValue({ scope: "OWN" }) },
+      lead: { findFirst: leadLookup }, meeting: { findFirst: vi.fn().mockResolvedValue(null) },
+    } as never });
+    const scheduler = { ...context, email: "carloshenrique@politizai.com", workspaceSlug: "politizai" };
+    expect((await service.authorize(scheduler, permission, { workspaceId: context.workspaceId, resourceType, resourceId: "lead-ad", ownerMemberId: "other-member" })).allowed).toBe(allowed);
+    if (allowed) expect(leadLookup).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId: context.workspaceId, pipeline: { workspaceId: context.workspaceId, name: "Anúncios", entityType: "LEAD", deletedAt: null } }) }));
+  });
+
+  it("mantém escopo próprio e adiciona apenas o pipeline de Anúncios às listagens do Carlos", async () => {
+    const service = createAuthorizationService({ database: {
+      workspaceMember: { findFirst: vi.fn().mockResolvedValue({ id: context.memberId }) },
+      actor: { findFirst: vi.fn().mockResolvedValue({ id: context.actorId }) },
+      rolePermission: { findFirst: vi.fn().mockResolvedValue({ scope: "OWN" }) },
+      pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "ads" }]) },
+    } as never });
+    await expect(service.authorize({ ...context, email: "carloshenrique@politizai.com", workspaceSlug: "politizai" }, PermissionKeys.LEADS_READ,
+      { workspaceId: context.workspaceId, resourceType: "LeadList", memberId: context.memberId }))
+      .resolves.toEqual({ allowed: true, scope: "OWN", additionalLeadPipelineIds: ["ads"] });
+  });
+
+  it("a exceção de Anúncios exige permissão-base e não cruza workspaces", async () => {
+    const lookup = vi.fn().mockResolvedValue({ id: "ads-lead" });
+    const service = createAuthorizationService({ database: {
+      workspaceMember: { findFirst: vi.fn().mockResolvedValue({ id: context.memberId }) }, actor: { findFirst: vi.fn().mockResolvedValue({ id: context.actorId }) },
+      rolePermission: { findFirst: vi.fn().mockResolvedValue(null) }, lead: { findFirst: lookup },
+    } as never });
+    const scheduler = { ...context, email: "carloshenrique@politizai.com", workspaceSlug: "politizai" };
+    await expect(service.authorize(scheduler, PermissionKeys.LEADS_WRITE, { workspaceId: context.workspaceId, resourceType: "Lead", resourceId: "ads-lead", ownerMemberId: "other" })).resolves.toMatchObject({ allowed: false, reason: "MISSING_PERMISSION" });
+    await expect(service.authorize(scheduler, PermissionKeys.LEADS_READ, { workspaceId: "foreign", resourceType: "Lead", resourceId: "ads-lead" })).resolves.toMatchObject({ allowed: false, reason: "WORKSPACE_MISMATCH" });
+    expect(lookup).not.toHaveBeenCalled();
   });
 
   it("nega um contexto não validado que não existe no workspace", async () => {
