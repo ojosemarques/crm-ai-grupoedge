@@ -124,6 +124,9 @@ describe("frentes comerciais integradas", () => {
     expect(afterBooking.total).toMatchObject({ booked: 0, completed: 7, completionCohort: { numerator: 0, denominator: 0, rate: null } });
     const rate = await metrics.getIntegratedOverview(admin, { ...query, from: "2058-05-20T15:00:00.000Z", filters: { pipelineIds: [ads.id] } });
     expect(rate.values.find((value) => value.metricId === "conversion.entry_to_meeting")).toMatchObject({ value: null, denominator: 0 });
+    await recordCommercialMetricFactInTransaction(database, { workspaceId, eventKey: `channel-fixture:${leads[0]}`, eventType: "EMAIL_SENT", occurredAt: now, sourceEntityType: "Activity", sourceEntityId: randomUUID(), leadId: leads[0]!, pipelineId: ads.id, channel: "EMAIL", creditedMemberId: carlos.memberId });
+    const channel = await metrics.getOverview(admin, { ...query, filters: { pipelineIds: [ads.id], channels: ["EMAIL"] } });
+    expect(channel.evidence.universeLeadIds).toEqual([leads[0]]);
   });
 
   it("preserva os dois pipelines, compartilha só contato confirmado e não duplica replay", async () => {

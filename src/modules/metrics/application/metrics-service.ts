@@ -527,6 +527,16 @@ export function createMetricsService(options: MetricsServiceOptions) {
       .filter((membership) => query.filters.teamIds.includes(membership.teamId))
       .map((membership) => membership.workspaceMemberId));
 
+    // Entity-based charts use leads with observed channel facts in this period.
+    // Keep the same factual authorization and signed corrections as the ledger.
+    const channelGroups = query.filters.channels?.length ? await options.database.commercialMetricFact.groupBy({
+      by: ["leadId"],
+      where: { ...await integratedFactWhere(options.database, context, scope, query), leadId: { not: null } },
+      _sum: { quantity: true }, orderBy: { leadId: "asc" }, take: 50_001,
+    }) : null;
+    if (channelGroups && channelGroups.length > 50_000) invalidInput("O canal excedeu 50 mil participações. Reduza o recorte.");
+    const channelLeadIds = channelGroups?.filter((group) => (group._sum.quantity ?? 0) > 0).flatMap((group) => group.leadId ? [group.leadId] : []);
+
     const leads = await options.database.lead.findMany({
       where: {
         workspaceId: context.workspaceId,
@@ -540,6 +550,7 @@ export function createMetricsService(options: MetricsServiceOptions) {
             scope.scope === "TEAM" ? scopedMemberIds : [],
           ),
           ...dimensionFilters(query.filters, filteredTeamMemberIds),
+          ...(channelLeadIds ? [{ id: { in: channelLeadIds } }] : []),
         ],
       },
       select: {
