@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { loadAcquisitionFunnel } from "@/modules/marketing/application/acquisition-funnel-service";
 import { createMarketingFormAdvertisingSyncService } from "@/modules/marketing-forms/application/marketing-form-advertising-sync-service";
 import { createMarketingFormService } from "@/modules/marketing-forms/application/marketing-form-service";
@@ -65,6 +66,7 @@ async function createFixture(label: string): Promise<Fixture> {
     PermissionKeys.INTEGRATIONS_SECRETS_MANAGE,
     PermissionKeys.BULK_ACTIONS_EXECUTE,
     PermissionKeys.LEADS_WRITE,
+    PermissionKeys.LEADS_READ,
     PermissionKeys.LEADS_ASSIGN,
   ]) {
     const permission = await database.permission.upsert({ where: { key }, update: {}, create: { key, description: key } });
@@ -519,6 +521,11 @@ describe("serviço administrativo de formulários", () => {
     const routed = await database.lead.findUniqueOrThrow({ where: { id: leadId }, include: { pipeline: true, currentStage: true } });
     expect(routed.pipeline.name).toBe("Anúncios");
     expect(routed.currentStage.leadStageCode).toBe("NEW");
+    const leadState = createPreSalesPipelineService({ database, authorization, now: () => now });
+    const summary = await leadState.getLeadState(tenantA.context, { leadId });
+    expect(summary).toMatchObject({ pipelineName: "Anúncios", formResponses: [{ formName: "Forms Mandato", answers: expect.arrayContaining([{ questionKey: "nome-completo", question: "Qual o seu nome completo?", displayValue: "Lead do formulário" }]) }] });
+    await expect(leadState.getLeadState(tenantA.viewer, { leadId })).rejects.toBeInstanceOf(AccessDeniedError);
+    await expect(leadState.getLeadState(tenantB.context, { leadId })).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(await database.stageHistory.count({ where: { workspaceId: tenantA.context.workspaceId, leadId } })).toBe(3);
     expect(await database.stageHistory.count({ where: { workspaceId: tenantA.context.workspaceId, leadId, exitedAt: { not: null }, transitionReason: "Entrada inicial do lead." } })).toBe(1);
     expect(await database.task.count({ where: { workspaceId: tenantA.context.workspaceId, leadId } })).toBe(before.tasks);

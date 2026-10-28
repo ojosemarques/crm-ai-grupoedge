@@ -6,6 +6,8 @@ import { FormEvent, useEffect, useState, type KeyboardEvent } from "react";
 
 import styles from "./lead-detail.module.css";
 import { Icon } from "@/components/ui/icon";
+import { LeadFormResponseDetails } from "@/components/leads/lead-form-response-details";
+import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { leadStageCodes, leadStageLabels } from "@/modules/pipelines/domain/pre-sales-pipeline-contracts";
 import { Button } from "@/components/ui/button";
 import { FreeQualificationWorkspace } from "@/app/leads/[leadId]/historico/free-qualification-workspace";
@@ -1226,6 +1228,16 @@ export function OperationalHistoryWorkspace({
         <div className={styles.content}>
       {activeTab === "summary" ? (
         <div aria-labelledby="tab-summary" className="grid gap-6" id="panel-summary" role="tabpanel">
+          {pipeline.pipelineName === ADVERTISING_PIPELINE_NAME ? (
+            <section aria-label="Respostas do formulário" className="surface-panel surface-panel--soft p-5 [&_section]:text-sm [&_summary]:text-sm">
+              <h2 className="text-lg font-semibold">Respostas do formulário</h2>
+              {pipeline.formResponses.length > 0 ? (
+                <div className="mt-3 min-w-0 [&>div]:min-w-0">
+                  <LeadFormResponseDetails responses={pipeline.formResponses} timeZone={operations.timeZone} />
+                </div>
+              ) : <p className="mt-2 text-sm text-muted-foreground">Este lead ainda não tem respostas de formulário vinculadas.</p>}
+            </section>
+          ) : null}
           <section className="surface-panel surface-panel--soft p-5" aria-label="Resumo de comunicações">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>

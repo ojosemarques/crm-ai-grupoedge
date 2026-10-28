@@ -830,8 +830,13 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
     }
     const hasNextAction = lead.tasks.length > 0;
     const pactoReady = lead.pactoRevisions[0]?.isQualificationReady ?? false;
+    const formResponses = pipeline.name === ADVERTISING_PIPELINE_NAME
+      ? (await responsesByLead(options.database, context.workspaceId, [lead.id])).get(lead.id) ?? []
+      : [];
     return Object.freeze({
       leadId: lead.id,
+      pipelineName: pipeline.name,
+      formResponses,
       currentStageId: lead.currentStage.id,
       currentStageCode: lead.currentStage.leadStageCode,
       currentStageName: lead.currentStage.name,

@@ -109,6 +109,8 @@ export type LeadPipelineStagePage = Readonly<{
 
 export type LeadPipelineState = Readonly<{
   leadId: string;
+  pipelineName: string;
+  formResponses: LeadPipelineCard["formResponses"];
   currentStageId: string;
   currentStageCode: LeadStageCode;
   currentStageName: string;

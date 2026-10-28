@@ -7,6 +7,8 @@ import type { AuthenticatedContext } from "@/modules/auth/application/authentica
 import { createAcquisitionConnectionService } from "@/modules/acquisition-api/application/acquisition-connection-service";
 import { createAcquisitionWebhookService } from "@/modules/acquisition-api/application/acquisition-webhook-service";
 import { responsesByLead } from "@/modules/marketing-forms/application/marketing-form-response-summary-service";
+import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
+import { ensureAdvertisingPipeline } from "@/modules/settings/application/production-foundation-service";
 import { createMetaNativeService } from "@/modules/acquisition-api/application/meta-native-service";
 import { createMetaNativeFeedbackWorker } from "@/modules/acquisition-api/application/meta-native-feedback-worker";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
@@ -320,7 +322,8 @@ describe("Etapa 14 — aquisição integrada", () => {
 
 describe("Forms Nativo — Página, data, identidade e feedback", () => {
   it("importa somente hoje, deduplica webhook, preserva origem e bloqueia outra Página/formulário", async () => {
-    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, entityType: "LEAD", deletedAt: null }, include: { stages: { where: { deletedAt: null, type: "OPEN" }, orderBy: { position: "asc" } } } });
+    await ensureAdvertisingPipeline(database, admin.workspaceId, admin.actorId);
+    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, name: "Anúncios", entityType: "LEAD", deletedAt: null }, include: { stages: { where: { deletedAt: null, type: "OPEN" }, orderBy: { position: "asc" } } } });
     const key = `native-${randomUUID().slice(0, 8)}`;
     const pageId = "931101203422256";
     const formId = "1826992651643956";
@@ -364,6 +367,12 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
     expect(submission).toMatchObject({ channel: "AD", submittedAt: new Date(capturedAt), rawPayload: expect.objectContaining({ pageId, formId, eventId: leadId }) });
     expect(await database.lead.findUniqueOrThrow({ where: { id: submission.leadId! } })).toMatchObject({ pipelineId: pipeline.id, currentStageId: pipeline.stages[0]!.id });
     expect((await responsesByLead(database, admin.workspaceId, [submission.leadId!])).get(submission.leadId!)?.[0]).toMatchObject({ formName: "Mandato nativo · Forms Nativo", answers: [{ questionKey: "qual_é_o_desafio/atual?", question: "Qual é o desafio?", displayValue: "Organizar o gabinete" }] });
+    const summary = await createPreSalesPipelineService({ database, authorization, now: () => now }).getLeadState(admin, { leadId: submission.leadId! });
+    expect(summary).toMatchObject({ pipelineName: "Anúncios", formResponses: [{ formName: "Mandato nativo · Forms Nativo", answers: [{ question: "Qual é o desafio?", displayValue: "Organizar o gabinete" }] }] });
+    const seller = await context("sdr1@demo.politizai.local");
+    await database.lead.update({ where: { id: submission.leadId! }, data: { ownerMemberId: seller.memberId, queueId: null } });
+    expect((await createPreSalesPipelineService({ database, authorization, now: () => now }).getLeadState(seller, { leadId: submission.leadId! })).formResponses).toEqual(summary.formResponses);
+    await expect(createPreSalesPipelineService({ database, authorization, now: () => now }).getLeadState(await context("sdr2@demo.politizai.local"), { leadId: submission.leadId! })).rejects.toMatchObject({ statusCode: 403 });
     expect(await database.leadSource.findUniqueOrThrow({ where: { id: submission.sourceId! } })).toMatchObject({ key, type: "PAID_MEDIA" });
     expect(JSON.stringify(await database.webhookInbox.findMany({ where: { connectionId: configured.id } }))).not.toContain("+5511999981919");
     expect((await nativeService.list(admin)).find((row) => row.id === configured.id)?.forms[0]).toMatchObject({ id: formId, total: 1, today: 1 });
