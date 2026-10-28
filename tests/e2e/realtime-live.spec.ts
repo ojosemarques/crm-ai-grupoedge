@@ -18,8 +18,8 @@ test(`refresh completo da TV a cada 30 minutos: ${scenario}`, async ({ page }) =
   await page.addInitScript(() => {
     (window as Window & { refreshTestDocument?: string }).refreshTestDocument = crypto.randomUUID();
   });
-  await page.route("**/api/public/tempo", route => route.fulfill({ json: { result: snapshot } }));
-  await page.route("**/api/public/tempo-real", route => route.fulfill({ json: { result: snapshot } }));
+  await page.route("**/api/public/tempo?*", route => route.fulfill({ json: { result: snapshot } }));
+  await page.route("**/api/public/tempo-real?*", route => route.fulfill({ json: { result: snapshot } }));
   const documentId = () => page.evaluate(() => (window as Window & { refreshTestDocument?: string }).refreshTestDocument);
   await page.goto(scenario === "outro-endereco" ? `/tempo-real-publico#${"v".repeat(43)}` : "/tempo");
   await expect(page.getByRole("button", { name: "Pausar apresentação", exact: true })).toBeVisible();
@@ -59,7 +59,7 @@ test("consulta a cada cinco segundos e retoma imediatamente no foco, visibilidad
   await page.clock.install({ time: now });
   let quantity = 0;
   let requests = 0;
-  await page.route("**/api/public/tempo-real", async route => {
+  await page.route("**/api/public/tempo-real?*", async route => {
     requests += 1;
     const result = aggregateRealtimeDashboard([{ id: "call", eventType: "CALL_ATTEMPTED", occurredAt: "2026-10-22T17:00:00Z", sourceEntityType: "Task", leadId: null, creditedMemberId: "seller", performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, quantity, valueCents: null }], [{ id: "seller", name: "Carlos" }], resolveRealtimeDashboardPeriods(now, "America/Sao_Paulo"));
     await route.fulfill({ json: { result: { ...result, workspaceName: "Empresa", timeZone: "America/Sao_Paulo", generatedAt: now.toISOString(), freshnessAt: now.toISOString(), quality: { state: "LIVE", reason: "Fixture" }, week: { ...result.week, salesGoal: weeklySalesGoal(0, null, null) } } } });
@@ -76,11 +76,11 @@ test("consulta a cada cinco segundos e retoma imediatamente no foco, visibilidad
   quantity = 2;
   await page.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, value: false }); document.dispatchEvent(new Event("visibilitychange")); });
   await expect(calls).toHaveText("2", { timeout: 1_000 });
-  expect(requests).toBe(before + 1);
+  expect(requests).toBe(before + 2);
   quantity = 3;
   await page.evaluate(() => { window.dispatchEvent(new Event("online")); window.dispatchEvent(new Event("focus")); });
   await expect(calls).toHaveText("3", { timeout: 1_000 });
-  expect(requests).toBe(before + 2);
+  expect(requests).toBe(before + 4);
 });
 
 test("Tempo Real acompanha outro cliente alterando tarefas, card e reunião sem recarregar a página", async ({ page, playwright, baseURL }) => {
@@ -89,6 +89,7 @@ test("Tempo Real acompanha outro cliente alterando tarefas, card e reunião sem 
   expect(databaseUrl.searchParams.get("schema")).toMatch(/^politizai_test_e2e_/);
   const database = getDatabaseClient();
   const workspace = await database.workspace.findUniqueOrThrow({ where: { slug: "politizai" } });
+  const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId: workspace.id, name: "Prospecção Ativa", deletedAt: null } });
   const system = await database.actor.findFirstOrThrow({ where: { workspaceId: workspace.id, type: "SYSTEM", key: "system" } });
   const role = await database.role.findFirstOrThrow({ where: { workspaceId: workspace.id, key: DEMO_USERS[1]!.roleKey } });
   const user = await database.user.create({ data: { email: "carloshenrique@politizai.com", normalizedEmail: "carloshenrique@politizai.com", displayName: "Carlos Henrique" } });
@@ -116,7 +117,7 @@ test("Tempo Real acompanha outro cliente alterando tarefas, card e reunião sem 
     await expect(calls).toHaveText("0");
     const createLead = async () => {
       const name = `Sincronia ${randomUUID()}`;
-      const response = await client.post("/api/leads/manual", { data: { idempotencyKey: `live:${randomUUID()}`, lead: { fullName: name, phone: `+55119${String(Date.now()).slice(-8)}`, priorityBandCode: "P2" } } });
+      const response = await client.post("/api/leads/manual", { data: { pipelineId: pipeline.id, idempotencyKey: `live:${randomUUID()}`, lead: { fullName: name, phone: `+55119${String(Date.now()).slice(-8)}`, priorityBandCode: "P2" } } });
       expect(response.status(), await response.text()).toBe(201);
       return database.lead.findFirstOrThrow({ where: { workspaceId: workspace.id, fullName: name } });
     };
@@ -155,7 +156,7 @@ test("Tempo Real acompanha outro cliente alterando tarefas, card e reunião sem 
     expect(meeting.status(), await meeting.text()).toBe(201);
     await page.clock.runFor(5_100);
     await expect(booked).toHaveText("2");
-    await page.getByRole("button", { name: "Mostrar slide 2", exact: true }).click();
+    await page.getByRole("button", { name: "Ranking", exact: true }).click();
     await expect(page.locator('[class*="leaderResult"] > strong')).toHaveText(["2"]);
     expect(await page.evaluate(() => (window as Window & { realtimeTestDocument?: string }).realtimeTestDocument)).toBe(documentId);
   } finally {

@@ -84,11 +84,12 @@ describe("schema do dashboard tempo real", () => {
     const user = await database.user.create({ data: { email, normalizedEmail: email, displayName: "Vendedora de teste" } });
     const role = await database.role.create({ data: { workspaceId: tenant.workspaceId, key: "closer", name: "Closer", createdByActorId: tenant.actorId, updatedByActorId: tenant.actorId } });
     const member = await database.workspaceMember.create({ data: { workspaceId: tenant.workspaceId, userId: user.id, roleId: role.id, status: "ACTIVE", createdByActorId: tenant.actorId, updatedByActorId: tenant.actorId } });
+    const pipeline = await database.pipeline.create({ data: { workspaceId: tenant.workspaceId, name: "Prospecção Ativa", entityType: "LEAD", createdByActorId: tenant.actorId, updatedByActorId: tenant.actorId } });
     await database.workspace.update({ where: { id: tenant.workspaceId }, data: { timeZone: "America/Sao_Paulo" } });
     await database.dailyGoalProfile.create({ data: { workspaceId: tenant.workspaceId, memberId: member.id, callsTarget: 10, messagesTarget: 5, effectiveContactsTarget: 2, meetingsScheduledTarget: 1, salesValueTargetCents: 10000n, createdByActorId: tenant.actorId, updatedByActorId: tenant.actorId } });
     const occurredAt = new Date("2026-10-22T14:00:00Z");
     for (const eventType of ["TASK_COMPLETED", "CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT", "EMAIL_SENT", "SALE_WON"] as const) {
-      await database.commercialMetricFact.create({ data: { workspaceId: tenant.workspaceId, eventKey: eventType, eventType, occurredAt, sourceEntityType: "Task", sourceEntityId: randomUUID(), creditedMemberId: member.id, quantity: eventType === "EMAIL_SENT" ? 3 : 1, valueCents: eventType === "SALE_WON" ? 5000n : null, inputFingerprint: "fixture" } });
+      await database.commercialMetricFact.create({ data: { workspaceId: tenant.workspaceId, pipelineId: pipeline.id, eventKey: eventType, eventType, occurredAt, sourceEntityType: "Task", sourceEntityId: randomUUID(), creditedMemberId: member.id, quantity: eventType === "EMAIL_SENT" ? 3 : 1, valueCents: eventType === "SALE_WON" ? 5000n : null, inputFingerprint: "fixture" } });
     }
     const token = "g".repeat(43);
     await database.realtimeDashboardShare.create({ data: { workspaceId: tenant.workspaceId, tokenHash: realtimeTokenHash(token), createdByActorId: tenant.actorId, updatedByActorId: tenant.actorId } });
@@ -102,7 +103,7 @@ describe("schema do dashboard tempo real", () => {
     expect(withoutWeek.week.goals.sales.targetValue).toBeNull();
     await plan("Semanal", "2026-10-19T03:00:00Z", "2026-10-26T03:00:00Z", 5n);
     const result = await service.publicSnapshot(token);
-    expect(result.today.totals).toMatchObject({ tasksCompleted: 1, calls: 1, messages: 4, sales: 1, salesValueCents: "5000" });
+    expect(result.today.totals).toMatchObject({ tasksCompleted: 1, calls: 1, messages: 1, sales: 1, salesValueCents: "5000" });
     expect(result.today.goals.messages).toMatchObject({ actualValue: "1", targetValue: "5", progressBasisPoints: 2000 });
     expect(result.week.goals.calls).toMatchObject({ actualValue: "1", targetValue: "50" });
     expect(result.week.goals.sales).toMatchObject({ actualValue: "1", targetValue: "5", source: "WEEKLY_PLAN", progressBasisPoints: 2000 });

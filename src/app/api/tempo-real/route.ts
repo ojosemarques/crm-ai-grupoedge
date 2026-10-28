@@ -5,6 +5,7 @@ import { z } from "zod";
 import { requireApiAuthentication } from "@/modules/auth/http/authentication-guards";
 import { assertSameOrigin } from "@/modules/auth/http/request-security";
 import { getRealtimeDashboardService } from "@/modules/realtime-dashboard/application/realtime-dashboard-service";
+import { realtimeDashboardFrontSchema } from "@/modules/realtime-dashboard/domain/realtime-dashboard-front";
 import { handleRouteError } from "@/shared/core/errors/route-error-handler";
 import { readLimitedJson } from "@/shared/core/http/request-hardening";
 
@@ -20,7 +21,8 @@ const noStoreHeaders = { "Cache-Control": "private, no-store, max-age=0" } as co
 export async function GET(request: NextRequest) {
   try {
     const context = await requireApiAuthentication(request);
-    const result = await getRealtimeDashboardService().screen(context);
+    const front = realtimeDashboardFrontSchema.parse(request.nextUrl.searchParams.get("front") ?? undefined);
+    const result = await getRealtimeDashboardService().screen(context, front);
     return NextResponse.json({ result }, { headers: noStoreHeaders });
   } catch (error) {
     return handleRouteError(error, request);

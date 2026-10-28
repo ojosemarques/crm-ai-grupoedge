@@ -24,11 +24,25 @@ describe("API pública da TV", () => {
     const response = await GET(new NextRequest("https://crm.example/api/public/tempo?workspaceId=outro", { headers: { authorization: "Bearer outro" } }));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ result: { workspaceName: "Empresa", today: {}, week: {} } });
-    expect(publicTvSnapshot).toHaveBeenCalledWith();
+    expect(publicTvSnapshot).toHaveBeenCalledWith("PROSPECTING");
     expect(enforceRateLimit).toHaveBeenCalledWith("public-realtime-tv", "client", { limit: 120, windowMs: 60_000 });
     expect(response.headers.get("cache-control")).toContain("no-store");
     expect(response.headers.get("x-robots-tag")).toContain("noindex");
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+
+  it("permite selecionar anúncios sem aceitar workspace do visitante", async () => {
+    const { GET } = await import("./route");
+    const response = await GET(new NextRequest("https://crm.example/api/public/tempo?front=ADVERTISING&workspaceId=outro"));
+    expect(response.status).toBe(200);
+    expect(publicTvSnapshot).toHaveBeenCalledWith("ADVERTISING");
+  });
+
+  it("rejeita frente desconhecida antes de consultar dados", async () => {
+    const { GET } = await import("./route");
+    const response = await GET(new NextRequest("https://crm.example/api/public/tempo?front=ALL"));
+    expect(response.status).toBe(400);
+    expect(publicTvSnapshot).not.toHaveBeenCalled();
   });
 
   it("nega acesso revogado sem cache ou exposição do motivo interno", async () => {

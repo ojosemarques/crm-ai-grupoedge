@@ -7,6 +7,7 @@ import {
   realtimeTokenHash,
 } from "@/modules/realtime-dashboard/application/realtime-dashboard-service";
 import { handleRouteError } from "@/shared/core/errors/route-error-handler";
+import { realtimeDashboardFrontSchema } from "@/modules/realtime-dashboard/domain/realtime-dashboard-front";
 import {
   enforceRateLimit,
   requestClientKey,
@@ -30,7 +31,8 @@ export async function GET(request: NextRequest) {
       { limit: 120, windowMs: 60_000 },
     );
     const token = readRealtimeBearer(authorization);
-    const result = await getRealtimeDashboardService().publicSnapshot(token);
+    const front = realtimeDashboardFrontSchema.parse(request.nextUrl.searchParams.get("front") ?? undefined);
+    const result = await getRealtimeDashboardService().publicSnapshot(token, front);
     return NextResponse.json({ result }, { headers: publicHeaders });
   } catch (error) {
     const response = handleRouteError(error, request);

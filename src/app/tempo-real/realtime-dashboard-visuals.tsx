@@ -1,3 +1,4 @@
+import type { RealtimeDashboardFront } from "@/modules/realtime-dashboard/domain/realtime-dashboard-front";
 import type { RealtimeDashboardGoals, RealtimeDashboardRankingRow, RealtimeDashboardSnapshot, RealtimeDashboardTotals, RealtimeGoalMetric, RealtimeGoalProgress } from "@/modules/realtime-dashboard/domain/realtime-dashboard-contracts";
 import { Avatar, Icon } from "./realtime-dashboard-icons";
 import styles from "./realtime-dashboard.module.css";
@@ -28,7 +29,7 @@ export function GoalMeter({ goal, metric, compact = false }: Readonly<{ goal: Re
   </div>;
 }
 
-export function DashboardSummary({ snapshot }: Readonly<{ snapshot: RealtimeDashboardSnapshot }>) {
+export function DashboardSummary({ snapshot, front }: Readonly<{ snapshot: RealtimeDashboardSnapshot; front: RealtimeDashboardFront }>) {
   const goal = snapshot.week.goals.sales;
   const contactsToday = snapshot.today.totals.effectiveContacts;
   const contactsWeek = snapshot.week.totals.effectiveContacts;
@@ -36,7 +37,7 @@ export function DashboardSummary({ snapshot }: Readonly<{ snapshot: RealtimeDash
   const callsWeek = snapshot.week.totals.calls;
   return <div className={styles.summaryStrip}>
     <article aria-label="Contatos de hoje"><span>Contatos de hoje</span><strong>{number.format(contactsToday)}<Icon name="people" /></strong><small>Pessoas únicas contatadas hoje</small></article>
-    <article aria-label="Contatos da semana"><span>Contatos da semana</span><strong>{number.format(contactsWeek)}<Icon name="people" /></strong><small>Pessoas únicas · segunda a sexta</small></article>
+    {front === "ADVERTISING" ? <article aria-label="Tarefas concluídas"><span>Tarefas concluídas hoje</span><strong>{number.format(snapshot.today.totals.tasksCompleted)}<Icon name="check" /></strong><small>{number.format(snapshot.week.totals.tasksCompleted)} na semana · Anúncios</small></article> : <article aria-label="Contatos da semana"><span>Contatos da semana</span><strong>{number.format(contactsWeek)}<Icon name="people" /></strong><small>Pessoas únicas · segunda a sexta</small></article>}
     <article aria-label="Ligações feitas hoje"><span>Ligações feitas hoje</span><strong>{number.format(callsToday)}<Icon name="phone" /></strong><small>{number.format(callsWeek)} na semana · ligações registradas</small></article>
     <article className={styles.summaryGoal}><span>Meta semanal de vendas</span><strong>{goal.targetValue === null ? number.format(snapshot.week.totals.sales) : goalValue(goal.actualValue)}<small>/ {goal.targetValue === null ? "não definida" : goalValue(goal.targetValue)}</small><Icon name="sale" /></strong><small>{goal.targetValue === null ? "Cadastre uma meta semanal em Metas" : goal.label}</small></article>
   </div>;
@@ -57,7 +58,7 @@ const rateNumber = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 });
 const funnelMoney = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const funnelRate = (basisPoints: number | null) => basisPoints === null ? "—" : `${rateNumber.format(basisPoints / 100)}%`;
 
-function SalesFunnel({ snapshot }: Readonly<{ snapshot: RealtimeDashboardSnapshot }>) {
+function SalesFunnel({ snapshot, front }: Readonly<{ snapshot: RealtimeDashboardSnapshot; front: RealtimeDashboardFront }>) {
   const funnel = snapshot.week.funnel;
   const stages = [
     { key: "leads", label: "Leads trabalhados", value: funnel.leadsWorked, rate: funnel.leadsWorked > 0 ? 10000 : null, basis: "base do funil", icon: "people" },
@@ -66,7 +67,7 @@ function SalesFunnel({ snapshot }: Readonly<{ snapshot: RealtimeDashboardSnapsho
     { key: "sales", label: "Vendas", value: funnel.sales, rate: funnel.salesRateBasisPoints, basis: "das realizadas", icon: "sale" },
   ] as const;
   return <article className={styles.funnelCard} aria-label="Funil de vendas da semana">
-    <header><div><span className={styles.eyebrow}>FUNIL COMERCIAL</span><h2>Da prospecção à venda.</h2></div><Icon name="chart" /></header>
+    <header><div><span className={styles.eyebrow}>FUNIL COMERCIAL</span><h2>{front === "ADVERTISING" ? "Do anúncio à venda." : "Da prospecção à venda."}</h2></div><Icon name="chart" /></header>
     <div className={styles.funnelPeriod}><span>Esta semana</span><span>{date(snapshot.week.period.fromDate)} — {date(snapshot.week.daily[4]!.date)}</span></div>
     <ol className={styles.funnelStages} aria-label="Etapas do funil comercial">{stages.map(stage => <li key={stage.key} data-funnel-stage={stage.key}>
       <div className={styles.funnelBand}>
@@ -79,15 +80,15 @@ function SalesFunnel({ snapshot }: Readonly<{ snapshot: RealtimeDashboardSnapsho
   </article>;
 }
 
-export function Overview({ snapshot }: Readonly<{ snapshot: RealtimeDashboardSnapshot }>) {
-  return <div className={styles.overview}><PeriodPanel period="today" totals={snapshot.today.totals} goals={snapshot.today.goals} title="Hoje" dates={date(snapshot.today.period.fromDate)} /><PeriodPanel period="week" totals={snapshot.week.totals} goals={snapshot.week.goals} title="Esta semana" dates={`${date(snapshot.week.period.fromDate)} — ${date(snapshot.week.period.toDate)}`} /><aside className={styles.overviewAside}><SalesFunnel snapshot={snapshot} /></aside></div>;
+export function Overview({ snapshot, front }: Readonly<{ snapshot: RealtimeDashboardSnapshot; front: RealtimeDashboardFront }>) {
+  return <div className={styles.overview}><PeriodPanel period="today" totals={snapshot.today.totals} goals={snapshot.today.goals} title="Hoje" dates={date(snapshot.today.period.fromDate)} /><PeriodPanel period="week" totals={snapshot.week.totals} goals={snapshot.week.goals} title="Esta semana" dates={`${date(snapshot.week.period.fromDate)} — ${date(snapshot.week.period.toDate)}`} /><aside className={styles.overviewAside}><SalesFunnel snapshot={snapshot} front={front} /></aside></div>;
 }
 
 function SellerMetric({ row, metric }: Readonly<{ row: RealtimeDashboardRankingRow; metric: typeof metrics[number] }>) {
   return <div role="cell" className={styles.sellerMetric}><div><span>Hoje</span><b>{number.format(row.today[metric.key])}</b></div><GoalMeter goal={row.goals.today[metric.key]} metric={metric.key} compact /><div><span>Semana</span><strong>{number.format(row[metric.key])}</strong></div><GoalMeter goal={row.goals.week[metric.key]} metric={metric.key} compact /></div>;
 }
 
-export function Leaderboard({ snapshot, page }: Readonly<{ snapshot: RealtimeDashboardSnapshot; page: number }>) {
+export function Leaderboard({ snapshot, page, front }: Readonly<{ snapshot: RealtimeDashboardSnapshot; page: number; front: RealtimeDashboardFront }>) {
   const rows = snapshot.week.ranking;
   const pages = Math.max(1, Math.ceil(rows.length / 4));
   const currentPage = page % pages;
@@ -96,7 +97,7 @@ export function Leaderboard({ snapshot, page }: Readonly<{ snapshot: RealtimeDas
     return <article className={styles.leaderCard} key={row.position} data-position={row.position}><span className={styles.podiumPosition}>0{row.position}</span><Avatar initials={row.initials} position={row.position} /><div className={styles.leaderName}><h3>{row.name}</h3><span>{number.format(row.meetingsScheduled)} agendamentos na semana</span></div><div className={styles.leaderResult}><strong>{number.format(row.today.meetingsScheduled)}</strong><span>reuniões agendadas hoje</span></div><div className={styles.leaderGoals}><Icon name="check" /><span>{goals.length ? `${goals.filter((goal) => (goal.progressBasisPoints ?? 0) >= 10_000).length}/${goals.length} metas diárias atingidas` : "Metas diárias não configuradas"}</span></div></article>;
   })}</div><section className={styles.rankingPanel} aria-label="Ranking de atividade"><header><div><span className={styles.eyebrow}>RESULTADO INDIVIDUAL</span><h2>Ranking de atividade</h2></div><div><span>{rows.length} profissionais</span><span>Página {currentPage + 1}/{pages}</span></div></header>
     <div className={styles.rankingTable} role="table" aria-label="Ranking semanal da equipe"><div className={styles.rankingHeader} role="row"><span role="columnheader">#</span><span role="columnheader">Profissional</span>{metrics.map((metric) => <span role="columnheader" key={metric.key}>{metric.label}</span>)}</div>
-      {rows.slice(currentPage * 4, currentPage * 4 + 4).map((row) => <div className={styles.rankingRow} role="row" key={row.position}><b role="cell" className={styles.rankNumber}>{row.position}</b><div role="cell" className={styles.tablePerson}><Avatar initials={row.initials} position={row.position} /><div><strong>{row.name}</strong><span>{number.format(row.meetingsScheduled)} agendamentos na semana</span><small>{formatCents(row.salesValueCents)} vendidos</small></div></div>{metrics.map((metric) => <SellerMetric key={metric.key} row={row} metric={metric} />)}</div>)}
+      {rows.slice(currentPage * 4, currentPage * 4 + 4).map((row) => <div className={styles.rankingRow} role="row" key={row.position}><b role="cell" className={styles.rankNumber}>{row.position}</b><div role="cell" className={styles.tablePerson}><Avatar initials={row.initials} position={row.position} /><div><strong>{row.name}</strong><span>{number.format(row.meetingsScheduled)} agendamentos na semana</span><small>{front === "ADVERTISING" ? `${number.format(row.today.tasksCompleted)} tarefas hoje · ${number.format(row.tasksCompleted)} na semana · ` : ""}{formatCents(row.salesValueCents)} vendidos</small></div></div>{metrics.map((metric) => <SellerMetric key={metric.key} row={row} metric={metric} />)}</div>)}
       {rows.length === 0 ? <div className={styles.noRanking}>Nenhum profissional comercial neste período.</div> : null}
     </div><footer><span>Ordem: agendamentos de hoje · desempate: semana e nome.</span><span>Metas sem configuração aparecem como “—”.</span></footer></section></div>;
 }

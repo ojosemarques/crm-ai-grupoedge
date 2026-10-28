@@ -3,6 +3,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { commercialMetricQuality } from "@/modules/metrics/domain/commercial-metric-quality";
+import { commercialFrontPipelineIds } from "@/modules/metrics/domain/commercial-front";
+import { realtimeFactPipelineId, type RealtimeDashboardFront } from "@/modules/realtime-dashboard/domain/realtime-dashboard-front";
 import type { IntegratedActivityFact } from "@/modules/metrics/domain/metrics-contracts";
 import type {
   RealtimeDashboardScreen,
@@ -111,7 +113,7 @@ function asActivityFact(row: Readonly<{
 }
 
 export function createRealtimeDashboardService(options: RealtimeDashboardServiceOptions) {
-  async function snapshotForWorkspace(workspaceId: string): Promise<RealtimeDashboardSnapshot> {
+  async function snapshotForWorkspace(workspaceId: string, front: RealtimeDashboardFront): Promise<RealtimeDashboardSnapshot> {
     const now = options.now();
     const workspace = await options.database.workspace.findFirst({
       where: { id: workspaceId, status: "ACTIVE", deletedAt: null },
@@ -120,18 +122,25 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     if (!workspace) publicNotFound();
 
     const periods = resolveRealtimeDashboardPeriods(now, workspace.timeZone);
-    const [factRows, activeMembers, latestBackfill, latestReconciliation, goalPlan, profiles] = await Promise.all([
+    const [allFactRows, activeMembers, latestBackfill, latestReconciliation, goalPlan, profiles, pipelines] = await Promise.all([
       options.database.commercialMetricFact.findMany({
         where: {
           workspaceId,
           eventType: { in: [...realtimeDashboardEventTypes] },
           occurredAt: { gte: periods.queryFrom, lt: periods.queryTo },
+          AND: [
+            { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } },
+            { corrections: { none: { eventKey: { endsWith: ":front-classification:replacement:v1" } } } },
+          ],
         },
         orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
         select: {
           id: true,
           eventType: true,
           sourceEntityType: true,
+          pipelineId: true,
+          safeMetadata: true,
+          correctionSource: { select: { pipelineId: true, safeMetadata: true } },
           occurredAt: true,
           recordedAt: true,
           leadId: true,
@@ -182,7 +191,16 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
         where: { workspaceId },
         select: { memberId: true, callsTarget: true, messagesTarget: true, effectiveContactsTarget: true, meetingsScheduledTarget: true, meetingsCompletedTarget: true, weeklySalesTarget: true, salesValueTargetCents: true },
       }),
+      options.database.pipeline.findMany({
+        where: { workspaceId, entityType: "LEAD", deletedAt: null },
+        select: { id: true, name: true },
+      }),
     ]);
+
+    const selectedPipelineIds = new Set(commercialFrontPipelineIds(front, pipelines));
+    const knownPipelineIds = new Set(commercialFrontPipelineIds("ALL", pipelines));
+    const factRows = allFactRows.filter((fact) => selectedPipelineIds.has(realtimeFactPipelineId(fact) ?? ""));
+    const unclassified = allFactRows.filter((fact) => !knownPipelineIds.has(realtimeFactPipelineId(fact) ?? "")).length;
 
     const historicalMemberIds = new Set<string>();
     for (const fact of factRows) {
@@ -219,12 +237,12 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
       generatedAt: now.toISOString(),
       freshnessAt: newestRecordedAt?.toISOString() ?? null,
       quality: Object.freeze({
-        state: unattributed > 0 ? "PARTIAL" as const : quality.reconciliationState === "AVAILABLE"
+        state: unattributed > 0 || unclassified > 0 ? "PARTIAL" as const : quality.reconciliationState === "AVAILABLE"
           ? "LIVE" as const
           : quality.reconciliationState === "UNAVAILABLE"
             ? "UNAVAILABLE" as const
             : "PARTIAL" as const,
-        reason: unattributed > 0 ? `${quality.reason} ${unattributed} fatos sem vendedor atribuído aparecem somente nos totais gerais.` : quality.reason,
+        reason: `${quality.reason}${unattributed > 0 ? ` ${unattributed} fatos sem vendedor atribuído aparecem somente nos totais gerais.` : ""}${unclassified > 0 ? ` ${unclassified} fatos sem frente comercial identificada foram excluídos para preservar a separação.` : ""}`,
       }),
       today: aggregation.today,
       week: Object.freeze({
@@ -238,14 +256,14 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     });
   }
 
-  async function screen(context: AuthenticatedContext): Promise<RealtimeDashboardScreen> {
+  async function screen(context: AuthenticatedContext, front: RealtimeDashboardFront = "PROSPECTING"): Promise<RealtimeDashboardScreen> {
     await options.authorization.assertAuthorized(
       context,
       PermissionKeys.REALTIME_READ,
       resource(context.workspaceId),
     );
     const [snapshot, share, manageDecision] = await Promise.all([
-      snapshotForWorkspace(context.workspaceId),
+      snapshotForWorkspace(context.workspaceId, front),
       options.database.realtimeDashboardShare.findUnique({ where: { workspaceId: context.workspaceId } }),
       options.authorization.authorize(
         context,
@@ -260,17 +278,17 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     });
   }
 
-  async function publicSnapshot(token: string): Promise<RealtimeDashboardSnapshot> {
+  async function publicSnapshot(token: string, front: RealtimeDashboardFront = "PROSPECTING"): Promise<RealtimeDashboardSnapshot> {
     if (!realtimeTokenPattern.test(token)) publicNotFound();
     const share = await options.database.realtimeDashboardShare.findUnique({
       where: { tokenHash: realtimeTokenHash(token) },
       select: { workspaceId: true, revokedAt: true },
     });
     if (!share || share.revokedAt) publicNotFound();
-    return snapshotForWorkspace(share.workspaceId);
+    return snapshotForWorkspace(share.workspaceId, front);
   }
 
-  async function publicTvSnapshot(): Promise<RealtimeDashboardSnapshot> {
+  async function publicTvSnapshot(front: RealtimeDashboardFront = "PROSPECTING"): Promise<RealtimeDashboardSnapshot> {
     if (!options.publicWorkspaceSlug) publicNotFound();
     const workspace = await options.database.workspace.findFirst({
       where: { slug: options.publicWorkspaceSlug, status: "ACTIVE", deletedAt: null },
@@ -282,7 +300,7 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
       select: { revokedAt: true },
     });
     if (!share || share.revokedAt) publicNotFound();
-    return snapshotForWorkspace(workspace.id);
+    return snapshotForWorkspace(workspace.id, front);
   }
 
   async function rotate(context: AuthenticatedContext, origin: string) {

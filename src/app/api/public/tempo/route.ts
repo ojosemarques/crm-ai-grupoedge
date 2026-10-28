@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import { getRealtimeDashboardService } from "@/modules/realtime-dashboard/application/realtime-dashboard-service";
+import { realtimeDashboardFrontSchema } from "@/modules/realtime-dashboard/domain/realtime-dashboard-front";
 import { handleRouteError } from "@/shared/core/errors/route-error-handler";
 import { enforceRateLimit, requestClientKey } from "@/shared/core/http/request-hardening";
 
@@ -17,7 +18,8 @@ const publicHeaders = {
 export async function GET(request: NextRequest) {
   try {
     await enforceRateLimit("public-realtime-tv", requestClientKey(request), { limit: 120, windowMs: 60_000 });
-    const result = await getRealtimeDashboardService().publicTvSnapshot();
+    const front = realtimeDashboardFrontSchema.parse(request.nextUrl.searchParams.get("front") ?? undefined);
+    const result = await getRealtimeDashboardService().publicTvSnapshot(front);
     return NextResponse.json({ result }, { headers: publicHeaders });
   } catch (error) {
     const response = handleRouteError(error, request);

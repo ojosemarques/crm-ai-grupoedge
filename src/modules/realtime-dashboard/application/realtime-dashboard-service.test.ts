@@ -17,6 +17,37 @@ function authorization() {
 }
 
 describe("serviço do dashboard tempo real", () => {
+  it("separa vendas, tarefas e atividades por frente antes de totalizar e ranquear", async () => {
+    const fact = (id: string, eventType: string, pipelineId: string | null, quantity: number, safeMetadata: unknown = null) => ({
+      id, eventType, pipelineId, safeMetadata, sourceEntityType: "Task", occurredAt: new Date("2026-10-22T14:00:00Z"), recordedAt: now,
+      leadId: id, creditedMemberId: "member", performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, quantity,
+      valueCents: eventType === "SALE_WON" ? BigInt(quantity * 10000) : null,
+    });
+    const database = {
+      workspace: { findFirst: vi.fn().mockResolvedValue({ name: "Empresa", timeZone: "America/Sao_Paulo" }) },
+      pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "ads", name: "Anúncios" }, { id: "pros", name: "Prospecção Ativa" }]) },
+      commercialMetricFact: { findMany: vi.fn().mockResolvedValue([
+        ...["SALE_WON", "TASK_COMPLETED", "CALL_ATTEMPTED", "WHATSAPP_MESSAGE_SENT", "MEETING_SCHEDULED"].flatMap((event) => [fact(`ads-${event}`, event, "opportunity", 2, { _commercialFrontPipelineId: "ads" }), fact(`pros-${event}`, event, "pros", 3)]),
+        fact("conflicting", "TASK_COMPLETED", "pros", 5, { _commercialFrontPipelineId: "ads" }),
+        fact("unknown", "TASK_COMPLETED", null, 99),
+      ]) },
+      workspaceMember: { findMany: vi.fn().mockResolvedValue([{ id: "member", user: { displayName: "Vendedor", normalizedEmail: "carloshenrique@politizai.com" }, role: { key: "closer" }, teamMemberships: [] }]) },
+      realtimeDashboardShare: { findUnique: vi.fn().mockResolvedValue({ workspaceId: "workspace", revokedAt: null }) },
+      commercialMetricBackfillRun: { findFirst: vi.fn().mockResolvedValue(null) }, commercialMetricReconciliationRun: { findFirst: vi.fn().mockResolvedValue(null) },
+      goalPlan: { findFirst: vi.fn().mockResolvedValue(null) }, dailyGoalProfile: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    const service = createRealtimeDashboardService({ database: database as never, authorization: authorization() as never, now: () => now });
+    const prospecting = await service.publicSnapshot(validToken);
+    const advertising = await service.publicSnapshot(validToken, "ADVERTISING");
+    expect(prospecting.today.totals).toMatchObject({ sales: 3, salesValueCents: "30000", tasksCompleted: 3, calls: 3, messages: 3, meetingsScheduled: 3 });
+    expect(advertising.today.totals).toMatchObject({ sales: 2, salesValueCents: "20000", tasksCompleted: 7, calls: 2, messages: 2, meetingsScheduled: 2 });
+    expect(prospecting.week.ranking[0]).toMatchObject({ sales: 3, tasksCompleted: 3, calls: 3 });
+    expect(advertising.week.ranking[0]).toMatchObject({ sales: 2, tasksCompleted: 7, calls: 2 });
+    expect(database.commercialMetricFact.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId: "workspace", AND: expect.arrayContaining([
+      { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } },
+      { corrections: { none: { eventKey: { endsWith: ":front-classification:replacement:v1" } } } },
+    ]) }) }));
+  });
   it("aceita somente bearer estrito e produz fingerprint sem preservar o segredo", () => {
     expect(readRealtimeBearer(`Bearer ${validToken}`)).toBe(validToken);
     expect(realtimeTokenHash(validToken)).toMatch(/^[0-9a-f]{64}$/);
@@ -74,7 +105,9 @@ describe("serviço do dashboard tempo real", () => {
     const database = {
       realtimeDashboardShare: { findUnique: vi.fn().mockResolvedValue({ workspaceId: "workspace-sentinel", revokedAt: null }) },
       workspace: { findFirst: vi.fn().mockResolvedValue({ id: "workspace-sentinel", name: "Empresa Exemplo", timeZone: "America/Sao_Paulo" }) },
+      pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "pros", name: "Prospecção Ativa" }]) },
       commercialMetricFact: { findMany: vi.fn().mockResolvedValue([{
+        pipelineId: "pros", safeMetadata: null,
         id: "fact-sentinel",
         eventType: "SALE_WON",
         sourceEntityType: "Opportunity",
@@ -142,7 +175,8 @@ describe("serviço do dashboard tempo real", () => {
     const database = {
       workspace: { findFirst: vi.fn().mockResolvedValue({ name: "Workspace", timeZone: "America/Sao_Paulo" }) },
       workspaceMember: { findMany: vi.fn().mockImplementation(({ where }) => Promise.resolve(where.id ? [{ id: "matheus", user: { displayName: "Matheus Mendon", normalizedEmail: "matheus@example.test" } }] : members)) },
-      commercialMetricFact: { findMany: vi.fn().mockResolvedValue(["admin", "matheus", "jhon"].map((id) => ({ id: `fact-${id}`, eventType: "CALL_ATTEMPTED", sourceEntityType: "Task", occurredAt: new Date("2026-10-22T14:00:00Z"), recordedAt: now, leadId: null, creditedMemberId: id, performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, quantity: 1, valueCents: null }))) },
+      pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "pros", name: "Prospecção Ativa" }]) },
+      commercialMetricFact: { findMany: vi.fn().mockResolvedValue(["admin", "matheus", "jhon"].map((id) => ({ id: `fact-${id}`, pipelineId: "pros", safeMetadata: null, eventType: "CALL_ATTEMPTED", sourceEntityType: "Task", occurredAt: new Date("2026-10-22T14:00:00Z"), recordedAt: now, leadId: null, creditedMemberId: id, performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, quantity: 1, valueCents: null }))) },
       realtimeDashboardShare: { findUnique: vi.fn().mockResolvedValue({ workspaceId: "workspace", revokedAt: null, createdAt: now, rotatedAt: null, revision: 1 }) },
       commercialMetricBackfillRun: { findFirst: vi.fn().mockResolvedValue(null) },
       commercialMetricReconciliationRun: { findFirst: vi.fn().mockResolvedValue(null) },

@@ -7,7 +7,7 @@ import type { IntegratedActivityFact } from "@/modules/metrics/domain/metrics-co
 import { DEMO_SEED_PASSWORD, DEMO_USERS } from "@/modules/settings/application/demo-seed-service";
 
 const board = (page: Page) => page.locator('main[aria-label="TEMPO REAL"]');
-const slide = (page: Page, index: number) => page.getByRole("region", { name: `Slide ${index} de 2` });
+const slide = (page: Page, index: number) => page.getByRole("region", { name: `Slide ${index} de 4` });
 
 async function expectPanelLayout(page: Page, desktop: boolean) {
   const logo = page.getByRole("img", { name: "Logo Politizai", exact: true });
@@ -79,9 +79,9 @@ test("gestor opera modos unificados e TV sem login em /tempo com revogação e r
   await expect(slide(page, 2)).toBeVisible();
   await expect(board(page)).toHaveAttribute("data-appearance", "dark");
   await page.clock.fastForward(60_000);
-  await expect(slide(page, 1)).toBeVisible();
+  await expect(slide(page, 3)).toBeVisible();
   await page.getByRole("button", { name: "Tema claro" }).click();
-  await page.getByRole("button", { name: "Mostrar slide 2" }).click();
+  await page.getByRole("button", { name: "Ranking", exact: true }).click();
   await expect(board(page)).toHaveAttribute("data-appearance", "light");
   await page.reload();
   await expect(board(page)).toHaveAttribute("data-appearance", "light");
@@ -155,7 +155,62 @@ function visualSnapshot(): RealtimeDashboardSnapshot {
   return { workspaceName: "Grupo Edge", timeZone, generatedAt: now.toISOString(), freshnessAt: now.toISOString(), quality: { state: "LIVE", reason: "Fixture visual isolada" }, ...result, week: { ...result.week, salesGoal: { target: "200", achieved: 160, progressBasisPoints: 8000, label: "Vendas da semana" } } };
 }
 
-test("resumo mostra contatos dos vendedores e ligações reais sem alterar os painéis de metas", async ({ page }) => {
+test("TV alterna as quatro telas a cada 60 segundos e mantém dados de anúncios separados", async ({ page }, testInfo) => {
+  const original = visualSnapshot();
+  const snapshot = (sales: number, tasks: number): RealtimeDashboardSnapshot => ({
+    ...original,
+    today: { ...original.today, totals: { ...original.today.totals, sales, tasksCompleted: tasks } },
+    week: { ...original.week, totals: { ...original.week.totals, sales, tasksCompleted: tasks }, ranking: original.week.ranking.slice(0, 3).map(row => ({ ...row, sales, tasksCompleted: tasks, today: { ...row.today, sales, tasksCompleted: tasks } })) },
+  });
+  await page.clock.install({ time: new Date(original.generatedAt) });
+  await page.clock.pauseAt(new Date(Date.parse(original.generatedAt) + 1_000));
+  const requests = new Set<string>();
+  await page.route("**/api/public/tempo?*", route => {
+    const front = new URL(route.request().url()).searchParams.get("front")!;
+    requests.add(front);
+    return route.fulfill({ json: { result: front === "ADVERTISING" ? snapshot(2, 4) : snapshot(7, 12) } });
+  });
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto("/tempo");
+  await expect(slide(page, 1)).toBeVisible();
+  expect([...requests].sort()).toEqual(["ADVERTISING", "PROSPECTING"]);
+  const sales = () => page.getByRole("region", { name: "Métricas de hoje" }).locator('[data-metric="sales"] > strong');
+  await expect(sales()).toHaveText("7");
+  for (const index of [2, 3, 4, 1]) {
+    await page.clock.fastForward(59_999);
+    await expect(slide(page, index === 1 ? 4 : index - 1)).toBeVisible();
+    await page.clock.fastForward(1);
+    await expect(slide(page, index)).toBeVisible();
+    await expect(board(page)).toHaveAttribute("data-front", index < 3 ? "PROSPECTING" : "ADVERTISING");
+    if (index === 3) {
+      await expect(sales()).toHaveText("2");
+      await expect(page.getByRole("article", { name: "Tarefas concluídas", exact: true }).locator(":scope > strong")).toHaveText("4");
+    }
+    if (index === 4) await expect(page.getByRole("table")).toContainText("4 tarefas hoje · 4 na semana");
+  }
+  await expect(sales()).toHaveText("7");
+  await page.getByRole("button", { name: "Pausar apresentação", exact: true }).click();
+  await page.getByRole("button", { name: "Anúncios", exact: true }).click();
+  await expect(slide(page, 3)).toBeVisible();
+  const targetIcon = page.getByRole("button", { name: "Anúncios", exact: true }).locator("svg circle");
+  await expect(targetIcon).toHaveCount(3);
+  for (const size of [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(size);
+    for (const theme of ["dark", "light"]) {
+      await page.getByRole("button", { name: theme === "dark" ? "Tema escuro" : "Tema claro" }).click();
+      for (const view of ["Geral", "Ranking"]) {
+        await page.getByRole("button", { name: view, exact: true }).click();
+        await expectPanelLayout(page, size.width > 900);
+        await page.screenshot({ path: testInfo.outputPath(`anuncios-${view}-${theme}-${size.width}.png`), fullPage: true, animations: "disabled" });
+      }
+    }
+  }
+  await page.getByRole("button", { name: "Prospecção Ativa", exact: true }).click();
+  await expect(sales()).toHaveText("7");
+  await expect(page.getByRole("article", { name: "Tarefas concluídas", exact: true })).toHaveCount(0);
+});
+
+test("resumo preserva os totais consolidados mesmo com profissionais fora do ranking", async ({ page }) => {
   const original = visualSnapshot();
   const snapshot: RealtimeDashboardSnapshot = {
     ...original,
@@ -166,15 +221,15 @@ test("resumo mostra contatos dos vendedores e ligações reais sem alterar os pa
       today: { ...row.today, effectiveContacts: [75, 12, 30][index]!, calls: [40, 7, 13][index]!, tasksCompleted: 500 },
     })) },
   };
-  await page.route("**/api/public/tempo-real", (route) => route.fulfill({ json: { result: snapshot } }));
+  await page.route("**/api/public/tempo-real?*", (route) => route.fulfill({ json: { result: snapshot } }));
   await page.goto(`/tempo-real-publico#${"v".repeat(43)}`);
   const today = page.getByRole("article", { name: "Contatos de hoje", exact: true });
   const week = page.getByRole("article", { name: "Contatos da semana", exact: true });
   const calls = page.getByRole("article", { name: "Ligações feitas hoje", exact: true });
-  await expect(today.locator(":scope > strong")).toHaveText("117");
-  await expect(week.locator(":scope > strong")).toHaveText("345");
-  await expect(calls.locator(":scope > strong")).toHaveText("60");
-  await expect(calls).toContainText("230 na semana");
+  await expect(today.locator(":scope > strong")).toHaveText("999");
+  await expect(week.locator(":scope > strong")).toHaveText("888");
+  await expect(calls.locator(":scope > strong")).toHaveText("999");
+  await expect(calls).toContainText("888 na semana");
   await expect(calls).not.toContainText("tarefas");
   await expect(page.getByRole("region", { name: "Métricas de hoje" }).locator('[data-metric="effectiveContacts"] > strong')).toHaveText("999");
   await expect(page.getByRole("region", { name: "Métricas da semana" }).locator('[data-metric="effectiveContacts"] > strong')).toHaveText("888");
@@ -187,7 +242,7 @@ test("visual de TV unificado suporta dois temas e paginação de 32 profissionai
   page.on("pageerror", (error) => errors.push(error.message));
   await page.clock.install({ time: new Date(snapshot.generatedAt) });
   let offline = false;
-  await page.route("**/api/public/tempo-real", (route) => offline ? route.abort("failed") : route.fulfill({ json: { result: snapshot } }));
+  await page.route("**/api/public/tempo-real?*", (route) => offline ? route.abort("failed") : route.fulfill({ json: { result: snapshot } }));
   await page.goto("/tempo-real");
   await expect(page).toHaveURL(/\/login\?next=%2Ftempo-real/);
   await page.goto(`/tempo-real-publico#${"v".repeat(43)}`);
@@ -197,7 +252,7 @@ test("visual de TV unificado suporta dois temas e paginação de 32 profissionai
     for (const theme of ["dark", "light"]) {
       await page.getByRole("button", { name: theme === "dark" ? "Tema escuro" : "Tema claro" }).click();
       for (const index of [1, 2]) {
-        await page.getByRole("button", { name: `Mostrar slide ${index}` }).click();
+        await page.getByRole("group", { name: "Visualização", exact: true }).getByRole("button", { name: index === 1 ? "Geral" : "Ranking", exact: true }).click();
         await expect(slide(page, index)).toBeVisible();
         await expect(board(page)).toHaveAttribute("data-appearance", theme);
         await page.screenshot({ path: testInfo.outputPath(`fixture-${index === 1 ? "geral" : "ranking"}-${theme}-${size.width}x${size.height}.png`), fullPage: true, animations: "disabled" });
@@ -206,8 +261,8 @@ test("visual de TV unificado suporta dois temas e paginação de 32 profissionai
     }
   }
   await page.setViewportSize({ width: 1366, height: 768 });
-  await page.getByRole("button", { name: "Mostrar slide 1" }).click();
-  await page.getByRole("button", { name: "Mostrar slide 2" }).click();
+  await page.getByRole("button", { name: "Geral", exact: true }).click();
+  await page.getByRole("button", { name: "Ranking", exact: true }).click();
   await page.clock.fastForward(12_000);
   await expect(page.getByRole("table")).toContainText("Contatos-dia");
   await expect(page.getByRole("table")).toContainText("Meta × 5");
@@ -219,15 +274,15 @@ test("visual de TV unificado suporta dois temas e paginação de 32 profissionai
   for (let index = 0; index < 4; index += 1) await page.clock.fastForward(12_000);
   await expect(page.getByRole("table")).toContainText(snapshot.week.ranking[20]!.name);
   await page.clock.fastForward(12_000);
-  await expect(slide(page, 1)).toBeVisible();
+  await expect(slide(page, 3)).toBeVisible();
   await page.clock.fastForward(60_000);
-  await expect(page.getByRole("table")).toContainText(snapshot.week.ranking[24]!.name);
+  await expect(page.getByRole("table")).toContainText(snapshot.week.ranking[0]!.name);
   await page.clock.fastForward(12_000);
-  await expect(page.getByRole("table")).toContainText(snapshot.week.ranking[28]!.name);
+  await expect(page.getByRole("table")).toContainText(snapshot.week.ranking[4]!.name);
   offline = true;
   await page.clock.fastForward(45_000);
   await expect(page.getByText("Reconectando", { exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: /^Slide [12] de 2$/ })).toBeVisible();
+  await expect(page.getByRole("region", { name: /^Slide [1-4] de 4$/ })).toBeVisible();
   offline = false;
   await page.clock.fastForward(120_000);
   await expect(page.getByText("Ao vivo", { exact: true })).toBeVisible();

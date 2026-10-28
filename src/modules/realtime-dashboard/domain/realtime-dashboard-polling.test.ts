@@ -9,8 +9,8 @@ import {
 } from "@/modules/realtime-dashboard/domain/realtime-dashboard-polling";
 
 describe("temporização do dashboard tempo real", () => {
-  it("mantém exatamente dois slides de sessenta segundos", () => {
-    expect(REALTIME_DASHBOARD_SLIDE_COUNT).toBe(2);
+  it("mantém quatro slides de sessenta segundos", () => {
+    expect(REALTIME_DASHBOARD_SLIDE_COUNT).toBe(4);
     expect(REALTIME_DASHBOARD_SLIDE_DURATION_MS).toBe(60_000);
     expect(REALTIME_TV_PAGE_RELOAD_INTERVAL_MS).toBe(1_800_000);
   });

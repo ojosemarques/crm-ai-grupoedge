@@ -36,7 +36,7 @@ test("resumo usa o consolidado da API sem perder atividade fora do ranking nem d
     today: { ...original.today, totals: { ...original.today.totals, effectiveContacts: 1, calls: 103 } },
     week: { ...original.week, totals: { ...original.week.totals, effectiveContacts: 2, calls: 105 } },
   };
-  await page.route("**/api/public/tempo-real", route => route.fulfill({ json: { result: snapshot } }));
+  await page.route("**/api/public/tempo-real?*", route => route.fulfill({ json: { result: snapshot } }));
   await page.goto(`/tempo-real-publico#${"v".repeat(43)}`);
   await page.getByRole("button", { name: "Pausar apresentação", exact: true }).click();
   await expect(page.getByRole("article", { name: "Contatos de hoje", exact: true }).locator(":scope > strong")).toHaveText("1");
@@ -61,13 +61,13 @@ test("TV mostra apenas WhatsApp e Instagram em mensagens de hoje, da semana e do
     performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, valueCents: null,
   })), [{ id: "jhon", name: "Jhon Cunha" }], resolveRealtimeDashboardPeriods(now, "America/Sao_Paulo"));
   const snapshot = { ...original, ...result, week: { ...result.week, salesGoal: original.week.salesGoal } };
-  await page.route("**/api/public/tempo", route => route.fulfill({ json: { result: snapshot } }));
+  await page.route("**/api/public/tempo?*", route => route.fulfill({ json: { result: snapshot } }));
   await page.goto("/tempo");
   await page.getByRole("button", { name: "Pausar apresentação", exact: true }).click();
   await expect(page.getByRole("region", { name: "Métricas de hoje" }).locator('[data-metric="messages"] > strong')).toHaveText("5");
   await expect(page.getByRole("region", { name: "Métricas da semana" }).locator('[data-metric="messages"] > strong')).toHaveText("9");
   await expect(page.getByText("WhatsApp e Instagram", { exact: true })).toHaveCount(2);
-  await page.getByRole("button", { name: "Mostrar slide 2", exact: true }).click();
+  await page.getByRole("button", { name: "Ranking", exact: true }).click();
   const cell = page.getByRole("table").getByRole("row").nth(1).getByRole("cell").nth(4);
   await expect(cell.locator(":scope > div:first-child > b")).toHaveText("5");
   await expect(cell.locator(":scope > div:nth-child(3) > strong")).toHaveText("9");
@@ -84,7 +84,7 @@ test("funil semanal exibe as bases, taxas, valor vendido e ausência de denomina
     performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null,
   })), [{ id: "seller", name: "Vendedor" }], resolveRealtimeDashboardPeriods(new Date(original.generatedAt), "America/Sao_Paulo"));
   let snapshot = { ...original, ...result, week: { ...result.week, salesGoal: original.week.salesGoal } };
-  await page.route("**/api/public/tempo", route => route.fulfill({ json: { result: snapshot } }));
+  await page.route("**/api/public/tempo?*", route => route.fulfill({ json: { result: snapshot } }));
   await page.goto("/tempo");
   const funnel = page.getByRole("article", { name: "Funil de vendas da semana", exact: true });
   await expect(funnel).toBeVisible();
@@ -108,11 +108,11 @@ test("ranking destaca agendamentos de hoje, respeita metas individuais e não mo
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   await page.clock.install({ time: new Date(snapshot.generatedAt) });
-  await page.route("**/api/public/tempo-real", route => route.fulfill({ json: { result: snapshot } }));
+  await page.route("**/api/public/tempo-real?*", route => route.fulfill({ json: { result: snapshot } }));
   await page.goto(`/tempo-real-publico#${"v".repeat(43)}`);
   await page.getByRole("button", { name: "Pausar apresentação", exact: true }).click();
-  await page.getByRole("button", { name: "Mostrar slide 2", exact: true }).click();
-  const ranking = page.getByRole("region", { name: "Slide 2 de 2" });
+  await page.getByRole("button", { name: "Ranking", exact: true }).click();
+  const ranking = page.getByRole("region", { name: "Slide 2 de 4" });
   const leaders = ranking.locator('[class*="leaderCard"]');
   const table = ranking.getByRole("table", { name: "Ranking semanal da equipe" });
   await expect(leaders.locator("h3")).toHaveText(["Ede Rafael", "Jhon Cunha", "Carlos Henrique"]);
@@ -165,7 +165,7 @@ test("TV em tela cheia mantém números e metas separados em telas HD, Full HD e
     { ...original.week.ranking[0]!, position: 4, name: "Profissional de sobrenome composto" },
   ] } };
   await page.clock.install({ time: new Date(snapshot.generatedAt) });
-  await page.route("**/api/public/tempo", route => route.fulfill({ json: { result: snapshot } }));
+  await page.route("**/api/public/tempo?*", route => route.fulfill({ json: { result: snapshot } }));
   await page.goto("/tempo");
   await page.getByRole("button", { name: "Pausar apresentação", exact: true }).click();
   for (const size of [
@@ -179,7 +179,7 @@ test("TV em tela cheia mantém números e metas separados em telas HD, Full HD e
     for (const theme of ["escuro", "claro"]) {
       await page.getByRole("button", { name: `Tema ${theme}`, exact: true }).click();
       for (const index of [1, 2]) {
-        await page.getByRole("button", { name: `Mostrar slide ${index}`, exact: true }).click();
+        await page.getByRole("group", { name: "Visualização", exact: true }).getByRole("button", { name: index === 1 ? "Geral" : "Ranking", exact: true }).click();
         await page.evaluate(() => document.fonts.ready);
         const problems = await page.locator('main[aria-label="TEMPO REAL"]').evaluate(board => {
           const problems: string[] = [];

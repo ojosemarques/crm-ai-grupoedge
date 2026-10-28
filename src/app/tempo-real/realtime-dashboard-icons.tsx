@@ -3,8 +3,9 @@ import type { ReactNode } from "react";
 import politizaiLogo from "../../../public/brand/politizai-logo-vector.svg";
 import styles from "./realtime-dashboard.module.css";
 
-type IconName = "grid" | "trophy" | "chart" | "expand" | "exit" | "play" | "pause" | "link" | "close" | "copy" | "phone" | "message" | "people" | "calendar" | "check" | "sale" | "arrow" | "clock" | "sun" | "moon";
+type IconName = "target" | "grid" | "trophy" | "chart" | "expand" | "exit" | "play" | "pause" | "link" | "close" | "copy" | "phone" | "message" | "people" | "calendar" | "check" | "sale" | "arrow" | "clock" | "sun" | "moon";
 const iconPaths: Record<IconName, ReactNode> = {
+  target: <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1" /></>,
   grid: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>,
   trophy: <><path d="M8 3h8v6a4 4 0 0 1-8 0V3ZM8 5H4v3a4 4 0 0 0 4 4m8-7h4v3a4 4 0 0 1-4 4M12 13v5m-4 3h8m-6-3h4v3" /></>,
   chart: <><path d="M4 3v17h17M8 15l4-5 4 3 5-8" /></>,

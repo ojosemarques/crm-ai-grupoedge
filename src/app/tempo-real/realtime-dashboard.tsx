@@ -8,8 +8,10 @@ import type {
   RealtimeDashboardSnapshot,
   RealtimeShareState,
 } from "@/modules/realtime-dashboard/domain/realtime-dashboard-contracts";
+import type { RealtimeDashboardFront } from "@/modules/realtime-dashboard/domain/realtime-dashboard-front";
 import {
   nextRealtimePollDelay,
+  REALTIME_DASHBOARD_SLIDE_COUNT,
   REALTIME_DASHBOARD_SLIDE_DURATION_MS,
   REALTIME_DASHBOARD_STALE_AFTER_MS,
   REALTIME_TV_PAGE_RELOAD_INTERVAL_MS,
@@ -32,7 +34,7 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
   const publicMode = mode !== "private";
   const tvMode = mode === "tv";
   const theme = useSyncExternalStore(subscribeRealtimeTheme, readRealtimeTheme, () => "dark" as const);
-  const [snapshot, setSnapshot] = useState<RealtimeDashboardSnapshot | null>(null);
+  const [snapshots, setSnapshots] = useState<Readonly<Record<RealtimeDashboardFront, RealtimeDashboardSnapshot>> | null>(null);
   const [sharing, setSharing] = useState<RealtimeShareState>(initialSharing);
   const [canManageShare, setCanManageShare] = useState(false);
   const [loadState, setLoadState] = useState<LoadState>("LOADING");
@@ -41,7 +43,11 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
   const [shareBusy, setShareBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [slide, setSlide] = useState<0 | 1>(0);
+  const [slide, setSlide] = useState(0);
+  const front: RealtimeDashboardFront = slide < 2 ? "PROSPECTING" : "ADVERTISING";
+  const frontLabel = front === "PROSPECTING" ? "Prospecção Ativa" : "Anúncios";
+  const ranking = slide % 2 === 1;
+  const snapshot = snapshots?.[front] ?? null;
   const [paused, setPaused] = useState(false);
   const [rankingPage, setRankingPage] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
@@ -93,28 +99,34 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
     const controller = new AbortController();
     inFlight.current = controller;
     try {
-      const response = await fetch(tvMode ? "/api/public/tempo" : publicMode ? "/api/public/tempo-real" : "/api/tempo-real", {
-        cache: "no-store",
-        ...(publicMode && !tvMode ? { headers: { Authorization: `Bearer ${publicToken}` } } : {}),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        if (publicMode && response.status === 404 && !controller.signal.aborted) {
-          setSnapshot(null);
-          lastSuccessAt.current = null;
-          setReceivedAt(null);
+      const endpoint = tvMode ? "/api/public/tempo" : publicMode ? "/api/public/tempo-real" : "/api/tempo-real";
+      const fetchFront = async (selectedFront: RealtimeDashboardFront) => {
+        const response = await fetch(`${endpoint}?front=${selectedFront}`, {
+          cache: "no-store",
+          ...(publicMode && !tvMode ? { headers: { Authorization: `Bearer ${publicToken}` } } : {}),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          if (publicMode && response.status === 404 && !controller.signal.aborted) {
+            setSnapshots(null);
+            lastSuccessAt.current = null;
+            setReceivedAt(null);
+          }
+          throw new Error(`HTTP_${response.status}`);
         }
-        throw new Error(`HTTP_${response.status}`);
-      }
-      const payload = await response.json() as { result: RealtimeDashboardScreen | RealtimeDashboardSnapshot };
+        const payload = await response.json() as { result: RealtimeDashboardScreen | RealtimeDashboardSnapshot };
+        return payload.result;
+      };
+      const [prospecting, advertising] = await Promise.all([fetchFront("PROSPECTING"), fetchFront("ADVERTISING")]);
       if (controller.signal.aborted) return false;
-      if (publicMode) setSnapshot(payload.result as RealtimeDashboardSnapshot);
+      if (publicMode) setSnapshots({ PROSPECTING: prospecting as RealtimeDashboardSnapshot, ADVERTISING: advertising as RealtimeDashboardSnapshot });
       else {
-        const screen = payload.result as RealtimeDashboardScreen;
-        setSnapshot(screen.snapshot);
+        const screen = prospecting as RealtimeDashboardScreen;
+        setSnapshots({ PROSPECTING: screen.snapshot, ADVERTISING: (advertising as RealtimeDashboardScreen).snapshot });
         setSharing(screen.sharing);
         setCanManageShare(screen.permissions.manageShare);
       }
+      if (lastSuccessAt.current === null) setSlideStartedAt(Date.now());
       lastSuccessAt.current = Date.now();
       setReceivedAt(lastSuccessAt.current);
       failureCount.current = 0;
@@ -122,6 +134,7 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
       return true;
     } catch {
       if (controller.signal.aborted) return false;
+      controller.abort();
       failureCount.current += 1;
       setLoadState(lastSuccessAt.current ? "STALE" : "ERROR");
       return false;
@@ -164,25 +177,27 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
     };
   }, [load]);
 
-  const selectSlide = useCallback((index: 0 | 1) => {
+  const selectSlide = useCallback((index: number) => {
     setSlide(index);
+    setRankingPage(0);
     setSlideStartedAt(Date.now());
   }, []);
 
   useEffect(() => {
     if (paused || dialogOpen || !hasSnapshot) return;
     const timer = window.setInterval(() => {
-      setSlide((current) => current === 0 ? 1 : 0);
+      setSlide((current) => (current + 1) % REALTIME_DASHBOARD_SLIDE_COUNT);
+      setRankingPage(0);
       setSlideStartedAt(Date.now());
     }, REALTIME_DASHBOARD_SLIDE_DURATION_MS);
     return () => window.clearInterval(timer);
   }, [paused, dialogOpen, slideStartedAt, hasSnapshot]);
 
   useEffect(() => {
-    if (paused || dialogOpen || !hasSnapshot || slide !== 1) return;
+    if (paused || dialogOpen || !hasSnapshot || !ranking) return;
     const timer = window.setInterval(() => setRankingPage((current) => current + 1), 12_000);
     return () => window.clearInterval(timer);
-  }, [paused, dialogOpen, hasSnapshot, slide]);
+  }, [paused, dialogOpen, hasSnapshot, ranking, slide]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -198,7 +213,7 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (dialogOpen || event.altKey || event.ctrlKey || event.metaKey || event.target instanceof HTMLElement && event.target.closest("input, textarea, button, a")) return;
-      if (event.key === "ArrowRight" || event.key === "ArrowLeft") { event.preventDefault(); selectSlide(slide === 0 ? 1 : 0); }
+      if (event.key === "ArrowRight" || event.key === "ArrowLeft") { event.preventDefault(); selectSlide((slide + (event.key === "ArrowRight" ? 1 : REALTIME_DASHBOARD_SLIDE_COUNT - 1)) % REALTIME_DASHBOARD_SLIDE_COUNT); }
       if (event.code === "Space") { event.preventDefault(); setPaused((value) => !value); setSlideStartedAt(Date.now()); }
     }
     document.addEventListener("keydown", onKey);
@@ -250,21 +265,21 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
   const statusTone = loadState === "LIVE" ? snapshot.quality.state.toLowerCase() : loadState.toLowerCase();
   const workspaceInitials = snapshot.workspaceName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("");
 
-  return <main ref={boardRef} className={styles.board} data-appearance={theme} data-fullscreen={fullscreen || undefined} aria-label="TEMPO REAL">
+  return <main ref={boardRef} className={styles.board} data-appearance={theme} data-fullscreen={fullscreen || undefined} aria-label="TEMPO REAL" data-front={front}>
     <div className={styles.frame}>
       <nav className={styles.rail} aria-label="Controles do painel de TV">
         {!publicMode ? <Link className={styles.brandLink} href="/" aria-label="Voltar ao CRM"><BrandMark /></Link> : <span className={styles.brandLink}><BrandMark /></span>}
-        <div className={styles.railViews}><button type="button" aria-label="Mostrar slide 1" title="Geral · Hoje e semana" aria-pressed={slide === 0} onClick={() => selectSlide(0)}><Icon name="grid" /></button><button type="button" aria-label="Mostrar slide 2" title="Ranking individual" aria-pressed={slide === 1} onClick={() => selectSlide(1)}><Icon name="people" /></button><button type="button" aria-label={paused ? "Retomar apresentação" : "Pausar apresentação"} title={paused ? "Retomar apresentação" : "Pausar apresentação"} onClick={() => { setPaused((value) => !value); setSlideStartedAt(Date.now()); }}><Icon name={paused ? "play" : "pause"} /></button><button type="button" aria-label={fullscreen ? "Sair da tela cheia" : "Tela cheia"} title="Tela cheia" onClick={() => void toggleFullscreen()}><Icon name="expand" /></button></div>
+        <div className={styles.railViews}><button type="button" aria-label="Prospecção Ativa" title="Tempo Real · Prospecção Ativa" aria-pressed={front === "PROSPECTING"} onClick={() => selectSlide(0)}><Icon name="grid" /></button><button type="button" aria-label="Anúncios" title="Tempo Real · Anúncios" aria-pressed={front === "ADVERTISING"} onClick={() => selectSlide(2)}><Icon name="target" /></button><button type="button" aria-label={paused ? "Retomar apresentação" : "Pausar apresentação"} title={paused ? "Retomar apresentação" : "Pausar apresentação"} onClick={() => { setPaused((value) => !value); setSlideStartedAt(Date.now()); }}><Icon name={paused ? "play" : "pause"} /></button><button type="button" aria-label={fullscreen ? "Sair da tela cheia" : "Tela cheia"} title="Tela cheia" onClick={() => void toggleFullscreen()}><Icon name="expand" /></button></div>
         <div className={styles.railBottom}>{!publicMode && canManageShare ? <button type="button" aria-label="Compartilhar painel" title="Compartilhar painel" onClick={() => setSettingsOpen(true)}><Icon name="link" /></button> : null}{!publicMode ? <Link href="/" aria-label="Sair do painel de TV" title="Voltar ao CRM"><Icon name="exit" /></Link> : null}</div>
       </nav>
       <div className={styles.presentation}>
-        <header className={styles.topbar}><div className={styles.screenName}><span>TRABALHO / PAINEL COMERCIAL</span><h1>TEMPO REAL</h1></div><div className={styles.topbarRight}><span className={styles.liveStatus} data-state={statusTone} title={snapshot.quality.reason}><i />{qualityLabel}</span><div className={styles.themeSwitch} role="group" aria-label="Aparência do painel"><button type="button" aria-label="Tema escuro" aria-pressed={theme === "dark"} onClick={() => setRealtimeTheme("dark")}><Icon name="moon" />Escuro</button><button type="button" aria-label="Tema claro" aria-pressed={theme === "light"} onClick={() => setRealtimeTheme("light")}><Icon name="sun" />Claro</button></div><span className={styles.workspaceProfile}><Avatar initials={workspaceInitials} /><strong>{snapshot.workspaceName}</strong></span></div></header>
-        <div className={styles.viewHeading}><div><h2>{slide === 0 ? "O ritmo da equipe. O resultado de todos." : "Cada vendedor. Cada avanço."}</h2><p>{slide === 0 ? "Hoje e semana lado a lado, com atividade real e metas verificadas." : "Ranking semanal com resultados e metas diárias e semanais por profissional."}</p></div><div className={styles.viewTabs} role="group" aria-label="Visualização"><button type="button" aria-pressed={slide === 0} onClick={() => selectSlide(0)}><Icon name="grid" />Geral</button><button type="button" aria-pressed={slide === 1} onClick={() => selectSlide(1)}><Icon name="people" />Ranking</button></div></div>
-        <DashboardSummary snapshot={snapshot} />
-        <section className={styles.stage} key={slide} aria-label={`Slide ${slide + 1} de 2`}>
-          {slide === 0 ? <Overview snapshot={snapshot} /> : <Leaderboard snapshot={snapshot} page={rankingPage} />}
+        <header className={styles.topbar}><div className={styles.screenName}><span>TEMPO REAL / {frontLabel.toLocaleUpperCase("pt-BR")}</span><h1>TEMPO REAL</h1></div><div className={styles.topbarRight}><span className={styles.liveStatus} data-state={statusTone} title={snapshot.quality.reason}><i />{qualityLabel}</span><div className={styles.themeSwitch} role="group" aria-label="Aparência do painel"><button type="button" aria-label="Tema escuro" aria-pressed={theme === "dark"} onClick={() => setRealtimeTheme("dark")}><Icon name="moon" />Escuro</button><button type="button" aria-label="Tema claro" aria-pressed={theme === "light"} onClick={() => setRealtimeTheme("light")}><Icon name="sun" />Claro</button></div><span className={styles.workspaceProfile}><Avatar initials={workspaceInitials} /><strong>{snapshot.workspaceName}</strong></span></div></header>
+        <div className={styles.viewHeading}><div><h2>{!ranking ? "O ritmo da equipe. O resultado de todos." : "Cada vendedor. Cada avanço."}</h2><p>{!ranking ? "Hoje e semana lado a lado, com atividade real e metas verificadas." : "Ranking semanal com resultados e metas diárias e semanais por profissional."}</p></div><div className={styles.viewTabs} role="group" aria-label="Visualização"><button type="button" aria-pressed={!ranking} onClick={() => selectSlide(front === "PROSPECTING" ? 0 : 2)}><Icon name="grid" />Geral</button><button type="button" aria-pressed={ranking} onClick={() => selectSlide(front === "PROSPECTING" ? 1 : 3)}><Icon name="trophy" />Ranking</button></div></div>
+        <DashboardSummary snapshot={snapshot} front={front} />
+        <section className={styles.stage} key={slide} aria-label={`Slide ${slide + 1} de ${REALTIME_DASHBOARD_SLIDE_COUNT}`}>
+          {!ranking ? <Overview snapshot={snapshot} front={front} /> : <Leaderboard snapshot={snapshot} page={rankingPage} front={front} />}
         </section>
-        <footer className={styles.footer}><div className={styles.footerStatus}><span>{relativeFreshness(receivedAt, clock)}</span><i />{snapshot.timeZone}<i /><span>Prospecção Ativa · Logs · Indicadores · contatos únicos por período</span></div><div className={styles.slideIndicator}><span>{paused ? "Apresentação pausada" : dialogOpen ? "Controles abertos" : `Próxima tela em ${secondsLeft}s`}</span><b data-active={slide === 0} /><b data-active={slide === 1} /><small>0{slide + 1} / 02</small></div></footer>
+        <footer className={styles.footer}><div className={styles.footerStatus}><span>{relativeFreshness(receivedAt, clock)}</span><i />{snapshot.timeZone}<i /><span>{frontLabel} · Logs · Indicadores · contatos únicos por período</span></div><div className={styles.slideIndicator}><span>{paused ? "Apresentação pausada" : dialogOpen ? "Controles abertos" : `Próxima tela em ${secondsLeft}s`}</span>{Array.from({ length: REALTIME_DASHBOARD_SLIDE_COUNT }, (_, index) => <b key={index} data-active={slide === index} />)}<small>0{slide + 1} / 04</small></div></footer>
       </div>
     </div>
     {loadState === "STALE" || loadState === "ERROR" ? <div className={styles.connectionNotice} role="status">Conexão interrompida. Exibindo a última atualização enquanto reconectamos.</div> : null}
