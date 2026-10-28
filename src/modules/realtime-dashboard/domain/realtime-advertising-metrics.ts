@@ -3,6 +3,7 @@ import type { IntegratedActivityFact } from "@/modules/metrics/domain/metrics-co
 export type RealtimeActivityFact = IntegratedActivityFact & Readonly<{
   meetingId?: string | null;
   meetingOwnerMemberIdAtEvent?: string | null;
+  leadOwnerMemberIdAtEvent?: string | null;
 }>;
 
 const entryEvents = new Set(["LEAD_CREATED", "LEAD_SUBMISSION_ATTACHED"]);
@@ -32,7 +33,8 @@ export function advertisingPeriodFacts(facts: readonly RealtimeActivityFact[]): 
 export function advertisingAssignedMeetings(facts: readonly RealtimeActivityFact[], memberId: string): number {
   const balances = new Map<string, { quantity: number; identified: boolean }>();
   for (const fact of facts) {
-    if (fact.eventType !== "MEETING_SCHEDULED" || fact.meetingOwnerMemberIdAtEvent !== memberId) continue;
+    const owner = fact.meetingOwnerMemberIdAtEvent ?? (fact.sourceEntityType === "StageHistory" ? fact.leadOwnerMemberIdAtEvent : null);
+    if (fact.eventType !== "MEETING_SCHEDULED" || owner !== memberId) continue;
     const key = fact.meetingId ?? `${fact.leadId ?? fact.id}:${fact.occurredAt}`;
     balances.set(key, { quantity: (balances.get(key)?.quantity ?? 0) + fact.quantity, identified: Boolean(fact.meetingId) });
   }

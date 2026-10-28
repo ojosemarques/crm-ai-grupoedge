@@ -60,6 +60,7 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 import {
   parseWorkspaceLocalDateTime,
   workspaceDateAt,
+  workspaceLocalDateTimeAt,
   workspaceDayRange,
   workspaceWeekRange,
 } from "@/shared/core/time/workspace-time";
@@ -381,6 +382,7 @@ async function syncActiveProspectingMeetingStageInTransaction(
     status: MeetingStatus;
     occurredAt: Date;
     leadDestination?: z.infer<typeof leadDestinationSchema>;
+    managerCorrection?: boolean;
   }>,
 ) {
   const pipeline = await transaction.pipeline.findFirst({
@@ -394,6 +396,7 @@ async function syncActiveProspectingMeetingStageInTransaction(
     select: { id: true, name: true },
   });
   if (!pipeline) return;
+  if (pipeline.name === ADVERTISING_PIPELINE_NAME && await transaction.pipelineStage.findFirst({ where: { workspaceId: context.workspaceId, id: input.currentStageId, leadStageCode: "CLIENT" }, select: { id: true } })) return;
   if (input.leadDestination === "PROPOSAL" && pipeline.name !== ADVERTISING_PIPELINE_NAME) {
     invalidInput("O destino Proposta pelo resultado da reunião está disponível em Anúncios.");
   }
@@ -413,12 +416,12 @@ async function syncActiveProspectingMeetingStageInTransaction(
     conflict("PIPELINE_CONFIGURATION_INVALID", `A etapa ${stableKey} não está configurada.`);
   }
   if (target.id === input.currentStageId) return;
-  await transitionLeadStageInTransaction(transaction, context, {
+  return transitionLeadStageInTransaction(transaction, context, {
     leadId: input.leadId,
     targetStageId: target.id,
     reason: `Reunião ${input.meetingId} atualizada para ${statusLabel(input.status)}.`,
     origin: "MEETING",
-    managerCorrection: false,
+    managerCorrection: input.managerCorrection ?? false,
     confirmed: true,
     ...(stableKey === "active-prospecting.proposal" ? { commercialEvent: "MEETING_COMPLETED" as const } : {}),
   }, input.occurredAt);
@@ -1077,7 +1080,9 @@ export function createMeetingService(options: MeetingServiceOptions) {
     });
   }
 
-  async function act(context: AuthenticatedContext, payload: unknown) {
+  type PipelineMove = Readonly<{ leadId: string; targetStageId: string; expectedLeadUpdatedAt: Date; managerCorrection: boolean }>;
+
+  async function executeAction(context: AuthenticatedContext, payload: unknown, pipelineMove?: PipelineMove) {
     const parsed = actionSchema.safeParse(payload);
     if (!parsed.success) invalidInput(parsed.error);
     const authorizedMeeting = await getMeetingForAuthorization(parsed.data.meetingId, context.workspaceId);
@@ -1085,11 +1090,19 @@ export function createMeetingService(options: MeetingServiceOptions) {
     const now = options.now();
     return options.database.$transaction(async (transaction) => {
       await lockCloser(transaction, context.workspaceId, authorizedMeeting.ownerMemberId);
+      if (pipelineMove) await transaction.$queryRaw`SELECT id FROM leads WHERE id = ${pipelineMove.leadId}::uuid AND "workspaceId" = ${context.workspaceId}::uuid FOR UPDATE`;
       const meeting = await transaction.meeting.findFirst({
         where: { id: parsed.data.meetingId, workspaceId: context.workspaceId, deletedAt: null },
-        include: { participants: { orderBy: { position: "asc" } }, lead: { select: { ownerMemberId: true, queueId: true, pipelineId: true, currentStageId: true } } },
+        include: { participants: { orderBy: { position: "asc" } }, lead: { select: { ownerMemberId: true, queueId: true, pipelineId: true, currentStageId: true, updatedAt: true, pipeline: { select: { name: true } } } } },
       });
       if (!meeting) notFound("Reunião não encontrada.");
+      if (pipelineMove) {
+        if (meeting.leadId !== pipelineMove.leadId || meeting.lead.pipeline.name !== ADVERTISING_PIPELINE_NAME) notFound("Reunião de Anúncios não encontrada.");
+        if (meeting.lead.updatedAt.getTime() !== pipelineMove.expectedLeadUpdatedAt.getTime()) conflict("LEAD_VERSION_CONFLICT", "Este lead mudou. Recarregue antes de alterar a etapa.");
+        const destination = await transaction.pipelineStage.findFirst({ where: { id: pipelineMove.targetStageId, workspaceId: context.workspaceId, pipelineId: meeting.lead.pipelineId, deletedAt: null, leadStageCode: parsed.data.action === "EDIT" && parsed.data.status === "COMPLETED" ? "MEETING_COMPLETED" : "MEETING_NO_SHOW" } });
+        if (!destination) notFound("Etapa de resultado não encontrada.");
+        if (meeting.startsAt > now) conflict("MEETING_NOT_STARTED", "Registre o resultado somente após o início da reunião.");
+      }
       if (meeting.revision !== parsed.data.expectedRevision) {
         conflict("MEETING_VERSION_CONFLICT", "A reunião mudou. Recarregue antes de continuar.");
       }
@@ -1097,13 +1110,13 @@ export function createMeetingService(options: MeetingServiceOptions) {
         conflict("MEETING_ALREADY_CLOSED", "A reunião já possui um resultado final.");
       }
       if (
-        parsed.data.action === "EDIT" &&
+        !pipelineMove && parsed.data.action === "EDIT" &&
         (meeting.status === "SCHEDULED" || meeting.status === "CONFIRMED") &&
         parsed.data.status !== meeting.status
       ) {
         conflict("MEETING_STATUS_ACTION_REQUIRED", "Use as ações da reunião para alterar o status enquanto ela estiver aberta.");
       }
-      const correctedHistory = parsed.data.action === "EDIT"
+      const correctedHistory = parsed.data.action === "EDIT" && (!pipelineMove || meeting.status !== "SCHEDULED" && meeting.status !== "CONFIRMED")
         ? await transaction.meetingHistory.findFirst({
           where: { workspaceId: context.workspaceId, meetingId: meeting.id, meetingRevision: meeting.revision },
         })
@@ -1124,8 +1137,10 @@ export function createMeetingService(options: MeetingServiceOptions) {
         participantEmails = parsed.data.participantEmails ?? (parsed.data.participantEmail === undefined
           ? participantEmails
           : [...new Set([...(parsed.data.participantEmail ? [parsed.data.participantEmail] : []), ...participantEmails.filter((email) => email !== meeting.participantEmail)])]);
-        startsAt = parseWorkspaceLocalDateTime(parsed.data.startsAtLocal, meeting.timeZone);
-        endsAt = new Date(startsAt.getTime() + parsed.data.durationMinutes * 60_000);
+        if (!pipelineMove) {
+          startsAt = parseWorkspaceLocalDateTime(parsed.data.startsAtLocal, meeting.timeZone);
+          endsAt = new Date(startsAt.getTime() + parsed.data.durationMinutes * 60_000);
+        }
         newStatus = parsed.data.status;
         reason = parsed.data.reason;
         outcome = parsed.data.status === "COMPLETED" || parsed.data.status === "NO_SHOW"
@@ -1154,6 +1169,9 @@ export function createMeetingService(options: MeetingServiceOptions) {
       }
 
       const participantEmail = participantEmails[0] ?? null;
+      const metricOccurredAt = meeting.lead.pipeline.name === ADVERTISING_PIPELINE_NAME && parsed.data.action === "EDIT" && newStatus === meeting.status
+        ? newStatus === "COMPLETED" ? meeting.completedAt ?? now : newStatus === "NO_SHOW" ? meeting.noShowAt ?? now : now
+        : now;
       const primaryGuest = currentGuests.find((guest) => guest.email === participantEmail);
       await transaction.meetingParticipant.deleteMany({ where: { workspaceId: context.workspaceId, meetingId: meeting.id, email: { notIn: participantEmails } } });
       for (const [position, email] of participantEmails.entries()) {
@@ -1243,7 +1261,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           },
           data: {
             status: newStatus === "COMPLETED" ? "COMPLETED" : "CANCELLED",
-            completedAt: newStatus === "COMPLETED" ? now : null,
+            completedAt: newStatus === "COMPLETED" ? metricOccurredAt : null,
             result: outcome ?? reason,
             updatedByActorId: context.actorId,
             updatedAt: now,
@@ -1283,16 +1301,18 @@ export function createMeetingService(options: MeetingServiceOptions) {
         });
         recoveryTaskId = recoveryTask.id;
       }
-      await syncActiveProspectingMeetingStageInTransaction(transaction, context, {
+      const leadTransition = await syncActiveProspectingMeetingStageInTransaction(transaction, context, {
         leadId: meeting.leadId,
         pipelineId: meeting.lead.pipelineId,
         currentStageId: meeting.lead.currentStageId,
         meetingId: meeting.id,
         status: newStatus,
         occurredAt: now,
+        ...(pipelineMove ? { managerCorrection: pipelineMove.managerCorrection } : {}),
         ...((parsed.data.action === "ATTENDED" || parsed.data.action === "EDIT") && parsed.data.leadDestination
           ? { leadDestination: parsed.data.leadDestination } : {}),
       });
+      if (pipelineMove && !leadTransition) conflict("STAGE_UNCHANGED", "O lead já está nesta etapa.");
       const nextTask = await findNextTask(transaction, context.workspaceId, meeting.leadId);
       const opportunityTask = meeting.opportunityId
         ? await transaction.task.findFirst({ where: { workspaceId: context.workspaceId, opportunityId: meeting.opportunityId, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null }, orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }], select: { id: true, title: true, dueAt: true } })
@@ -1309,7 +1329,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       if (meeting.opportunityId) {
         await transaction.opportunity.update({ where: { id: meeting.opportunityId }, data: { nextActionTaskId: opportunityTask?.id ?? null, nextActionAt: opportunityTask?.dueAt ?? null, nextActionDescription: opportunityTask?.title ?? null, updatedByActorId: context.actorId, updatedAt: now } });
       }
-      const correctedActivity = parsed.data.action === "EDIT"
+      const correctedActivity = parsed.data.action === "EDIT" && (!pipelineMove || correctedHistory)
         ? await transaction.activity.findFirst({
           where: { workspaceId: context.workspaceId, meetingId: meeting.id, deletedAt: null },
           orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
@@ -1317,7 +1337,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         })
         : null;
       const activityResult = parsed.data.action === "EDIT"
-        ? "CORRECTED"
+        ? pipelineMove ? newStatus === "COMPLETED" ? "COMPLETED" : "NO_SHOW" : "CORRECTED"
         : ({
           CONFIRM: "INFORMATION",
           RESCHEDULE: "SCHEDULED",
@@ -1334,7 +1354,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           type: "MEETING",
           direction: "INTERNAL",
           result: activityResult,
-          subject: parsed.data.action === "EDIT"
+          subject: parsed.data.action === "EDIT" && !pipelineMove
             ? `Correção da reunião: ${title}`
             : `Reunião ${statusLabel(newStatus)}: ${title}`,
           description: parsed.data.action === "EDIT" ? reason : outcome ?? reason,
@@ -1413,7 +1433,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         workspaceId: context.workspaceId,
         eventKey: `meeting-history:${meetingHistory.id}:${eventType.toLowerCase()}:v1`,
         eventType,
-        occurredAt: now,
+        occurredAt: metricOccurredAt,
         sourceEntityType: "MeetingHistory",
         sourceEntityId: meetingHistory.id,
         leadId: meeting.leadId,
@@ -1479,7 +1499,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
             workspaceId: context.workspaceId,
             eventKey: `task:${meetingTask.id}:${taskEventType === "TASK_COMPLETED" ? "completed" : "cancelled"}:meeting:${meetingHistory.id}:v1`,
             eventType: taskEventType,
-            occurredAt: now,
+            occurredAt: metricOccurredAt,
             sourceEntityType: "Task",
             sourceEntityId: meetingTask.id,
             leadId: meeting.leadId,
@@ -1537,7 +1557,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
             outcome,
             activityId: activity.id,
           },
-          metadata: { timeZone: meeting.timeZone, revision: updated.revision },
+          metadata: { timeZone: meeting.timeZone, revision: updated.revision, ...(pipelineMove ? { origin: "PIPELINE", targetStageId: pipelineMove.targetStageId } : {}) },
         },
       });
       if ((parsed.data.action === "ATTENDED" || (parsed.data.action === "EDIT" && newStatus === "COMPLETED" && meeting.status !== "COMPLETED")) && meeting.opportunityId) {
@@ -1633,8 +1653,27 @@ export function createMeetingService(options: MeetingServiceOptions) {
         status: updated.status,
         revision: updated.revision,
         startsAt: updated.startsAt.toISOString(),
+        ...(pipelineMove ? { leadTransition } : {}),
       });
     });
+  }
+
+  async function act(context: AuthenticatedContext, payload: unknown) {
+    return executeAction(context, payload);
+  }
+
+  async function recordPipelineOutcome(context: AuthenticatedContext, input: Readonly<{
+    meetingId: string; expectedRevision: number; targetStageId: string; expectedLeadUpdatedAt: Date; status: "COMPLETED" | "NO_SHOW"; reason: string; managerCorrection: boolean;
+  }>) {
+    const meeting = await options.database.meeting.findFirst({ where: { workspaceId: context.workspaceId, id: input.meetingId, deletedAt: null } });
+    if (!meeting) notFound("Reunião não encontrada.");
+    const reason = `Resultado registrado pelo pipeline: ${input.reason}`;
+    const result = await executeAction(context, {
+      action: "EDIT", meetingId: meeting.id, expectedRevision: input.expectedRevision, title: meeting.title,
+      startsAtLocal: workspaceLocalDateTimeAt(meeting.startsAt, meeting.timeZone), durationMinutes: meeting.durationMinutes,
+      status: input.status, observation: meeting.observation, outcome: reason, reason,
+    }, { leadId: meeting.leadId, targetStageId: input.targetStageId, expectedLeadUpdatedAt: input.expectedLeadUpdatedAt, managerCorrection: input.managerCorrection });
+    return result.leadTransition!;
   }
 
   async function getBriefing(context: AuthenticatedContext, payload: unknown): Promise<MeetingBriefing> {
@@ -1786,7 +1825,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
     });
   }
 
-  return Object.freeze({ getAgenda, getLeadMeetings, searchLeadOptions, schedule, act, getBriefing, recordTranscript });
+  return Object.freeze({ getAgenda, getLeadMeetings, searchLeadOptions, schedule, act, recordPipelineOutcome, getBriefing, recordTranscript });
 }
 
 let service: ReturnType<typeof createMeetingService> | undefined;

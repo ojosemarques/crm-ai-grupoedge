@@ -20,3 +20,11 @@ Em `Anúncios`, ao registrar comparecimento ou corrigir uma reunião realizada,
 o vendedor informa o resumo e escolhe `Reunião feita` ou `Proposta`. A agenda,
 a tarefa vinculada e a etapa são atualizadas na mesma transação. Tarefas de
 reuniões vinculadas direcionam para esse fluxo de resultado na ficha do lead.
+
+Mover manualmente um card de Anúncios para `Reunião feita` ou `Noshow` reutiliza
+o resultado da reunião vinculada: agenda, tarefa, fatos analíticos e etapa mudam
+na mesma transação. Sem reunião na agenda, o histórico da etapa registra o
+resultado do ciclo de agendamento, sem duplicá-lo ao retornar à mesma etapa.
+`Proposta` isolada não presume reunião realizada nem venda. Revisar o resumo de
+uma reunião realizada preserva sua data; registros da Agenda posteriores ao
+fechamento não retiram o lead de `Cliente`.

@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { advertisingLeadArrivals, advertisingPeriodFacts, type RealtimeActivityFact } from "./realtime-advertising-metrics";
+import { advertisingAssignedMeetings, advertisingLeadArrivals, advertisingPeriodFacts, type RealtimeActivityFact } from "./realtime-advertising-metrics";
 
 const fact = (id: string, eventType: string, leadId: string, quantity = 1, occurredAt = "2026-10-28T13:00:00Z"): RealtimeActivityFact => ({
   id, eventType, leadId, quantity, occurredAt, sourceEntityType: "Activity", creditedMemberId: "carlos", performedByMemberId: null,
   bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, valueCents: null,
+});
+
+it("usa o responsável histórico do card para agendamentos antigos e respeita a atribuição posterior na Agenda", () => {
+  const stage = { ...fact("stage", "MEETING_SCHEDULED", "lead"), sourceEntityType: "StageHistory", meetingOwnerMemberIdAtEvent: null, leadOwnerMemberIdAtEvent: "jhon" };
+  expect(advertisingAssignedMeetings([stage], "jhon")).toBe(1);
+  expect(advertisingAssignedMeetings([{ ...stage, sourceEntityType: "MeetingHistory" }], "jhon")).toBe(0);
+  const corrected = [stage, { ...stage, id: "undo", quantity: -1 }, { ...stage, id: "assigned", meetingId: "meeting", meetingOwnerMemberIdAtEvent: "ede" }];
+  expect(advertisingAssignedMeetings(corrected, "jhon")).toBe(0);
+  expect(advertisingAssignedMeetings(corrected, "ede")).toBe(1);
 });
 
 describe("leads recebidos de anúncios", () => {

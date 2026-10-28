@@ -21,6 +21,7 @@ import {
   statusForLeadStage,
 } from "@/modules/pipelines/domain/lead-stage-transition-policy";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
+import { findLeadMeetingCycle, recordStageMeetingOutcomeInTransaction } from "@/modules/metrics/application/stage-meeting-outcome";
 import {
   defaultLeadStageCodes,
   leadStageCodes,
@@ -620,9 +621,18 @@ export async function transitionLeadStageInTransaction(
       performedByMemberId: performedByMember?.id ?? null,
       bookedByMemberId: bookingMemberId,
       leadOwnerMemberIdAtEvent: lead.ownerMemberId,
+      ...(lead.pipeline.name === ADVERTISING_PIPELINE_NAME ? { meetingOwnerMemberIdAtEvent: lead.ownerMemberId } : {}),
       result: input.managerCorrection ? "MANAGER_CORRECTION" : "STAGE_TRANSITION",
       executionMode,
       safeMetadata: { bookingBasis: "meeting_scheduled_stage_entry" },
+    });
+  }
+  if (lead.pipeline.name === ADVERTISING_PIPELINE_NAME && ["PIPELINE_BOARD", "PIPELINE_LIST", "LEAD_CARD"].includes(input.origin)
+    && (target.leadStageCode === "MEETING_COMPLETED" || target.leadStageCode === "MEETING_NO_SHOW")) {
+    await recordStageMeetingOutcomeInTransaction(transaction, {
+      workspaceId: context.workspaceId, leadId: lead.id, pipelineId: lead.pipelineId, stageId: target.id, stageHistoryId: enteredHistory.id,
+      activityId: activity.id, occurredAt, eventType: target.leadStageCode, ownerMemberId: lead.ownerMemberId,
+      performedByMemberId: performedByMember?.id ?? null, reason: input.reason,
     });
   }
   if (target.leadStageCode === "QUALIFIED" || target.leadStageCode === "DISQUALIFIED") {
@@ -1112,6 +1122,19 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
     await options.authorization.assertAuthorized(context, PermissionKeys.LEADS_WRITE, resource);
     if (parsed.data.managerCorrection) {
       await options.authorization.assertAuthorized(context, PermissionKeys.LEADS_ASSIGN, resource);
+    }
+
+    const target = await options.database.pipelineStage.findFirst({ where: { workspaceId: context.workspaceId, id: parsed.data.targetStageId, pipeline: { name: ADVERTISING_PIPELINE_NAME }, leadStageCode: { in: ["MEETING_COMPLETED", "MEETING_NO_SHOW"] }, deletedAt: null } });
+    if (target) {
+      const { meeting } = await findLeadMeetingCycle(options.database, context.workspaceId, parsed.data.leadId, options.now());
+      const desired = target.leadStageCode === "MEETING_COMPLETED" ? "COMPLETED" : "NO_SHOW";
+      if (meeting && meeting.status !== desired) {
+        const { createMeetingService } = await import("@/modules/meetings/application/meeting-service");
+        return createMeetingService(options).recordPipelineOutcome(context, {
+          meetingId: meeting.id, expectedRevision: meeting.revision, targetStageId: target.id, expectedLeadUpdatedAt: parsed.data.expectedUpdatedAt,
+          status: desired, reason: parsed.data.reason, managerCorrection: parsed.data.managerCorrection,
+        });
+      }
     }
 
     const result = await options.database.$transaction(async (transaction) => {

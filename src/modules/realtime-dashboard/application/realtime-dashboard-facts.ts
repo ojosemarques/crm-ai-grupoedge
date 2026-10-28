@@ -36,6 +36,7 @@ export async function readRealtimeDashboardFacts(database: PrismaClient, workspa
           bookedByMemberId: true,
           meetingId: true,
           meetingOwnerMemberIdAtEvent: true,
+          leadOwnerMemberIdAtEvent: true,
           taskKind: true,
           result: true,
           cadenceStepKey: true,
