@@ -14689,6 +14689,9 @@ model CommercialMetricFact {
   inputFingerprint                String
   safeMetadata                    Json?
 
+  correctionSource CommercialMetricFact?  @relation("CommercialMetricCorrections", fields: [workspaceId, correctionOfFactId], references: [workspaceId, id], onDelete: Restrict, onUpdate: NoAction, map: "commercial_metric_facts_correction_fk")
+  corrections      CommercialMetricFact[] @relation("CommercialMetricCorrections")
+
   @@unique([workspaceId, id])
   @@unique([workspaceId, eventKey])
   @@index([workspaceId, occurredAt])

@@ -1,4 +1,6 @@
+import { CommercialFrontPanel } from "./commercial-front-panel";
 import Link from "next/link";
+import { commercialFrontLabels, commercialFrontPaths } from "@/modules/metrics/domain/commercial-front";
 
 import { CommercialEvolutionChart, CommercialFlowChart, KpiSparkline, RevenueSalesChart } from "@/app/dashboard/dashboard-charts";
 import { DashboardPeriodFields } from "@/app/dashboard/dashboard-period-fields";
@@ -19,12 +21,14 @@ import { integratedMetricRegistry } from "@/modules/metrics/domain/integrated-me
 
 function paramsFor(query: DashboardQuery, extras: Record<string, string> = {}) {
   const params = new URLSearchParams({ preset: query.preset, fromDate: query.fromDate, toDate: query.toDate, ...extras });
+  if (query.mode) params.set("mode", query.mode);
   if (query.integratedMemberId) params.set("integratedMember", query.integratedMemberId);
   const mappings = [
     ["sdr", query.filters.sdrMemberIds], ["closer", query.filters.closerMemberIds],
     ["team", query.filters.teamIds], ["source", query.filters.sourceIds],
     ["campaign", query.filters.campaignIds], ["creative", query.filters.creativeIds],
     ["priority", query.filters.priorityCodes], ["product", query.filters.productIds],
+    ["form", query.filters.formIds ?? []], ["pipeline", query.selectedPipelineIds ?? query.filters.pipelineIds ?? []], ["stage", query.filters.stageIds ?? []], ["channel", query.filters.channels ?? []],
   ] as const;
   for (const [name, values] of mappings) for (const value of values) params.append(name, value);
   return params;
@@ -69,11 +73,12 @@ function integratedValue(metric: CanonicalMetricValue) {
 }
 
 function integratedHref(query: DashboardQuery, metricId: string, memberId?: string, period?: Readonly<{ from: string; to: string }>) {
-  const params = new URLSearchParams({ metricId, from: period?.from ?? query.from, to: period?.to ?? query.to });
+  const params = new URLSearchParams({ ...(query.mode ? { mode: query.mode } : {}), metricId, from: period?.from ?? query.from, to: period?.to ?? query.to });
   const mappings = [
     ["sdrMemberIds", memberId ? [memberId] : query.filters.sdrMemberIds], ["closerMemberIds", memberId ? [] : query.filters.closerMemberIds], ["teamIds", query.filters.teamIds],
     ["sourceIds", query.filters.sourceIds], ["campaignIds", query.filters.campaignIds], ["creativeIds", query.filters.creativeIds],
     ["priorityCodes", query.filters.priorityCodes], ["productIds", query.filters.productIds],
+    ["formIds", query.filters.formIds ?? []], ["pipelineIds", query.filters.pipelineIds ?? []], ["stageIds", query.filters.stageIds ?? []], ["channels", query.filters.channels ?? []],
   ] as const;
   for (const [key, values] of mappings) for (const value of values) params.append(key, value);
   return `/dashboard/atividades-integradas?${params.toString()}`;
@@ -232,9 +237,9 @@ function PerformancePanel({ screen }: Readonly<{ screen: DashboardScreen }>) {
   );
 }
 
-export function DashboardView({ basePath, displayName, roleKey, roleName, screen }: Readonly<{ basePath: "/" | "/dashboard"; displayName: string; roleKey: string; roleName: string; screen: DashboardScreen }>) {
+export function DashboardView({ basePath, displayName, roleKey, roleName, screen }: Readonly<{ basePath: "/" | "/dashboard" | "/dashboard/anuncios" | "/dashboard/prospeccao"; displayName: string; roleKey: string; roleName: string; screen: DashboardScreen }>) {
   const q = screen.query;
-  const activeFilterCount = Object.values(q.filters).reduce((total, values) => total + values.length, 0);
+  const activeFilterCount = Object.entries(q.filters).reduce((total, [key, values]) => total + (key === "pipelineIds" && q.mode ? q.selectedPipelineIds?.length ?? 0 : values.length), 0);
   const activeFilterGroups = [
     q.filters.sdrMemberIds.length > 0 ? `${q.filters.sdrMemberIds.length} SDR` : null,
     q.filters.closerMemberIds.length > 0 ? `${q.filters.closerMemberIds.length} closer` : null,
@@ -302,20 +307,22 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
   return (
     <div className={styles.dashboard}>
       <header className={styles.dashboardHeader}>
-        <div><p className={styles.eyebrow}>{scopeLabel}</p><h1>Bom trabalho, {displayName.split(/\s+/)[0]}.</h1><p className={styles.headerIntro}>Veja seus resultados e acompanhe o que vem a seguir.</p></div>
+        <div><p className={styles.eyebrow}>{scopeLabel}</p><h1>{q.mode ? commercialFrontLabels[q.mode] : `Bom trabalho, ${displayName.split(/\s+/)[0]}.`}</h1><p className={styles.headerIntro}>{q.mode === "ALL" ? "Resultados de Anúncios e Prospecção Ativa no mesmo recorte." : "Entradas, atividades e resultados desta frente comercial."}</p></div>
         <div className={styles.headerActions}><Link className={styles.primaryAction} href={focusAction.href}>{focusAction.label}<Icon name="seta-direita" size={15} /></Link></div>
       </header>
 
+      <nav aria-label="Visões dos indicadores" className={styles.periodNav}>{Object.entries(commercialFrontPaths).map(([mode, path]) => <Link aria-current={q.mode === mode ? "page" : undefined} className={styles.periodLink} href={`${path}?${paramsFor({ ...q, mode: mode as keyof typeof commercialFrontPaths, selectedPipelineIds: [], filters: { ...q.filters, pipelineIds: [], stageIds: [] } })}`} key={mode}>{commercialFrontLabels[mode as keyof typeof commercialFrontLabels]}</Link>)}</nav>
       <section aria-label="Período e filtros do dashboard" className={styles.toolbar}>
-        <nav aria-label="Atalhos de período" className={styles.periodNav}>{(["TODAY", "YESTERDAY", "WEEK", "MONTH"] as const).map((preset) => { const names = { TODAY: "Hoje", YESTERDAY: "Ontem", WEEK: "Semana", MONTH: "Mês" }; return <Link aria-current={q.preset === preset ? "page" : undefined} className={`${styles.periodLink} ${q.preset === preset ? styles.periodActive : ""}`} href={`${basePath}?${paramsFor({ ...q, preset }).toString()}`} key={preset}>{names[preset]}</Link>; })}</nav>
+        <nav aria-label="Atalhos de período" className={styles.periodNav}>{(["TODAY", "YESTERDAY", "LAST_7_DAYS", "MONTH", "LAST_30_DAYS"] as const).map((preset) => { const names = { TODAY: "Hoje", YESTERDAY: "Ontem", LAST_7_DAYS: "7 dias", MONTH: "Mês", LAST_30_DAYS: "30 dias" }; return <Link aria-current={q.preset === preset ? "page" : undefined} className={`${styles.periodLink} ${q.preset === preset ? styles.periodActive : ""}`} href={`${basePath}?${paramsFor({ ...q, preset }).toString()}`} key={preset}>{names[preset]}</Link>; })}</nav>
         <div className={styles.contextInline}><strong>{currentPeriodLabel}</strong><details><summary>Comparado ao período anterior</summary><div><p><span>Anterior</span>{previousPeriodLabel}</p><p><span>Filtros</span>{activeFilterGroups.length > 0 ? activeFilterGroups.join(" · ") : "Todos os registros"}</p><p><span>Atualização</span>{generatedLabel(screen.overview.generatedAt, screen.overview.period.timeZone)}</p><p>{roleName} · {screen.overview.period.timeZone}</p></div></details></div>
         <details className={styles.filterDetails} open={activeFilterCount > 0 || q.preset === "CUSTOM"}>
           <summary className={styles.filterSummary}><Icon name="filtro" size={15} /> Filtros{activeFilterCount > 0 ? <span className={styles.filterCount}>{activeFilterCount}</span> : null}</summary>
           <div className={styles.filterPanel}><div className={styles.filterPanelHeader}><div><strong>Refinar análise</strong><span>O mesmo recorte será preservado nos indicadores e drilldowns.</span></div></div><form className={styles.filterForm} method="get">
             <DashboardPeriodFields fromDate={q.fromDate} key={`${q.preset}:${q.fromDate}:${q.toDate}`} preset={q.preset} toDate={q.toDate} />
+            {q.mode ? <input name="mode" type="hidden" value={q.mode} /> : null}
             {q.integratedMemberId ? <input name="integratedMember" type="hidden" value={q.integratedMemberId} /> : null}
-            <SelectFilter label="Prioridade" name="priority" options={screen.filterOptions.priorities} selected={q.filters.priorityCodes} /><SelectFilter label="SDR" name="sdr" options={screen.filterOptions.sdrs} selected={q.filters.sdrMemberIds} /><SelectFilter label="Closer" name="closer" options={screen.filterOptions.closers} selected={q.filters.closerMemberIds} /><SelectFilter label="Equipe" name="team" options={screen.filterOptions.teams} selected={q.filters.teamIds} /><SelectFilter label="Origem" name="source" options={screen.filterOptions.sources} selected={q.filters.sourceIds} /><SelectFilter label="Campanha" name="campaign" options={screen.filterOptions.campaigns} selected={q.filters.campaignIds} /><SelectFilter label="Criativo" name="creative" options={screen.filterOptions.creatives} selected={q.filters.creativeIds} /><SelectFilter label="Produto" name="product" options={screen.filterOptions.products} selected={q.filters.productIds} />
-            <div className={styles.filterActions}><Link className={styles.filterClear} href={`${basePath}?preset=MONTH`}>Limpar</Link><button className={styles.filterApply} type="submit">Aplicar filtros</button></div>
+            <SelectFilter label="Canal de interação" name="channel" options={screen.filterOptions.channels ?? []} selected={q.filters.channels ?? []} /><SelectFilter label="Pipeline" name="pipeline" options={screen.filterOptions.pipelines ?? []} selected={q.selectedPipelineIds ?? []} /><SelectFilter label="Etapa" name="stage" options={screen.filterOptions.stages ?? []} selected={q.filters.stageIds ?? []} /><SelectFilter label="Formulário vinculado" name="form" options={screen.filterOptions.forms ?? []} selected={q.filters.formIds ?? []} /><SelectFilter label="Prioridade" name="priority" options={screen.filterOptions.priorities} selected={q.filters.priorityCodes} /><SelectFilter label="SDR" name="sdr" options={screen.filterOptions.sdrs} selected={q.filters.sdrMemberIds} /><SelectFilter label="Closer" name="closer" options={screen.filterOptions.closers} selected={q.filters.closerMemberIds} /><SelectFilter label="Equipe" name="team" options={screen.filterOptions.teams} selected={q.filters.teamIds} /><SelectFilter label="Origem" name="source" options={screen.filterOptions.sources} selected={q.filters.sourceIds} /><SelectFilter label="Campanha" name="campaign" options={screen.filterOptions.campaigns} selected={q.filters.campaignIds} /><SelectFilter label="Criativo" name="creative" options={screen.filterOptions.creatives} selected={q.filters.creativeIds} /><SelectFilter label="Produto" name="product" options={screen.filterOptions.products} selected={q.filters.productIds} />
+            <div className={styles.filterActions}><Link className={styles.filterClear} href={`${basePath}?preset=MONTH${q.mode ? `&mode=${q.mode}` : ""}`}>Limpar</Link><button className={styles.filterApply} type="submit">Aplicar filtros</button></div>
           </form></div>
         </details>
       </section>
@@ -339,6 +346,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
         <AttentionPanel items={screen.attention} query={q} />
       </div>
 
+      <CommercialFrontPanel screen={screen} />
       <PerformancePanel screen={screen} />
 
       <section className={`${styles.panel} ${styles.integratedPanel}`}>

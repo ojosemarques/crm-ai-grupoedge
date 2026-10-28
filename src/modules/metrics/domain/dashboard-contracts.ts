@@ -10,12 +10,16 @@ export const dashboardPeriodPresets = [
   "YESTERDAY",
   "WEEK",
   "MONTH",
+  "LAST_7_DAYS",
+  "LAST_30_DAYS",
   "CUSTOM",
 ] as const;
 
 export type DashboardPeriodPreset = (typeof dashboardPeriodPresets)[number];
 
 export type DashboardQuery = Readonly<{
+  mode?: import("./commercial-front").CommercialFrontMode;
+  selectedPipelineIds?: readonly string[];
   preset: DashboardPeriodPreset;
   fromDate: string;
   toDate: string;
@@ -209,6 +213,10 @@ export type DashboardIntegratedMemberOption = DashboardFilterOption & Readonly<{
 }>;
 
 export type DashboardFilterOptions = Readonly<{
+  channels?: readonly DashboardFilterOption[];
+  pipelines?: readonly DashboardFilterOption[];
+  stages?: readonly DashboardFilterOption[];
+  forms?: readonly DashboardFilterOption[];
   sdrs: readonly DashboardFilterOption[];
   closers: readonly DashboardFilterOption[];
   integratedMembers: readonly DashboardIntegratedMemberOption[];
@@ -221,6 +229,7 @@ export type DashboardFilterOptions = Readonly<{
 }>;
 
 export type DashboardScreen = Readonly<{
+  commercialSummary?: Awaited<ReturnType<ReturnType<typeof import("@/modules/metrics/application/metrics-service").createMetricsService>["getCommercialFrontSummary"]>>;
   query: DashboardQuery;
   comparisonPeriod: DashboardPeriodInterval;
   overview: MetricsOverview;

@@ -58,7 +58,9 @@ const navigationGroups: ReadonlyArray<Readonly<{
   {
     label: "Indicadores",
     items: [
-      { href: "/dashboard", icon: "dashboard", label: "Visão geral", permission: "metrics.read" },
+      { href: "/dashboard", icon: "dashboard", label: "Visão Geral", permission: "metrics.read" },
+      { href: "/dashboard/anuncios", icon: "dashboard", label: "Visão Geral — Anúncios", permission: "metrics.read" },
+      { href: "/dashboard/prospeccao", icon: "dashboard", label: "Visão Geral — Prospecção Ativa", permission: "metrics.read" },
       { href: "/gestao-equipe", icon: "equipe", label: "Gestão da equipe", roles: managerRoles },
       { href: "/metas", icon: "dashboard", label: "Metas", permission: "metrics.read" },
       { href: "/forecast", icon: "receita", label: "Forecast", permission: "metrics.read" },
@@ -112,7 +114,7 @@ const navigationGroups: ReadonlyArray<Readonly<{
 
 const sections = [
   { key: "work", label: "Trabalho", icon: "meu-dia", paths: ["/meu-dia", "/tempo-real", "/email-agente", "/anuncios", "/oportunidades", "/leads", "/agenda", "/inbox", "/atividades", "/automacoes"] },
-  { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/gestao-equipe", "/metas", "/forecast", "/metricas-receita", "/receita", "/analises"] },
+  { key: "analytics", label: "Indicadores", icon: "dashboard", paths: ["/dashboard", "/dashboard/anuncios", "/dashboard/prospeccao", "/gestao-equipe", "/metas", "/forecast", "/metricas-receita", "/receita", "/analises"] },
   { key: "finance", label: "Financeiro", icon: "receita", paths: ["/financeiro", "/pagamentos", "/contratos"] },
   { key: "customers", label: "Clientes", icon: "leads", paths: ["/contas", "/onboarding", "/customer-success", "/customer-service", "/farmer"] },
   { key: "marketing", label: "Marketing", icon: "dashboard", paths: ["/aquisicao/midia", "/formularios", "/aquisicao", "/integracoes/meta-ads", "/integracoes/google-ads", "/integracoes"] },
@@ -132,6 +134,7 @@ const labels: Record<string, string> = {
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
+  if (href === "/dashboard") return pathname === "/dashboard" || pathname === "/dashboard/registros" || pathname === "/dashboard/atividades-integradas" || pathname === "/dashboard/evidencias";
   if (href === "/leads") {
     return pathname === "/leads" || (pathname.startsWith("/leads/") && !pathname.startsWith("/leads/entrada"));
   }

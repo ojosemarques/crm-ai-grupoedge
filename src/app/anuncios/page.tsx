@@ -1,4 +1,6 @@
 import { redirect } from "next/navigation";
+import { CommercialHistory } from "@/components/leads/commercial-history";
+import { RouteAutoRefresh } from "@/components/layout/route-auto-refresh";
 
 import {
   AdvertisingActivities,
@@ -81,11 +83,13 @@ export default async function AdvertisingPage({ searchParams }: Readonly<{ searc
 
   return (
     <main className="page-canvas">
+      <RouteAutoRefresh />
       <PageHeader description="Pipeline exclusivo para leads de anúncios, com atividades e indicadores separados da Prospecção Ativa." eyebrow="Trabalho" title={ADVERTISING_PIPELINE_NAME} />
       <AdvertisingNav active={view} />
       {view === "pipeline" && pipelineScreen ? <PreSalesPipelineWorkspace basePath="/anuncios" fixedQuery={{ view: "pipeline" }} initialView="board" key={pipelineScreen.pipelineId} screen={pipelineScreen} showGenderFilter showPhoneTypeFilter showStateFilter showSubmissionDetails /> : null}
       {view === "stock" && workspaceScreen ? <AdvertisingStock screen={workspaceScreen} /> : null}
       {view === "activities" && workspaceScreen ? <AdvertisingActivities screen={workspaceScreen} /> : null}
+      {view === "activities" ? <CommercialHistory basePath="/anuncios" context={context} params={params} pipelineName="Anúncios" /> : null}
       {view === "metrics" && workspaceScreen ? <AdvertisingMetrics screen={workspaceScreen} /> : null}
     </main>
   );

@@ -16,7 +16,7 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const filterKeys = [
   "sdrMemberIds", "closerMemberIds", "teamIds", "sourceIds", "campaignIds", "creativeIds",
-  "priorityCodes", "productIds", "pipelineIds", "stageIds", "channels", "municipality",
+  "priorityCodes", "productIds", "formIds", "pipelineIds", "stageIds", "channels", "municipality",
   "stateCodes", "politicalRoles", "cadenceStepKeys", "executionModes",
 ] as const;
 
@@ -44,16 +44,20 @@ function dashboardHref(params: Record<string, string | string[] | undefined>, ti
   }).format(new Date(value));
   const query = new URLSearchParams({
     preset: "CUSTOM", fromDate: date(from), toDate: date(new Date(new Date(to).getTime() - 1).toISOString()),
+    from, to,
   });
   const mappings = {
     sdrMemberIds: "sdr", closerMemberIds: "closer", teamIds: "team", sourceIds: "source",
-    campaignIds: "campaign", creativeIds: "creative", priorityCodes: "priority", productIds: "product",
+    campaignIds: "campaign", creativeIds: "creative", priorityCodes: "priority", productIds: "product", formIds: "form", pipelineIds: "pipeline", stageIds: "stage", channels: "channel",
   } as const;
   for (const [source, target] of Object.entries(mappings)) {
     const value = params[source];
     for (const item of Array.isArray(value) ? value : value ? [value] : []) query.append(target, item);
   }
-  return `/dashboard?${query.toString()}`;
+  const mode = single(params.mode);
+  if (mode) query.set("mode", mode);
+  const base = mode === "ADVERTISING" ? "/dashboard/anuncios" : mode === "PROSPECTING" ? "/dashboard/prospeccao" : "/dashboard";
+  return `${base}?${query.toString()}`;
 }
 
 function formatResult(value: string | null) {
@@ -138,7 +142,8 @@ export default async function IntegratedActivityRecordsPage({ searchParams }: Re
       <PageHeader back={{ href: backHref, label: "Voltar aos indicadores com os mesmos filtros" }} description={result.metric.description} eyebrow="Log comercial" title={result.metric.label} />
       <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard hint={workspace.timeZone} label="Período" tone="info" value={period} />
-        <StatCard label="Registros nesta página" value={result.records.length} />
+        <StatCard hint="O número do indicador e os eventos que o comprovam têm unidades distintas quando há pessoas únicas, taxas ou correções." label="Valor do indicador" value={result.canonicalValue === null ? "Sem base" : result.metric.unit === "BASIS_POINTS" ? `${(Number(result.canonicalValue) / 100).toLocaleString("pt-BR")}%` : result.metric.unit === "CENTS" ? formatMoney(String(result.canonicalValue)) : String(result.canonicalValue)} />
+        <StatCard label="Eventos nesta página" value={result.records.length} />
         <StatCard label="Escopo" value={result.scope === "WORKSPACE" ? "Todo o workspace" : result.scope === "TEAM" ? "Minha equipe" : "Meus registros"} />
       </section>
       {result.records.length === 0 ? (

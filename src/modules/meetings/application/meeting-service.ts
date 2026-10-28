@@ -1,3 +1,5 @@
+import { assertAdvertisingSchedulingAccess, getAdvertisingSchedulingAccess } from "@/modules/meetings/application/advertising-scheduling-access";
+import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import type {
   MeetingHistoryAction,
   MeetingStatus,
@@ -695,6 +697,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       where: { id: parsed.data.leadId, workspaceId: context.workspaceId, deletedAt: null },
       select: {
         id: true,
+        pipeline: { select: { name: true } },
         ownerMemberId: true,
         queueId: true,
         routingQueue: { select: { teamId: true } },
@@ -724,7 +727,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
         orderBy: [{ startsAt: "desc" }, { id: "desc" }],
       }),
     ]);
-    const scheduleScope = schedulingScope(context, write);
+    const advertisingAccess = lead.pipeline.name !== "Anúncios" || Boolean(await getAdvertisingSchedulingAccess(options.database, context));
+    const scheduleScope = advertisingAccess ? schedulingScope(context, write) : null;
     const closers = scheduleScope ? await closerOptions(context, scheduleScope) : [];
     if (workspaceRow.defaultMeetingDurationMinutes !== 30 && workspaceRow.defaultMeetingDurationMinutes !== 40) {
       conflict("SETTINGS_INVALID", "A duração padrão de reunião é inválida.");
@@ -803,6 +807,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           ownerMemberId: true,
           queueId: true,
           pipelineId: true,
+          pipeline: { select: { name: true } },
           currentStage: { select: { leadStageCode: true } },
           meetings: {
             where: { status: { in: ["SCHEDULED", "CONFIRMED"] }, deletedAt: null },
@@ -818,6 +823,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
         },
       });
       if (!currentLead) notFound("Lead não encontrado.");
+      const schedulingPolicy = currentLead.pipeline.name === ADVERTISING_PIPELINE_NAME
+        ? await assertAdvertisingSchedulingAccess(transaction, context) : "EXISTING_FLOW";
       if (currentLead.meetings.length > 0) {
         conflict("LEAD_ALREADY_HAS_ACTIVE_MEETING", "O lead já possui uma reunião ativa.");
       }
@@ -956,6 +963,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           occurredAt,
           changes: {
             leadId: currentLead.id,
+            schedulingPolicy,
             closerId: closer.id,
             startsAt: startsAt.toISOString(),
             endsAt: endsAt.toISOString(),

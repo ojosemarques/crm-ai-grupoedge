@@ -1,3 +1,4 @@
+import { assertAdvertisingSchedulingAccess } from "@/modules/meetings/application/advertising-scheduling-access";
 import {
   Prisma,
   type LeadPipelineStageCode,
@@ -394,6 +395,7 @@ export async function transitionLeadStageInTransaction(
     where: { id: input.leadId, workspaceId: context.workspaceId, deletedAt: null },
     include: {
       currentStage: true,
+      pipeline: { select: { name: true } },
       stageHistory: {
         where: { exitedAt: null },
         orderBy: [{ enteredAt: "desc" }, { id: "desc" }],
@@ -434,6 +436,8 @@ export async function transitionLeadStageInTransaction(
   });
   if (!target || !isLeadStageCode(target.leadStageCode)) notFound("Etapa de destino não encontrada.");
   if (target.id === lead.currentStageId) conflict("STAGE_UNCHANGED", "O lead já está nesta etapa.");
+  const advertisingSchedulingPolicy = lead.pipeline.name === "Anúncios" && target.leadStageCode === "MEETING_SCHEDULED" && input.origin !== "MEETING"
+    ? await assertAdvertisingSchedulingAccess(transaction, context) : null;
   if (target.leadStageCode === "PROPOSAL" && input.commercialEvent !== "PROPOSAL_REGISTERED") {
     conflict("PROPOSAL_FORM_REQUIRED", "Registre uma proposta no negócio vinculado para avançar o lead.");
   }
@@ -596,7 +600,7 @@ export async function transitionLeadStageInTransaction(
     executionMode,
   });
   if (target.leadStageCode === "MEETING_SCHEDULED" && input.origin !== "MEETING") {
-    const bookingMemberId = performedByMember?.id ?? lead.ownerMemberId;
+    const bookingMemberId = performedByMember?.id ?? (lead.pipeline.name === "Anúncios" ? null : lead.ownerMemberId);
     await recordCommercialMetricFactInTransaction(transaction, {
       workspaceId: context.workspaceId,
       eventKey: `stage-history:${enteredHistory.id}:meeting-scheduled:v1`,
@@ -663,6 +667,7 @@ export async function transitionLeadStageInTransaction(
       changes: {
         fromStageId: lead.currentStage.id,
         fromStageCode: lead.currentStage.leadStageCode,
+        ...(advertisingSchedulingPolicy ? { schedulingPolicy: advertisingSchedulingPolicy } : {}),
         toStageId: target.id,
         toStageCode: target.leadStageCode,
         fromStatus: lead.status,

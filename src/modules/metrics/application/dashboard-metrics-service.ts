@@ -1,3 +1,4 @@
+import { summarizeLeadCohortRate } from "@/modules/metrics/domain/metric-cohort";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import {
@@ -46,6 +47,7 @@ import {
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
+import { commercialFrontModes, commercialFrontPipelineIds } from "@/modules/metrics/domain/commercial-front";
 
 type AuthorizationPort = Readonly<{
   authorize: (
@@ -77,9 +79,16 @@ const optionalUuidParam = z.preprocess(
 );
 
 const inputSchema = z.object({
+  mode: z.enum(commercialFrontModes).optional(),
+  form: listParam.optional().default([]),
+  pipeline: listParam.optional().default([]),
+  stage: listParam.optional().default([]),
+  channel: listParam.optional().default([]),
   preset: z.enum(dashboardPeriodPresets).optional().default("MONTH"),
   fromDate: z.string().optional(),
   toDate: z.string().optional(),
+  from: z.iso.datetime().optional(),
+  to: z.iso.datetime().optional(),
   sdr: listParam.optional().default([]),
   closer: listParam.optional().default([]),
   team: listParam.optional().default([]),
@@ -264,9 +273,13 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       options.now(),
       workspace.timeZone,
     );
+    const pipelines = parsed.data.mode ? await options.database.pipeline.findMany({
+      where: { workspaceId: context.workspaceId, entityType: "LEAD", deletedAt: null },
+      select: { id: true, name: true },
+    }) : [];
     const normalized = parseMetricsQuery({
-      from: period.from,
-      to: period.to,
+      from: parsed.data.from ?? period.from,
+      to: parsed.data.to ?? period.to,
       filters: {
         sdrMemberIds: parsed.data.sdr,
         closerMemberIds: parsed.data.closer,
@@ -276,10 +289,17 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
         creativeIds: parsed.data.creative,
         priorityCodes: parsed.data.priority,
         productIds: parsed.data.product,
+        formIds: parsed.data.form,
+        pipelineIds: parsed.data.mode ? commercialFrontPipelineIds(parsed.data.mode, pipelines, parsed.data.pipeline) : parsed.data.pipeline,
+        stageIds: parsed.data.stage,
+        channels: parsed.data.channel,
       },
     });
     return Object.freeze({
       ...period,
+      from: normalized.from,
+      to: normalized.to,
+      ...(parsed.data.mode ? { mode: parsed.data.mode, selectedPipelineIds: parsed.data.pipeline } : {}),
       integratedMemberId: parsed.data.integratedMember ?? null,
       filters: normalized.filters,
     });
@@ -311,10 +331,11 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
           },
         })
       : integratedPromise;
-    const [overview, integrated, integratedOperation] = await Promise.all([
+    const [overview, integrated, integratedOperation, commercialSummary] = await Promise.all([
       overviewPromise,
       integratedPromise,
       integratedOperationPromise,
+      query.mode ? metrics.getCommercialFrontSummary(context, { from: query.from, to: query.to, filters: query.filters }) : Promise.resolve(undefined),
     ]);
     const comparisonPeriod = resolveDashboardComparisonPeriod(
       query,
@@ -659,23 +680,23 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       proposals: "sales.proposals",
       sales: "sales.won",
       revenue: "sales.won_value",
-      "lead-to-meeting": "meetings.scheduled",
-      "lead-to-sale": "sales.won",
-      "meeting-to-sale": "sales.won",
+      "lead-to-meeting": "conversion.entry_to_meeting",
+      "lead-to-sale": "conversion.entry_to_sale",
+      "meeting-to-sale": "conversion.meeting_to_sale",
     } as const;
     const alignActivityComparison = (metric: ComparableMetric, facts: readonly IntegratedActivityFact[], series: readonly { id: string; points: readonly { value: number | string | null }[] }[]): ComparableMetric => {
       if (facts.length === 0 || !(metric.id in integratedComparisonIds)) return metric;
-      const totalFor = (id: string) => (series.find((item) => item.id === id)?.points ?? [])
-        .reduce<number>((total, point) => total + Number(point.value ?? 0), 0);
       const rateDefinitions = {
-        "lead-to-meeting": { numeratorId: "scheduled", denominatorId: "leads", formula: "reuniões agendadas / leads recebidos" },
-        "lead-to-sale": { numeratorId: "sales", denominatorId: "leads", formula: "vendas / leads recebidos" },
-        "meeting-to-sale": { numeratorId: "sales", denominatorId: "scheduled", formula: "vendas / reuniões agendadas" },
+        "lead-to-meeting": { numeratorType: "MEETING_SCHEDULED", denominatorType: "LEAD_CREATED", formula: "leads com entrada e agendamento / leads com entrada no período" },
+        "lead-to-sale": { numeratorType: "SALE_WON", denominatorType: "LEAD_CREATED", formula: "leads com entrada e venda / leads com entrada no período" },
+        "meeting-to-sale": { numeratorType: "SALE_WON", denominatorType: "MEETING_SCHEDULED", formula: "leads agendados e ganhos / leads agendados no período" },
       } as const;
       const rateDefinition = rateDefinitions[metric.id as keyof typeof rateDefinitions];
       if (rateDefinition) {
-        const numerator = totalFor(rateDefinition.numeratorId);
-        const denominator = totalFor(rateDefinition.denominatorId);
+        const { numerator, denominator } = summarizeLeadCohortRate(
+          facts.filter((fact) => fact.eventType === rateDefinition.numeratorType),
+          facts.filter((fact) => fact.eventType === rateDefinition.denominatorType),
+        );
         return Object.freeze({
           ...metric,
           value: denominator === 0 ? null : Math.round((numerator / denominator) * 10_000) / 100,
@@ -1282,7 +1303,14 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     const dedupeOptions = (rows: readonly DashboardFilterOption[]) => optionSort(
       [...new Map(rows.map((row) => [row.id, row])).values()],
     );
+    const [pipelineCatalog, formLinks] = query.mode ? await Promise.all([
+      options.database.pipeline.findMany({ where: { workspaceId: context.workspaceId, entityType: "LEAD", name: { in: query.mode === "ADVERTISING" ? ["Anúncios"] : query.mode === "PROSPECTING" ? ["Prospecção Ativa"] : ["Anúncios", "Prospecção Ativa"] }, deletedAt: null }, select: { id: true, name: true, stages: { where: { deletedAt: null }, orderBy: { position: "asc" }, select: { id: true, name: true } } } }),
+      options.database.leadFormSubmission.groupBy({ by: ["marketingFormId"], where: { workspaceId: context.workspaceId, leadId: { in: ids }, marketingFormId: { not: null } } }),
+    ]) : [[], []];
+    const formIds = formLinks.flatMap((link) => link.marketingFormId ? [link.marketingFormId] : []);
+    const forms = formIds.length ? await options.database.marketingForm.findMany({ where: { workspaceId: context.workspaceId, id: { in: formIds }, deletedAt: null }, select: { id: true, name: true } }) : [];
     const filterOptions = Object.freeze({
+      channels: commercialSummary?.channels ?? [], pipelines: optionSort(pipelineCatalog), stages: optionSort(pipelineCatalog.flatMap((pipeline) => pipeline.stages.map((stage) => ({ ...stage, name: `${pipeline.name} · ${stage.name}` })))), forms: optionSort(forms),
       sdrs: dedupeOptions(commercialFunctions.filter((item) => item.role === "SDR").map((item) => ({ id: item.id, name: item.name }))),
       closers: dedupeOptions(commercialFunctions.filter((item) => item.role === "CLOSER").map((item) => ({ id: item.id, name: item.name }))),
       integratedMembers: optionSort([...new Map(commercialFunctions.map((member) => {
@@ -1300,7 +1328,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
     });
 
     return Object.freeze({
-      query, comparisonPeriod, overview, integrated, integratedOperation, kpis: Object.freeze(kpis),
+      query, comparisonPeriod, overview, integrated, integratedOperation, ...(commercialSummary ? { commercialSummary } : {}), kpis: Object.freeze(kpis),
       comparisons: Object.freeze(comparisons), timeSeries, previousTimeSeries,
       funnel: Object.freeze(funnel), fullFunnel, attention: Object.freeze(attention),
       stageConversion: Object.freeze(stageConversion), stageTime: Object.freeze(stageTime),

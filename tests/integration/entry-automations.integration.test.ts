@@ -281,7 +281,7 @@ describe("CRM-22 — automações de entrada", () => {
     await finishScheduledChecks(testClock, local.worker, "crm22-received-cleanup");
   });
 
-  it("trata duplicidade sem mesclar campos, alerta o responsável e preserva o score versionado", async () => {
+  it("preserva registros distintos e revisão quando telefone/e-mail coincidem com nome divergente", async () => {
     const testClock = clock("2046-01-03T12:00:00.000Z");
     const local = services(testClock);
     const phone = testPhone(`duplicate:${randomUUID()}`);
@@ -301,21 +301,21 @@ describe("CRM-22 — automações de entrada", () => {
       }),
       manager,
     );
-    expect(second).toMatchObject({ outcome: "ATTACHED", leadId: first.leadId });
+    expect(second).toMatchObject({ outcome: "CREATED" });
     if (second.outcome === "REJECTED") throw new Error("Duplicidade rejeitada.");
+    expect(second.leadId).not.toBe(first.leadId);
     await drainDue(local.worker, "crm22-duplicate-second");
 
     const lead = await database.lead.findUniqueOrThrow({ where: { id: first.leadId } });
     expect(lead.fullName).toBe(`Lead CRM-22 duplicate-first`);
-    expect(lead.needsIdentityReview).toBe(true);
-    expect(await database.leadFormSubmission.count({ where: { leadId: lead.id } })).toBe(2);
-    expect(await database.leadScore.count({ where: { leadId: lead.id } })).toBe(2);
-    expect(await database.notification.count({
-      where: { leadId: lead.id, title: "Nova conversão duplicada" },
-    })).toBe(1);
-    expect(await database.activity.count({
-      where: { leadId: lead.id, subject: "Automação: duplicidade tratada" },
-    })).toBe(1);
+    expect(await database.leadFormSubmission.count({ where: { leadId: lead.id } })).toBe(1);
+    expect(await database.leadFormSubmission.count({ where: { leadId: second.leadId } })).toBe(1);
+    expect(await database.leadScore.count({ where: { leadId: lead.id } })).toBe(1);
+    const other = await database.lead.findUniqueOrThrow({ where: { id: second.leadId } });
+    expect(other.fullName).toBe("Nome divergente não confiável");
+    expect(other.contactId).not.toBe(lead.contactId);
+    expect(await database.contactIdentityReview.count({ where: { workspaceId, leadId: second.leadId, status: "OPEN" } })).toBeGreaterThan(0);
+    expect(await database.activity.count({ where: { leadId: second.leadId, subject: "Automação: lead recebido" } })).toBe(1);
     await finishScheduledChecks(testClock, local.worker, "crm22-duplicate-cleanup");
   });
 

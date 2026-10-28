@@ -1,3 +1,4 @@
+import { RelatedCommercialHistory } from "@/components/leads/related-commercial-history";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
@@ -100,6 +101,7 @@ export async function LeadHistoryContent({
         <Link href="/leads">Contatos</Link><span aria-hidden="true">›</span>
         <span>{operations.lead.fullName}</span>
       </nav>
+      <RelatedCommercialHistory context={context} leadId={leadId} />
       <OperationalHistoryWorkspace
         autoOpenActivityPanel={autoOpenActivityPanel}
         key={leadId}

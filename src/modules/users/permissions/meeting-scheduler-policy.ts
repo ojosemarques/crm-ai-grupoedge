@@ -2,7 +2,7 @@ import type { AuthenticatedContext } from "@/modules/auth/application/authentica
 
 export const WORKSPACE_MEETING_SCHEDULER_EMAIL = "carloshenrique@politizai.com";
 
-export function isWorkspaceMeetingScheduler(context: AuthenticatedContext): boolean {
+export function isWorkspaceMeetingScheduler(context: Pick<AuthenticatedContext, "workspaceSlug" | "email">): boolean {
   return context.workspaceSlug === "politizai"
     && context.email?.trim().toLowerCase() === WORKSPACE_MEETING_SCHEDULER_EMAIL;
 }

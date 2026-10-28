@@ -1,4 +1,6 @@
 import { redirect } from "next/navigation";
+import { CommercialHistory } from "@/components/leads/commercial-history";
+import { RouteAutoRefresh } from "@/components/layout/route-auto-refresh";
 
 import {
   ProspectingActivities,
@@ -73,6 +75,7 @@ export default async function ActiveProspectingPage({ searchParams }: Readonly<{
 
   return (
     <main className="page-canvas">
+      <RouteAutoRefresh />
       <PageHeader
         description="Pipeline comercial integrado aos leads, ao Meu Dia, às atividades e aos indicadores do CRM."
         eyebrow="Negócios"
@@ -82,6 +85,7 @@ export default async function ActiveProspectingPage({ searchParams }: Readonly<{
       {view === "pipeline" && pipelineScreen ? <PreSalesPipelineWorkspace basePath="/email-agente?view=pipeline" fixedQuery={{ view: "pipeline" }} initialView="board" key={pipelineScreen.pipelineId} screen={pipelineScreen} showGenderFilter showPhoneTypeFilter showStateFilter /> : null}
       {view === "stock" && workspaceScreen ? <ProspectingStock screen={workspaceScreen} /> : null}
       {view === "activities" && workspaceScreen ? <ProspectingActivities screen={workspaceScreen} /> : null}
+      {view === "activities" ? <CommercialHistory basePath="/email-agente" context={context} params={params} pipelineName="Prospecção Ativa" /> : null}
       {view === "metrics" && workspaceScreen ? <ProspectingMetrics screen={workspaceScreen} /> : null}
     </main>
   );

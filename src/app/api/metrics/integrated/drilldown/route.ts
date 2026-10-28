@@ -7,7 +7,7 @@ import { handleRouteError } from "@/shared/core/errors/route-error-handler";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const filterKeys = ["sdrMemberIds", "closerMemberIds", "teamIds", "sourceIds", "campaignIds", "creativeIds", "priorityCodes", "productIds", "pipelineIds", "stageIds", "channels", "municipality", "stateCodes", "politicalRoles", "cadenceStepKeys", "executionModes"] as const;
+const filterKeys = ["sdrMemberIds", "closerMemberIds", "teamIds", "sourceIds", "campaignIds", "creativeIds", "priorityCodes", "productIds", "formIds", "pipelineIds", "stageIds", "channels", "municipality", "stateCodes", "politicalRoles", "cadenceStepKeys", "executionModes"] as const;
 
 export async function GET(request: NextRequest) {
   try {

@@ -127,6 +127,10 @@ export function resolveDashboardPeriod(
     const range = workspaceWeekRange(today, timeZone);
     return { preset, fromDate: range.startDate, toDate: today, from: range.start.toISOString(), to: now.toISOString() };
   }
+  if (preset === "LAST_7_DAYS" || preset === "LAST_30_DAYS") {
+    const fromDate = addLocalDays(today, preset === "LAST_7_DAYS" ? -6 : -29);
+    return { preset, fromDate, toDate: today, from: workspaceDayRange(fromDate, timeZone).start.toISOString(), to: now.toISOString() };
+  }
   if (preset === "MONTH") {
     const range = monthRange(today, timeZone);
     return { preset, fromDate: range.fromDate, toDate: today, from: range.from.toISOString(), to: now.toISOString() };
@@ -165,6 +169,11 @@ export function resolveDashboardComparisonPeriod(
     const fromDate = previousMonthStart(query.fromDate);
     const to = previousMonthEquivalentEnd(currentTo, timeZone);
     return interval(fromDate, workspaceDateAt(to, timeZone), workspaceDayRange(fromDate, timeZone).start, to, timeZone);
+  }
+  if (query.preset === "LAST_7_DAYS" || query.preset === "LAST_30_DAYS") {
+    const days = query.preset === "LAST_7_DAYS" ? 7 : 30;
+    return interval(addLocalDays(query.fromDate, -days), addLocalDays(query.toDate, -days),
+      shiftInstantByCalendarDays(currentFrom, -days, timeZone), shiftInstantByCalendarDays(currentTo, -days, timeZone), timeZone);
   }
   if (isCompleteCalendarMonth(query)) {
     const fromDate = previousMonthStart(query.fromDate);

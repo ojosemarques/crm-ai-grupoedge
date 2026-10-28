@@ -1,3 +1,4 @@
+import { createMetricsService } from "@/modules/metrics/application/metrics-service";
 import { Prisma, type CommercialMetricEventType, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import {
@@ -25,22 +26,6 @@ const querySchema = z.object({
   metricsFrom: z.string().optional(),
   metricsTo: z.string().optional(),
 }).strict();
-
-const metricEventTypes = [
-  "LEAD_CREATED",
-  "CALL_ATTEMPTED",
-  "CALL_CONNECTED",
-  "CALL_UNANSWERED",
-  "CALL_FAILED",
-  "WHATSAPP_MESSAGE_SENT",
-  "WHATSAPP_UNAVAILABLE",
-  "INSTAGRAM_MESSAGE_SENT",
-  "INSTAGRAM_FOLLOW_COMPLETED",
-  "MEETING_SCHEDULED",
-  "MEETING_COMPLETED",
-  "PROPOSAL_REACHED",
-  "SALE_WON",
-] as const satisfies readonly CommercialMetricEventType[];
 
 type AuthorizationPort = Pick<ReturnType<typeof getAuthorizationService>, "authorize" | "assertAuthorized">;
 
@@ -106,7 +91,7 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
     const pageSize = 25;
     const activityPageSize = 25;
 
-    const [leadTotal, stageCounts, leads, taskTotal, tasks, visibleLeadIds] = await Promise.all([
+    const [leadTotal, stageCounts, leads, taskTotal, tasks] = await Promise.all([
       options.database.lead.count({ where: leadWhere }),
       options.database.lead.groupBy({ by: ["currentStageId"], where: leadWhere, _count: { _all: true } }),
       options.database.lead.findMany({
@@ -148,21 +133,12 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
           assignee: { select: { id: true, user: { select: { displayName: true } } } },
         },
       }),
-      options.database.lead.findMany({ where: leadWhere, select: { id: true } }),
     ]);
     const formResponses = await responsesByLead(options.database, context.workspaceId, leads.map((lead) => lead.id));
 
-    const metricWhere = {
-      workspaceId: context.workspaceId,
-      eventType: { in: [...metricEventTypes] },
-      occurredAt: { gte: period.start, lte: period.end },
-      reversedAt: null,
-      leadId: { in: visibleLeadIds.map((lead) => lead.id) },
-    } satisfies Prisma.CommercialMetricFactWhereInput;
-    const metricRows = await options.database.commercialMetricFact.groupBy({
-      by: ["eventType", "creditedMemberId"],
-      where: metricWhere,
-      _sum: { quantity: true, valueCents: true },
+    const metricRows = await createMetricsService(options).getIntegratedProduction(context, {
+      from: period.start.toISOString(), to: new Date(period.end.getTime() + 1).toISOString(),
+      filters: { pipelineIds: [pipeline.id] },
     });
     const memberIds = [...new Set(metricRows.flatMap((row) => row.creditedMemberId ? [row.creditedMemberId] : []))];
     const members = memberIds.length

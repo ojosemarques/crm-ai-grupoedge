@@ -15,11 +15,13 @@ export const dynamic = "force-dynamic";
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 function queryParams(query: DashboardQuery, extras: Record<string, string> = {}) {
-  const params = new URLSearchParams({ preset: query.preset, fromDate: query.fromDate, toDate: query.toDate, ...extras });
+  const params = new URLSearchParams({ preset: query.preset, fromDate: query.fromDate, toDate: query.toDate, from: query.from, to: query.to, ...extras });
+  if (query.mode) params.set("mode", query.mode);
   const mappings = [
     ["sdr", query.filters.sdrMemberIds], ["closer", query.filters.closerMemberIds], ["team", query.filters.teamIds],
     ["source", query.filters.sourceIds], ["campaign", query.filters.campaignIds], ["creative", query.filters.creativeIds],
     ["priority", query.filters.priorityCodes], ["product", query.filters.productIds],
+    ["form", query.filters.formIds ?? []], ["pipeline", query.selectedPipelineIds ?? query.filters.pipelineIds ?? []], ["stage", query.filters.stageIds ?? []], ["channel", query.filters.channels ?? []],
   ] as const;
   for (const [name, values] of mappings) for (const value of values) params.append(name, value);
   return params;

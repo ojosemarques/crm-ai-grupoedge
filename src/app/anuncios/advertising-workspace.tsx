@@ -114,7 +114,7 @@ export function AdvertisingMetrics({ screen }: Readonly<{ screen: Screen }>) {
   ] as const;
   return (
     <>
-      <div className={styles.sectionHeader}><div><h2>Indicadores de Anúncios</h2><p>Fatos comerciais restritos aos leads deste pipeline.</p></div><Link className={styles.link} href="/dashboard">Abrir Indicadores gerais</Link></div>
+      <div className={styles.sectionHeader}><div><h2>Indicadores de Anúncios</h2><p>Fatos comerciais restritos aos leads deste pipeline.</p></div><Link className={styles.link} href="/dashboard/anuncios">Abrir Visão Geral — Anúncios</Link></div>
       <section aria-label="Filtro de período das métricas" className={`${styles.card} ${styles.periodFilter}`}>
         <div><strong>Período das métricas</strong><p>{periodLabels[selected.preset] ?? "Período"} · {localDate(selected.fromDate)} a {localDate(selected.toDate)}</p></div>
         <nav aria-label="Atalhos de período" className={styles.periodNav}>{periodShortcuts.map(([preset, label]) => <Link aria-current={selected.preset === preset ? "page" : undefined} className={styles.periodLink} data-active={selected.preset === preset} href={`/anuncios?view=metrics&metricsPreset=${preset}`} key={preset}>{label}</Link>)}</nav>

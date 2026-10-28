@@ -11,6 +11,7 @@ export type MetricsFilters = Readonly<{
   creativeIds: readonly string[];
   priorityCodes: readonly MetricsPriorityCode[];
   productIds: readonly string[];
+  formIds?: readonly string[];
   pipelineIds?: readonly string[];
   stageIds?: readonly string[];
   channels?: readonly string[];

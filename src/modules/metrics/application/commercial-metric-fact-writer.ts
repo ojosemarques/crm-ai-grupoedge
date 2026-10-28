@@ -79,13 +79,22 @@ export function commercialMetricFactFingerprint(input: CommercialMetricFactInput
 }
 
 export async function recordCommercialMetricFactInTransaction(
-  transaction: Pick<Prisma.TransactionClient, "commercialMetricFact">,
+  transaction: Pick<Prisma.TransactionClient, "commercialMetricFact"> & Partial<Pick<Prisma.TransactionClient, "stageHistory">>,
   input: CommercialMetricFactInput,
 ) {
   const inputFingerprint = commercialMetricFactFingerprint(input);
+  // pipelineId may identify the opportunity pipeline. Keep the commercial front
+  // separately, from the lead's interval at the event, without changing replay hashes.
+  const interval = !input.correctionOfFactId && input.leadId && transaction.stageHistory ? await transaction.stageHistory.findFirst({
+    where: { workspaceId: input.workspaceId, leadId: input.leadId, opportunityId: null, pipeline: { entityType: "LEAD" }, enteredAt: { lte: input.occurredAt },
+      OR: [{ exitedAt: null }, { exitedAt: { gt: input.occurredAt } }] },
+    orderBy: [{ enteredAt: "desc" }, { id: "desc" }], select: { pipelineId: true },
+  }) : null;
+  const metadata = input.safeMetadata && typeof input.safeMetadata === "object" && !Array.isArray(input.safeMetadata) ? input.safeMetadata : {};
   const created = await transaction.commercialMetricFact.createMany({
     data: [{
       ...input,
+      ...(interval ? { safeMetadata: { ...metadata, _commercialFrontPipelineId: interval.pipelineId } } : {}),
       sourceRevision: input.sourceRevision ?? 1,
       executionMode: input.executionMode ?? "SYSTEM",
       quantity: input.quantity ?? 1,

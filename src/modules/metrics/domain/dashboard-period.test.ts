@@ -26,6 +26,14 @@ describe("períodos civis do dashboard", () => {
     expect(() => resolveDashboardPeriod("CUSTOM", "2035-02-03", "2035-02-02", now, zone)).toThrow(/inicial/);
   });
 
+  it("usa últimos 7/30 dias civis e compara o mesmo horário local anterior", () => {
+    const week = resolveDashboardPeriod("LAST_7_DAYS", undefined, undefined, now, zone);
+    const month = resolveDashboardPeriod("LAST_30_DAYS", undefined, undefined, now, zone);
+    expect(week).toMatchObject({ fromDate: "2035-02-04", toDate: "2035-02-10", from: "2035-02-04T03:00:00.000Z", to: now.toISOString() });
+    expect(month).toMatchObject({ fromDate: "2035-01-12", toDate: "2035-02-10" });
+    expect(resolveDashboardComparisonPeriod({ ...week, filters: { sdrMemberIds: [], closerMemberIds: [], teamIds: [], sourceIds: [], campaignIds: [], creativeIds: [], priorityCodes: [], productIds: [] } }, zone)).toMatchObject({ fromDate: "2035-01-28", toDate: "2035-02-03", to: "2035-02-03T14:00:00.000Z" });
+  });
+
   function query(
     preset: DashboardQuery["preset"],
     fromDate?: string,

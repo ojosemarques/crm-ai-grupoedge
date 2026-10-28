@@ -159,10 +159,24 @@ export function createUnifiedActivityService(options: Options) {
         }
       } else if (parsed.data.action === "REASSIGN") {
         const assigneeMemberId = parsed.data.assigneeMemberId;
+        await tx.activity.createMany({ data: tasks.map((task) => ({
+          workspaceId: context.workspaceId, leadId: task.leadId, type: "TASK" as const, direction: "INTERNAL" as const,
+          result: "INFORMATION" as const, subject: `Responsável da tarefa alterado: ${task.title}`, occurredAt: at,
+          previousValues: json({ taskId: task.id, assigneeMemberId: task.assigneeMemberId }),
+          newValues: json({ taskId: task.id, assigneeMemberId }),
+          createdByActorId: context.actorId, updatedByActorId: context.actorId,
+        })) });
         await tx.task.updateMany({ where: { workspaceId: context.workspaceId, id: { in: taskIds }, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null }, data: { assigneeMemberId, queueId: null, updatedByActorId: context.actorId } });
         await Promise.all(tasks.map((task) => tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "task.bulk_reassigned", entityType: "Task", entityId: task.id, occurredAt: at, changes: json({ fromAssigneeMemberId: task.assigneeMemberId, toAssigneeMemberId: assigneeMemberId }) } })));
       } else {
         const dueAt = parsed.data.dueAt;
+        await tx.activity.createMany({ data: tasks.map((task) => ({
+          workspaceId: context.workspaceId, leadId: task.leadId, type: "TASK" as const, direction: "INTERNAL" as const,
+          result: "INFORMATION" as const, subject: `Prazo da tarefa alterado: ${task.title}`, occurredAt: at,
+          previousValues: json({ taskId: task.id, dueAt: task.dueAt.toISOString() }),
+          newValues: json({ taskId: task.id, dueAt: dueAt.toISOString() }),
+          createdByActorId: context.actorId, updatedByActorId: context.actorId,
+        })) });
         await tx.task.updateMany({ where: { workspaceId: context.workspaceId, id: { in: taskIds }, status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null }, data: { dueAt, updatedByActorId: context.actorId } });
         await tx.opportunityStageActivityInstance.updateMany({ where: { workspaceId: context.workspaceId, taskId: { in: taskIds }, status: "ACTIVE" }, data: { dueAt } });
         await Promise.all(tasks.map(async (task) => {

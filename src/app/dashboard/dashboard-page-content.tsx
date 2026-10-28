@@ -1,4 +1,7 @@
+import { MarketingCostStatus } from "./marketing-cost-status";
 import Link from "next/link";
+import type { CommercialFrontMode } from "@/modules/metrics/domain/commercial-front";
+import { RouteAutoRefresh } from "@/components/layout/route-auto-refresh";
 import { redirect } from "next/navigation";
 
 import { DashboardView } from "@/app/dashboard/dashboard-view";
@@ -12,15 +15,17 @@ export type DashboardSearchParams = Promise<Record<string, string | string[] | u
 export async function DashboardPageContent({
   basePath,
   searchParams,
+  mode = "ALL",
 }: Readonly<{
-  basePath: "/" | "/dashboard";
+  mode?: CommercialFrontMode;
+  basePath: "/" | "/dashboard" | "/dashboard/anuncios" | "/dashboard/prospeccao";
   searchParams: DashboardSearchParams;
 }>) {
   const context = await requirePageAuthentication();
   const params = await searchParams;
   let screen;
   try {
-    screen = await getDashboardMetricsService().getScreen(context, params);
+    screen = await getDashboardMetricsService().getScreen(context, { ...params, mode });
   } catch (error) {
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     if (error instanceof ApplicationError && error.code === "INVALID_INPUT") {
@@ -39,6 +44,8 @@ export async function DashboardPageContent({
 
   return (
     <main className="page-canvas page-canvas-wide">
+      <RouteAutoRefresh />
+      <MarketingCostStatus context={context} query={screen.query} />
       <DashboardView
         basePath={basePath}
         displayName={context.displayName}

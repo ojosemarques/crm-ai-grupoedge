@@ -1,3 +1,4 @@
+import { positiveCommercialFrontFacts, summarizeCommercialFront } from "@/modules/metrics/domain/commercial-front-summary";
 import type {
   CommercialMetricEventType,
   PermissionScope,
@@ -65,6 +66,7 @@ const filtersSchema = z.object({
   creativeIds: uuidListSchema,
   priorityCodes: z.array(z.enum(metricsPriorityCodes)).max(3).default([]),
   productIds: uuidListSchema,
+  formIds: uuidListSchema,
   pipelineIds: uuidListSchema,
   stageIds: uuidListSchema,
   channels: z.array(z.string().trim().min(1).max(80)).max(50).default([]),
@@ -83,6 +85,7 @@ const emptyFilters = {
   creativeIds: [],
   priorityCodes: [],
   productIds: [],
+  formIds: [],
   pipelineIds: [],
   stageIds: [],
   channels: [],
@@ -135,6 +138,7 @@ export function parseMetricsQuery(input: unknown): MetricsQuery {
       creativeIds: uniqueSorted(parsed.data.filters.creativeIds),
       priorityCodes: uniqueSorted(parsed.data.filters.priorityCodes),
       productIds: uniqueSorted(parsed.data.filters.productIds),
+      formIds: uniqueSorted(parsed.data.filters.formIds),
       pipelineIds: uniqueSorted(parsed.data.filters.pipelineIds),
       stageIds: uniqueSorted(parsed.data.filters.stageIds),
       channels: uniqueSorted(parsed.data.filters.channels),
@@ -222,9 +226,12 @@ async function integratedFactWhere(
   }) : [];
   const scopedMembers = uniqueSorted(scopeMemberships.map((item) => item.workspaceMemberId));
   const selectedMembers = uniqueSorted([...query.filters.sdrMemberIds, ...query.filters.closerMemberIds]);
-  const fallbackLeadIds = async (where: Prisma.LeadWhereInput) => (await database.lead.findMany({
-    where: { workspaceId: context.workspaceId, ...where }, select: { id: true },
-  })).map((lead) => lead.id);
+  const fallbackLeadIds = async (where: Prisma.LeadWhereInput) => {
+    const leads = await database.lead.findMany({ where: { workspaceId: context.workspaceId, ...where }, select: { id: true }, take: 50_001 });
+    if (leads.length > 50_000) invalidInput("A dimensão excedeu 50 mil participações. Reduza o recorte.");
+    return leads.map((lead) => lead.id);
+  };
+  const formLeadIds = query.filters.formIds?.length ? await fallbackLeadIds({ submissions: { some: { marketingFormId: { in: [...query.filters.formIds] } } } }) : null;
   const [sourceLeadIds, campaignLeadIds, creativeLeadIds, teamLeadIds, filteredTeamMembers] = await Promise.all([
     query.filters.sourceIds.length ? fallbackLeadIds({ sourceId: { in: [...query.filters.sourceIds] } }) : null,
     query.filters.campaignIds.length ? fallbackLeadIds({ campaignId: { in: [...query.filters.campaignIds] } }) : null,
@@ -278,7 +285,10 @@ async function integratedFactWhere(
     workspaceId: context.workspaceId,
     occurredAt: { gte: new Date(query.from), lt: new Date(query.to) },
     AND: [
+      { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } },
+      { corrections: { none: { eventKey: { endsWith: ":front-classification:replacement:v1" } } } },
       visibility,
+      ...(formLeadIds === null ? [] : [{ leadId: { in: formLeadIds } }]),
       ...(dimensionLeadIds === null ? [] : [{ leadId: { in: dimensionLeadIds } }]),
       ...(selectedMembers.length ? [{ OR: [
         { eventType: "MEETING_SCHEDULED" as const, bookedByMemberId: { in: selectedMembers } },
@@ -288,9 +298,11 @@ async function integratedFactWhere(
       ] }] : []),
       ...(query.filters.teamIds.length ? [{ OR: [
         { teamId: { in: [...query.filters.teamIds] } },
-        { creditedMemberId: { in: filteredTeamMemberIds } },
-        { performedByMemberId: { in: filteredTeamMemberIds } },
-        { teamId: null, leadId: { in: teamLeadIds ?? [] } },
+        { teamId: null, OR: [
+          { creditedMemberId: { in: filteredTeamMemberIds } },
+          { performedByMemberId: { in: filteredTeamMemberIds } },
+          { leadId: { in: teamLeadIds ?? [] } },
+        ] },
       ] }] : []),
       ...(sourceLeadIds === null ? [] : [{ OR: [
         { sourceId: { in: [...query.filters.sourceIds] } }, { sourceId: null, leadId: { in: sourceLeadIds } },
@@ -302,7 +314,10 @@ async function integratedFactWhere(
         { creativeId: { in: [...query.filters.creativeIds] } }, { creativeId: null, leadId: { in: creativeLeadIds } },
       ] }]),
     ],
-    ...(query.filters.pipelineIds?.length ? { pipelineId: { in: [...query.filters.pipelineIds] } } : {}),
+    ...(query.filters.pipelineIds?.length ? { OR: [
+      { pipelineId: { in: [...query.filters.pipelineIds] } },
+      ...query.filters.pipelineIds.map((id) => ({ safeMetadata: { path: ["_commercialFrontPipelineId"], equals: id } })),
+    ] } : {}),
     ...(query.filters.stageIds?.length ? { stageId: { in: [...query.filters.stageIds] } } : {}),
     ...(query.filters.channels?.length ? { channel: { in: [...query.filters.channels] } } : {}),
     ...(query.filters.cadenceStepKeys?.length ? { cadenceStepKey: { in: [...query.filters.cadenceStepKeys] } } : {}),
@@ -318,6 +333,9 @@ function dimensionFilters(
   filteredTeamMemberIds: readonly string[],
 ): Prisma.LeadWhereInput[] {
   const clauses: Prisma.LeadWhereInput[] = [];
+  if (filters.formIds?.length) clauses.push({ submissions: { some: { marketingFormId: { in: [...filters.formIds] } } } });
+  if (filters.pipelineIds?.length) clauses.push({ pipelineId: { in: [...filters.pipelineIds] } });
+  if (filters.stageIds?.length) clauses.push({ currentStageId: { in: [...filters.stageIds] } });
   if (filters.sourceIds.length > 0) clauses.push({ sourceId: { in: [...filters.sourceIds] } });
   if (filters.campaignIds.length > 0) clauses.push({ campaignId: { in: [...filters.campaignIds] } });
   if (filters.creativeIds.length > 0) clauses.push({ creativeId: { in: [...filters.creativeIds] } });
@@ -1170,18 +1188,28 @@ export function createMetricsService(options: MetricsServiceOptions) {
     const scope = await resolveMetricsScope(options.database, options.authorization, context);
     const baseWhere = await integratedFactWhere(options.database, context, scope, query);
     const cursorFact = parsed.data.cursor ? await options.database.commercialMetricFact.findFirst({
-      where: { id: parsed.data.cursor, workspaceId: context.workspaceId },
+      where: { ...baseWhere, id: parsed.data.cursor, eventType: { in: [...definition.eventTypes] } },
       select: { id: true, occurredAt: true },
     }) : null;
     if (parsed.data.cursor && !cursorFact) invalidInput("Cursor de drill-down inválido.");
+    let cohortLeadIds: string[] | null = null;
+    if (definition.aggregation === "RATE" && definition.denominatorAggregation === "DISTINCT_LEAD" && definition.denominatorEventTypes) {
+      const groups = await options.database.commercialMetricFact.groupBy({
+        by: ["leadId", "eventType"], where: { ...baseWhere, leadId: { not: null }, eventType: { in: [...definition.denominatorEventTypes] } },
+        _sum: { quantity: true }, orderBy: { leadId: "asc" }, take: 50_001,
+      });
+      if (groups.length > 50_000) invalidInput("A coorte excedeu 50 mil registros. Reduza o período.");
+      cohortLeadIds = [...new Set(groups.filter((group) => (group._sum.quantity ?? 0) > 0).flatMap((group) => group.leadId ? [group.leadId] : []))];
+    }
     const rows = await options.database.commercialMetricFact.findMany({
       where: {
         ...baseWhere,
+        ...(cohortLeadIds === null ? {} : { leadId: { in: cohortLeadIds } }),
         eventType: { in: [...definition.eventTypes] },
         ...(definition.sourceEntityTypes ? { sourceEntityType: { in: [...definition.sourceEntityTypes] } } : {}),
         ...(definition.channels ? { channel: { in: [...definition.channels] } } : {}),
         ...(definition.results ? { result: { in: [...definition.results] } } : {}),
-        ...(cursorFact ? { OR: [{ occurredAt: { lt: cursorFact.occurredAt } }, { occurredAt: cursorFact.occurredAt, id: { lt: cursorFact.id } }] } : {}),
+        AND: [baseWhere, ...(cursorFact ? [{ OR: [{ occurredAt: { lt: cursorFact.occurredAt } }, { occurredAt: cursorFact.occurredAt, id: { lt: cursorFact.id } }] }] : [])],
       },
       orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
       take: parsed.data.limit + 1,
@@ -1200,7 +1228,10 @@ export function createMetricsService(options: MetricsServiceOptions) {
       occurredAt: row.occurredAt.toISOString(),
       valueCents: row.valueCents?.toString() ?? null,
     }));
+    const canonical = (await getIntegratedOverview(context, query)).values.find((value) => value.metricId === definition.id)!;
     return Object.freeze({
+      canonicalValue: canonical.value,
+      aggregation: definition.aggregation,
       metric: Object.freeze({ id: definition.id, label: definition.label, description: definition.description, unit: definition.unit }),
       period: Object.freeze({ from: query.from, to: query.to, interval: "HALF_OPEN" as const }),
       scope: scope.scope,
@@ -1235,7 +1266,117 @@ export function createMetricsService(options: MetricsServiceOptions) {
     return Object.freeze(facts);
   }
 
-  return Object.freeze({ getOverview, getIntegratedOverview, getIntegratedDrilldown, getIntegratedActivityFacts });
+  async function getIntegratedProduction(context: AuthenticatedContext, input: unknown) {
+    const query = parseMetricsQuery(input);
+    const scope = await resolveMetricsScope(options.database, options.authorization, context);
+    const where = await integratedFactWhere(options.database, context, scope, query);
+    const groups = await options.database.commercialMetricFact.groupBy({
+      by: ["eventType", "creditedMemberId", "bookedByMemberId"], where,
+      _sum: { quantity: true, valueCents: true },
+    });
+    return groups.map((row) => ({ ...row, creditedMemberId: row.eventType === "MEETING_SCHEDULED" ? row.bookedByMemberId ?? row.creditedMemberId : row.creditedMemberId }));
+  }
+
+  async function loadCommercialFrontFacts(context: AuthenticatedContext, input: unknown) {
+    const query = parseMetricsQuery(input);
+    const scope = await resolveMetricsScope(options.database, options.authorization, context);
+    // This query includes meeting owners as well as bookers. Attribution is then
+    // separated by role; it never creates another occurrence of the meeting.
+    const base = await integratedFactWhere(options.database, context, scope, { ...query, filters: { ...query.filters, sdrMemberIds: [], closerMemberIds: [], pipelineIds: [] } });
+    const selected = uniqueSorted([...query.filters.sdrMemberIds, ...query.filters.closerMemberIds]);
+    const members = selected.length ? selected : scope.scope === "OWN" ? [context.memberId] : [];
+    const rows = await options.database.commercialMetricFact.findMany({
+      where: { ...base, eventType: { in: ["LEAD_CREATED", "LEAD_SUBMISSION_ATTACHED", "MEETING_SCHEDULED", "MEETING_COMPLETED", "SALE_WON", "OPPORTUNITY_LOST", "LEAD_DISQUALIFIED", "CALL_ATTEMPTED", "CALL_CONNECTED", "EMAIL_SENT", "EMAIL_REPLIED", "INBOUND_MESSAGE_RECEIVED", "WHATSAPP_MESSAGE_SENT", "INSTAGRAM_MESSAGE_SENT", "INSTAGRAM_FOLLOW_COMPLETED", "HUMAN_RESPONSE_CONFIRMED"] },
+        AND: [base, ...(members.length ? [{ OR: [
+          { bookedByMemberId: { in: members } }, { creditedMemberId: { in: members } }, { meetingOwnerMemberIdAtEvent: { in: members } },
+          { eventType: { in: ["LEAD_CREATED" as const, "LEAD_SUBMISSION_ATTACHED" as const] }, leadOwnerMemberIdAtEvent: { in: members } },
+        ] }] : [])],
+      },
+      orderBy: [{ occurredAt: "asc" }, { id: "asc" }], take: 50_001,
+      select: { id: true, sourceEntityId: true, eventType: true, leadId: true, contactId: true, pipelineId: true, meetingId: true, sourceEntityType: true,
+        bookedByMemberId: true, creditedMemberId: true, meetingOwnerMemberIdAtEvent: true, channel: true, quantity: true, valueCents: true, correctionOfFactId: true, safeMetadata: true, occurredAt: true },
+    });
+    if (rows.length > 50_000) invalidInput("O resumo excedeu 50 mil marcos. Reduza o período ou adicione filtros.");
+    const contactIds = [...new Set(rows.flatMap((row) => row.contactId ? [row.contactId] : []))];
+    const submissionIds = rows.filter((row) => row.eventType === "LEAD_SUBMISSION_ATTACHED" && row.sourceEntityType === "LeadFormSubmission").map((row) => row.sourceEntityId);
+    const [contacts, submissions, pipelines] = await Promise.all([
+      contactIds.length ? options.database.contact.findMany({ where: { workspaceId: context.workspaceId, id: { in: contactIds }, status: "ACTIVE", quality: "CONFIRMED", deletedAt: null }, select: { id: true } }) : [],
+      submissionIds.length ? options.database.leadFormSubmission.findMany({ where: { workspaceId: context.workspaceId, id: { in: submissionIds } }, select: { id: true, intakeOutcome: true } }) : [],
+      options.database.pipeline.findMany({ where: { workspaceId: context.workspaceId, entityType: "LEAD", deletedAt: null }, select: { id: true, name: true } }),
+    ]);
+    const confirmedContacts = new Set(contacts.map((contact) => contact.id));
+    const outcomes = new Map(submissions.map((submission) => [submission.id, submission.intakeOutcome]));
+    const allFacts = rows.map((row) => ({ ...row, entryOutcome: outcomes.get(row.sourceEntityId) ?? null, identityConfirmed: Boolean(row.contactId && confirmedContacts.has(row.contactId)), occurredAt: row.occurredAt.toISOString(), valueCents: row.valueCents?.toString() ?? null,
+      pipelineId: row.safeMetadata && typeof row.safeMetadata === "object" && !Array.isArray(row.safeMetadata)
+        && typeof row.safeMetadata._commercialFrontPipelineId === "string" ? row.safeMetadata._commercialFrontPipelineId : row.pipelineId,
+    }));
+    const leadPipelineIds = new Set(pipelines.map((pipeline) => pipeline.id));
+    const unclassifiedCount = allFacts.filter((fact) => !fact.pipelineId || !leadPipelineIds.has(fact.pipelineId)).length;
+    const selectedPipelines = query.filters.pipelineIds?.length ? query.filters.pipelineIds : pipelines.filter((pipeline) => ["Anúncios", "Prospecção Ativa"].includes(pipeline.name)).map((pipeline) => pipeline.id);
+    const facts = allFacts.filter((fact) => fact.pipelineId && selectedPipelines.includes(fact.pipelineId));
+    return { facts, selectedMemberIds: members, query, pipelines, unclassifiedCount };
+  }
+
+  async function getCommercialFrontSummary(context: AuthenticatedContext, input: unknown) {
+    const { facts, selectedMemberIds, query, pipelines, unclassifiedCount } = await loadCommercialFrontFacts(context, input);
+    const screenSummary = (rows: typeof facts) => {
+      const summary = summarizeCommercialFront(rows);
+      return { ...summary, timing: summary.timing.map((timing) => ({ id: timing.id, label: timing.label, statistics: timing.statistics, missingCount: timing.missingCount })) };
+    };
+    return {
+      total: screenSummary(facts),
+      fronts: pipelines.filter((pipeline) => ["Anúncios", "Prospecção Ativa"].includes(pipeline.name) && (!query.filters.pipelineIds?.length || query.filters.pipelineIds.includes(pipeline.id))).map((pipeline) => ({
+        ...pipeline, ...screenSummary(facts.filter((fact) => fact.pipelineId === pipeline.id)),
+      })),
+      selectedMemberIds, unclassifiedCount, channels: [...new Set(facts.flatMap((fact) => fact.channel ? [fact.channel] : []))].sort().map((channel) => ({ id: channel, name: channel })),
+    };
+  }
+
+  async function getCommercialFrontEvidence(context: AuthenticatedContext, input: unknown) {
+    const parsed = z.object({
+      query: z.unknown(), measure: z.enum(["entries", "participations", "people", "booked", "assigned", "completed", "booking-cohort", "completion-cohort", "time-first-action", "time-first-response", "time-booking", "time-result"]),
+      memberId: z.string().uuid().optional(), page: z.coerce.number().int().min(1).max(100_000).default(1),
+    }).strict().safeParse(input);
+    if (!parsed.success) invalidInput(parsed.error);
+    const { facts, query } = await loadCommercialFrontFacts(context, parsed.data.query);
+    const { measure, memberId, page } = parsed.data;
+    if (measure === "time-first-action" || measure === "time-first-response" || measure === "time-booking" || measure === "time-result") {
+      const timing = summarizeCommercialFront(facts).timing.find((item) => item.id === measure)!;
+      const byId = new Map(facts.map((fact) => [fact.id, fact]));
+      return { measure, query, total: timing.samples.length, quantity: timing.samples.length, page, pageSize: 50,
+        records: timing.samples.slice((page - 1) * 50, page * 50).map((sample) => ({ id: sample.endFactId, eventType: byId.get(sample.endFactId)!.eventType, occurredAt: sample.endedAt, quantity: 1, leadId: sample.leadId, meetingId: byId.get(sample.endFactId)!.meetingId, startedAt: sample.startedAt, durationSeconds: sample.seconds })),
+      };
+    }
+    const types = { entries: "LEAD_SUBMISSION_ATTACHED", participations: "LEAD_CREATED", people: "LEAD_CREATED", booked: "MEETING_SCHEDULED", assigned: "MEETING_SCHEDULED", completed: "MEETING_COMPLETED", "booking-cohort": "MEETING_SCHEDULED", "completion-cohort": "MEETING_COMPLETED" } as const;
+    const positive = positiveCommercialFrontFacts(facts);
+    const distinct = ["people", "assigned", "booking-cohort", "completion-cohort"].includes(measure);
+    let records = (distinct ? positive : facts).filter((fact) => fact.eventType === types[measure]);
+    if (memberId) records = records.filter((fact) => measure === "assigned" ? fact.meetingOwnerMemberIdAtEvent === memberId
+      : measure === "booked" ? (fact.bookedByMemberId ?? fact.creditedMemberId) === memberId : fact.creditedMemberId === memberId);
+    if (measure === "assigned") records = records.filter((fact) => fact.meetingId && fact.quantity > 0);
+    if (measure === "booking-cohort") {
+      const ids = new Set(positive.filter((fact) => fact.eventType === "LEAD_SUBMISSION_ATTACHED" && fact.quantity > 0).map((fact) => fact.leadId));
+      records = records.filter((fact) => fact.leadId && ids.has(fact.leadId) && fact.quantity > 0);
+    }
+    if (measure === "completion-cohort") {
+      const ids = new Set(positive.filter((fact) => fact.eventType === "MEETING_SCHEDULED" && fact.quantity > 0).map((fact) => fact.meetingId));
+      records = records.filter((fact) => fact.meetingId && ids.has(fact.meetingId) && fact.quantity > 0);
+    }
+    if (["people", "assigned", "booking-cohort", "completion-cohort"].includes(measure)) {
+      const seen = new Set<string>();
+      records = records.filter((fact) => {
+        const key = measure === "people" ? (fact.identityConfirmed ? fact.contactId : fact.leadId) ?? fact.id : measure === "booking-cohort" ? fact.leadId ?? fact.id : fact.meetingId ?? fact.id;
+        if (seen.has(key)) return false;
+        seen.add(key); return true;
+      });
+    }
+    records.sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id));
+    return { measure, query, total: records.length, quantity: records.reduce((sum, fact) => sum + fact.quantity, 0), page, pageSize: 50,
+      records: records.slice((page - 1) * 50, page * 50).map((row) => ({ id: row.id, eventType: row.eventType, occurredAt: row.occurredAt, quantity: row.quantity, leadId: row.leadId, meetingId: row.meetingId, startedAt: null, durationSeconds: null })),
+    };
+  }
+
+  return Object.freeze({ getOverview, getIntegratedOverview, getIntegratedDrilldown, getIntegratedActivityFacts, getCommercialFrontSummary, getCommercialFrontEvidence, getIntegratedProduction });
 }
 
 let metricsService: ReturnType<typeof createMetricsService> | undefined;

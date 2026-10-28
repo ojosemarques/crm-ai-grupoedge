@@ -11,7 +11,7 @@ import type { AuthenticatedContext } from "@/modules/auth/application/authentica
 import type { ServiceActorContext } from "@/modules/auth/application/service-actor-context";
 import { getActiveProspectingLeadEntryPipeline } from "@/modules/leads/application/active-prospecting-lead-entry-access";
 import { ensureContactForLeadInTransaction } from "@/modules/contacts/application/contact-identity-service";
-import { mayAutomaticallyAttachBySharedPhone } from "@/modules/portability/domain/commercial-identity-policy";
+import { resolveIntakeParticipation } from "@/modules/leads/domain/intake-participation";
 import type {
   InternalAutomationEvent,
   PublicationResult,
@@ -1003,14 +1003,17 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
               normalizedPhone: parsed.normalizedPhone,
               deletedAt: null,
             },
+            include: { contact: { select: { quality: true, status: true, deletedAt: true } } },
           })
         : [];
-      // Telefone é um ponto de contato compartilhável, não uma identidade forte.
-      // A associação automática só ocorre quando o e-mail normalizado também coincide;
-      // os demais candidatos seguem como pessoas separadas e entram em revisão humana.
-      const existingLead = parsed.channel === "OPEN_DOT"
-        ? null
-        : phoneCandidates.find((candidate) => mayAutomaticallyAttachBySharedPhone({ submittedEmail: parsed.normalizedEmail, candidateEmail: candidate.normalizedEmail })) ?? null;
+      const destinationPipeline = parsed.pipelineId ? { id: parsed.pipelineId } : await transaction.pipeline.findFirst({
+        where: { workspaceId: context.workspaceId, entityType: "LEAD", isDefault: true, deletedAt: null }, select: { id: true },
+      });
+      const participation = resolveIntakeParticipation(phoneCandidates, {
+        pipelineId: destinationPipeline?.id, email: parsed.normalizedEmail,
+        fullName: parsed.fullName, jobTitle: parsed.jobTitle,
+      });
+      const existingLead = parsed.channel === "OPEN_DOT" ? null : participation.existingLead;
       const preparedScore = await prepareFormProvisionalScore(
         transaction,
         context.workspaceId,
@@ -1083,6 +1086,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         const lead = await transaction.lead.create({
           data: {
             workspaceId: context.workspaceId,
+            ...(parsed.channel !== "OPEN_DOT" && participation.confirmedContactId ? { contactId: participation.confirmedContactId } : {}),
             sourceId: references.source.id,
             campaignId: references.campaign?.id ?? null,
             creativeId: references.creative?.id ?? null,
@@ -1249,6 +1253,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
           sourceEntityType: "LeadFormSubmission",
           sourceEntityId: submission.id,
         });
+        if (contactIdentity.createdContact) {
         await recordCommercialMetricFactInTransaction(transaction, {
           ...commonDimensions,
           eventKey: `contact:${contactIdentity.contactId}:created:v1`,
@@ -1256,6 +1261,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
           sourceEntityType: "Contact",
           sourceEntityId: contactIdentity.contactId,
         });
+        }
         await recordCommercialMetricFactInTransaction(transaction, {
           ...commonDimensions,
           eventKey: `stage-history:${initialStageHistory.id}:entered:v1`,
