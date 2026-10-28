@@ -7,6 +7,8 @@ import { loadAcquisitionFunnel } from "@/modules/marketing/application/acquisiti
 import { createSaleCompletionService } from "@/modules/opportunities/application/sale-completion-service";
 import { createPaymentService } from "@/modules/payments/application/payment-service";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
+import { ensureAdvertisingPipeline } from "@/modules/settings/application/production-foundation-service";
+import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
 
@@ -82,5 +84,12 @@ describe("recebimento real atribuído à aquisição", () => {
     for (const rows of Object.values(result.byDimension)) expect(rows.reduce((sum, row) => sum + BigInt(row.netReceivedCents), 0n)).toBe(4000n);
     expect((await database.payment.findFirstOrThrow({ where: { invoiceId: unknown.invoiceId } })).currency).toBe("BRL");
     await expect(loadAcquisitionFunnel(database, randomUUID(), start, end)).resolves.toMatchObject({ cohortSize: 0, byDimension: { campaign: [] } });
+    await ensureAdvertisingPipeline(database, workspaceId, admin.actorId);
+    const advertising = await database.pipeline.findFirstOrThrow({ where: { workspaceId, name: ADVERTISING_PIPELINE_NAME, deletedAt: null } });
+    const firstStage = await database.pipelineStage.findFirstOrThrow({ where: { workspaceId, pipelineId: advertising.id, deletedAt: null }, orderBy: { position: "asc" } });
+    await database.lead.update({ where: { id: unknown.leadId }, data: { pipelineId: advertising.id, currentStageId: firstStage.id } });
+    const advertisingOnly = await loadAcquisitionFunnel(database, workspaceId, start, end, ADVERTISING_PIPELINE_NAME);
+    expect(advertisingOnly.cohortSize).toBe(1);
+    expect(advertisingOnly.byDimension.campaign).toEqual([expect.objectContaining({ key: "unattributed", leads: 1, netReceivedCents: "2000" })]);
   });
 });

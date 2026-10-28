@@ -76,6 +76,12 @@ Meta permanecem separados dos leads observados no CRM. As ferramentas
 `consultar_metricas_anuncios` expõem essas leituras pelo MCP existente,
 preservando escopos e RBAC; elas não acionam coleta nem alteram o CRM.
 
+O resumo mostra as entradas no pipeline de Anúncios no período escolhido e
+seu funil de agendamento, reunião realizada e compra. Essa coorte usa a data
+de criação do lead e exclui os outros pipelines, inclusive Prospecção Ativa.
+O funil geral por origem/campanha continua disponível separadamente. Custos
+e volumes sem fatos coletados aparecem como “Sem dados”, sem assumir zero.
+
 A credencial deve ter apenas leitura de anúncios e acesso explícito às contas
 selecionadas. Se a identidade, a permissão ou a conta falhar, o estado muda para
 `NEEDS_ATTENTION`; se não houver referência resolvível, permanece

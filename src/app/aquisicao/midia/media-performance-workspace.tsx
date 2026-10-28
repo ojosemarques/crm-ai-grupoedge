@@ -44,6 +44,14 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
   const chartData = initial.trend.map((point) => ({ ...point, value: chartMetric === "spendCents" ? point.spendCents / 100 : point[chartMetric] }));
   const strategies = initial.acquisitionFunnel.byDimension[funnelDimension];
   const strategy = strategies.find((row) => row.key === strategyKey) ?? strategies[0];
+  const mediaAvailable = initial.missingInformation.length === 0;
+  const advertisingRows = initial.advertisingFunnel.byDimension.source;
+  const advertisingStages = [
+    { key: "received", label: "Leads recebidos", value: initial.advertisingFunnel.cohortSize },
+    { key: "scheduled", label: "Agendaram reunião", value: advertisingRows.reduce((sum, row) => sum + row.scheduled, 0) },
+    { key: "completed", label: "Realizaram reunião", value: advertisingRows.reduce((sum, row) => sum + row.completed, 0) },
+    { key: "buyers", label: "Compraram", value: advertisingRows.reduce((sum, row) => sum + row.buyers, 0) },
+  ];
   const cohortRate = (value: number, total: number) => total > 0 ? `${(value * 100 / total).toFixed(1)}%` : "Sem base";
 
   async function post(body: unknown) {
@@ -90,14 +98,16 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
     <div className={styles.toolbar}><div><Icon name="agenda" size={15} /><span>{initial.period.start.slice(0, 10)} — {initial.period.end.slice(0, 10)}</span><small>vs. {initial.period.previousStart.slice(0, 10)} — {initial.period.previousEnd.slice(0, 10)}</small></div>{initial.permissions.canImport ? <Button onClick={() => setImportOpen(true)} size="sm"><Icon name="mais" size={14} /> Importar performance</Button> : null}</div>
     {feedback && !importOpen ? <p className={styles.feedback} role="status">{feedback}</p> : null}
     <section aria-label="Resumo de mídia" className={styles.kpis}>{[
-      { label: "Investimento", value: money(initial.totals.spendCents), hint: "Total no período", icon: "receita" as const },
-      { label: "Impressões", value: initial.totals.impressions.toLocaleString("pt-BR"), hint: "Exibições dos anúncios", icon: "tendencia" as const },
-      { label: "Cliques", value: initial.totals.clicks.toLocaleString("pt-BR"), hint: "Interações reportadas", icon: "entrada" as const },
-      { label: "Leads reportados", value: initial.totals.reportedLeads.toLocaleString("pt-BR"), hint: "Volume informado pela mídia", icon: "leads" as const },
+      { label: "Investimento", value: mediaAvailable ? money(initial.totals.spendCents) : "Sem dados", hint: "Total no período", icon: "receita" as const },
+      { label: "Impressões", value: mediaAvailable ? initial.totals.impressions.toLocaleString("pt-BR") : "Sem dados", hint: "Exibições dos anúncios", icon: "tendencia" as const },
+      { label: "Cliques", value: mediaAvailable ? initial.totals.clicks.toLocaleString("pt-BR") : "Sem dados", hint: "Interações reportadas", icon: "entrada" as const },
+      { label: "Leads reportados", value: mediaAvailable ? initial.totals.reportedLeads.toLocaleString("pt-BR") : "Sem dados", hint: "Volume informado pela mídia", icon: "leads" as const },
+      { label: "Leads recebidos no CRM", value: initial.advertisingFunnel.cohortSize.toLocaleString("pt-BR"), hint: "Entradas no pipeline de Anúncios no período", icon: "leads" as const },
+      { label: "CPC", value: metricValue(initial.metrics.find((metric) => metric.key === "cpc")?.value ?? null, "BRL_CENTS"), hint: "Investimento / cliques reportados", icon: "receita" as const },
     ].map((metric) => <article className={styles.stat} key={metric.label}><div><span>{metric.label}</span><Icon name={metric.icon} size={16} /></div><strong>{metric.value}</strong><small>{metric.hint}</small></article>)}</section>
 
     <div className={styles.primaryGrid}><Surface className={styles.panel}><SectionHeader title="Evolução da performance" description="Compare o comportamento dos seus indicadores ao longo dos dias." /><div aria-label="Indicador do gráfico" className={styles.chartTabs} role="group">{chartOptions.map((option) => <button aria-pressed={chartMetric === option.key} key={option.key} onClick={() => setChartMetric(option.key)} type="button">{option.label}</button>)}</div>{chartData.length ? <AnalyticsChart label={`Evolução diária de ${chartOptions.find((option) => option.key === chartMetric)?.label}`} points={chartData.map((point) => ({ label: point.date.slice(5).split("-").reverse().join("/"), values: { value: point.value } }))} series={[{ key: "value", label: chartOptions.find((option) => option.key === chartMetric)?.label ?? "Indicador", color: "#ff6b2c" }]} formatValue={(value) => chartMetric === "spendCents" ? money(value * 100) : value.toLocaleString("pt-BR")} /> : <div className={styles.chartEmpty}><Icon name="tendencia" size={28} /><strong>Acompanhe a evolução das campanhas</strong><span>Importe os dados de performance para visualizar o gráfico diário.</span></div>}<details className={styles.dataDetails}><summary>Ver dados em tabela</summary><DataTableShell className="mt-3"><table><thead><tr><th>Data</th><th>Investimento</th><th>Impressões</th><th>Cliques</th><th>Leads</th></tr></thead><tbody>{initial.trend.map((point) => <tr key={point.date}><td>{point.date}</td><td>{money(point.spendCents)}</td><td>{point.impressions}</td><td>{point.clicks}</td><td>{point.reportedLeads}</td></tr>)}</tbody></table></DataTableShell></details></Surface>
-    <Surface className={styles.panel}><SectionHeader title="Funil de aquisição" description="Da mídia à jornada comercial no CRM." /><div className={styles.funnelGroups}>{[{ label: "Mídia", stages: initial.funnel.media }, { label: "CRM", stages: initial.funnel.crm }, { label: "Resultados", stages: initial.funnel.outcomes }].map((group) => { const max = Math.max(...group.stages.map((stage) => stage.value), 1); return <section key={group.label}><h3>{group.label}</h3>{group.stages.map((stage) => <div className={styles.funnelRow} key={stage.key}><div><span>{stage.label}</span><strong>{stage.value.toLocaleString("pt-BR")}</strong></div><progress aria-label={`${stage.label}: ${stage.value}`} max={max} value={stage.value} /></div>)}</section>; })}</div></Surface></div>
+    <Surface className={styles.panel}><SectionHeader title="Funil de aquisição" description="Da mídia à jornada comercial no CRM." /><div className={styles.funnelGroups}>{[{ label: "Mídia", stages: initial.funnel.media }, { label: "CRM · Pipeline de Anúncios", stages: advertisingStages }, { label: "Resultados", stages: initial.funnel.outcomes }].map((group) => { const max = Math.max(...group.stages.map((stage) => stage.value), 1); return <section key={group.label}><h3>{group.label}</h3>{group.stages.map((stage) => <div className={styles.funnelRow} key={stage.key}><div><span>{stage.label}</span><strong>{stage.value.toLocaleString("pt-BR")}</strong></div><progress aria-label={`${stage.label}: ${stage.value}`} max={max} value={stage.value} /></div>)}</section>; })}</div></Surface></div>
 
     <StrategyFunnelEditor initial={strategyInitial} />
 

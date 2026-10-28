@@ -3,9 +3,9 @@ import { PAYMENT_PROVIDER_KEY } from "@/modules/payments/domain/payment-contract
 import { summarizeAcquisitionFunnel, summarizeAcquisitionReceipts, type AcquisitionReceipt, type FunnelDimension, type FunnelLead } from "../domain/acquisition-funnel";
 
 /** Called only after the media service authorizes access; no individual customer data leaves this boundary. */
-export async function loadAcquisitionFunnel(database: PrismaClient, workspaceId: string, start: Date, end: Date) {
+export async function loadAcquisitionFunnel(database: PrismaClient, workspaceId: string, start: Date, end: Date, pipelineName?: string) {
   const leads = await database.lead.findMany({
-    where: { workspaceId, deletedAt: null, createdAt: { gte: start, lt: end } },
+    where: { workspaceId, deletedAt: null, createdAt: { gte: start, lt: end }, ...(pipelineName ? { pipeline: { name: pipelineName, deletedAt: null } } : {}) },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 10_001,
     select: {
       id: true,
