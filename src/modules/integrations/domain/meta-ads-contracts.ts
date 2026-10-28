@@ -209,3 +209,16 @@ export function metaActionMoneyValue(actions: readonly MetaAdsAction[] | undefin
   }
   return found ? total : null;
 }
+
+// Aggregate action types overlap their components; adding both doubles results.
+export function metaReportedLeads(actions: readonly MetaAdsAction[] | undefined): bigint | null {
+  return metaActionValue(actions, ["lead"]) ?? metaActionValue(actions, ["onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"]);
+}
+
+export function metaReportedPurchases(actions: readonly MetaAdsAction[] | undefined): bigint | null {
+  return metaActionValue(actions, ["purchase"]) ?? metaActionValue(actions, ["omni_purchase"]) ?? metaActionValue(actions, ["offsite_conversion.fb_pixel_purchase"]);
+}
+
+export function metaReportedRevenueCents(actions: readonly MetaAdsAction[] | undefined): bigint | null {
+  return metaActionMoneyValue(actions, ["purchase"]) ?? metaActionMoneyValue(actions, ["omni_purchase"]) ?? metaActionMoneyValue(actions, ["offsite_conversion.fb_pixel_purchase"]);
+}

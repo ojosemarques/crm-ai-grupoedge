@@ -4,6 +4,9 @@ import {
   decimalStringToMinorUnits,
   integerMetric,
   metaActionMoneyValue,
+  metaReportedLeads,
+  metaReportedPurchases,
+  metaReportedRevenueCents,
   metaActionValue,
   metaVideoComparable,
   metaAdsConfigurationSchema,
@@ -12,6 +15,16 @@ import {
 } from "@/modules/integrations/domain/meta-ads-contracts";
 
 describe("CRM-40 contratos do Meta Ads", () => {
+  it("não soma conversões agregadas com seus componentes sobrepostos", () => {
+    const components = [{ action_type: "onsite_conversion.lead_grouped", value: "25" }, { action_type: "offsite_conversion.fb_pixel_lead", value: "9" }];
+    expect(metaReportedLeads([{ action_type: "lead", value: "34" }, ...components])).toBe(34n);
+    expect(metaReportedLeads(components)).toBe(34n);
+    expect(metaReportedLeads([{ action_type: "lead", value: "0" }, ...components])).toBe(0n);
+    const purchases = ["purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase"].map((action_type) => ({ action_type, value: "2" }));
+    expect(metaReportedPurchases(purchases)).toBe(2n);
+    expect(metaReportedRevenueCents(purchases.map((row) => ({ ...row, value: "10.50" })))).toBe(1050n);
+    expect(metaReportedLeads(undefined)).toBeNull();
+  });
   it("normaliza o offset ISO da Graph API sem aceitar datas inválidas", () => {
     const campaign = { id: "123456", name: "Campanha", start_time: "2026-10-28T09:15:00-0300", stop_time: "2026-10-29T09:15:00+0530" };
     expect(metaAdsCampaignSchema.parse(campaign)).toMatchObject({ start_time: "2026-10-28T09:15:00-03:00", stop_time: "2026-10-29T09:15:00+05:30" });

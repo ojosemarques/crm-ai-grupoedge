@@ -133,6 +133,11 @@ ignorado. Conta, campanha, conjunto, anúncio e criativo usam IDs exatos em
 São coletados, quando retornados: investimento, impressões, alcance, cliques,
 cliques em link, visualizações de landing, leads, compras e valor de compra.
 Dinheiro é convertido de string decimal para centavos com aritmética inteira.
+Leads usam o agregado `lead`; somente quando ausente, somam os componentes
+onsite/offsite. Compras e valor usam o primeiro agregado disponível entre
+`purchase`, `omni_purchase` e pixel purchase. Agregado e componentes nunca são
+somados entre si, pois representam conversões sobrepostas. As ações originais
+permanecem preservadas para auditoria.
 
 `availableMetrics` e `missingMetrics` distinguem explicitamente `0` reportado de
 campo ausente. Ações conhecidas são marcadas `RECOGNIZED`; ações novas ou não

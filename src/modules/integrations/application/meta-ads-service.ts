@@ -13,7 +13,9 @@ import {
   classifyMetaAction,
   decimalStringToMinorUnits,
   integerMetric,
-  metaActionMoneyValue,
+  metaReportedLeads,
+  metaReportedPurchases,
+  metaReportedRevenueCents,
   metaActionValue,
   metaVideoComparable,
   metaAdsConfigurationSchema,
@@ -105,9 +107,9 @@ function metricBundle(insight: MetaAdsInsight) {
     clicks: integerMetric(insight.clicks),
     linkClicks: integerMetric(insight.inline_link_clicks) ?? metaActionValue(insight.actions, ["link_click"]),
     landingPageViews: metaActionValue(insight.actions, ["landing_page_view"]),
-    reportedLeads: metaActionValue(insight.actions, ["lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"]),
-    reportedPurchases: metaActionValue(insight.actions, ["purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase"]),
-    reportedRevenueCents: metaActionMoneyValue(insight.action_values, ["purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase"]),
+    reportedLeads: metaReportedLeads(insight.actions),
+    reportedPurchases: metaReportedPurchases(insight.actions),
+    reportedRevenueCents: metaReportedRevenueCents(insight.action_values),
   };
   const availableMetrics = Object.entries(raw).filter(([, value]) => value !== null).map(([key]) => key);
   const missingMetrics = Object.entries(raw).filter(([, value]) => value === null).map(([key]) => key);
