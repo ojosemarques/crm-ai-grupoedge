@@ -137,7 +137,7 @@ function CombinedConversionCard({ comparisons, query }: Readonly<{ comparisons: 
         <div className={styles.comparisonPairMetric} data-interpretation={comparison.interpretation} key={comparison.id}>
           <span>{comparison.label}</span>
           <Link aria-label={`${comparison.label}: ver fórmula e registros`} href={comparisonHref(query, comparison.current.drilldownId, comparison.currentPeriod)}><strong>{formatValue(comparison.kind, comparison.current.value)}</strong></Link>
-          {comparison.id === "completed-meeting-to-sale" ? <small className={styles.conversionBase}>{comparison.current.denominator ? `${comparison.current.numerator} de ${comparison.current.denominator} leads com reunião realizada venderam` : "Sem reuniões realizadas no período"}</small> : null}
+          {comparison.id === "completed-meeting-to-sale" ? <small className={styles.conversionBase}>{comparison.current.numerator} {Number(comparison.current.numerator) === 1 ? "venda" : "vendas"} / {comparison.current.denominator} {comparison.current.denominator === 1 ? "reunião realizada" : "reuniões realizadas"} no período</small> : null}
           <p className={styles.comparisonDelta}><span aria-hidden="true">{comparison.direction === "UP" ? "↑" : comparison.direction === "DOWN" ? "↓" : "→"}</span>{comparisonSentence(comparison)}</p>
         </div>
       ))}</div>

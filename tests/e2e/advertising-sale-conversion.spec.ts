@@ -14,7 +14,7 @@ test("Anúncios mostra realizadas → venda no card e preserva o recorte dos reg
   const card = page.locator("article").filter({ has: page.getByText("Conversões em venda", { exact: true }) });
   const records = card.getByRole("link", { name: "Reunião realizada → venda: abrir registros", exact: true });
   await expect(card.getByRole("link", { name: "Reunião realizada → venda: ver fórmula e registros", exact: true })).toBeVisible();
-  await expect(card).toContainText(/leads com reunião realizada venderam|Sem reuniões realizadas no período/);
+  await expect(card).toContainText(/\d+ vendas? \/ \d+ reuni(?:ão realizada|ões realizadas) no período/);
   const href = await records.getAttribute("href");
   const target = new URL(href!, "http://localhost");
   expect(target.searchParams.get("metricId") ?? target.searchParams.get("view")).toBe(target.pathname === "/dashboard/atividades-integradas" ? "conversion.completed_meeting_to_sale" : "comparison.current.completed-meeting-to-sale");
