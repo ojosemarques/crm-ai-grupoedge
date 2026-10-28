@@ -26,7 +26,7 @@ function resource(context: AuthenticatedContext) {
   return { workspaceId: context.workspaceId, resourceType: "MarketingConversionFeedback", resourceId: context.workspaceId };
 }
 
-async function privacyEvidence(tx: Tx, input: { workspaceId: string; actorId: string; contactId: string; now: Date }) {
+export async function privacyEvidence(tx: Tx, input: { workspaceId: string; actorId: string; contactId: string; now: Date }) {
   const purpose = await tx.processingPurpose.findFirst({
     where: { workspaceId: input.workspaceId, code: META_CONVERSION_PURPOSE_CODE, active: true },
     select: { id: true, versions: { orderBy: { version: "desc" }, take: 1, select: { id: true, status: true, validFrom: true, validTo: true, allowedChannels: true, legalBasis: { select: { status: true, validFrom: true, validTo: true } } } } },

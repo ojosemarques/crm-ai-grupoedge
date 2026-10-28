@@ -8,6 +8,7 @@ import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { META_ADS_DEFAULT_API_VERSION } from "@/modules/integrations/domain/meta-ads-contracts";
+import { assertMetaNativeTarget } from "./meta-native-target";
 
 function fail(message: string, code: string, statusCode = 409): never { throw new ApplicationError(message, { code, statusCode, expose: true }); }
 function json(value: unknown): Prisma.InputJsonValue { return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue; }
@@ -20,11 +21,19 @@ export function createAcquisitionConnectionService(database: PrismaClient, secre
     await authorization.assertAuthorized(context, PermissionKeys.INTEGRATIONS_MANAGE, { workspaceId: context.workspaceId, resourceType: "IntegrationConnection", resourceId: context.workspaceId });
     await authorization.assertAuthorized(context, PermissionKeys.INTEGRATIONS_SECRETS_MANAGE, { workspaceId: context.workspaceId, resourceType: "IntegrationConnection", resourceId: context.workspaceId });
     const input = acquisitionConnectionSchema.parse(raw);
+    if (input.metaNative) await assertMetaNativeTarget(secrets, context.workspaceId, input.metaNative);
     return database.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`acquisition:${context.workspaceId}:${input.key}`}, 0))`;
       if (await tx.integrationConnection.findUnique({ where: { workspaceId_key: { workspaceId: context.workspaceId, key: input.key } } })) fail("Já existe uma conexão com esta chave.", "ACQUISITION_CONNECTION_CONFLICT");
-      const source = await tx.leadSource.findFirst({ where: { workspaceId: context.workspaceId, key: input.sourceKey, deletedAt: null } }); if (!source) fail("Origem não encontrada.", "ACQUISITION_SOURCE_NOT_FOUND", 422);
-      const config = { provider: input.provider, sourceKey: input.sourceKey, retry: { maxAttempts: 5, strategy: "EXPONENTIAL_CAPPED" }, ordering: "EXTERNAL_OCCURRED_AT", mappingVersion: 1, ...(input.provider === "META_LEAD_ADS" ? { graphApiVersion: META_ADS_DEFAULT_API_VERSION } : {}) };
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`acquisition-source:${context.workspaceId}:${input.sourceKey}`}, 0))`;
+      let source = await tx.leadSource.findFirst({ where: { workspaceId: context.workspaceId, key: input.sourceKey, deletedAt: null } });
+      if (!source && input.metaNative) source = await tx.leadSource.create({ data: { workspaceId: context.workspaceId, key: input.sourceKey, name: input.displayName, type: "PAID_MEDIA", externalRef: `meta-page:${input.metaNative.pageId}`, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+      if (!source) fail("Origem não encontrada.", "ACQUISITION_SOURCE_NOT_FOUND", 422);
+      if (input.metaNative) {
+        const destination = await tx.pipelineStage.findFirst({ where: { id: input.metaNative.initialStageId, workspaceId: context.workspaceId, pipelineId: input.metaNative.pipelineId, deletedAt: null, type: "OPEN", pipeline: { workspaceId: context.workspaceId, entityType: "LEAD", deletedAt: null } } });
+        if (!destination) fail("Frente ou etapa de entrada nativa inválida.", "META_NATIVE_DESTINATION_INVALID", 422);
+      }
+      const config = { provider: input.provider, sourceKey: input.sourceKey, retry: { maxAttempts: 5, strategy: "EXPONENTIAL_CAPPED" }, ordering: "EXTERNAL_OCCURRED_AT", mappingVersion: 1, ...(input.provider === "META_LEAD_ADS" ? { graphApiVersion: META_ADS_DEFAULT_API_VERSION } : {}), ...(input.metaNative ? { metaNative: input.metaNative } : {}) };
       const connection = await tx.integrationConnection.create({ data: { workspaceId: context.workspaceId, key: input.key, providerKey: input.provider, adapterKey: `acquisition-${input.provider.toLocaleLowerCase().replaceAll("_", "-")}-v1`, displayName: input.displayName, environment: "PRODUCTION", status: "AWAITING_CREDENTIAL", capabilityLevel: "IMPLEMENTED", enabled: false, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
       await tx.integrationConnectionConfigVersion.create({ data: { workspaceId: context.workspaceId, connectionId: connection.id, version: 1, schemaVersion: ACQUISITION_CONTRACT_VERSION, config: json(config), configHash: sha256(canonicalJson(config)), createdByActorId: context.actorId } });
       await tx.integrationConnectionCapability.create({ data: { workspaceId: context.workspaceId, connectionId: connection.id, capability: "WEBHOOK_RECEIVE" } });

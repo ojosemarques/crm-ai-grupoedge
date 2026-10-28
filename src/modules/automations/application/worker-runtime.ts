@@ -14,6 +14,7 @@ import { createCalendarWorkerService } from "@/modules/integrations/application/
 import { localCalendarSandbox } from "@/modules/integrations/application/calendar-transport";
 import { createGoogleCalendarWorkerService } from "@/modules/integrations/application/google-calendar-worker-service";
 import { getConversionFeedbackService } from "@/modules/conversion-feedback/application/conversion-feedback-service";
+import { getMetaNativeFeedbackWorker } from "@/modules/acquisition-api/application/meta-native-feedback-worker";
 import { getPaymentWorkerService } from "@/modules/payments/application/payment-worker-service";
 import { getProspectingReleaseService } from "@/modules/prospecting/application/prospecting-release-service";
 import { getProspectingCadenceService } from "@/modules/prospecting/application/prospecting-cadence-service";
@@ -79,6 +80,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
         { key: "whatsapp", processNext: whatsappWorker.processNext },
         { key: "automations", processNext: automationWorker.processNext },
         { key: "meta-conversions", processNext: metaConversionWorker.processNext },
+        { key: "meta-native-feedback", processNext: getMetaNativeFeedbackWorker().processNext },
         { key: "marketing-audit", processNext: getMediaPerformanceService().processDailyReconciliation },
       ],
     }),

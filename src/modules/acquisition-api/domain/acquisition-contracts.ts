@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { metaNativeConfigurationSchema } from "./meta-native-contracts";
 
 export const acquisitionProviderSchema = z.enum(["FORM", "LANDING_PAGE", "META_LEAD_ADS", "TYPEFORM"]);
 export type AcquisitionProvider = z.infer<typeof acquisitionProviderSchema>;
@@ -13,8 +14,10 @@ export const acquisitionConnectionSchema = z.object({
   verificationTokenReferenceKey: z.string().trim().regex(/^META_ADS_[A-Z0-9_]{3,120}$/).optional(),
   enrichmentTokenReferenceKey: z.string().trim().regex(/^META_ADS_[A-Z0-9_]{3,120}$/).optional(),
   mapping: z.partialRecord(z.enum(canonicalFields), z.string().trim().regex(/^[A-Za-z0-9_.-]{1,120}$/)),
+  metaNative: metaNativeConfigurationSchema.optional(),
   definition: z.object({ name: z.string().trim().min(2).max(160), canonicalUrl: z.string().url().max(500).refine((value) => ["http:", "https:"].includes(new URL(value).protocol), "Use URL HTTP ou HTTPS.").optional(), title: z.string().trim().max(200).optional() }).optional(),
 }).strict().superRefine((value, ctx) => {
+  if (value.metaNative && value.provider !== "META_LEAD_ADS") ctx.addIssue({ code: "custom", path: ["metaNative"], message: "Configuração nativa exige Meta Lead Ads." });
   for (const required of ["fullName", "phone"] as const) if (!value.mapping[required]) ctx.addIssue({ code: "custom", path: ["mapping", required], message: `${required} é obrigatório.` });
   if (value.provider === "LANDING_PAGE" && !value.definition?.canonicalUrl) ctx.addIssue({ code: "custom", path: ["definition", "canonicalUrl"], message: "Landing page exige URL canônica." });
   if (value.provider === "META_LEAD_ADS" && !value.verificationTokenReferenceKey) ctx.addIssue({ code: "custom", path: ["verificationTokenReferenceKey"], message: "Meta exige referência separada para o verify token." });

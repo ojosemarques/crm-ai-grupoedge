@@ -1,4 +1,6 @@
 import { PageHeader } from "@/components/layout/page-header";
+import Link from "next/link";
+import styles from "./marketing-forms.module.css";
 import { MarketingFormsIndex } from "@/app/formularios/marketing-forms-index";
 import { requireWorkspacePagePermission } from "@/modules/auth/http/authentication-guards";
 import { getMarketingFormService } from "@/modules/marketing-forms/application/marketing-form-service";
@@ -22,6 +24,7 @@ export default async function MarketingFormsPage() {
         title="Formulários"
         description="Crie experiências conversacionais, publique versões imutáveis e envie respostas validadas ao CRM."
       />
+      <nav className={styles.formTabs} aria-label="Origem dos formulários"><Link href="/formularios" aria-current="page">Formulários CRM</Link><Link href="/formularios/nativos">Forms Nativo</Link></nav>
       <MarketingFormsIndex initialForms={forms.map((form) => ({ ...form, publishedAt: form.publishedAt?.toISOString() ?? null, updatedAt: form.updatedAt.toISOString() }))} />
     </main>
   );

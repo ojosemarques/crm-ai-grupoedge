@@ -1,4 +1,7 @@
 .index { display: grid; gap: 24px; }
+.formTabs { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+.formTabs a { border: 1px solid var(--color-border, #dbe3ee); border-radius: 10px; color: inherit; padding: 10px 16px; text-decoration: none; }
+.formTabs a[aria-current="page"] { background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; font-weight: 700; }
 .indexToolbar { align-items: end; display: flex; gap: 16px; justify-content: space-between; }
 .search { color: var(--color-text-secondary, #475569); display: grid; font-size: 12px; font-weight: 650; gap: 6px; width: min(420px, 100%); }
 .search input, .createDialog input, .slugField { background: var(--color-surface, #fff); border: 1px solid var(--color-border, #dbe3ee); border-radius: 10px; color: inherit; min-height: 42px; padding: 0 12px; }
