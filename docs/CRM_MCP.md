@@ -161,6 +161,8 @@ auditoria, com `clientId` e ferramenta, sem argumentos nem resultados.
 - Cada período explícito aceita até 93 dias. Para intervalos maiores, consulte
   janelas e siga as regras de agregação de cada indicador; não some taxas,
   medianas, saldos ou contagens distintas entre janelas.
+- Em Aquisição, `totals.reach` é alcance somado por anúncio/dia, sem deduplicação
+  de pessoas entre anúncios ou datas; não equivale ao alcance único da conta.
 - Paginação comum: `page` e `pageSize` (10–100). Histórico do lead aceita
   `pageSize` de 1–50; fatos integrados usam `limit` de 1–100 e cursor.
 - O dashboard retorna agregados e IDs de drilldowns. Consulte os registros

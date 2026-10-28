@@ -132,6 +132,9 @@ ignorado. Conta, campanha, conjunto, anúncio e criativo usam IDs exatos em
 
 São coletados, quando retornados: investimento, impressões, alcance, cliques,
 cliques em link, visualizações de landing, leads, compras e valor de compra.
+O alcance dos fatos é por anúncio e dia. `totals.reach` soma esse grão e não
+representa pessoas únicas na conta ou no período; não deve ser comparado ao
+alcance deduplicado do Ads Manager. Essa definição acompanha a resposta MCP.
 Dinheiro é convertido de string decimal para centavos com aritmética inteira.
 Leads usam o agregado `lead`; somente quando ausente, somam os componentes
 onsite/offsite. Compras e valor usam o primeiro agregado disponível entre
