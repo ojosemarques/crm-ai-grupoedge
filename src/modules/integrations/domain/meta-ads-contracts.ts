@@ -45,7 +45,7 @@ const metaStatus = z.string().trim().min(1).max(40);
 
 export const metaAdsIdentitySchema = z.object({
   id: graphId,
-  name: z.string().trim().min(1).max(255),
+  name: z.string().trim().min(1).max(255).optional(),
 }).passthrough();
 
 export const metaAdsAccountSchema = z.object({

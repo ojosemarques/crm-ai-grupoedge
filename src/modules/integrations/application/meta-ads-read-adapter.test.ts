@@ -7,6 +7,15 @@ const credentials = { accessToken: "test-only-token", appSecret: "test-only-secr
 const ok = (value: unknown, headers?: HeadersInit) => new Response(JSON.stringify(value), { status: 200, ...(headers ? { headers } : {}) });
 
 describe("CRM-40 adaptador Meta Ads somente leitura", () => {
+  it("accepts a system identity without a public profile name and still validates account access", async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => new URL(String(input)).pathname.endsWith("/me")
+      ? ok({ id: "61595619636279" })
+      : ok({ data: [{ id: "act_857477559328413", name: "Conta8", currency: "BRL" }] }));
+    const result = await new MetaAdsReadAdapter({ fetcher }).testConnection(config, credentials);
+    expect(result.identity).toEqual({ id: "61595619636279" });
+    expect(result.accounts[0]?.id).toBe("act_857477559328413");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
   it("reports only known contract fields without returning rejected values", () => {
     const parsed = z.object({ name: z.number(), access_token: z.number() }).safeParse({ name: "private-name", access_token: "private-token" });
     if (parsed.success) throw new Error("Expected invalid fixture");
