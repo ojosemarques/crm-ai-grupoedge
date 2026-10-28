@@ -1,0 +1,31 @@
+import { expect, test } from "@playwright/test";
+import { DEMO_SEED_PASSWORD, DEMO_USERS } from "@/modules/settings/application/demo-seed-service";
+import { enterDemoCompany } from "./helpers/company-hub";
+
+test("Anúncios mostra realizadas → venda no card e preserva o recorte dos registros", async ({ page }, testInfo) => {
+  await page.goto("/login");
+  await page.getByLabel("E-mail").fill(DEMO_USERS[1].email);
+  await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
+  await page.getByRole("button", { name: "Entrar" }).click();
+  await enterDemoCompany(page);
+  await expect(page).toHaveURL(/\/$/);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/dashboard/anuncios?preset=MONTH");
+  const card = page.locator("article").filter({ has: page.getByText("Conversões em venda", { exact: true }) });
+  const records = card.getByRole("link", { name: "Reunião realizada → venda: abrir registros", exact: true });
+  await expect(card.getByRole("link", { name: "Reunião realizada → venda: ver fórmula e registros", exact: true })).toBeVisible();
+  await expect(card).toContainText(/leads com reunião realizada venderam|Sem reuniões realizadas no período/);
+  const href = await records.getAttribute("href");
+  const target = new URL(href!, "http://localhost");
+  expect(target.searchParams.get("metricId") ?? target.searchParams.get("view")).toBe(target.pathname === "/dashboard/atividades-integradas" ? "conversion.completed_meeting_to_sale" : "comparison.current.completed-meeting-to-sale");
+  expect(href).toContain("mode=ADVERTISING");
+  await card.screenshot({ path: testInfo.outputPath("conversion-desktop.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(records).toBeVisible();
+  const bounds = await card.boundingBox();
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  await card.screenshot({ path: testInfo.outputPath("conversion-mobile.png") });
+  await records.click();
+  await expect(page).toHaveURL(new RegExp(`${target.pathname}\\?`));
+  await expect(page.getByRole("heading", { name: /Reunião realizada → venda/ })).toBeVisible();
+});

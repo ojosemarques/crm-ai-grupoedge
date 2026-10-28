@@ -127,7 +127,9 @@ function ComparisonCard({ comparison, featured, query, series }: Readonly<{ comp
   );
 }
 
-function CombinedConversionCard({ comparisons, query }: Readonly<{ comparisons: readonly [DashboardComparison, DashboardComparison]; query: DashboardQuery }>) {
+function CombinedConversionCard({ comparisons, query }: Readonly<{ comparisons: readonly DashboardComparison[]; query: DashboardQuery }>) {
+  const firstComparison = comparisons[0];
+  if (!firstComparison) return null;
   return (
     <article className={`${styles.comparisonCard} ${styles.comparisonPairCard}`} data-interpretation="CONTEXT_REQUIRED">
       <div className={styles.comparisonHeader}><span>Conversões em venda</span><span className={styles.comparisonIcon}><Icon name="pipeline" size={15} /></span></div>
@@ -135,11 +137,12 @@ function CombinedConversionCard({ comparisons, query }: Readonly<{ comparisons: 
         <div className={styles.comparisonPairMetric} data-interpretation={comparison.interpretation} key={comparison.id}>
           <span>{comparison.label}</span>
           <Link aria-label={`${comparison.label}: ver fórmula e registros`} href={comparisonHref(query, comparison.current.drilldownId, comparison.currentPeriod)}><strong>{formatValue(comparison.kind, comparison.current.value)}</strong></Link>
+          {comparison.id === "completed-meeting-to-sale" ? <small className={styles.conversionBase}>{comparison.current.denominator ? `${comparison.current.numerator} de ${comparison.current.denominator} leads com reunião realizada venderam` : "Sem reuniões realizadas no período"}</small> : null}
           <p className={styles.comparisonDelta}><span aria-hidden="true">{comparison.direction === "UP" ? "↑" : comparison.direction === "DOWN" ? "↓" : "→"}</span>{comparisonSentence(comparison)}</p>
         </div>
       ))}</div>
       <div className={styles.comparisonFooter}>
-        <details className={styles.comparisonFacts}><summary>Comparação</summary><div>{comparisons.map((comparison) => <p key={comparison.id}><span>{comparison.label}</span><strong>{formatValue(comparison.kind, comparison.previous.value)}</strong></p>)}<p>{periodLabel(comparisons[0].previousPeriod.fromDate, comparisons[0].previousPeriod.toDate)}</p></div></details>
+        <details className={styles.comparisonFacts}><summary>Comparação</summary><div>{comparisons.map((comparison) => <p key={comparison.id}><span>{comparison.label}</span><strong>{formatValue(comparison.kind, comparison.previous.value)}</strong></p>)}<p>{periodLabel(firstComparison.previousPeriod.fromDate, firstComparison.previousPeriod.toDate)}</p></div></details>
         <div className={styles.comparisonPairLinks}>{comparisons.map((comparison) => <Link aria-label={`${comparison.label}: abrir registros`} className={styles.cardLink} href={comparisonHref(query, comparison.current.drilldownId, comparison.currentPeriod)} key={comparison.id}>Registros <Icon name="seta-direita" size={12} /></Link>)}</div>
       </div>
     </article>
@@ -252,7 +255,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
   ].filter((value): value is string => value !== null);
   const comparisonById = new Map(screen.comparisons.map((comparison) => [comparison.id, comparison]));
   const primaryComparisons = ["revenue", "sales", "lead-to-meeting"].flatMap((id) => comparisonById.get(id) ?? []);
-  const saleConversions = ["lead-to-sale", "meeting-to-sale"].flatMap((id) => comparisonById.get(id) ?? []);
+  const saleConversions = ["lead-to-sale", "meeting-to-sale", ...(q.mode === "ADVERTISING" ? ["completed-meeting-to-sale"] : [])].flatMap((id) => comparisonById.get(id) ?? []);
   const kpiById = new Map(screen.kpis.map((metric) => [metric.id, metric]));
   const operationalPulse = [
     ["contacts.leads_created", "Leads recebidos"],
@@ -329,7 +332,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
 
       {!screen.hasData ? <section className={styles.emptyState}><Icon name="tendencia" size={22} /><div><h2>Nenhum dado no período</h2><p>Selecione outro período ou ajuste os filtros para explorar seus resultados.</p></div></section> : null}
 
-      <section aria-label="Indicadores principais"><div className={styles.comparisonGrid}>{primaryComparisons.map((comparison, index) => <ComparisonCard comparison={comparison} featured={index === 0} key={comparison.id} query={q} series={screen.timeSeries.find((series) => series.id === comparison.id)} />)}{saleConversions.length === 2 ? <CombinedConversionCard comparisons={[saleConversions[0]!, saleConversions[1]!]} query={q} /> : saleConversions.map((comparison) => <ComparisonCard comparison={comparison} key={comparison.id} query={q} series={screen.timeSeries.find((series) => series.id === comparison.id)} />)}</div></section>
+      <section aria-label="Indicadores principais"><div className={styles.comparisonGrid}>{primaryComparisons.map((comparison, index) => <ComparisonCard comparison={comparison} featured={index === 0} key={comparison.id} query={q} series={screen.timeSeries.find((series) => series.id === comparison.id)} />)}{saleConversions.length > 0 ? <CombinedConversionCard comparisons={saleConversions} query={q} /> : null}</div></section>
 
       <div className={styles.primaryGrid}>
         <section className={`${styles.panel} ${styles.evolutionPanel}`}><header className={styles.panelHeader}><div><h2>Evolução comercial</h2><p>O ritmo da operação, dia após dia.</p></div><span className={styles.headerIcon}><Icon name="tendencia" size={16} /></span></header><CommercialEvolutionChart currentPeriodLabel={currentPeriodLabel} description="Evolução dos principais marcos comerciais" previousPeriodLabel={previousPeriodLabel} previousSeries={screen.previousTimeSeries} series={screen.timeSeries} title="Evolução comercial" /></section>

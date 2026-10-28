@@ -198,6 +198,31 @@ describe("frentes comerciais integradas", () => {
 
   });
 
+  it("reconcilia realizadas → venda por lead, período, frente e registros sem contar no-show ou estorno", async () => {
+    const occurredAt = new Date("2058-05-23T15:00:00Z");
+    const prospectingLead = await database.lead.findFirstOrThrow({ where: { workspaceId, pipelineId: prospecting.id, deletedAt: null } });
+    const service = createDashboardMetricsService({ database, authorization, now: () => new Date("2058-05-24T03:00:00Z") });
+    for (const [index, eventType, quantity, pipelineId] of [
+      [0, "MEETING_COMPLETED", 1, ads.id], [0, "MEETING_COMPLETED", 1, ads.id], [0, "SALE_WON", 1, ads.id],
+      [1, "MEETING_NO_SHOW", 1, ads.id], [1, "SALE_WON", 1, ads.id],
+      [2, "MEETING_COMPLETED", 1, ads.id],
+      [3, "MEETING_COMPLETED", 1, ads.id], [3, "MEETING_COMPLETED", -1, ads.id], [3, "SALE_WON", 1, ads.id],
+      [4, "MEETING_COMPLETED", 1, prospecting.id], [4, "SALE_WON", 1, prospecting.id],
+    ] as const) {
+      await recordCommercialMetricFactInTransaction(database, { workspaceId, eventKey: `completed-conversion:${randomUUID()}`, eventType, quantity,
+        occurredAt, sourceEntityType: eventType === "SALE_WON" ? "OpportunityOutcomeSnapshot" : "MeetingHistory", sourceEntityId: randomUUID(), leadId: pipelineId === prospecting.id ? prospectingLead.id : leads[index]!, pipelineId });
+    }
+    const screen = await service.getScreen(admin, { mode: "ADVERTISING", preset: "CUSTOM", fromDate: "2058-05-23", toDate: "2058-05-23" });
+    const metric = screen.comparisons.find((item) => item.id === "completed-meeting-to-sale")!;
+    expect(metric).toMatchObject({ label: "Reunião realizada → venda", current: { value: 50, numerator: 1, denominator: 2, drilldownId: "integrated:conversion.completed_meeting_to_sale" }, previous: { value: null, denominator: 0 } });
+    const records = await metrics.getIntegratedDrilldown(admin, { query: { from: screen.query.from, to: screen.query.to, filters: screen.query.filters }, metricId: "conversion.completed_meeting_to_sale" });
+    expect(records).toMatchObject({ canonicalValue: 5000 });
+    expect(records.records.map((row) => row.leadId)).toEqual([leads[0]]);
+    await expect(metrics.getIntegratedDrilldown({ ...admin, workspaceId: randomUUID() }, { query, metricId: "conversion.completed_meeting_to_sale" })).rejects.toMatchObject({ statusCode: 403 });
+    const empty = await service.getScreen(admin, { mode: "ADVERTISING", preset: "CUSTOM", fromDate: "2058-05-22", toDate: "2058-05-22" });
+    expect(empty.comparisons.find((item) => item.id === "completed-meeting-to-sale")).toMatchObject({ current: { value: null, numerator: 0, denominator: 0 } });
+  });
+
   it("ensaia o grant persistido OWN idempotente sem alterar outras permissões", async () => {
     const permission = await database.permission.findUniqueOrThrow({ where: { key: "metrics.read" } });
     await database.rolePermission.delete({ where: { workspaceId_roleId_permissionId: { workspaceId, roleId: jhon.roleId, permissionId: permission.id } } });

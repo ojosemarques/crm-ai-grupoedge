@@ -193,6 +193,7 @@ function comparableMetrics(overview: MetricsOverview): readonly ComparableMetric
     { id: "lead-to-meeting", label: "Lead → reunião agendada", kind: "RATE", value: ratioValue(evidence.scheduledMeetings.length, evidence.leadReceipts.length), numerator: evidence.scheduledMeetings.length, denominator: evidence.leadReceipts.length, keys: meetingKeys(evidence.scheduledMeetings), formula: "reuniões agendadas / leads recebidos", desiredDirection: "UP" },
     { id: "lead-to-sale", label: "Lead → venda", kind: "RATE", value: ratioValue(evidence.periodWins.length, evidence.leadReceipts.length), numerator: evidence.periodWins.length, denominator: evidence.leadReceipts.length, keys: opportunityKeys(evidence.periodWins), formula: "vendas / leads recebidos", desiredDirection: "UP" },
     { id: "meeting-to-sale", label: "Reunião agendada → venda", kind: "RATE", value: ratioValue(evidence.periodWins.length, evidence.scheduledMeetings.length), numerator: evidence.periodWins.length, denominator: evidence.scheduledMeetings.length, keys: opportunityKeys(evidence.periodWins), formula: "vendas / reuniões agendadas", desiredDirection: "UP" },
+    { id: "completed-meeting-to-sale", label: "Reunião realizada → venda", kind: "RATE", value: overview.meetingToSaleRate.percentage, numerator: overview.meetingToSaleRate.numerator, denominator: overview.meetingToSaleRate.denominator, keys: opportunityKeys(evidence.periodWins.filter((win) => evidence.heldMeetings.some((meeting) => meeting.leadId === win.leadId))), formula: "leads com reunião realizada e venda / leads com reunião realizada no período", desiredDirection: "UP" },
     { id: "backlog", label: "Leads abertos", kind: "COUNT", value: overview.backlog.value, numerator: overview.backlog.value, denominator: null, keys: leadKeys(evidence.openLeadIds), formula: "leads em etapa aberta no corte", desiredDirection: "CONTEXT" },
     { id: "stalled", label: "Leads parados", kind: "COUNT", value: overview.stalledLeads.value, numerator: overview.stalledLeads.value, denominator: overview.backlog.value, keys: leadKeys(evidence.stalledLeadIds), formula: "backlog acima do limite de estagnação", desiredDirection: "DOWN" },
     { id: "no-next-action", label: "Sem próxima ação", kind: "COUNT", value: overview.leadsWithoutNextAction.value, numerator: overview.leadsWithoutNextAction.value, denominator: overview.backlog.value, keys: leadKeys(evidence.leadsWithoutNextActionIds), formula: "backlog sem tarefa ativa", desiredDirection: "DOWN" },
@@ -690,6 +691,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       "lead-to-meeting": "conversion.entry_to_meeting",
       "lead-to-sale": "conversion.entry_to_sale",
       "meeting-to-sale": "conversion.meeting_to_sale",
+      "completed-meeting-to-sale": "conversion.completed_meeting_to_sale",
     } as const;
     const alignActivityComparison = (metric: ComparableMetric, facts: readonly IntegratedActivityFact[], series: readonly { id: string; points: readonly { value: number | string | null }[] }[]): ComparableMetric => {
       if (facts.length === 0 || !(metric.id in integratedComparisonIds)) return metric;
@@ -697,6 +699,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
         "lead-to-meeting": { numeratorType: "MEETING_SCHEDULED", denominatorType: "LEAD_CREATED", formula: "leads com entrada e agendamento / leads com entrada no período" },
         "lead-to-sale": { numeratorType: "SALE_WON", denominatorType: "LEAD_CREATED", formula: "leads com entrada e venda / leads com entrada no período" },
         "meeting-to-sale": { numeratorType: "SALE_WON", denominatorType: "MEETING_SCHEDULED", formula: "leads agendados e ganhos / leads agendados no período" },
+        "completed-meeting-to-sale": { numeratorType: "SALE_WON", denominatorType: "MEETING_COMPLETED", formula: "leads com reunião realizada e venda / leads com reunião realizada no período" },
       } as const;
       const rateDefinition = rateDefinitions[metric.id as keyof typeof rateDefinitions];
       if (rateDefinition) {

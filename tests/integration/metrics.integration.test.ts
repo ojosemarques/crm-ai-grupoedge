@@ -798,6 +798,7 @@ describe("camada confiável de métricas", () => {
     });
     expect(comparison["lead-to-meeting"]).toMatchObject({ current: { value: 66.67, numerator: 2, denominator: 3 } });
     expect(comparison["meeting-to-sale"]).toMatchObject({ current: { value: 50, numerator: 1, denominator: 2 } });
+    expect(comparison["completed-meeting-to-sale"]).toMatchObject({ current: { value: 100, numerator: 1, denominator: 1 } });
   });
 
   it("aplica filtros compartilhados, períodos civis e estado sem dados", async () => {
@@ -815,6 +816,7 @@ describe("camada confiável de métricas", () => {
     expect(empty.timeSeries.find((item) => item.id === "lead-to-sale")?.points.every((point) => point.value === null)).toBe(true);
     expect(empty.timeSeries.find((item) => item.id === "lead-to-meeting")?.points.every((point) => point.value === null)).toBe(true);
     expect(empty.timeSeries.find((item) => item.id === "meeting-to-sale")?.points.every((point) => point.value === null)).toBe(true);
+    expect(empty.comparisons.find((item) => item.id === "completed-meeting-to-sale")).toMatchObject({ current: { value: null, numerator: 0, denominator: 0 } });
     expect(empty.comparisons.find((item) => item.id === "leads")).toMatchObject({
       current: { value: 0 }, previous: { value: 0 }, direction: "STABLE", interpretation: "NEUTRAL",
     });
