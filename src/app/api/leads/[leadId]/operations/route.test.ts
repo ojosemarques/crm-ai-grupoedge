@@ -4,14 +4,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const requireApiAuthentication = vi.fn();
 const createTask = vi.fn();
 const updateCompletedTask = vi.fn();
+const recordProposal = vi.fn();
 const schedule = vi.fn();
 
 vi.mock("@/modules/auth/http/authentication-guards", () => ({ requireApiAuthentication }));
 vi.mock("@/modules/activities/application/operational-history-service", () => ({
-  getOperationalHistoryService: () => ({ createTask, updateCompletedTask }),
+  getOperationalHistoryService: () => ({ createTask, updateCompletedTask, recordProposal }),
 }));
 vi.mock("@/modules/meetings/application/meeting-service", () => ({
   getMeetingService: () => ({ schedule }),
+}));
+vi.mock("@/modules/leads/application/lead-distribution-service", () => ({
+  getLeadDistributionService: () => ({}),
 }));
 
 const leadId = "11111111-1111-4111-8111-111111111111";
@@ -27,6 +31,14 @@ function request(data: Record<string, unknown>, action = "CREATE_TASK") {
 }
 
 describe("criação de tarefa no card do lead", () => {
+  it("registra proposta usando o lead da rota, preservando autenticação e origem", async () => {
+    const { POST } = await import("./route");
+    recordProposal.mockResolvedValueOnce({ id: "proposal-activity" });
+    const response = await POST(request({ leadId: closerId, name: "Plano mandato", amountCents: 350000 }, "RECORD_PROPOSAL"), { params: Promise.resolve({ leadId }) });
+    expect(response.status).toBe(200);
+    expect(recordProposal).toHaveBeenCalledWith(context, { leadId, name: "Plano mandato", amountCents: 350000 });
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     requireApiAuthentication.mockResolvedValue(context);

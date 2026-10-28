@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { FreeQualificationWorkspace } from "@/app/leads/[leadId]/historico/free-qualification-workspace";
 import { ScoringWorkspace } from "@/app/leads/[leadId]/historico/scoring-workspace";
 import { LeadStageWorkspace } from "@/app/leads/[leadId]/historico/lead-stage-workspace";
+import { LeadProposalPanel } from "@/components/leads/lead-proposal-panel";
 import { LeadMeetingsWorkspace } from "@/app/leads/[leadId]/historico/lead-meetings-workspace";
 import { LeadOpportunitiesWorkspace } from "@/app/leads/[leadId]/historico/lead-opportunities-workspace";
 import { LeadSalePanel } from "@/components/opportunities/lead-sale-preparation-panel";
@@ -1386,6 +1387,9 @@ export function OperationalHistoryWorkspace({
               pipeline={pipeline}
               timeZone={operations.timeZone}
             />
+            {pipeline.pipelineName === ADVERTISING_PIPELINE_NAME && pipeline.currentStageCode === "PROPOSAL" && operations.permissions.canWrite ? (
+              <LeadProposalPanel leadId={pipeline.leadId} onCommitted={refresh} />
+            ) : null}
             {operations.permissions.canWrite ? (
               <details className={styles.actionForm} id="registrar-atividade"><summary><Icon name="mais" size={15} />Registrar atividade</summary>
                 <form className="mt-4 grid gap-4" onSubmit={submitActivity}>

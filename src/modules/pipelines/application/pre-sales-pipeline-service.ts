@@ -170,18 +170,19 @@ function resourceForLead(
 function transitionOptions(
   stages: readonly PipelineStageRecord[],
   currentCode: LeadStageCode,
+  pipelineName: string,
 ): StageTransitionOption[] {
   return stages.flatMap((stage) => {
     if (!isLeadStageCode(stage.leadStageCode) || stage.leadStageCode === currentCode) return [];
     const target = stage.leadStageCode;
-    const integratedOnly = target === "PROPOSAL" || target === "CLIENT";
+    const integratedOnly = (target === "PROPOSAL" && pipelineName !== ADVERTISING_PIPELINE_NAME) || target === "CLIENT";
     return [{
       stageId: stage.id,
       code: target,
       name: stage.name,
       allowed: !integratedOnly,
       correctionAllowed: !integratedOnly,
-      blockReason: target === "PROPOSAL"
+      blockReason: target === "PROPOSAL" && integratedOnly
         ? "Registre uma proposta no negócio vinculado."
         : target === "CLIENT"
           ? "Use Marcar vendido no card do negócio."
@@ -439,7 +440,7 @@ export async function transitionLeadStageInTransaction(
   const advertisingSchedulingPolicy = lead.pipeline.name === "Anúncios" && target.leadStageCode === "MEETING_SCHEDULED" && input.origin !== "MEETING"
     ? await assertAdvertisingSchedulingAccess(transaction, context) : null;
   const meetingProposal = input.commercialEvent === "MEETING_COMPLETED" && input.origin === "MEETING" && lead.pipeline.name === ADVERTISING_PIPELINE_NAME;
-  if (target.leadStageCode === "PROPOSAL" && input.commercialEvent !== "PROPOSAL_REGISTERED" && !meetingProposal) {
+  if (target.leadStageCode === "PROPOSAL" && lead.pipeline.name !== ADVERTISING_PIPELINE_NAME && input.commercialEvent !== "PROPOSAL_REGISTERED" && !meetingProposal) {
     conflict("PROPOSAL_FORM_REQUIRED", "Registre uma proposta no negócio vinculado para avançar o lead.");
   }
   if (target.leadStageCode === "CLIENT" && input.commercialEvent !== "SALE_WON") {
@@ -847,7 +848,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       pactoReady,
       ...permission,
       disqualificationReasons: reasons,
-      transitions: transitionOptions(pipeline.stages, lead.currentStage.leadStageCode),
+      transitions: transitionOptions(pipeline.stages, lead.currentStage.leadStageCode, pipeline.name),
     });
   }
 

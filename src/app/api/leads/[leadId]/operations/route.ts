@@ -89,6 +89,9 @@ export async function POST(
       case "RECORD_ACTIVITY":
         result = await service.recordActivity(context, { ...data, leadId });
         break;
+      case "RECORD_PROPOSAL":
+        result = await service.recordProposal(context, { ...data, leadId });
+        break;
       case "CORRECT_ACTIVITY":
         result = await service.correctActivity(context, { ...data, leadId });
         break;

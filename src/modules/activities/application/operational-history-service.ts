@@ -209,6 +209,15 @@ const recordActivitySchema = z
   })
   .strict();
 
+const recordProposalSchema = z.object({
+  leadId: z.string().uuid(),
+  name: z.string().trim().min(2).max(180),
+  amountCents: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+  sentAt: z.coerce.date().optional(),
+  conditions: z.string().trim().max(1_500).default(""),
+  details: z.string().trim().max(2_500).default(""),
+}).strict();
+
 const correctionSchema = z
   .object({
     leadId: z.string().uuid(),
@@ -1375,6 +1384,24 @@ export function createOperationalHistoryService(
     });
   }
 
+  async function recordProposal(context: AuthenticatedContext, payload: unknown) {
+    const parsed = recordProposalSchema.safeParse(payload);
+    if (!parsed.success) invalidInput(parsed.error);
+    const { leadId, name, amountCents, conditions, details } = parsed.data;
+    const sentAt = parsed.data.sentAt ?? options.now();
+    const observation = [
+      amountCents !== null && amountCents !== undefined
+        ? `Valor: ${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(amountCents / 100)}` : null,
+      conditions ? `Condições: ${conditions}` : null,
+      details ? `Detalhes: ${details}` : null,
+    ].filter(Boolean).join("\n");
+    return recordActivity(context, {
+      leadId, type: "PROPOSAL", direction: "OUTBOUND", result: "SENT",
+      subject: `Proposta enviada: ${name}`, observation, occurredAt: sentAt,
+      newValues: { proposal: { name, amountCents: amountCents ?? null, sentAt: sentAt.toISOString(), conditions, details } },
+    });
+  }
+
   async function recordActivity(
     context: OperationalActorContext,
     payload: unknown,
@@ -2421,6 +2448,7 @@ export function createOperationalHistoryService(
     completeTask,
     updateCompletedTask,
     recordActivity,
+    recordProposal,
     updateLeadSummary,
     correctActivity,
     getLeadOperations,

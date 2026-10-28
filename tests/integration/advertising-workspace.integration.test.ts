@@ -4,6 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PrismaClient } from "@/generated/prisma/client";
 import { createAdvertisingWorkspaceService } from "@/modules/advertising/application/advertising-workspace-service";
+import { createOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
+import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
@@ -130,4 +132,37 @@ describe("workspace de Anúncios", () => {
     const messages = await service.getScreen(context, { pipelineId: pipeline.id, metricsPreset: "MONTH" });
     expect(messages.metrics.totals).toMatchObject({ leadsReceived: 1, messages: 2, effectiveContacts: 1 });
   });
+  it("libera Proposta sem negócio e registra os detalhes enviados na ficha do lead", async () => {
+    await ensureAdvertisingPipeline(database, workspaceId, context.actorId);
+    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId, name: ADVERTISING_PIPELINE_NAME }, include: { stages: true } });
+    const intake = await createLeadIntakeService({ database, authorization, now: () => now }).intake({
+      channel: "MANUAL", idempotencyKey: `proposal-test:${randomUUID()}`, fullName: "Lead da proposta enviada",
+      phone: "+5511999990099", sourceKey: "manual", pipelineId: pipeline.id, priorityBandCode: "P2", rawPayload: { test: true },
+    }, context);
+    if (intake.outcome === "REJECTED") throw new Error(intake.code);
+    const stages = createPreSalesPipelineService({ database, authorization, now: () => now });
+    const before = await stages.getLeadState(context, { leadId: intake.leadId });
+    expect(before.transitions.find((item) => item.code === "PROPOSAL")).toMatchObject({ allowed: true, blockReason: null });
+    expect(before.transitions.find((item) => item.code === "CLIENT")).toMatchObject({ allowed: false });
+    await expect(stages.transition(context, {
+      leadId: intake.leadId, targetStageId: pipeline.stages.find((stage) => stage.leadStageCode === "PROPOSAL")!.id,
+      expectedUpdatedAt: before.updatedAt, origin: "LEAD_CARD",
+    })).resolves.toMatchObject({ toStageCode: "PROPOSAL" });
+    const history = createOperationalHistoryService({ database, authorization, now: () => now });
+    const payload = { leadId: intake.leadId, name: "Plano de mandato", amountCents: 350000,
+      sentAt: now.toISOString(), conditions: "Entrada + 2 parcelas", details: "Gestão de comunicação e atendimento." };
+    await history.recordProposal(context, payload);
+    const activity = await database.activity.findFirstOrThrow({ where: { workspaceId, leadId: intake.leadId, type: "PROPOSAL" } });
+    expect(activity).toMatchObject({ result: "SENT", direction: "OUTBOUND", createdByActorId: context.actorId,
+      newValues: { proposal: { name: payload.name, amountCents: 350000, conditions: payload.conditions, details: payload.details } } });
+    expect(activity.description).toContain("R$ 3.500,00");
+    expect(activity.description).toContain(payload.conditions);
+    await expect(database.opportunity.count({ where: { workspaceId, leadId: intake.leadId } })).resolves.toBe(0);
+    await expect(history.recordProposal(context, { ...payload, amountCents: -1 })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(history.recordProposal({ ...context, workspaceId: randomUUID() }, payload)).rejects.toBeDefined();
+    const viewer = await database.workspaceMember.findFirstOrThrow({ where: { workspaceId, user: { normalizedEmail: "viewer@demo.politizai.local" } }, include: { role: true } });
+    await expect(history.recordProposal({ ...context, userId: viewer.userId, memberId: viewer.id, roleId: viewer.roleId, roleKey: viewer.role.key }, payload)).rejects.toBeDefined();
+  });
+
+
 });
