@@ -163,6 +163,11 @@ auditoria, com `clientId` e ferramenta, sem argumentos nem resultados.
   medianas, saldos ou contagens distintas entre janelas.
 - Em Aquisição, `totals.reach` é alcance somado por anúncio/dia, sem deduplicação
   de pessoas entre anúncios ou datas; não equivale ao alcance único da conta.
+- `advertisingFunnel.cohortSize` inclui cadastros de Anúncios e respostas
+  incompletas salvas de formulários destinados a esse pipeline.
+  `registeredLeadCount` e `incompleteCount` discriminam esses volumes. A conclusão
+  substitui a parcial sem duplicação; a chegada mantém a primeira resposta
+  quando anterior ao cadastro. A contagem agregada não cria cadastros comerciais.
 - Paginação comum: `page` e `pageSize` (10–100). Histórico do lead aceita
   `pageSize` de 1–50; fatos integrados usam `limit` de 1–100 e cursor.
 - O dashboard retorna agregados e IDs de drilldowns. Consulte os registros

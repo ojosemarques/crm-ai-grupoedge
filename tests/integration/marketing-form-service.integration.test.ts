@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { loadAcquisitionFunnel } from "@/modules/marketing/application/acquisition-funnel-service";
 import { createMarketingFormAdvertisingSyncService } from "@/modules/marketing-forms/application/marketing-form-advertising-sync-service";
 import { createMarketingFormService } from "@/modules/marketing-forms/application/marketing-form-service";
 import { createMarketingFormReportingService } from "@/modules/marketing-forms/application/marketing-form-reporting-service";
@@ -222,6 +223,9 @@ describe("serviço administrativo de formulários", () => {
     const name = `Pessoa incompleta ${randomUUID().slice(0, 8)}`;
     const phone = `(62)9${Math.floor(10_000_000 + Math.random() * 89_999_999).toString().slice(0, 4)}-${Math.floor(1_000 + Math.random() * 8_999)}`;
 
+    await submissionService.recordEvents(slug, { versionPublicId: published.version.publicId, sessionPublicId: randomUUID(), tracking: {}, events: [{ eventId: randomUUID(), kind: "FORM_VIEW", occurredAt: now.toISOString() }] });
+    await expect(loadAcquisitionFunnel(database, tenantA.context.workspaceId, new Date("2033-03-15T03:00:00Z"), new Date("2033-03-16T03:00:00Z"), "Captação")).resolves.toMatchObject({ cohortSize: 0 });
+
     await submissionService.recordEvents(slug, {
       versionPublicId: published.version.publicId,
       sessionPublicId,
@@ -236,6 +240,19 @@ describe("serviço administrativo de formulários", () => {
     expect(partial).toMatchObject({ respondentName: name, respondentPhone: phone, completedAt: null, deletedAt: null });
     expect(await database.marketingFormReceipt.count({ where: { workspaceId: tenantA.context.workspaceId, marketingFormId: form.id } })).toBe(0);
     expect(await database.lead.count({ where: { workspaceId: tenantA.context.workspaceId, fullName: name } })).toBe(0);
+
+    const periodStart = new Date("2033-03-15T03:00:00Z");
+    const periodEnd = new Date("2033-03-16T03:00:00Z");
+    const incompleteFunnel = await loadAcquisitionFunnel(database, tenantA.context.workspaceId, periodStart, periodEnd, "Captação");
+    expect(incompleteFunnel).toMatchObject({
+      cohortSize: 1, incompleteCount: 1, registeredLeadCount: 0,
+      byDimension: { source: [expect.objectContaining({ label: "Formulário", leads: 1, scheduled: 0, buyers: 0 })] },
+    });
+    expect(JSON.stringify(incompleteFunnel)).not.toContain(name);
+    expect(JSON.stringify(incompleteFunnel)).not.toContain(phone);
+    expect(await database.lead.count({ where: { workspaceId: tenantA.context.workspaceId, fullName: name } })).toBe(0);
+    await expect(loadAcquisitionFunnel(database, tenantB.context.workspaceId, periodStart, periodEnd, "Captação")).resolves.toMatchObject({ cohortSize: 0 });
+    await expect(loadAcquisitionFunnel(database, tenantA.context.workspaceId, periodStart, periodEnd, "Outro pipeline")).resolves.toMatchObject({ cohortSize: 0 });
 
     await expect(reportingService.list(tenantA.context, form.id, { status: "INCOMPLETO" })).resolves.toMatchObject({
       total: 1,
@@ -270,6 +287,15 @@ describe("serviço administrativo de formulários", () => {
     await expect(database.marketingFormPartialResponse.findUniqueOrThrow({ where: { id: partial.id }, select: { completedAt: true, receiptId: true, answers: true, respondentName: true, respondentPhone: true } })).resolves.toMatchObject({ completedAt: now, receiptId: expect.any(String), answers: [], respondentName: null, respondentPhone: null });
     await expect(reportingService.list(tenantA.context, form.id, { status: "INCOMPLETO" })).resolves.toMatchObject({ total: 0, items: [] });
 
+    // Completion on the next day keeps the original arrival date and replaces
+    // the partial response instead of adding a second entry to the funnel.
+    const completedSubmission = await database.leadFormSubmission.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, marketingFormReceiptId: (await database.marketingFormReceipt.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, publicId: accepted.receiptPublicId } })).id } });
+    const tomorrow = new Date("2033-03-16T14:30:00Z");
+    await database.lead.update({ where: { id: completedSubmission.leadId! }, data: { createdAt: tomorrow } });
+    await database.marketingFormPartialResponse.update({ where: { id: partial.id }, data: { completedAt: tomorrow } });
+    await expect(loadAcquisitionFunnel(database, tenantA.context.workspaceId, periodStart, periodEnd, "Captação")).resolves.toMatchObject({ cohortSize: 1, incompleteCount: 0, registeredLeadCount: 1 });
+    await expect(loadAcquisitionFunnel(database, tenantA.context.workspaceId, periodEnd, new Date("2033-03-17T03:00:00Z"), "Captação")).resolves.toMatchObject({ cohortSize: 0, incompleteCount: 0 });
+
     const deletionSession = randomUUID();
     await submissionService.recordEvents(slug, {
       versionPublicId: published.version.publicId,
@@ -280,6 +306,33 @@ describe("serviço administrativo de formulários", () => {
     const deletable = await database.marketingFormPartialResponse.findUniqueOrThrow({ where: { workspaceId_marketingFormVersionId_sessionPublicId: { workspaceId: tenantA.context.workspaceId, marketingFormVersionId: published.version.id, sessionPublicId: deletionSession } } });
     await expect(reportingService.remove(tenantA.context, form.id, deletable.publicId)).resolves.toMatchObject({ publicId: deletable.publicId, leadPreserved: false });
     await expect(reportingService.detail(tenantA.context, form.id, deletable.publicId)).rejects.toMatchObject({ code: "MARKETING_FORM_RESPONSE_NOT_FOUND", statusCode: 404 });
+    await expect(loadAcquisitionFunnel(database, tenantA.context.workspaceId, periodStart, periodEnd, "Captação")).resolves.toMatchObject({ cohortSize: 1, incompleteCount: 0 });
+  });
+
+  it("conta uma entrada quando a resposta é concluída durante a leitura do funil", async () => {
+    const fixture = await createFixture("snapshot");
+    const slug = `snapshot-${randomUUID().slice(0, 8)}`;
+    const form = await service.create(fixture.context, { name: "Form snapshot", publicSlug: slug });
+    const saved = await service.updateDraft(fixture.context, form.id, { name: form.name, expectedRevision: form.revision, definition: publishableDefinition(fixture) });
+    const published = await service.publish(fixture.context, form.id, saved.revision);
+    const sessionPublicId = randomUUID();
+    const answers = [{ questionKey: "nome-completo", value: "Pessoa snapshot" }, { questionKey: "telefone", value: "+5511999994321" }];
+    await submissionService.recordEvents(slug, { versionPublicId: published.version.publicId, sessionPublicId, tracking: {}, events: answers.map((answer) => ({ eventId: randomUUID(), kind: "QUESTION_ANSWERED", questionKey: answer.questionKey, answer: answer.value, occurredAt: now.toISOString() })) });
+    let completedDuringRead = false;
+    const concurrentDatabase = database.$extends({ query: { marketingFormPartialResponse: { async findMany({ args, query }) {
+      const rows = await query(args);
+      if (!completedDuringRead && args.where?.firstAnsweredAt) {
+        completedDuringRead = true;
+        const accepted = await submissionService.submit(slug, { versionPublicId: published.version.publicId, sessionPublicId, idempotencyToken: randomUUID(), startedAt: new Date(now.getTime() - 2_000).toISOString(), honeypot: "", tracking: {}, answers });
+        const receipt = await database.marketingFormReceipt.findFirstOrThrow({ where: { workspaceId: fixture.context.workspaceId, publicId: accepted.receiptPublicId } });
+        const submission = await database.leadFormSubmission.findFirstOrThrow({ where: { workspaceId: fixture.context.workspaceId, marketingFormReceiptId: receipt.id } });
+        await database.lead.update({ where: { id: submission.leadId! }, data: { createdAt: now } });
+      }
+      return rows;
+    } } } });
+    const result = await loadAcquisitionFunnel(concurrentDatabase as unknown as PrismaClient, fixture.context.workspaceId, new Date("2033-03-15T03:00:00Z"), new Date("2033-03-16T03:00:00Z"), "Captação");
+    expect(completedDuringRead).toBe(true);
+    expect(result.cohortSize).toBe(1);
   });
 
   it("materializa uma resposta uma vez, preserva a etapa e não avança a rotação no replay", async () => {

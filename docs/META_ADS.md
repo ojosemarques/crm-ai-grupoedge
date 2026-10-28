@@ -83,9 +83,16 @@ Meta permanecem separados dos leads observados no CRM. As ferramentas
 `consultar_metricas_anuncios` expõem essas leituras pelo MCP existente,
 preservando escopos e RBAC; elas não acionam coleta nem alteram o CRM.
 
-O resumo mostra as entradas no pipeline de Anúncios no período escolhido e
-seu funil de agendamento, reunião realizada e compra. Essa coorte usa a data
-de criação do lead e exclui os outros pipelines, inclusive Prospecção Ativa.
+O resumo mostra as entradas de Anúncios no período escolhido e seu funil de
+agendamento, reunião realizada e compra. Respostas incompletas salvas de
+formulários destinados a Anúncios também contam como recebidas. A interface
+separa cadastros de respostas incompletas. A primeira resposta salva define
+a chegada quando anterior ao cadastro; concluir o formulário substitui a
+parcial sem duplicar a entrada nem mudar sua data para o dia da conclusão.
+Visitas sem resposta e respostas excluídas não entram nessa contagem. A leitura
+não cria cadastros, atividades ou conversões; etapas comerciais e valores
+dependem dos registros efetivos. Outros pipelines, inclusive Prospecção Ativa,
+ficam fora do resumo de Anúncios.
 O funil geral por origem/campanha continua disponível separadamente. Custos
 e volumes sem fatos coletados aparecem como “Sem dados”, sem assumir zero.
 

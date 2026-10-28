@@ -102,7 +102,7 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
       { label: "Impressões", value: mediaAvailable ? initial.totals.impressions.toLocaleString("pt-BR") : "Sem dados", hint: "Exibições dos anúncios", icon: "tendencia" as const },
       { label: "Cliques", value: mediaAvailable ? initial.totals.clicks.toLocaleString("pt-BR") : "Sem dados", hint: "Interações reportadas", icon: "entrada" as const },
       { label: "Leads reportados", value: mediaAvailable ? initial.totals.reportedLeads.toLocaleString("pt-BR") : "Sem dados", hint: "Volume informado pela mídia", icon: "leads" as const },
-      { label: "Leads recebidos no CRM", value: initial.advertisingFunnel.cohortSize.toLocaleString("pt-BR"), hint: "Entradas no pipeline de Anúncios no período", icon: "leads" as const },
+      { label: "Leads recebidos no CRM", value: initial.advertisingFunnel.cohortSize.toLocaleString("pt-BR"), hint: `${initial.advertisingFunnel.registeredLeadCount} cadastros · ${initial.advertisingFunnel.incompleteCount} ${initial.advertisingFunnel.incompleteCount === 1 ? "resposta incompleta" : "respostas incompletas"}`, icon: "leads" as const },
       { label: "CPC", value: metricValue(initial.metrics.find((metric) => metric.key === "cpc")?.value ?? null, "BRL_CENTS"), hint: "Investimento / cliques reportados", icon: "receita" as const },
     ].map((metric) => <article className={styles.stat} key={metric.label}><div><span>{metric.label}</span><Icon name={metric.icon} size={16} /></div><strong>{metric.value}</strong><small>{metric.hint}</small></article>)}</section>
 
@@ -129,7 +129,7 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
     </Surface>
 
     <Surface className={styles.panel}>
-      <SectionHeader title="Origem dos resultados comerciais" description={`${initial.acquisitionFunnel.cohortSize} leads criados no período, acompanhados até ${initial.period.end.slice(0, 10)}.`} />
+      <SectionHeader title="Origem dos resultados comerciais" description={`${initial.acquisitionFunnel.cohortSize} entradas recebidas no período, incluindo ${initial.acquisitionFunnel.incompleteCount} respostas incompletas, acompanhadas até ${initial.period.end.slice(0, 10)}.`} />
       <div className={styles.chartTabs} role="group" aria-label="Agrupar funil por">
         {([{ key: "source", label: "Canal" }, { key: "campaign", label: "Campanha" }, { key: "creative", label: "Criativo" }, { key: "utmCampaign", label: "UTM campanha" }, { key: "utmContent", label: "UTM criativo" }] as const).map((item) => <button key={item.key} type="button" aria-pressed={funnelDimension === item.key} onClick={() => setFunnelDimension(item.key)}>{item.label}</button>)}
       </div>

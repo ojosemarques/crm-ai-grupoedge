@@ -1,14 +1,23 @@
-import type { PrismaClient } from "@/generated/prisma/client";
+import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { PAYMENT_PROVIDER_KEY } from "@/modules/payments/domain/payment-contracts";
+import { loadAcquisitionFormArrivals, loadLeadArrivalDates } from "./acquisition-form-arrivals";
 import { summarizeAcquisitionFunnel, summarizeAcquisitionReceipts, type AcquisitionReceipt, type FunnelDimension, type FunnelLead } from "../domain/acquisition-funnel";
 
 /** Called only after the media service authorizes access; no individual customer data leaves this boundary. */
 export async function loadAcquisitionFunnel(database: PrismaClient, workspaceId: string, start: Date, end: Date, pipelineName?: string) {
-  const leads = await database.lead.findMany({
-    where: { workspaceId, deletedAt: null, createdAt: { gte: start, lt: end }, ...(pipelineName ? { pipeline: { name: pipelineName, deletedAt: null } } : {}) },
+  // Completion creates the lead and closes its partial atomically. Read one
+  // snapshot so a concurrent completion cannot appear as two arrivals.
+  return database.$transaction((tx) => loadAcquisitionFunnelSnapshot(tx, workspaceId, start, end, pipelineName), { isolationLevel: "RepeatableRead", timeout: 30_000 });
+}
+
+async function loadAcquisitionFunnelSnapshot(database: Prisma.TransactionClient, workspaceId: string, start: Date, end: Date, pipelineName?: string) {
+  const formArrivals = await loadAcquisitionFormArrivals(database, workspaceId, start, end, pipelineName);
+  const candidates = await database.lead.findMany({
+    where: { workspaceId, deletedAt: null, OR: [{ createdAt: { gte: start, lt: end } }, ...(formArrivals.completedReceiptIds.length ? [{ submissions: { some: { workspaceId, marketingFormReceiptId: { in: formArrivals.completedReceiptIds } } } }] : [])], ...(pipelineName ? { pipeline: { name: pipelineName, deletedAt: null } } : {}) },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 10_001,
     select: {
       id: true,
+      createdAt: true,
       submissions: { orderBy: [{ submittedAt: "asc" }, { id: "asc" }], take: 1, select: { marketingSessionId: true } },
       source: { select: { id: true, name: true } }, campaign: { select: { id: true, name: true } }, creative: { select: { id: true, name: true } },
       tags: { where: { removedAt: null, tag: { deletedAt: null } }, select: { tag: { select: { name: true } } } },
@@ -16,8 +25,11 @@ export async function loadAcquisitionFunnel(database: PrismaClient, workspaceId:
       opportunities: { select: { id: true, amountCents: true, status: true, closedAt: true, deletedAt: true } },
     },
   });
-  let truncated = leads.length > 10_000;
-  if (truncated) leads.pop();
+  let truncated = candidates.length > 10_000 || formArrivals.truncated;
+  if (candidates.length > 10_000) candidates.pop();
+  const arrival = await loadLeadArrivalDates(database, workspaceId, candidates);
+  truncated ||= arrival.truncated;
+  const leads = candidates.filter((lead) => arrival.dates.get(lead.id)! >= start && arrival.dates.get(lead.id)! < end);
   const sessionOwners = new Map<string, string | null>();
   for (const lead of leads) {
     const sessionId = lead.submissions[0]?.marketingSessionId;
@@ -70,14 +82,19 @@ export async function loadAcquisitionFunnel(database: PrismaClient, workspaceId:
     tags: [...lead.tags.map(({ tag }) => tag.name), ...(tagsByLead.get(lead.id) ?? [])], wins: lead.opportunities.filter((sale) => !sale.deletedAt && sale.status === "WON" && sale.closedAt && sale.closedAt < end).map((sale) => ({ amountCents: Number(sale.amountCents) })),
     receipts: summarizeAcquisitionReceipts(paymentsByLead.get(lead.id) ?? [], start, end),
   }));
+  const incomplete = formArrivals.incomplete.slice(0, Math.max(10_000 - cohort.length, 0));
+  if (incomplete.length < formArrivals.incomplete.length) truncated = true;
+  cohort.push(...incomplete);
   const dimensions: FunnelDimension[] = ["source", "campaign", "creative", "utmCampaign", "utmContent"];
   return {
     cohortSize: cohort.length,
+    registeredLeadCount: leads.length,
+    incompleteCount: incomplete.length,
     truncated,
     excludedReceiptCount: cohort.reduce((sum, lead) => sum + (lead.receipts?.excludedCount ?? 0), 0),
     receiptCurrency: "BRL" as const,
     byDimension: Object.fromEntries(dimensions.map((dimension) => [dimension, summarizeAcquisitionFunnel(cohort, dimension)])) as Record<FunnelDimension, ReturnType<typeof summarizeAcquisitionFunnel>>,
-    method: "Leads criados no período; origem inicial e primeira UTM elegível. Agendamentos registrados até o fim e vendas fechadas até o fim do período. Status e tags refletem o cadastro atual. Agendados inclui cancelamentos; etapas contam pessoas únicas e podem se sobrepor.",
+    method: "Leads recebidos no período, incluindo respostas incompletas salvas. A primeira resposta define a chegada quando anterior ao cadastro; concluir o formulário substitui a resposta parcial sem duplicar a entrada. Origem inicial e primeira UTM elegível; incompletos usam a origem configurada e as UTMs salvas. Agendamentos registrados até o fim e vendas fechadas até o fim do período. Status e tags refletem o cadastro atual. Agendados inclui cancelamentos; etapas contam entradas únicas e podem se sobrepor.",
     receiptMethod: "Recebimentos em BRL confirmados para cobranças dos leads desta coorte, pela data do pagamento; estornos pela data da reversão. Recebido líquido = recebido bruto − estornos do período. Cada pagamento é contado uma vez por dimensão, inclusive em Não identificado quando não há atribuição. Exclui simulações, entradas financeiras avulsas e clientes de coortes anteriores; não representa todo o caixa da empresa. Vendas contratadas e recebimentos são medidas diferentes.",
     classification: "Tier 1, Tier 2, Tier 3 e Representante usam tags explícitas. Sem tag de tier ou com tiers conflitantes: não classificado.",
   };
