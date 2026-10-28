@@ -7,24 +7,26 @@ const credentials = { accessToken: "test-only-token", appSecret: "test-only-secr
 const ok = (value: unknown, headers?: HeadersInit) => new Response(JSON.stringify(value), { status: 200, ...(headers ? { headers } : {}) });
 
 describe("CRM-40 adaptador Meta Ads somente leitura", () => {
-  it("filters discovered accounts to the chosen BM and rejects an account moved to another BM", async () => {
+  it("restricts discovery to the approved accounts without requesting business_management fields", async () => {
+    const requestedFields: string[] = [];
     const adapter = new MetaAdsReadAdapter({ fetcher: async (input) => {
-      const path = new URL(String(input)).pathname;
+      const url = new URL(String(input)); const path = url.pathname;
+      requestedFields.push(url.searchParams.get("fields") ?? "");
       if (path.endsWith("/me")) return ok({ id: "123456" });
       if (path.endsWith("/me/adaccounts")) return ok({ data: [{ id: "act_123456", name: "Selecionada", business: { id: "777777" } }, { id: "act_654321", name: "Outra", business: { id: "888888" } }] });
       return ok({ id: "act_123456", name: "Selecionada", business: { id: "888888" } });
     } });
     const scoped = { ...config, businessId: "777777" };
     expect((await adapter.testConnection(scoped, credentials)).accounts.map((item) => item.id)).toEqual(["act_123456"]);
-    await expect(adapter.pull(scoped, credentials, { since: "2026-10-01", until: "2026-10-01" })).rejects.toMatchObject({ failure: { code: "META_ACCOUNT_BUSINESS_MISMATCH" } });
+    expect(requestedFields.every((fields) => !fields.includes("business"))).toBe(true);
   });
   it("accepts a system identity without a public profile name and still validates account access", async () => {
     const fetcher = vi.fn(async (input: string | URL | Request) => new URL(String(input)).pathname.endsWith("/me")
-      ? ok({ id: "61595619636279" })
-      : ok({ data: [{ id: "act_857477559328413", name: "Conta8", currency: "BRL" }] }));
+      ? ok({ id: "123456" })
+      : ok({ data: [{ id: "act_123456", name: "Conta Fixture", currency: "BRL" }] }));
     const result = await new MetaAdsReadAdapter({ fetcher }).testConnection(config, credentials);
-    expect(result.identity).toEqual({ id: "61595619636279" });
-    expect(result.accounts[0]?.id).toBe("act_857477559328413");
+    expect(result.identity).toEqual({ id: "123456" });
+    expect(result.accounts[0]?.id).toBe("act_123456");
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
   it("reports only known contract fields without returning rejected values", () => {
@@ -42,7 +44,7 @@ describe("CRM-40 adaptador Meta Ads somente leitura", () => {
       if (!url.searchParams.has("after")) return ok({ data: [{ id: "act_123456", account_id: "123456", name: "Conta A", currency: "BRL", timezone_name: "America/Sao_Paulo" }], paging: { cursors: { after: "cursor-safe" } } });
       return ok({ data: [{ id: "act_654321", account_id: "654321", name: "Conta B", currency: "BRL", timezone_name: "America/Sao_Paulo" }] });
     });
-    const result = await new MetaAdsReadAdapter({ fetcher }).testConnection(config, credentials);
+    const result = await new MetaAdsReadAdapter({ fetcher }).testConnection({ ...config, selectedAccountIds: [] }, credentials);
     expect(result.accounts).toHaveLength(2);
     expect(calls.every(({ url }) => url.origin === "https://graph.facebook.com" && url.pathname.startsWith("/v26.0/"))).toBe(true);
     expect(calls.every(({ init }) => init?.method === "GET")).toBe(true);

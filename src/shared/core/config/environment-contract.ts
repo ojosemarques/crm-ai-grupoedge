@@ -193,6 +193,8 @@ export function loadEnvironmentContract(
   }
   if (remote && values.META_ADS_SERVER_CREDENTIALS_ENABLED === "true" && !source.META_ADS_ACCESS_TOKEN?.trim() && !source.META_ADS_REPORTING_ACCESS_TOKEN?.trim()) invalidVariables.add("META_ADS_ACCESS_TOKEN");
   if (source.META_ADS_REPORTING_ACCESS_TOKEN?.trim() && !z.string().uuid().safeParse(source.META_ADS_REPORTING_WORKSPACE_ID).success) invalidVariables.add("META_ADS_REPORTING_WORKSPACE_ID");
+  if (source.META_ADS_REPORTING_ACCESS_TOKEN?.trim() && !/^[0-9]{3,40}$/.test(source.META_ADS_REPORTING_BUSINESS_ID ?? "")) invalidVariables.add("META_ADS_REPORTING_BUSINESS_ID");
+  if (source.META_ADS_REPORTING_ACCESS_TOKEN?.trim() && !/^act_[0-9]{3,40}(?:,act_[0-9]{3,40})*$/.test(source.META_ADS_REPORTING_ACCOUNT_IDS ?? "")) invalidVariables.add("META_ADS_REPORTING_ACCOUNT_IDS");
   if (values.PROCESS_ROLE === "worker" && values.AUTOMATION_WORKER_ENABLED !== "true") invalidVariables.add("AUTOMATION_WORKER_ENABLED");
   if (values.PROCESS_ROLE !== "bootstrap" && values.ADMIN_BOOTSTRAP_ENABLED === "true") invalidVariables.add("ADMIN_BOOTSTRAP_ENABLED");
 

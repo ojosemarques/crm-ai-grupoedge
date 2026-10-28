@@ -162,10 +162,10 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     await expect(noCredentialService.testConnection(admin)).rejects.toMatchObject({ code: "META_CREDENTIALS_PENDING" });
     await expect(noCredentialService.screen(admin)).resolves.toMatchObject({ readiness: "PENDING_CREDENTIALS", externalValidation: false });
   });
-  it("isolates reporting credentials, verifies BM ownership and syncs automatically with current delegation", async () => {
+  it("pins approved reporting assets and syncs automatically with current delegation", async () => {
     const fixture = fixtureAdapter("777777");
     let clock = new Date(now.getTime() + 3_600_000);
-    const service = createMetaAdsService({ database, adapter: fixture.adapter, secrets: new EphemeralSecretResolver({ META_ADS_ACCESS_TOKEN: "capi-only", META_ADS_REPORTING_ACCESS_TOKEN: "reporting-only", META_ADS_REPORTING_WORKSPACE_ID: workspaceId }), now: () => clock });
+    const service = createMetaAdsService({ database, adapter: fixture.adapter, secrets: new EphemeralSecretResolver({ META_ADS_ACCESS_TOKEN: "capi-only", META_ADS_REPORTING_ACCESS_TOKEN: "reporting-only", META_ADS_REPORTING_WORKSPACE_ID: workspaceId, META_ADS_REPORTING_BUSINESS_ID: "777777", META_ADS_REPORTING_ACCOUNT_IDS: "act_123456" }), now: () => clock });
     const existing = await database.integrationConnection.findUnique({ where: { workspaceId_key: { workspaceId, key: "meta-ads" } } });
     const configured = await service.configure(admin, { ...(existing ? { revision: existing.revision } : {}), config: { selectedAccountIds: ["act_123456"], businessId: "777777", autoSyncEnabled: true, initialSince: "2046-04-19" } });
     expect(await database.integrationSecretReference.findFirstOrThrow({ where: { workspaceId, connectionId: configured.id, alias: "access-token", disabledAt: null } })).toMatchObject({ referenceKey: "META_ADS_REPORTING_ACCESS_TOKEN" });

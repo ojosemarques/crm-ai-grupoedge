@@ -2,12 +2,11 @@
 
 ## Estado real
 
-O conector possui testes locais e validação externa iniciada. Em 28/10/2026,
-o teste da credencial existente identificou um nome de perfil ausente na
-identidade de sistema; o contrato foi corrigido. A chamada seguinte recebeu
-403 da Meta por falta de permissão de anúncios. Isso não comprova conexão nem
-importação de métricas: uma credencial com `ads_read` ainda precisa ser
-autorizada e validada no workspace e na conta escolhida.
+Em 28/10/2026, a credencial dedicada do aplicativo POLITIZAI ADS foi autorizada
+com apenas `ads_read`. A leitura real da Conta8 e dos insights do dia respondeu
+HTTP 200 na Graph API. O vínculo da conta com a BM foi conferido no Meta
+Business Suite. O estado e a cobertura da importação no CRM são consultáveis
+em `/integracoes/meta-ads`; uma leitura direta da API não comprova importação.
 
 O conector usa a Graph API `v26.0` por padrão e aceita apenas as versões
 explicitamente allowlisted `v25.0` e `v26.0`. A versão deve ser revista antes do
@@ -37,7 +36,9 @@ sem URL arbitrária.
 Para relatórios, prefira `META_ADS_REPORTING_ACCESS_TOKEN`, separado do
 `META_ADS_ACCESS_TOKEN` usado pela Conversions API. A credencial de relatórios
 exige `META_ADS_REPORTING_WORKSPACE_ID` com o UUID exato do workspace; o serviço
-recusa configuração e uso em outro workspace. Os valores ficam somente como
+também exige `META_ADS_REPORTING_BUSINESS_ID` e `META_ADS_REPORTING_ACCOUNT_IDS`
+(IDs `act_...` separados por vírgula). Configuração e coleta recusam outro
+workspace, outra BM ou contas fora dessa lista. Os valores ficam somente como
 Secrets do servidor. A configuração troca a referência versionada, sem copiar
 o token para o banco. Conexões legadas continuam usando a referência anterior
 até serem reconfiguradas.
@@ -51,17 +52,20 @@ altera dados comerciais do CRM.
 1. configure as variáveis somente no ambiente não versionado do processo;
 2. reinicie a aplicação;
 3. entre como Administrador e abra `/integracoes/meta-ads`;
-4. salve a versão da API e a janela inicial;
+4. salve a versão da API, a BM, os IDs de contas autorizados e a janela inicial;
 5. execute **Testar conexão**;
 6. selecione explicitamente as contas retornadas;
 7. salve a nova versão da configuração;
 8. execute a sincronização inicial;
 9. use a incremental nas execuções seguintes.
 
-O campo Business Manager aceita o ID do portfólio escolhido. A descoberta
-filtra as contas pelo `business.id` informado pela Meta, e a coleta verifica
-novamente essa propriedade antes de ler campanhas e métricas. Uma conta que
-mudou de BM é recusada.
+O campo Business Manager deve corresponder ao portfólio aprovado no servidor.
+A descoberta retorna as contas selecionadas acessíveis à credencial. A coleta
+revalida a lista aprovada antes de consultar a API. O campo Graph `business`
+exige `business_management`; ele não é solicitado para preservar o escopo
+`ads_read`. O vínculo BM/conta deve ser conferido no Meta Business Suite ao
+provisionar ou alterar a lista aprovada. Mudança de propriedade que preserve
+o acesso do token não é detectada automaticamente pela Graph API.
 
 Ative **Atualizar métricas automaticamente a cada 15 minutos** e salve/teste a
 conexão para optar pela coleta periódica. O worker existente revalida o membro
@@ -86,6 +90,11 @@ A credencial deve ter apenas leitura de anúncios e acesso explícito às contas
 selecionadas. Se a identidade, a permissão ou a conta falhar, o estado muda para
 `NEEDS_ATTENTION`; se não houver referência resolvível, permanece
 `AWAITING_CREDENTIAL`.
+
+Tokens de sistema podem ser emitidos sem expiração quando a Meta permitir.
+Isso não impede revogação, suspensão do usuário de sistema ou perda de acesso
+ao ativo. A rotação exige substituir o Secret no servidor, publicar o ambiente
+atualizado e testar novamente a conexão; o valor nunca vai para o MCP.
 
 ## Sincronização e idempotência
 
@@ -135,14 +144,6 @@ Pausar a conexão impede novas coletas. Retomar exige teste real aprovado
 anteriormente. Runs e erros ficam em `/integracoes/meta-ads`, enquanto os fatos
 normalizados aparecem em `/aquisicao/midia`.
 
-## Pendente para validação externa
-
-- token real com escopo mínimo e conta de teste/sandbox acessível;
-- confirmação dos IDs de conta permitidos;
-- teste de paginação e rate limit contra a API real;
-- reconciliação de uma amostra real com o Ads Manager;
-- política operacional de rotação/revogação de credencial;
-- evidência de que a versão da API continua suportada no momento da conexão.
-
-Até esses itens ocorrerem, não usar `CONNECTED`, `SANDBOX` ou “validado na Meta”
-em relatórios de aceite.
+Paginação e rate limit têm testes controlados; a validação real não provoca
+limites da plataforma. Ao conferir totais, compare a mesma janela, moeda,
+fuso e horário de coleta: métricas do dia e ações atribuídas podem mudar.

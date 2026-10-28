@@ -3,7 +3,7 @@ import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { MetaAdsReadAdapter, metaAdsReadAdapter, type MetaAdsCredentials, type MetaAdsSyncPayload } from "@/modules/integrations/application/meta-ads-read-adapter";
 import { environmentSecretResolver, type SecretResolver } from "@/modules/integrations/application/secret-resolver";
-import { assertMetaAdsCredentialWorkspace, META_ADS_REPORTING_APP_SECRET_REFERENCE, META_ADS_REPORTING_TOKEN_REFERENCE, resolveMetaAdsTokenReference } from "./meta-ads-credentials";
+import { assertMetaAdsReportingSelection, META_ADS_REPORTING_APP_SECRET_REFERENCE, META_ADS_REPORTING_TOKEN_REFERENCE, resolveMetaAdsTokenReference } from "./meta-ads-credentials";
 import {
   META_ADS_ACCESS_TOKEN_ALIAS,
   META_ADS_ADAPTER_KEY,
@@ -133,10 +133,10 @@ export function createMetaAdsService(options: Options) {
     return options.database.integrationConnection.findUnique({ where: { workspaceId_key: { workspaceId: context.workspaceId, key: CONNECTION_KEY } }, include });
   }
 
-  async function credentialsOrFail(connection: NonNullable<Awaited<ReturnType<typeof findConnection>>>): Promise<MetaAdsCredentials> {
+  async function credentialsOrFail(connection: NonNullable<Awaited<ReturnType<typeof findConnection>>>, config: MetaAdsConfiguration): Promise<MetaAdsCredentials> {
     const tokenReference = connection.secrets.find((item) => item.alias === META_ADS_ACCESS_TOKEN_ALIAS);
     const appSecretReference = connection.secrets.find((item) => item.alias === META_ADS_APP_SECRET_ALIAS);
-    if (tokenReference) await assertMetaAdsCredentialWorkspace(options.secrets, tokenReference.referenceKey, connection.workspaceId);
+    if (tokenReference) await assertMetaAdsReportingSelection(options.secrets, tokenReference.referenceKey, connection.workspaceId, config);
     const accessToken = tokenReference ? await options.secrets.resolve(tokenReference.referenceKey) : null;
     const appSecret = appSecretReference ? await options.secrets.resolve(appSecretReference.referenceKey) : null;
     if (!accessToken) fail("A referência server-side do token Meta ainda não está disponível.", "META_CREDENTIALS_PENDING", 409);
@@ -173,6 +173,7 @@ export function createMetaAdsService(options: Options) {
     await authorize(context, PermissionKeys.INTEGRATIONS_SECRETS_MANAGE);
     const input = metaAdsConfigureSchema.parse(raw);
     const accessReference = await resolveMetaAdsTokenReference(options.secrets, context.workspaceId);
+    await assertMetaAdsReportingSelection(options.secrets, accessReference.referenceKey, context.workspaceId, input.config);
     const accessPresent = accessReference.present;
     const appSecretReferenceKey = accessReference.referenceKey === META_ADS_REPORTING_TOKEN_REFERENCE ? META_ADS_REPORTING_APP_SECRET_REFERENCE : META_ADS_APP_SECRET_REFERENCE;
     const appSecretPresent = Boolean(await options.secrets.resolve(appSecretReferenceKey));
@@ -215,7 +216,7 @@ export function createMetaAdsService(options: Options) {
     if (!connection) fail("Configure a conexão Meta Ads antes de testar.", "META_CONNECTION_NOT_CONFIGURED", 404);
     const config = await currentConfig(connection);
     let credentials: MetaAdsCredentials;
-    try { credentials = await credentialsOrFail(connection); }
+    try { credentials = await credentialsOrFail(connection, config); }
     catch (error) { const failure = { classification: "CONFIGURATION", code: "META_CREDENTIALS_PENDING", safeMessage: "A referência server-side do token Meta ainda não está disponível." } as const; await persistFailure(context, connection.id, failure); throw error; }
     try {
       const result = await options.adapter.testConnection(config, credentials);
@@ -286,7 +287,7 @@ export function createMetaAdsService(options: Options) {
     const connection = await findConnection(context); if (!connection) fail("Configure a conexão Meta Ads antes de sincronizar.", "META_CONNECTION_NOT_CONFIGURED", 404);
     if (!connection.enabled || connection.status !== "CONNECTED" || connection.capabilityLevel !== "CONNECTED") fail("Teste e conecte a conta Meta antes de sincronizar.", "META_CONNECTION_NOT_READY");
     const config = await currentConfig(connection); if (config.selectedAccountIds.length === 0) fail("Selecione ao menos uma conta de anúncios acessível.", "META_ACCOUNT_SELECTION_REQUIRED", 422);
-    const credentials = await credentialsOrFail(connection);
+    const credentials = await credentialsOrFail(connection, config);
     const existing = await options.database.integrationSyncRun.findUnique({ where: { workspaceId_connectionId_direction_objectType_correlationId: { workspaceId: context.workspaceId, connectionId: connection.id, direction: "PULL", objectType: OBJECT_TYPE, correlationId: input.correlationId } } });
     if (existing?.status === "SUCCEEDED") return existing;
     const cursor = await options.database.integrationSyncCursor.findUnique({ where: { workspaceId_connectionId_direction_objectType: { workspaceId: context.workspaceId, connectionId: connection.id, direction: "PULL", objectType: OBJECT_TYPE } } });
