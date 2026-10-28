@@ -9,6 +9,7 @@ export type LeadCardTask = Readonly<{
   completedAt: string | null;
   result: string | null;
   sourceKey: string | null;
+  meetingId?: string | null;
   updatedAt: string;
   editable: boolean;
   overdue: boolean;

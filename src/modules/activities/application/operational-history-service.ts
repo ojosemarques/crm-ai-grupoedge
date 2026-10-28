@@ -970,6 +970,9 @@ export function createOperationalHistoryService(
         },
       });
       if (!task) notFound("Tarefa não encontrada.");
+      if (task.kind === "MEETING" && task.meetingId) {
+        conflict("MEETING_RESULT_REQUIRED", "Registre o resultado pelas ações da reunião para atualizar a agenda e o lead juntos.");
+      }
       if (task.kind === "IMMEDIATE_CALL") {
         conflict(
           "CONTACT_ACTIVITY_REQUIRED",
@@ -2392,6 +2395,7 @@ export function createOperationalHistoryService(
         completedAt: task.completedAt?.toISOString() ?? null,
         result: task.result,
         sourceKey: task.sourceKey,
+        meetingId: task.meetingId,
         updatedAt: task.updatedAt.toISOString(),
         editable: isManuallyEditableTask(task),
         overdue:

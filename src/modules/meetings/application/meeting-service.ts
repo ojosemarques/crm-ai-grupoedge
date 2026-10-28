@@ -92,6 +92,7 @@ const nextActionSchema = z.object({
   title: z.string().trim().min(2).max(200),
   dueAtLocal: localDateTimeSchema,
 }).strict();
+const leadDestinationSchema = z.enum(["MEETING_COMPLETED", "PROPOSAL"]);
 
 const agendaQuerySchema = z.object({
   view: z.enum(["day", "week"]).default("day"),
@@ -141,6 +142,7 @@ const actionSchema = z.discriminatedUnion("action", [
     meetingId: z.string().uuid(),
     expectedRevision: z.number().int().positive(),
     outcome: z.string().trim().min(3).max(5_000),
+    leadDestination: leadDestinationSchema.optional(),
     nextAction: nextActionSchema,
   }).strict(),
   z.object({
@@ -162,6 +164,7 @@ const actionSchema = z.discriminatedUnion("action", [
     participantEmail: participantEmailSchema.nullable().optional(),
     participantEmails: participantEmailsSchema.optional(),
     outcome: z.string().trim().max(5_000).nullable(),
+    leadDestination: leadDestinationSchema.optional(),
     reason: z.string().trim().min(3).max(2_000),
   }).strict(),
 ]).superRefine((value, context) => {
@@ -192,7 +195,7 @@ const transcriptSchema = z.object({
 type MeetingRow = Prisma.MeetingGetPayload<{
   include: {
     participants: true;
-    lead: { select: { fullName: true } };
+    lead: { select: { fullName: true; pipeline: { select: { name: true } } } };
     owner: { select: { user: { select: { displayName: true } } } };
     createdBy: { select: { displayName: true } };
     calendarLinks: { select: { syncState: true }; take: 1 };
@@ -312,6 +315,7 @@ function serializeMeeting(row: MeetingRow, now: Date, canWrite: boolean): Meetin
     participants: meetingGuests(row).map((guest) => ({ ...guest, responseUpdatedAt: guest.responseUpdatedAt?.toISOString() ?? null })),
     revision: row.revision,
     canWrite,
+    canChooseLeadDestination: row.lead.pipeline.name === ADVERTISING_PIPELINE_NAME,
     calendarSync: row.googleCalendarLink
       ? { state: row.googleCalendarLink.syncState, externalEgress: true, conferenceUrl: row.googleCalendarLink.conferenceUrl }
       : { state: (row.calendarLinks[0]?.syncState ?? "NOT_LINKED") as MeetingListItem["calendarSync"]["state"], externalEgress: false, conferenceUrl: null },
@@ -376,6 +380,7 @@ async function syncActiveProspectingMeetingStageInTransaction(
     meetingId: string;
     status: MeetingStatus;
     occurredAt: Date;
+    leadDestination?: z.infer<typeof leadDestinationSchema>;
   }>,
 ) {
   const pipeline = await transaction.pipeline.findFirst({
@@ -386,10 +391,15 @@ async function syncActiveProspectingMeetingStageInTransaction(
       name: { in: [...prospectingOperationPipelineNames] },
       deletedAt: null,
     },
-    select: { id: true },
+    select: { id: true, name: true },
   });
   if (!pipeline) return;
-  const stableKey = activeProspectingMeetingStage(input.status);
+  if (input.leadDestination === "PROPOSAL" && pipeline.name !== ADVERTISING_PIPELINE_NAME) {
+    invalidInput("O destino Proposta pelo resultado da reunião está disponível em Anúncios.");
+  }
+  const stableKey = input.status === "COMPLETED" && input.leadDestination === "PROPOSAL"
+    ? "active-prospecting.proposal"
+    : activeProspectingMeetingStage(input.status);
   const target = await transaction.pipelineStage.findFirst({
     where: {
       workspaceId: context.workspaceId,
@@ -410,6 +420,7 @@ async function syncActiveProspectingMeetingStageInTransaction(
     origin: "MEETING",
     managerCorrection: false,
     confirmed: true,
+    ...(stableKey === "active-prospecting.proposal" ? { commercialEvent: "MEETING_COMPLETED" as const } : {}),
   }, input.occurredAt);
 }
 
@@ -640,7 +651,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           ...ownerFilter,
         },
         include: {
-          lead: { select: { fullName: true } },
+          lead: { select: { fullName: true, pipeline: { select: { name: true } } } },
           owner: { select: { user: { select: { displayName: true } } } },
           createdBy: { select: { displayName: true } },
           calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
@@ -714,7 +725,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       options.database.meeting.findMany({
         where: { workspaceId: context.workspaceId, leadId: lead.id, deletedAt: null },
         include: {
-          lead: { select: { fullName: true } },
+          lead: { select: { fullName: true, pipeline: { select: { name: true } } } },
           owner: { select: { user: { select: { displayName: true } } } },
           createdBy: { select: { displayName: true } },
           calendarLinks: { select: { syncState: true }, take: 1, orderBy: { createdAt: "asc" } },
@@ -1279,6 +1290,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
         meetingId: meeting.id,
         status: newStatus,
         occurredAt: now,
+        ...((parsed.data.action === "ATTENDED" || parsed.data.action === "EDIT") && parsed.data.leadDestination
+          ? { leadDestination: parsed.data.leadDestination } : {}),
       });
       const nextTask = await findNextTask(transaction, context.workspaceId, meeting.leadId);
       const opportunityTask = meeting.opportunityId
@@ -1345,6 +1358,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
             observation,
             outcome,
             revision: updated.revision,
+            ...((parsed.data.action === "ATTENDED" || parsed.data.action === "EDIT") && parsed.data.leadDestination
+              ? { leadDestination: parsed.data.leadDestination } : {}),
           },
           correctsActivityId: correctedActivity?.id ?? null,
           createdByActorId: context.actorId,
@@ -1640,6 +1655,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         participants: { orderBy: { position: "asc" } },
         lead: {
           include: {
+            pipeline: { select: { name: true } },
             submissions: {
               orderBy: [{ submittedAt: "desc" }, { id: "desc" }],
               take: 1,

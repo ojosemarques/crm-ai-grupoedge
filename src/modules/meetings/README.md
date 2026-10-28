@@ -15,3 +15,8 @@ No pipeline `Prospecção Ativa`, o resultado persistido na agenda também atual
 o card na mesma transação: reuniões realizadas seguem para `Reunião feita`;
 no-show e cancelamento seguem para `Noshow`; reabertura ou remarcação retorna o
 lead para `Reunião marcada`.
+
+Em `Anúncios`, ao registrar comparecimento ou corrigir uma reunião realizada,
+o vendedor informa o resumo e escolhe `Reunião feita` ou `Proposta`. A agenda,
+a tarefa vinculada e a etapa são atualizadas na mesma transação. Tarefas de
+reuniões vinculadas direcionam para esse fluxo de resultado na ficha do lead.

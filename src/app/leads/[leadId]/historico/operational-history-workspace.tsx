@@ -1479,7 +1479,8 @@ export function OperationalHistoryWorkspace({
                                 </div>
                               </form>
                             ) : <Button className="mt-3" onClick={() => setEditingTaskId(task.id)} size="sm" type="button" variant="secondary">Editar tarefa concluída</Button> : null}
-                            {operations.permissions.canManageTasks && (task.status === "OPEN" || task.status === "IN_PROGRESS") && task.kind !== "IMMEDIATE_CALL" ? (
+                            {task.kind === "MEETING" && task.meetingId && (task.status === "OPEN" || task.status === "IN_PROGRESS") ? <div className="mt-3 space-y-2"><p className="text-xs text-muted-foreground">Registre o resultado, o resumo e a etapa de destino nas ações da reunião.</p><Button onClick={() => setActiveTab("meetings")} size="sm" type="button" variant="secondary">Registrar resultado da reunião</Button></div> : null}
+                            {operations.permissions.canManageTasks && (task.status === "OPEN" || task.status === "IN_PROGRESS") && task.kind !== "IMMEDIATE_CALL" && !(task.kind === "MEETING" && task.meetingId) ? (
                               <form className="mt-3 grid gap-3" onSubmit={(event) => submitCompletion(event, task.id)}>
                                 {completion.available ? <>
                                   <label className="text-sm">Resultado da conclusão<select className={inputClass} name="result" required><option value="">Selecione</option>{completion.options.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>

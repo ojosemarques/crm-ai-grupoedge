@@ -82,6 +82,7 @@ export function MeetingActions({
         observation: data.get("observation") || null,
         participantEmails: participantEmailsFromForm(data),
         outcome: data.get("outcome") || null,
+        ...(editStatus === "COMPLETED" && meeting.canChooseLeadDestination ? { leadDestination: data.get("leadDestination") } : {}),
         reason: data.get("reason"),
       });
       return;
@@ -102,7 +103,7 @@ export function MeetingActions({
     await post({
       ...common,
       ...(action === "ATTENDED"
-        ? { outcome: data.get("outcome") }
+        ? { outcome: data.get("outcome"), ...(meeting.canChooseLeadDestination ? { leadDestination: data.get("leadDestination") } : {}) }
         : { reason: data.get("reason") }),
       nextAction,
     });
@@ -139,6 +140,7 @@ export function MeetingActions({
               <label className="text-sm">Duração<select className={inputClass} defaultValue={meeting.durationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
               <MeetingParticipantField className="text-sm sm:col-span-2" defaultEmails={meeting.participants.map((guest) => guest.email)} inputClassName={inputClass} />
               <label className="text-sm">Resultado ou motivo final<textarea className={inputClass} defaultValue={meeting.outcome ?? ""} minLength={3} name="outcome" required={editStatus === "COMPLETED" || editStatus === "NO_SHOW"} /></label>
+              {editStatus === "COMPLETED" && meeting.canChooseLeadDestination ? <LeadDestinationField /> : null}
               <label className="text-sm sm:col-span-2">Observação<textarea className={inputClass} defaultValue={meeting.observation ?? ""} name="observation" /></label>
               <label className="text-sm sm:col-span-2">Motivo da correção<textarea className={inputClass} minLength={3} name="reason" required /></label>
               <p className="text-xs text-muted-foreground sm:col-span-2">A alteração gera uma nova revisão e preserva o registro anterior no histórico.</p>
@@ -151,7 +153,8 @@ export function MeetingActions({
             </>
           ) : (
             <>
-              <label className="text-sm sm:col-span-2">{action === "ATTENDED" ? "Resultado" : "Motivo"}<textarea className={inputClass} name={action === "ATTENDED" ? "outcome" : "reason"} required /></label>
+              <label className="text-sm sm:col-span-2">{action === "ATTENDED" ? "Resumo da reunião" : "Motivo"}<textarea className={inputClass} minLength={3} name={action === "ATTENDED" ? "outcome" : "reason"} required /></label>
+              {action === "ATTENDED" && meeting.canChooseLeadDestination ? <LeadDestinationField /> : null}
               <label className="text-sm">Próxima ação<input className={inputClass} name="nextActionTitle" required /></label>
               <label className="text-sm">Prazo da próxima ação<input className={inputClass} name="nextActionDueAtLocal" required type="datetime-local" /></label>
               <p className="text-xs text-muted-foreground sm:col-span-2">A próxima ação é explícita para que o lead não fique sem acompanhamento.</p>
@@ -166,4 +169,8 @@ export function MeetingActions({
       {notice ? <p className={`mt-2 text-sm ${notice.kind === "error" ? "text-red-700" : "text-emerald-700"}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
     </div>
   );
+}
+
+function LeadDestinationField() {
+  return <label className="text-sm sm:col-span-2">Para onde mover o lead?<select className={inputClass} defaultValue="" name="leadDestination" required><option value="" disabled>Selecione a etapa após a reunião</option><option value="MEETING_COMPLETED">Reunião feita</option><option value="PROPOSAL">Proposta</option></select></label>;
 }

@@ -381,7 +381,7 @@ export type TransactionalLeadStageTransitionInput = Readonly<{
   managerCorrection: boolean;
   confirmed: boolean;
   disqualificationReasonId?: string | null;
-  commercialEvent?: "PROPOSAL_REGISTERED" | "SALE_WON";
+  commercialEvent?: "PROPOSAL_REGISTERED" | "SALE_WON" | "MEETING_COMPLETED";
 }>;
 
 export async function transitionLeadStageInTransaction(
@@ -438,7 +438,8 @@ export async function transitionLeadStageInTransaction(
   if (target.id === lead.currentStageId) conflict("STAGE_UNCHANGED", "O lead já está nesta etapa.");
   const advertisingSchedulingPolicy = lead.pipeline.name === "Anúncios" && target.leadStageCode === "MEETING_SCHEDULED" && input.origin !== "MEETING"
     ? await assertAdvertisingSchedulingAccess(transaction, context) : null;
-  if (target.leadStageCode === "PROPOSAL" && input.commercialEvent !== "PROPOSAL_REGISTERED") {
+  const meetingProposal = input.commercialEvent === "MEETING_COMPLETED" && input.origin === "MEETING" && lead.pipeline.name === ADVERTISING_PIPELINE_NAME;
+  if (target.leadStageCode === "PROPOSAL" && input.commercialEvent !== "PROPOSAL_REGISTERED" && !meetingProposal) {
     conflict("PROPOSAL_FORM_REQUIRED", "Registre uma proposta no negócio vinculado para avançar o lead.");
   }
   if (target.leadStageCode === "CLIENT" && input.commercialEvent !== "SALE_WON") {

@@ -25,6 +25,7 @@ export type MeetingListItem = Readonly<{
   participants: readonly Readonly<{ email: string; responseStatus: MeetingParticipantResponseStatusValue; responseUpdatedAt: string | null }>[];
   revision: number;
   canWrite: boolean;
+  canChooseLeadDestination?: boolean;
   calendarSync: Readonly<{
     state: "NOT_LINKED" | "PENDING_PUSH" | "PENDING_PULL" | "SYNCED" | "CONFLICT" | "FAILED" | "CANCELLED";
     externalEgress: boolean;

@@ -239,6 +239,38 @@ beforeAll(async () => {
 afterAll(async () => database.$disconnect());
 
 describe("agenda interna e reuniões", () => {
+  it.each(["MEETING_COMPLETED", "PROPOSAL"] as const)("salva o resultado de Anúncios e move para %s na mesma transação", async (leadDestination) => {
+    clock = new Date("2035-02-10T15:00:00.000Z");
+    await ensureAdvertisingPipeline(database, workspaceId, managerContext.actorId);
+    const ads = await database.pipeline.findFirstOrThrow({ where: { workspaceId, name: "Anúncios" }, include: { stages: true } });
+    const intake = await createLeadIntakeService({ database, authorization, now: () => clock }).intake({
+      channel: "MANUAL", fullName: `Destino reunião ${leadDestination}`, phone: `+55119${(++sequence).toString().slice(-8)}`,
+      idempotencyKey: randomUUID(), sourceKey: "manual", pipelineId: ads.id,
+      initialStageId: ads.stages.find((stage) => stage.leadStageCode === "NEW")!.id, priorityBandCode: "P3",
+      rawPayload: { test: "meeting-destination" },
+    }, systemContext);
+    if (intake.outcome === "REJECTED") throw new Error(intake.code);
+    const saved = await schedule(intake.leadId, adminContext, "2035-02-09T09:30");
+    const closer = await contextByMember(closer1Id);
+    const screen = await meetings().getLeadMeetings(closer, { leadId: intake.leadId });
+    expect(screen.meetings[0]?.canChooseLeadDestination).toBe(true);
+    const operations = createOperationalHistoryService({ database, authorization, now: () => clock });
+    expect((await operations.getLeadOperations(closer, { leadId: intake.leadId })).tasks).toContainEqual(expect.objectContaining({ id: saved.taskId, meetingId: saved.meetingId }));
+    await expect(operations.completeTask(closer, { leadId: intake.leadId, taskId: saved.taskId, result: "Concluída sem resultado na agenda" })).rejects.toMatchObject({ code: "MEETING_RESULT_REQUIRED" });
+    const input = { action: "ATTENDED", meetingId: saved.meetingId, expectedRevision: 1, outcome: "Diagnóstico realizado e próximos passos definidos.", leadDestination, nextAction: { title: "Retomar conversa", dueAtLocal: "2035-02-11T10:00" } };
+    await expect(meetings().act(closer, { ...input, leadDestination: "CLIENT" })).rejects.toThrow();
+    await expect(meetings({ beforeCommit: async () => { throw new Error("rollback destino"); } }).act(closer, input)).rejects.toThrow("rollback destino");
+    expect(await database.meeting.findUniqueOrThrow({ where: { id: saved.meetingId } })).toMatchObject({ status: "SCHEDULED", revision: 1 });
+    await meetings().act(closer, input);
+    expect(await database.lead.findUniqueOrThrow({ where: { id: intake.leadId }, include: { currentStage: true } })).toMatchObject({ currentStage: { leadStageCode: leadDestination } });
+    expect(await database.task.findUniqueOrThrow({ where: { id: saved.taskId } })).toMatchObject({ status: "COMPLETED", result: input.outcome });
+    expect(await database.meeting.findUniqueOrThrow({ where: { id: saved.meetingId } })).toMatchObject({ status: "COMPLETED", outcome: input.outcome });
+    expect(await database.opportunity.count({ where: { workspaceId, leadId: intake.leadId } })).toBe(0);
+    await meetings().act(closer, { action: "EDIT", meetingId: saved.meetingId, expectedRevision: 2, title: "Resultado corrigido", startsAtLocal: "2035-02-09T09:30", durationMinutes: 30, status: "COMPLETED", observation: null, outcome: input.outcome, leadDestination: leadDestination === "PROPOSAL" ? "MEETING_COMPLETED" : "PROPOSAL", reason: "Correção da etapa escolhida após reunião." });
+    expect(await database.lead.findUniqueOrThrow({ where: { id: intake.leadId }, include: { currentStage: true } })).toMatchObject({ currentStage: { leadStageCode: leadDestination === "PROPOSAL" ? "MEETING_COMPLETED" : "PROPOSAL" } });
+    await expect(meetings().act(viewerContext, { ...input, expectedRevision: 3 })).rejects.toThrow();
+  });
+
   it("agenda reunião para lead novo sem resumo, detalhes ou PACTO", async () => {
     sequence += 1;
     const created = await createLeadIntakeService({ database, authorization, now: () => clock }).intake({
