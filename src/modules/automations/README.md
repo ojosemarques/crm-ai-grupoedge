@@ -23,5 +23,19 @@ Fronteira do motor local entregue nas CRM-21, CRM-22 e CRM-23:
 
 As 12 automações são predefinidas e seedadas. A gestão e o histórico ficam em
 `/automacoes`; cada usuário consulta suas notificações em `/notificacoes`.
-Não existe editor visual livre, integração externa, mensagem real, onboarding
-ou nutrição automática. Consulte `docs/AUTOMATIONS.md`.
+Essas 12 regras não enviam mensagens reais; conectores externos são executados
+por workers específicos. Consulte `docs/AUTOMATIONS.md`.
+
+Os novos leads do pipeline `Anúncios` do workspace `politizai` podem gerar um
+aviso privado para Carlos pelo Telegram. O job é persistido com a entrada do
+lead e enviado depois do commit, inclusive nos formulários públicos. O cron
+recupera falhas; replay da entrada e conversões anexadas não criam novo aviso.
+O envio exige `TELEGRAM_ENABLED=true`, `TELEGRAM_BOT_TOKEN` e
+`TELEGRAM_WEBHOOK_SECRET` server-side, além de Carlos ativo e conectado.
+O vínculo usa a conexão `telegram-carlos-lead-alerts`, configuração versionada
+`telegram-lead-alerts/v1` e um código de ativação de uso único, com expiração.
+Somente o hash do código fica no banco. O webhook
+`/api/integrations/telegram/webhook` exige o segredo do Telegram, aceita vínculo
+apenas em conversa privada e impede que outro chat reutilize o código.
+O aviso inclui nome, horário de recebimento e botão para a ficha autenticada;
+telefone e respostas do formulário permanecem no CRM. O bot não aborda o lead.

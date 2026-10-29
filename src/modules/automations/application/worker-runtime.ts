@@ -22,6 +22,7 @@ import { getProspectingPlannerService } from "@/modules/prospecting/application/
 import { getProspectingReconciliationService } from "@/modules/prospecting/application/prospecting-reconciliation-service";
 import { createMillionSendProspectingWorker } from "@/modules/prospecting/application/millionsend-prospecting-worker";
 import { createMeetingParticipantEmailWorker } from "@/modules/meetings/application/meeting-participant-email-service";
+import { createTelegramLeadAlertWorker } from "@/modules/integrations/application/telegram-lead-alert-service";
 import type { ApplicationConfig } from "@/shared/core/config/application-config";
 import { getDatabaseClient } from "@/shared/core/database/client";
 
@@ -56,12 +57,14 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
   const prospectingReconciliationWorker = getProspectingReconciliationService();
   const millionSendProspectingWorker = createMillionSendProspectingWorker();
   const meetingParticipantEmailWorker = createMeetingParticipantEmailWorker(common);
+  const telegramLeadAlertWorker = createTelegramLeadAlertWorker(common);
 
   return Object.freeze({
     database,
     runner: createWorkerBatchRunner({
       scanDue: lifecycleScanner.scanDue,
       processors: [
+        { key: "telegram-lead-alert", processNext: telegramLeadAlertWorker.processNext },
         { key: "meta-ads", processNext: getMetaAdsService().processDue },
         { key: "millionsend-prospecting-email", processNext: millionSendProspectingWorker.processNext },
         { key: "prospecting-reconciliation", processNext: prospectingReconciliationWorker.processNext },

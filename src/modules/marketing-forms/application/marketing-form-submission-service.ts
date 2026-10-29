@@ -6,6 +6,7 @@ import { buildMinimizedMetaConversion, metaConversionDeduplicationKey, metaConve
 import { createOutboxEventInTransaction } from "@/modules/integrations/application/integration-platform-service";
 import { canonicalJson } from "@/modules/integrations/domain/integration-policy";
 import { getLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { deliverTelegramReceiptAlertAfterCommit } from "@/modules/integrations/application/telegram-lead-alert-service";
 import { marketingFormDefinitionSchema, marketingFormSlugSchema, type MarketingFormDefinition } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import { publicFormEventSchema, publicFormSubmitSchema } from "@/modules/marketing-forms/domain/public-form-contracts";
 import { mapAnswersToLead, publicFormAnswerError, validatePublicFormAnswers } from "@/modules/marketing-forms/domain/public-form-validation";
@@ -406,6 +407,7 @@ export function createMarketingFormSubmissionService(options: Options) {
     }, { isolationLevel: "Serializable" });
 
     if (!transactionResult.ok) fail("Não foi possível processar esta resposta.", "MARKETING_FORM_INTAKE_REJECTED", 422);
+    await deliverTelegramReceiptAlertAfterCommit(options.database, form.workspaceId, transactionResult.receiptId);
     let metaEventId: string | null = null;
     try {
       metaEventId = await options.database.$transaction((tx) => queueMetaConversionForReceipt(tx, { form, receiptId: transactionResult.receiptId, receiptPublicId: transactionResult.result.receiptPublicId, actorId: transactionResult.actorId, now, allowServerSide: mapped.contactPreference === true }));

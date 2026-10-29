@@ -17,6 +17,8 @@ import type {
   PublicationResult,
 } from "@/modules/automations/domain/automation-contracts";
 import { getAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
+import { deliverTelegramLeadAlertAfterCommit, enqueueTelegramLeadAlertInTransaction } from "@/modules/integrations/application/telegram-lead-alert-service";
+import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
 import {
   chooseRoundRobinOwner,
@@ -192,7 +194,7 @@ type IntakeReferences = Readonly<{
   campaign: Readonly<{ id: string }> | null;
   creative: Readonly<{ id: string }> | null;
   queue: Readonly<{ id: string; teamId: string | null }>;
-  pipeline: Readonly<{ id: string }>;
+  pipeline: Readonly<{ id: string; name: string }>;
   stage: Readonly<{ id: string }>;
   requestedOwner: Readonly<{ id: string }> | null;
   priorityBand: Readonly<{
@@ -456,7 +458,7 @@ async function findReferences(
       ...(input.pipelineId ? { id: input.pipelineId } : { isDefault: true }),
       deletedAt: null,
     },
-    select: { id: true },
+    select: { id: true, name: true },
   });
   const priorityBand = await transaction.leadPriorityBand.findFirst({
     where: {
@@ -1298,6 +1300,9 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
             action: "lead.score.form_provisional_calculated",
           });
         }
+        if (references.pipeline.name === ADVERTISING_PIPELINE_NAME) {
+          await enqueueTelegramLeadAlertInTransaction(transaction, { workspaceId: context.workspaceId, leadId: lead.id, actorId: context.actorId, occurredAt: parsed.receivedAt });
+        }
         await options.afterInitialOperationsPersisted?.();
         await transaction.auditLog.create({
           data: {
@@ -1675,6 +1680,9 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       } catch {
         // Automações complementam o cadastro e nunca impedem a persistência do lead.
       }
+    }
+    if (!transactionOverride && result.outcome === "CREATED" && !result.idempotentReplay) {
+      await deliverTelegramLeadAlertAfterCommit(options.database, context.workspaceId, result.leadId);
     }
     return result;
   }
