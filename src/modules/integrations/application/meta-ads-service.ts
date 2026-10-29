@@ -30,11 +30,16 @@ import { getAuthorizationService } from "@/modules/users/permissions/authorizati
 import { PermissionKeys, type PermissionKey } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { logger } from "@/shared/core/logging/logger";
 
 type Tx = Prisma.TransactionClient;
 type Options = Readonly<{ database: PrismaClient; adapter: MetaAdsReadAdapter; secrets: SecretResolver; now: () => Date }>;
 const CONNECTION_KEY = "meta-ads";
 const OBJECT_TYPE = "meta_ads_daily_insights";
+const AUTO_SYNC_INTERVAL_MS = 15 * 60_000;
+const AUTO_SYNC_RETRY_MS = 5 * 60_000;
+const MAX_CONSECUTIVE_FAILURES = 3;
+const retryableFailures: MetaAdsFailure["classification"][] = ["TRANSIENT", "RATE_LIMIT", "INTERNAL"];
 const json = (value: unknown) => JSON.parse(JSON.stringify(redactSensitive(value))) as Prisma.InputJsonValue;
 
 function fail(message: string, code: string, statusCode = 409): never {
@@ -204,11 +209,17 @@ export function createMetaAdsService(options: Options) {
     }, { isolationLevel: "Serializable" });
   }
 
-  async function persistFailure(context: Pick<AuthenticatedContext, "workspaceId" | "actorId">, connectionId: string, failure: MetaAdsFailure, requestId?: string) {
+  async function persistFailure(context: Pick<AuthenticatedContext, "workspaceId" | "actorId">, connectionId: string, failure: MetaAdsFailure, requestId?: string, automatic = false) {
     const now = options.now();
     await options.database.$transaction(async (tx) => {
-      await tx.integrationConnection.update({ where: { id: connectionId }, data: { status: errorStatus(failure), enabled: false, lastErroredAt: now, currentErrorClass: failure.classification, currentErrorCode: failure.code, currentErrorMessage: failure.safeMessage, revision: { increment: 1 }, updatedByActorId: context.actorId } });
-      await audit(tx, context, { action: "integration.meta_ads.failed", entityId: connectionId, ...(requestId ? { requestId } : {}), changes: { classification: failure.classification, code: failure.code, retryAfterSeconds: failure.retryAfterSeconds ?? null, secretIncluded: false } });
+      await tx.$queryRaw`SELECT id FROM integration_connections WHERE id=${connectionId}::uuid AND "workspaceId"=${context.workspaceId}::uuid FOR UPDATE`;
+      const current = await tx.integrationConnection.findUniqueOrThrow({ where: { workspaceId_id: { workspaceId: context.workspaceId, id: connectionId } } });
+      const retryable = automatic && retryableFailures.includes(failure.classification);
+      const failures = retryable ? await tx.integrationDeliveryAttempt.count({ where: { workspaceId: context.workspaceId, kind: "SYNC", syncRun: { connectionId, objectType: OBJECT_TYPE }, status: "FAILED", finishedAt: { gt: current.lastSucceededAt ?? new Date(0) } } }) : 0;
+      const retryScheduled = retryable && current.enabled && !current.disabledAt && failures < MAX_CONSECUTIVE_FAILURES;
+      const manuallyPaused = current.status === "PAUSED" || current.disabledAt !== null;
+      await tx.integrationConnection.update({ where: { id: connectionId }, data: { status: manuallyPaused ? current.status : errorStatus(failure), enabled: retryScheduled, lastErroredAt: now, currentErrorClass: failure.classification, currentErrorCode: failure.code, currentErrorMessage: failure.safeMessage, revision: { increment: 1 }, updatedByActorId: context.actorId } });
+      await audit(tx, context, { action: "integration.meta_ads.failed", entityId: connectionId, ...(requestId ? { requestId } : {}), changes: { classification: failure.classification, code: failure.code, retryAfterSeconds: failure.retryAfterSeconds ?? null, retryScheduled, consecutiveFailures: failures, secretIncluded: false } });
     });
   }
 
@@ -287,7 +298,9 @@ export function createMetaAdsService(options: Options) {
     await authorize(context, PermissionKeys.INTEGRATIONS_EXECUTE);
     await authorize(context, PermissionKeys.MARKETING_MEDIA_IMPORT);
     const connection = await findConnection(context); if (!connection) fail("Configure a conexão Meta Ads antes de sincronizar.", "META_CONNECTION_NOT_CONFIGURED", 404);
-    if (!connection.enabled || connection.status !== "CONNECTED" || connection.capabilityLevel !== "CONNECTED") fail("Teste e conecte a conta Meta antes de sincronizar.", "META_CONNECTION_NOT_READY");
+    if (connection.enabled && connection.status === "SYNCING") fail("Já existe uma sincronização Meta em andamento.", "META_SYNC_ALREADY_RUNNING");
+    const retryAllowed = connection.status === "DEGRADED" && retryableFailures.some((classification) => classification === connection.currentErrorClass);
+    if (!connection.enabled || connection.disabledAt || (connection.status !== "CONNECTED" && !retryAllowed) || connection.capabilityLevel !== "CONNECTED") fail("Teste e conecte a conta Meta antes de sincronizar.", "META_CONNECTION_NOT_READY");
     const config = await currentConfig(connection); if (config.selectedAccountIds.length === 0) fail("Selecione ao menos uma conta de anúncios acessível.", "META_ACCOUNT_SELECTION_REQUIRED", 422);
     const credentials = await credentialsOrFail(connection, config);
     const existing = await options.database.integrationSyncRun.findUnique({ where: { workspaceId_connectionId_direction_objectType_correlationId: { workspaceId: context.workspaceId, connectionId: connection.id, direction: "PULL", objectType: OBJECT_TYPE, correlationId: input.correlationId } } });
@@ -350,11 +363,13 @@ export function createMetaAdsService(options: Options) {
       }, { isolationLevel: "Serializable", timeout: 30_000 });
     } catch (error) {
       const failure = options.adapter.classifyError(error); const finishedAt = options.now();
+      const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" && /^P\d{4}$/.test(error.code) ? error.code : undefined;
+      logger.warn({ operation: "meta_ads_sync", syncRunId: run.id, errorCode: failure.code, errorClass: failure.classification, errorName: error instanceof Error && /^[\w.]{1,80}$/.test(error.name) ? error.name : "UnknownError", databaseErrorCode: code }, "Coleta Meta falhou; diagnóstico sem payload ou credenciais");
       await options.database.$transaction(async (tx) => {
         await tx.integrationSyncRun.update({ where: { id: run.id }, data: { status: "FAILED", errorClass: failure.classification, errorCode: failure.code, errorMessage: failure.safeMessage, failedCount: { increment: 1 }, finishedAt } });
         await tx.integrationDeliveryAttempt.create({ data: { workspaceId: context.workspaceId, kind: "SYNC", syncRunId: run.id, attemptNumber: run.attempts, status: "FAILED", errorClass: failure.classification, errorCode: failure.code, errorMessage: failure.safeMessage, retryAfterSeconds: failure.retryAfterSeconds ?? null, startedAt: run.startedAt ?? finishedAt, finishedAt } });
       });
-      await persistFailure(context, connection.id, failure, input.correlationId);
+      await persistFailure(context, connection.id, failure, input.correlationId, config.autoSyncEnabled === true);
       fail(failure.safeMessage, failure.code, failure.classification === "AUTHENTICATION" ? 401 : failure.classification === "PERMISSION" ? 403 : 409);
     }
   }
@@ -372,11 +387,16 @@ export function createMetaAdsService(options: Options) {
   }
 
   async function processDue() {
-    const dueBefore = new Date(options.now().getTime() - 15 * 60_000);
-    const connections = await options.database.integrationConnection.findMany({ where: { key: CONNECTION_KEY, providerKey: META_ADS_PROVIDER_KEY, enabled: true, status: "CONNECTED", capabilityLevel: "CONNECTED", disabledAt: null, OR: [{ lastSucceededAt: null }, { lastSucceededAt: { lt: dueBefore } }] }, include, orderBy: { lastSucceededAt: "asc" }, take: 50 });
+    const dueBefore = new Date(options.now().getTime() - AUTO_SYNC_INTERVAL_MS);
+    const retryBefore = new Date(options.now().getTime() - AUTO_SYNC_RETRY_MS);
+    const connections = await options.database.integrationConnection.findMany({ where: { key: CONNECTION_KEY, providerKey: META_ADS_PROVIDER_KEY, enabled: true, capabilityLevel: "CONNECTED", disabledAt: null, OR: [{ status: "CONNECTED", OR: [{ lastSucceededAt: null }, { lastSucceededAt: { lt: dueBefore } }] }, { status: "DEGRADED", currentErrorClass: { in: retryableFailures }, lastErroredAt: { lte: retryBefore } }] }, include, orderBy: { lastSucceededAt: "asc" }, take: 50 });
     for (const connection of connections) {
       const config = await currentConfig(connection);
       if (!config.autoSyncEnabled || config.selectedAccountIds.length === 0) continue;
+      if (connection.status === "DEGRADED" && connection.lastErroredAt) {
+        const attempt = await options.database.integrationDeliveryAttempt.findFirst({ where: { workspaceId: connection.workspaceId, syncRun: { connectionId: connection.id, objectType: OBJECT_TYPE }, status: "FAILED" }, orderBy: { finishedAt: "desc" }, select: { retryAfterSeconds: true } });
+        if (connection.lastErroredAt.getTime() + Math.max(AUTO_SYNC_RETRY_MS, (attempt?.retryAfterSeconds ?? 0) * 1000) > options.now().getTime()) continue;
+      }
       const actor = await options.database.actor.findFirst({ where: { id: connection.updatedByActorId, workspaceId: connection.workspaceId, type: "HUMAN" }, select: { id: true, userId: true } });
       const member = actor?.userId ? await options.database.workspaceMember.findFirst({ where: { workspaceId: connection.workspaceId, userId: actor.userId, status: "ACTIVE", deletedAt: null, user: { status: "ACTIVE", deletedAt: null }, workspace: { status: "ACTIVE", deletedAt: null }, role: { deletedAt: null } }, select: { id: true, userId: true, roleId: true, role: { select: { key: true, name: true } }, user: { select: { displayName: true } }, workspace: { select: { slug: true } } } }) : null;
       if (!actor || !member) {
@@ -388,7 +408,7 @@ export function createMetaAdsService(options: Options) {
         const result = await runSync(context, { mode: "INCREMENTAL", correlationId: `meta-auto-${Math.floor(options.now().getTime() / 900_000)}-${connection.id}` });
         return { status: result.status };
       } catch (error) {
-        if (error instanceof ApplicationError && error.code === "META_SYNC_ALREADY_RUNNING") return { status: "IDLE" };
+        if (error instanceof ApplicationError && ["META_SYNC_ALREADY_RUNNING", "META_CONNECTION_NOT_READY"].includes(error.code)) return { status: "IDLE" };
         if (!(error instanceof ApplicationError)) throw error;
         const current = await options.database.integrationConnection.findUnique({ where: { workspaceId_id: { workspaceId: connection.workspaceId, id: connection.id } }, select: { currentErrorCode: true } });
         if (current && !current.currentErrorCode) await persistFailure(context, connection.id, { classification: error.statusCode === 403 ? "PERMISSION" : "CONFIGURATION", code: error.code, safeMessage: "A coleta automática Meta foi interrompida. Revalide a conexão antes de retomar." });

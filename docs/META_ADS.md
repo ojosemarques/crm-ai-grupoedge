@@ -76,6 +76,10 @@ humano que autorizou a conexão e suas permissões de executar integrações e
 importar mídia. Suspensão ou perda de permissão interrompe a coleta. Conexões
 pausadas ou sem essa opção não são coletadas automaticamente.
 
+Falhas transitórias, limites da API e falhas internas preservam a coleta habilitada por até três falhas consecutivas desde o último sucesso. O worker tenta novamente após cinco minutos, respeitando um `Retry-After` maior informado pela Meta. Sucesso limpa o erro e restaura o intervalo normal de 15 minutos. Ao atingir o limite, a conexão é desabilitada e exige revalidação. Erros de autenticação, permissão, conta, configuração ou contrato interrompem imediatamente; uma pausa manual nunca é desfeita por uma tentativa com falha. Os erros e a decisão de tentar novamente ficam auditados, sem payloads nem credenciais.
+
+Aquisição e Anúncios e funil atualizam a rota a cada 15 segundos enquanto a aba está visível e online, e ao recuperar foco/conexão. A atualização fica suspensa durante a importação manual. A tela mostra a última coleta realmente concluída (testar a credencial não altera essa data), o estado automático e falhas de sincronização. Atualizar a tela não dispara outra consulta à Graph API; os valores dependem da coleta periódica e do processamento de relatórios da Meta.
+
 Marketing > Aquisição mostra os mesmos fatos de mídia de `/aquisicao/midia`,
 com seleção de datas locais inclusivas e botão Hoje. Os leads reportados pela
 Meta permanecem separados dos leads observados no CRM. As ferramentas

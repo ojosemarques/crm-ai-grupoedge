@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { workspaceDateAt } from "@/shared/core/time/workspace-time";
 import { MarketingPeriodFilter } from "../marketing-period-filter";
+import { RouteAutoRefresh } from "@/components/layout/route-auto-refresh";
 import { AnalyticsChart } from "../analytics-chart";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import { Button } from "@/components/ui/button";
@@ -93,7 +94,10 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
   }
 
   return <div className={styles.workspace}>
+    <RouteAutoRefresh enabled={!importOpen && !pending} />
     <MarketingPeriodFilter basePath={basePath} from={initial.period.startDate} key={`${initial.period.startDate}:${initial.period.endDate}`} to={initial.period.endDate} today={workspaceDateAt(new Date(), initial.period.timeZone)} />
+    {initial.mediaSync ? <p className={styles.footnote} role="status">Última coleta Meta: {initial.mediaSync.lastCollectedAt ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: initial.period.timeZone }).format(new Date(initial.mediaSync.lastCollectedAt)) : "nenhuma sincronização concluída"}. {initial.mediaSync.automatic && initial.mediaSync.enabled ? "Coleta automática a cada 15 minutos. Tela atualizada automaticamente." : "Coleta automática desativada."}</p> : null}
+    {initial.mediaSync?.error ? <p className={styles.feedback} role="alert">{initial.mediaSync.enabled && initial.mediaSync.automatic ? "Coleta com falha; uma nova tentativa automática será feita após o intervalo de segurança." : "Coleta interrompida. Revalide a conexão em Integrações → Meta Ads."} {initial.mediaSync.error}</p> : null}
     <div className={styles.toolbar}><div><Icon name="agenda" size={15} /><span>{initial.period.start.slice(0, 10)} — {initial.period.end.slice(0, 10)}</span><small>vs. {initial.period.previousStart.slice(0, 10)} — {initial.period.previousEnd.slice(0, 10)}</small></div>{initial.permissions.canImport ? <Button onClick={() => setImportOpen(true)} size="sm"><Icon name="mais" size={14} /> Importar performance</Button> : null}</div>
     {feedback && !importOpen ? <p className={styles.feedback} role="status">{feedback}</p> : null}
     <section aria-label="Resumo de mídia" className={styles.kpis}>{[

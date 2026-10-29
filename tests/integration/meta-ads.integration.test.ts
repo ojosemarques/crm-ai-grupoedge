@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
-import { MetaAdsReadAdapter } from "@/modules/integrations/application/meta-ads-read-adapter";
+import { MetaAdsAdapterError, MetaAdsReadAdapter } from "@/modules/integrations/application/meta-ads-read-adapter";
 import { createMetaAdsService } from "@/modules/integrations/application/meta-ads-service";
 import { createMediaPerformanceService } from "@/modules/marketing/application/media-performance-service";
 import { EphemeralSecretResolver } from "@/modules/integrations/application/secret-resolver";
@@ -185,6 +185,28 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     clock = new Date(clock.getTime() + 16 * 60_000);
     expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
     expect(await service.processDue()).toEqual({ status: "IDLE" });
+    const collectedAt = clock.toISOString();
+    clock = new Date(clock.getTime() + 60_000);
+    await service.testConnection(admin);
+    const media = createMediaPerformanceService({ database, now: () => clock });
+    expect((await media.getScreen(admin, { periodStart: "2046-04-19", periodEnd: "2046-04-19" })).mediaSync).toMatchObject({ enabled: true, automatic: true, lastCollectedAt: collectedAt, error: null });
+    const pull = vi.spyOn(fixture.adapter, "pull");
+    pull.mockRejectedValueOnce(new Error("internal fixture failure without provider payload"));
+    clock = new Date(clock.getTime() + 16 * 60_000);
+    expect(await service.processDue()).toEqual({ status: "FAILED" });
+    expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({ status: "DEGRADED", enabled: true, currentErrorCode: "META_INTERNAL" });
+    expect(await service.processDue()).toEqual({ status: "IDLE" });
+    clock = new Date(clock.getTime() + 6 * 60_000);
+    expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
+    expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({ status: "CONNECTED", enabled: true, currentErrorCode: null });
+    pull.mockRejectedValueOnce(new MetaAdsAdapterError({ classification: "RATE_LIMIT", code: "META_RATE_LIMIT", safeMessage: "Fixture limitada", retryAfterSeconds: 3600 }));
+    clock = new Date(clock.getTime() + 16 * 60_000);
+    expect(await service.processDue()).toEqual({ status: "FAILED" });
+    clock = new Date(clock.getTime() + 6 * 60_000);
+    expect(await service.processDue()).toEqual({ status: "IDLE" });
+    clock = new Date(clock.getTime() + 55 * 60_000);
+    expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
+    pull.mockRestore();
     const callsBeforeSuspension = fixture.calls.length;
     await database.workspaceMember.update({ where: { id: admin.memberId }, data: { status: "INACTIVE" } });
     try {
@@ -195,6 +217,48 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     } finally {
       await database.workspaceMember.update({ where: { id: admin.memberId }, data: { status: "ACTIVE" } });
     }
+  });
+
+  it("limita falhas consecutivas e preserva bloqueios de permissão e pausa durante coleta", async () => {
+    const fixture = fixtureAdapter();
+    let clock = new Date(now.getTime() + 6 * 3_600_000);
+    const service = createMetaAdsService({ database, adapter: fixture.adapter, secrets: new EphemeralSecretResolver({ META_ADS_ACCESS_TOKEN: "fixture-only" }), now: () => clock });
+    const prior = await database.integrationConnection.findUniqueOrThrow({ where: { workspaceId_key: { workspaceId, key: "meta-ads" } } });
+    const configured = await service.configure(admin, { revision: prior.revision, config: { selectedAccountIds: ["act_123456"], autoSyncEnabled: true, initialSince: "2046-04-19" } });
+    await service.testConnection(admin);
+    const pull = vi.spyOn(fixture.adapter, "pull");
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        clock = new Date(clock.getTime() + (attempt === 0 ? 16 : 6) * 60_000);
+        pull.mockRejectedValueOnce(new Error("consecutive fixture failure"));
+        expect(await service.processDue()).toEqual({ status: "FAILED" });
+        expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({ status: "DEGRADED", enabled: attempt < 2 });
+      }
+      clock = new Date(clock.getTime() + 30 * 60_000);
+      const exhaustedCalls = pull.mock.calls.length;
+      expect(await service.processDue()).toEqual({ status: "IDLE" });
+      expect(pull).toHaveBeenCalledTimes(exhaustedCalls);
+
+      await service.testConnection(admin);
+      clock = new Date(clock.getTime() + 16 * 60_000);
+      pull.mockRejectedValueOnce(new MetaAdsAdapterError({ classification: "PERMISSION", code: "META_PERMISSION", safeMessage: "Fixture sem permissão" }));
+      expect(await service.processDue()).toEqual({ status: "FAILED" });
+      expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({ status: "NEEDS_ATTENTION", enabled: false });
+      clock = new Date(clock.getTime() + 6 * 60_000);
+      expect(await service.processDue()).toEqual({ status: "IDLE" });
+
+      await service.testConnection(admin);
+      clock = new Date(clock.getTime() + 16 * 60_000);
+      pull.mockImplementationOnce(async () => {
+        const connection = await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } });
+        await service.setPaused(admin, connection.revision, true);
+        throw new Error("fixture interrupted after pause");
+      });
+      expect(await service.processDue()).toEqual({ status: "FAILED" });
+      expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({ status: "PAUSED", enabled: false });
+      clock = new Date(clock.getTime() + 6 * 60_000);
+      expect(await service.processDue()).toEqual({ status: "IDLE" });
+    } finally { pull.mockRestore(); }
   });
 
 });

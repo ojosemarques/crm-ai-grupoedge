@@ -3,12 +3,13 @@
 import { useEffect, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-export function RouteAutoRefresh() {
+export function RouteAutoRefresh({ enabled = true }: Readonly<{ enabled?: boolean }> = {}) {
   const router = useRouter();
   const pathname = usePathname();
   const query = useSearchParams().toString();
   const [pending, startTransition] = useTransition();
   useEffect(() => {
+    if (!enabled) return;
     const refresh = () => {
       if (!pending && document.visibilityState === "visible" && navigator.onLine) {
         startTransition(() => router.refresh());
@@ -24,6 +25,6 @@ export function RouteAutoRefresh() {
       window.removeEventListener("online", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [router, pathname, query, pending]);
+  }, [router, pathname, query, pending, enabled]);
   return null;
 }
