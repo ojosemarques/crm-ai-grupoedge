@@ -38,6 +38,7 @@ import { stopColdCadenceInTransaction } from "@/modules/prospecting/application/
 import { reconcileStageMeetingBookingInTransaction } from "@/modules/metrics/application/stage-meeting-booking-credit";
 import { enqueueGoogleCalendarSyncInTransaction } from "@/modules/integrations/application/google-calendar-service";
 import { scheduleMeetingBookingNotificationsInTransaction } from "@/modules/meetings/application/meeting-booking-notification";
+import { scheduleMeetingLifecycleNotificationsInTransaction } from "@/modules/meetings/application/meeting-lifecycle-notification";
 import {
   cancelMeetingParticipantEmailsInTransaction,
   scheduleMeetingParticipantEmailsInTransaction,
@@ -1105,7 +1106,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       if (pipelineMove) await transaction.$queryRaw`SELECT id FROM leads WHERE id = ${pipelineMove.leadId}::uuid AND "workspaceId" = ${context.workspaceId}::uuid FOR UPDATE`;
       const meeting = await transaction.meeting.findFirst({
         where: { id: parsed.data.meetingId, workspaceId: context.workspaceId, deletedAt: null },
-        include: { participants: { orderBy: { position: "asc" } }, lead: { select: { ownerMemberId: true, queueId: true, pipelineId: true, currentStageId: true, updatedAt: true, pipeline: { select: { name: true } } } } },
+        include: { owner: { select: { user: { select: { displayName: true } } } }, participants: { orderBy: { position: "asc" } }, lead: { select: { fullName: true, ownerMemberId: true, queueId: true, pipelineId: true, currentStageId: true, updatedAt: true, pipeline: { select: { name: true } } } } },
       });
       if (!meeting) notFound("Reunião não encontrada.");
       if (pipelineMove) {
@@ -1645,6 +1646,22 @@ export function createMeetingService(options: MeetingServiceOptions) {
           reasonCode: "MEETING_CLOSED",
         });
       }
+      await scheduleMeetingLifecycleNotificationsInTransaction(transaction, {
+        context,
+        meetingId: meeting.id,
+        meetingRevision: updated.revision,
+        previousStatus: meeting.status,
+        status: newStatus,
+        previousStartsAt: meeting.startsAt,
+        previousEndsAt: meeting.endsAt,
+        startsAt,
+        endsAt,
+        leadName: meeting.lead.fullName,
+        closerName: meeting.owner.user.displayName,
+        title,
+        timeZone: meeting.timeZone,
+        occurredAt: now,
+      });
       if (parsed.data.action === "EDIT" && meeting.status === "CANCELLED" && newStatus !== "CANCELLED") {
         await transaction.googleCalendarEventLink.updateMany({
           where: { workspaceId: context.workspaceId, meetingId: meeting.id },

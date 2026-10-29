@@ -19,7 +19,16 @@ data, horário, fuso e vendedor responsável no momento do agendamento.
 O worker envia esses avisos pelo MillionSend com remetente fixo
 `noreply@politizai.com`, exigindo o domínio `politizai.com` com SPF/DKIM/DMARC
 validados. Preserva supressões, chave idempotente por reunião/destinatário e
-até cinco tentativas. Edições, confirmações e remarcações não duplicam esse aviso.
+até cinco tentativas. Edições e confirmações não duplicam esse aviso.
+Remarcações, cancelamentos e novos registros de reunião realizada também geram
+três avisos individuais na mesma transação, com chave por evento/revisão. A
+remarcação informa as datas e horários anteriores e novos; o cancelamento
+informa o horário cancelado. A realização identifica o contato, o vendedor
+responsável, o horário na agenda e quem registrou o resultado, com a data do
+registro. Alterar somente o resumo não reenvia a notificação de realização.
+Mudanças de horário feitas pela edição e resultados registrados pelo pipeline
+usam o mesmo fluxo. Os avisos preservam o retrato do evento mesmo que a reunião
+seja alterada novamente antes do envio.
 A classificação na caixa principal é controlada pelo Gmail do destinatário.
 
 No pipeline `Prospecção Ativa`, o resultado persistido na agenda também atualiza

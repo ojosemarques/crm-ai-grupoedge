@@ -6,6 +6,7 @@ import type { AuthenticatedContext } from "@/modules/auth/application/authentica
 import {
   buildMeetingBookingNotification,
   MEETING_BOOKING_NOTIFICATION_KIND,
+  MEETING_LIFECYCLE_NOTIFICATION_KIND,
   MEETING_BOOKING_NOTIFICATION_RECIPIENTS,
   meetingBookingNotificationSchema,
   scheduleMeetingBookingNotificationsInTransaction,
@@ -96,6 +97,14 @@ function workerFixture(overrides: { payload?: Record<string, unknown>; workspace
 }
 
 describe("processamento dos avisos internos pelo MillionSend", () => {
+  it.each(["RESCHEDULED_NOTIFICATION", "CANCELLED_NOTIFICATION", "COMPLETED_NOTIFICATION"])("envia %s pelo noreply e audita o evento mesmo com a reunião encerrada", async (emailKind) => {
+    const fixture = workerFixture({ payload: { kind: MEETING_LIFECYCLE_NOTIFICATION_KIND, emailKind, meetingRevision: 3, subject: "Alteração da reunião", text: "Retrato da alteração registrada." } });
+    await expect(fixture.worker.processNext("test-worker")).resolves.toMatchObject({ status: "SUCCEEDED", emailKind });
+    const body = JSON.parse(fixture.fetchImpl.mock.calls[0]![1].body);
+    expect(body).toMatchObject({ from: "noreply@politizai.com", to: [MEETING_BOOKING_NOTIFICATION_RECIPIENTS[0]], subject: "Alteração da reunião", text: "Retrato da alteração registrada." });
+    expect(fixture.transaction.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "meeting.lifecycle_notification_sent" }) }));
+  });
+
   it("envia o retrato do agendamento sem convidados, mesmo após mudanças na reunião", async () => {
     const fixture = workerFixture();
     await expect(fixture.worker.processNext("test-worker")).resolves.toMatchObject({ status: "SUCCEEDED", emailKind: "BOOKING_NOTIFICATION" });
