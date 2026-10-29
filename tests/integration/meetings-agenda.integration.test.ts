@@ -1558,7 +1558,7 @@ describe("agenda interna e reuniões", () => {
     await database.job.updateMany({ where: { workspaceId, status: "PENDING", id: { notIn: notices.map((job) => job.id) } }, data: { runAt: new Date("2036-01-01T00:00:00Z") } });
     const profile = await database.emailConnectionProfile.findFirstOrThrow({ where: { workspaceId } });
     await database.integrationConnection.update({ where: { id: profile.connectionId }, data: { providerKey: "MILLIONSEND", enabled: true } });
-    await database.emailConnectionProfile.update({ where: { id: profile.id }, data: { operatingMode: "EXTERNAL_READY", spfStatus: "VERIFIED_EXTERNAL", dkimStatus: "VERIFIED_EXTERNAL", dmarcStatus: "VERIFIED_EXTERNAL" } });
+    await database.emailConnectionProfile.update({ where: { id: profile.id }, data: { domain: "politizai.com", operatingMode: "EXTERNAL_READY", spfStatus: "VERIFIED_EXTERNAL", dkimStatus: "VERIFIED_EXTERNAL", dmarcStatus: "VERIFIED_EXTERNAL" } });
     const sent: Array<Record<string, unknown>> = [];
     const worker = createMeetingParticipantEmailWorker({ database, now: () => clock,
       environment: { MILLIONSEND_ENABLED: "true", MILLIONSEND_API_KEY: "ms_integration_test_key" },
@@ -1568,6 +1568,7 @@ describe("agenda interna e reuniões", () => {
     await expect(worker.processNext("booking-notices-test")).resolves.toEqual({ status: "IDLE" });
     expect(sent.map((body) => (body.to as string[])[0]).sort()).toEqual(["ejosemarquess@gmail.com", "mattheusmendon@gmail.com", "oswaldomuller701@gmail.com"]);
     expect(sent.every((body) => body.subject === `VENDEDOR ${seller.displayName.toLocaleUpperCase("pt-BR")} AGENDOU UMA REUNIÃO`)).toBe(true);
+    expect(sent.every((body) => body.from === "noreply@politizai.com" && !("reply_to" in body))).toBe(true);
     expect(await database.job.count({ where: { ...noticeWhere, status: "SUCCEEDED" } })).toBe(3);
     expect(await database.auditLog.count({ where: { workspaceId, entityId: saved.meetingId, action: "meeting.booking_notification_sent" } })).toBe(3);
   });

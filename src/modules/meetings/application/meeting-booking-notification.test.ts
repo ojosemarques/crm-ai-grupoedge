@@ -85,7 +85,7 @@ function workerFixture(overrides: { payload?: Record<string, unknown>; workspace
       participantEmail: null, participants: [], lead: { fullName: "Nome alterado" },
       owner: { user: { displayName: "Outro vendedor" } }, googleCalendarLink: null,
     }) },
-    emailConnectionProfile: { findFirst: vi.fn().mockResolvedValue(overrides.senderReady === false ? null : { id: randomUUID(), senderAddressNormalized: "jhoncunha@politizai.com", replyTo: null }), update: vi.fn() },
+    emailConnectionProfile: { findFirst: vi.fn().mockResolvedValue(overrides.senderReady === false ? null : { id: randomUUID(), senderAddressNormalized: "jhoncunha@politizai.com", replyTo: "jhoncunha@politizai.com" }), update: vi.fn() },
     emailSuppression: { findFirst: vi.fn().mockResolvedValue(overrides.suppression ? { id: randomUUID() } : null) },
     auditLog: { create: vi.fn() },
   };
@@ -102,10 +102,16 @@ describe("processamento dos avisos internos pelo MillionSend", () => {
     const [url, request] = fixture.fetchImpl.mock.calls[0]!;
     expect(url).toBe("https://api.millionsend.com/emails");
     expect(JSON.parse(request.body)).toMatchObject({
+      from: "noreply@politizai.com",
       to: [MEETING_BOOKING_NOTIFICATION_RECIPIENTS[0]],
       subject: "VENDEDOR JHON CUNHA AGENDOU UMA REUNIÃO",
       text: expect.stringContaining("Com quem: Cliente de teste"),
     });
+    expect(JSON.parse(request.body)).not.toHaveProperty("reply_to");
+    expect(fixture.transaction.emailConnectionProfile.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ workspaceId: context.workspaceId, domain: "politizai.com", operatingMode: "EXTERNAL_READY", spfStatus: "VERIFIED_EXTERNAL", dkimStatus: "VERIFIED_EXTERNAL", dmarcStatus: "VERIFIED_EXTERNAL", connection: { enabled: true, providerKey: "MILLIONSEND" } }),
+    }));
+    expect(fixture.transaction.job.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ result: expect.objectContaining({ senderAddress: "noreply@politizai.com" }) }) }));
     expect(request.headers["Idempotency-Key"]).toBe(fixture.job.idempotencyKey);
     expect(fixture.transaction.meeting.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId: context.workspaceId }) }));
     expect(fixture.transaction.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "meeting.booking_notification_sent" }) }));

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { meetingGuests } from "@/modules/meetings/domain/meeting-participants";
 import { MillionSendProviderError, MillionSendTransport } from "@/modules/integrations/application/millionsend-transport";
 import { calculateRetryDelaySeconds } from "@/modules/integrations/domain/integration-policy";
-import { MEETING_BOOKING_NOTIFICATION_KIND, meetingBookingNotificationSchema, type MeetingBookingNotificationPayload } from "./meeting-booking-notification";
+import { MEETING_BOOKING_NOTIFICATION_KIND, MEETING_BOOKING_NOTIFICATION_SENDER, meetingBookingNotificationSchema, type MeetingBookingNotificationPayload } from "./meeting-booking-notification";
 
 const LEGACY_JOB_KIND = "MEETING_PARTICIPANT_EMAIL_V1";
 const JOB_KIND = "MEETING_PARTICIPANT_EMAIL_V2";
@@ -309,6 +309,7 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
         options.database.emailConnectionProfile.findFirst({
           where: {
             workspaceId: job.workspaceId,
+            ...(bookingNotification ? { domain: "politizai.com" } : {}),
             operatingMode: "EXTERNAL_READY",
             spfStatus: "VERIFIED_EXTERNAL",
             dkimStatus: "VERIFIED_EXTERNAL",
@@ -337,9 +338,10 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
         timeZone: meeting.timeZone,
         conferenceUrl: meeting.googleCalendarLink?.conferenceUrl ?? null,
       });
+      const senderAddress = bookingNotification ? MEETING_BOOKING_NOTIFICATION_SENDER : profile.senderAddressNormalized;
       const result = await transport.send({
-        from: profile.senderAddressNormalized,
-        replyTo: profile.replyTo,
+        from: senderAddress,
+        replyTo: bookingNotification ? null : profile.replyTo,
         to: [recipientEmail],
         subject: content.subject,
         text: content.text,
@@ -350,7 +352,7 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
       return options.database.$transaction(async (transaction) => {
         const changed = await transaction.job.updateMany({
           where: { id: job.id, workspaceId: job.workspaceId, status: "RUNNING", lockedBy: workerId },
-          data: { status: "SUCCEEDED", result: json({ provider: "MILLIONSEND", providerMessageId: result.providerMessageId, emailKind: data.emailKind, reminderMinutes: data.reminderMinutes }), finishedAt: completedAt, lockedAt: null, lockedBy: null, lockExpiresAt: null, errorCode: null, lastError: null },
+          data: { status: "SUCCEEDED", result: json({ provider: "MILLIONSEND", providerMessageId: result.providerMessageId, senderAddress, emailKind: data.emailKind, reminderMinutes: data.reminderMinutes }), finishedAt: completedAt, lockedAt: null, lockedBy: null, lockExpiresAt: null, errorCode: null, lastError: null },
         });
         if (changed.count !== 1) return { status: "LOST_LOCK" as const };
         await transaction.emailConnectionProfile.update({ where: { id: profile.id }, data: { lastSuccessAt: completedAt, updatedByActorId: job.updatedByActorId } });

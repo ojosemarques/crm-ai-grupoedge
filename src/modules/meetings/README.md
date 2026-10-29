@@ -16,8 +16,9 @@ enfileira, na mesma transação, um aviso individual para `ejosemarquess@gmail.c
 `mattheusmendon@gmail.com` e `oswaldomuller701@gmail.com`. O assunto identifica
 quem agendou (Carlos é identificado como pré-vendedor); o corpo guarda cliente,
 data, horário, fuso e vendedor responsável no momento do agendamento.
-O worker de e-mails de reuniões envia pelo MillionSend usando remetente com
-SPF/DKIM/DMARC validados, supressões, chave idempotente por reunião/destinatário e
+O worker envia esses avisos pelo MillionSend com remetente fixo
+`noreply@politizai.com`, exigindo o domínio `politizai.com` com SPF/DKIM/DMARC
+validados. Preserva supressões, chave idempotente por reunião/destinatário e
 até cinco tentativas. Edições, confirmações e remarcações não duplicam esse aviso.
 A classificação na caixa principal é controlada pelo Gmail do destinatário.
 

@@ -7,6 +7,7 @@ import { AccessRoleKeys } from "@/modules/users/permissions/permission-keys";
 import { isWorkspaceMeetingScheduler } from "@/modules/users/permissions/meeting-scheduler-policy";
 
 export const MEETING_BOOKING_NOTIFICATION_KIND = "MEETING_BOOKING_NOTIFICATION_V1";
+export const MEETING_BOOKING_NOTIFICATION_SENDER = "noreply@politizai.com";
 export const MEETING_BOOKING_NOTIFICATION_RECIPIENTS = [
   "ejosemarquess@gmail.com",
   "mattheusmendon@gmail.com",
