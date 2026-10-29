@@ -624,7 +624,7 @@ describe("camada confiável de métricas", () => {
     const receivedAt = at("02T12:00");
     const lead = await createLeadScenario({ label: "excluded-test", receivedAt, priority: "P1", automaticSeconds: 2, attemptSeconds: 30, connectedSeconds: 50, sourceId: isolatedSource.id });
     const common = {
-      workspaceId, leadId: lead.leadId, eventType: "LEAD_CREATED" as const, occurredAt: receivedAt,
+      workspaceId, leadId: lead.leadId, pipelineId: lead.pipelineId, eventType: "LEAD_CREATED" as const, occurredAt: receivedAt,
       sourceEntityType: "Lead", sourceEntityId: lead.leadId, sourceId: isolatedSource.id,
     };
     const original = await database.$transaction((transaction) => recordCommercialMetricFactInTransaction(transaction, {
@@ -648,6 +648,17 @@ describe("camada confiável de métricas", () => {
     expect(result.humanSla.sampleCount).toBe(0);
     expect(result.evidence.universeLeadIds).not.toContain(lead.leadId);
     expect(result.stageTime).toHaveLength(0);
+
+    const factQuery = { ...query, filters: { ...query.filters, pipelineIds: [lead.pipelineId] } };
+    const [drilldown, evidence] = await Promise.all([
+      service.getIntegratedDrilldown(admin, { metricId: "contacts.leads_created", query: factQuery, limit: 50 }),
+      service.getCommercialFrontEvidence(admin, { measure: "participations", query: factQuery }),
+    ]);
+    expect.soft(drilldown.canonicalValue).toBe(0);
+    expect.soft(drilldown.records).toHaveLength(0);
+    expect.soft(evidence.quantity).toBe(0);
+    expect.soft(evidence.total).toBe(0);
+    expect.soft(evidence.records).toHaveLength(0);
   });
 
   it("mantém vendedor legado sem equipe visível nos filtros e no desempenho", async () => {

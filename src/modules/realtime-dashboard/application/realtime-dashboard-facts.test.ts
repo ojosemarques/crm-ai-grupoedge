@@ -12,8 +12,11 @@ it("exclui originais substituídos sem limitar a data da correção e preserva a
   const result = await readRealtimeDashboardFacts(database as never, "workspace", from, to, "PROSPECTING", scope);
   expect(result.factRows).toEqual([reversal]);
   expect(result.unclassified).toBe(0);
-  expect(findMany).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: expect.objectContaining({ workspaceId: "workspace", occurredAt: { gte: from, lt: to }, AND: [scope.where, { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } }] }) }));
-  expect(findMany).toHaveBeenNthCalledWith(2, { where: { workspaceId: "workspace", correctionOfFactId: { in: ["original", "replacement", "reversal"] }, eventKey: { endsWith: ":front-classification:replacement:v1" } }, select: { correctionOfFactId: true } });
+  expect(findMany).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: expect.objectContaining({ workspaceId: "workspace", occurredAt: { gte: from, lt: to }, AND: [scope.where, { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } }, { NOT: { eventKey: { endsWith: ":test-removal:reversal:v1" } } }] }) }));
+  expect(findMany).toHaveBeenNthCalledWith(2, { where: { workspaceId: "workspace", correctionOfFactId: { in: ["original", "replacement", "reversal"] }, OR: [
+    { eventKey: { endsWith: ":front-classification:replacement:v1" } },
+    { eventKey: { endsWith: ":test-removal:reversal:v1" } },
+  ] }, select: { correctionOfFactId: true } });
 });
 
 it("não consulta substituições quando o período não contém fatos", async () => {

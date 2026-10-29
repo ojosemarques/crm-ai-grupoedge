@@ -298,7 +298,12 @@ async function integratedFactWhere(
     occurredAt: { gte: new Date(query.from), lt: new Date(query.to) },
     AND: [
       { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } },
-      { corrections: { none: { eventKey: { endsWith: ":front-classification:replacement:v1" } } } },
+      // Removed test facts remain auditable in storage, outside operational metrics and records.
+      { NOT: { eventKey: { endsWith: ":test-removal:reversal:v1" } } },
+      { corrections: { none: { OR: [
+        { eventKey: { endsWith: ":front-classification:replacement:v1" } },
+        { eventKey: { endsWith: ":test-removal:reversal:v1" } },
+      ] } } },
       visibility,
       ...(formLeadIds === null ? [] : [{ leadId: { in: formLeadIds } }]),
       ...(dimensionLeadIds === null ? [] : [{ leadId: { in: dimensionLeadIds } }]),

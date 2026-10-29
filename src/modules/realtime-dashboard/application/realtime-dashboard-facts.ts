@@ -17,6 +17,7 @@ export async function readRealtimeDashboardFacts(database: PrismaClient, workspa
           AND: [
             ...(scope ? [scope.where] : []),
             { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } },
+            { NOT: { eventKey: { endsWith: ":test-removal:reversal:v1" } } },
           ],
         },
         orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
@@ -49,7 +50,10 @@ export async function readRealtimeDashboardFacts(database: PrismaClient, workspa
   // Resolve replacements in one batch. A correlated anti-join scans historical
   // corrections for every refresh and stalls the production polling queries.
   const replacements = candidateRows.length ? await database.commercialMetricFact.findMany({
-    where: { workspaceId, correctionOfFactId: { in: candidateRows.map(fact => fact.id) }, eventKey: { endsWith: ":front-classification:replacement:v1" } },
+    where: { workspaceId, correctionOfFactId: { in: candidateRows.map(fact => fact.id) }, OR: [
+      { eventKey: { endsWith: ":front-classification:replacement:v1" } },
+      { eventKey: { endsWith: ":test-removal:reversal:v1" } },
+    ] },
     select: { correctionOfFactId: true },
   }) : [];
   const replacedIds = new Set(replacements.map(fact => fact.correctionOfFactId));

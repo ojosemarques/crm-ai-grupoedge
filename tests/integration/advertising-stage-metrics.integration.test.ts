@@ -8,9 +8,9 @@ import { createMeetingService } from "@/modules/meetings/application/meeting-ser
 import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { createRealtimeDashboardService } from "@/modules/realtime-dashboard/application/realtime-dashboard-service";
 import { readRealtimeDashboardFacts, realtimeActivityFact } from "@/modules/realtime-dashboard/application/realtime-dashboard-facts";
-import { advertisingAssignedMeetings } from "@/modules/realtime-dashboard/domain/realtime-advertising-metrics";
+import { advertisingAssignedMeetings, advertisingLeadArrivals } from "@/modules/realtime-dashboard/domain/realtime-advertising-metrics";
 import { createSaleCompletionService } from "@/modules/opportunities/application/sale-completion-service";
-import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
+import { recordCommercialMetricCorrectionInTransaction, recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { ensureAdvertisingPipeline } from "@/modules/settings/application/production-foundation-service";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -52,6 +52,31 @@ beforeAll(async () => {
   for (const stage of pipeline.stages) if (stage.leadStageCode) stages.set(stage.leadStageCode, stage.id);
 });
 afterAll(() => db.$disconnect());
+
+it("retira os fatos do teste excluído sem diminuir as entradas reais do Tempo Real", async () => {
+  const from = new Date(clock);
+  const testLeadId = await newLead();
+  const realLeadId = await newLead();
+  const to = new Date(clock.getTime() + 1000);
+  const before = await readRealtimeDashboardFacts(db, context.workspaceId, from, to, "ADVERTISING");
+  expect(advertisingLeadArrivals(before.factRows.map(realtimeActivityFact)).has(testLeadId)).toBe(true);
+  expect(advertisingLeadArrivals(before.factRows.map(realtimeActivityFact)).has(realLeadId)).toBe(true);
+  const originals = await db.commercialMetricFact.findMany({ where: { workspaceId: context.workspaceId, leadId: testLeadId } });
+  await db.$transaction(async transaction => {
+    await transaction.lead.update({ where: { id: testLeadId }, data: { deletedAt: clock } });
+    for (const fact of originals) await recordCommercialMetricCorrectionInTransaction(transaction, {
+      workspaceId: context.workspaceId, leadId: testLeadId, eventKey: `${fact.eventKey}:test-removal:reversal:v1`,
+      eventType: fact.eventType, sourceEntityType: fact.sourceEntityType, sourceEntityId: fact.sourceEntityId,
+      occurredAt: fact.occurredAt, pipelineId: fact.pipelineId, creditedMemberId: fact.creditedMemberId,
+      quantity: -fact.quantity, correctionOfFactId: fact.id, reversalReason: "Exclusão do teste.",
+    });
+  });
+  const after = await readRealtimeDashboardFacts(db, context.workspaceId, from, to, "ADVERTISING");
+  const arrivals = advertisingLeadArrivals(after.factRows.map(realtimeActivityFact));
+  expect.soft(arrivals.has(testLeadId)).toBe(false);
+  expect.soft(arrivals.has(realLeadId)).toBe(true);
+  expect.soft(after.factRows.some(fact => fact.leadId === testLeadId)).toBe(false);
+});
 
 it("movimento manual registra agendamento, no-show, realização e proposta sem duplicar resultados", async () => {
   const leadId = await newLead();
