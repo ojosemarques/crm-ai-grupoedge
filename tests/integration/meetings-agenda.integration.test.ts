@@ -368,6 +368,17 @@ describe("agenda interna e reuniões", () => {
     expect(history).toHaveLength(1);
     expect(activities).toHaveLength(1);
     expect(audit).toHaveLength(1);
+    const notices = await database.job.findMany({ where: { workspaceId, idempotencyKey: { startsWith: `meeting-booking-notification:${result.meetingId}:` } } });
+    expect(notices).toHaveLength(3);
+    expect(notices.map((job) => (job.payload as { recipientEmail: string }).recipientEmail).sort()).toEqual([
+      "ejosemarquess@gmail.com", "mattheusmendon@gmail.com", "oswaldomuller701@gmail.com",
+    ]);
+    expect(notices.every((job) => job.status === "PENDING" && job.runAt.getTime() === clock.getTime())).toBe(true);
+    expect(notices[0]!.payload).toMatchObject({
+      emailKind: "BOOKING_NOTIFICATION",
+      subject: `PRÉ-VENDEDOR ${lead.sdrContext.displayName.toLocaleUpperCase("pt-BR")} AGENDOU UMA REUNIÃO`,
+      text: expect.stringContaining("Horário: 09:30 (America/Sao_Paulo)"),
+    });
   });
 
   it("conta uma vez ao mover o card e depois agendar, preservando o crédito original", async () => {
@@ -1217,7 +1228,8 @@ describe("agenda interna e reuniões", () => {
   it("faz rollback completo quando a transação falha", async () => {
     clock = new Date("2035-02-19T12:00:00.000Z");
     const lead = await qualifyLead("CRM15 rollback");
-    await expect(meetings({ beforeCommit: async () => { throw new Error("falha controlada crm15"); } }).schedule(managerContext, {
+    const noticesBefore = await database.job.count({ where: { workspaceId, idempotencyKey: { startsWith: "meeting-booking-notification:" } } });
+    await expect(meetings({ beforeCommit: async () => { throw new Error("falha controlada crm15"); } }).schedule(lead.sdrContext, {
       leadId: lead.leadId,
       closerId: closer1Id,
       title: "Reunião que deve reverter",
@@ -1225,6 +1237,7 @@ describe("agenda interna e reuniões", () => {
       durationMinutes: 30,
     })).rejects.toThrow("falha controlada crm15");
     expect(await database.meeting.count({ where: { workspaceId, leadId: lead.leadId } })).toBe(0);
+    expect(await database.job.count({ where: { workspaceId, idempotencyKey: { startsWith: "meeting-booking-notification:" } } })).toBe(noticesBefore);
     expect(await database.task.count({ where: { workspaceId, leadId: lead.leadId, kind: "MEETING" } })).toBe(0);
     const stored = await database.lead.findUniqueOrThrow({ where: { id: lead.leadId }, include: { currentStage: true } });
     expect(stored.currentStage.leadStageCode).toBe("QUALIFIED");
@@ -1529,5 +1542,33 @@ describe("agenda interna e reuniões", () => {
       if (previous.encryptionKey === undefined) delete process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY; else process.env.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY = previous.encryptionKey;
       if (previous.canonicalUrl === undefined) delete process.env.APP_CANONICAL_URL; else process.env.APP_CANONICAL_URL = previous.canonicalUrl;
     }
+  });
+  it("envia os três avisos do vendedor sem convidados e preserva o evento após cancelamento", async () => {
+    clock = new Date("2035-03-10T12:00:00Z");
+    const lead = await qualifyLead("Aviso interno do vendedor");
+    await database.lead.update({ where: { id: lead.leadId }, data: { ownerMemberId: closer1Id } });
+    const seller = await contextByMember(closer1Id);
+    const saved = await schedule(lead.leadId, seller, "2035-03-11T09:30");
+    const noticeWhere = { workspaceId, idempotencyKey: { startsWith: `meeting-booking-notification:${saved.meetingId}:` } };
+    const notices = await database.job.findMany({ where: noticeWhere });
+    expect(notices).toHaveLength(3);
+    await meetings().act(seller, { action: "CANCEL", meetingId: saved.meetingId, expectedRevision: 1, reason: "Cancelamento após o agendamento para validar preservação do aviso.", nextAction: { title: "Retomar contato", dueAtLocal: "2035-03-12T09:00" } });
+    expect(await database.job.count({ where: { ...noticeWhere, status: "PENDING", cancelRequestedAt: null } })).toBe(3);
+    // Isolate this delivery scenario from pending jobs created by the other cases.
+    await database.job.updateMany({ where: { workspaceId, status: "PENDING", id: { notIn: notices.map((job) => job.id) } }, data: { runAt: new Date("2036-01-01T00:00:00Z") } });
+    const profile = await database.emailConnectionProfile.findFirstOrThrow({ where: { workspaceId } });
+    await database.integrationConnection.update({ where: { id: profile.connectionId }, data: { providerKey: "MILLIONSEND", enabled: true } });
+    await database.emailConnectionProfile.update({ where: { id: profile.id }, data: { operatingMode: "EXTERNAL_READY", spfStatus: "VERIFIED_EXTERNAL", dkimStatus: "VERIFIED_EXTERNAL", dmarcStatus: "VERIFIED_EXTERNAL" } });
+    const sent: Array<Record<string, unknown>> = [];
+    const worker = createMeetingParticipantEmailWorker({ database, now: () => clock,
+      environment: { MILLIONSEND_ENABLED: "true", MILLIONSEND_API_KEY: "ms_integration_test_key" },
+      fetchImpl: async (_url, init) => { sent.push(JSON.parse(String(init?.body))); return new Response(JSON.stringify({ id: `notice-${sent.length}` }), { status: 200 }); },
+    });
+    for (let i = 0; i < 3; i++) await expect(worker.processNext("booking-notices-test")).resolves.toMatchObject({ status: "SUCCEEDED", emailKind: "BOOKING_NOTIFICATION" });
+    await expect(worker.processNext("booking-notices-test")).resolves.toEqual({ status: "IDLE" });
+    expect(sent.map((body) => (body.to as string[])[0]).sort()).toEqual(["ejosemarquess@gmail.com", "mattheusmendon@gmail.com", "oswaldomuller701@gmail.com"]);
+    expect(sent.every((body) => body.subject === `VENDEDOR ${seller.displayName.toLocaleUpperCase("pt-BR")} AGENDOU UMA REUNIÃO`)).toBe(true);
+    expect(await database.job.count({ where: { ...noticeWhere, status: "SUCCEEDED" } })).toBe(3);
+    expect(await database.auditLog.count({ where: { workspaceId, entityId: saved.meetingId, action: "meeting.booking_notification_sent" } })).toBe(3);
   });
 });

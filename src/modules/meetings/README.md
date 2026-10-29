@@ -11,6 +11,16 @@ agendada`; a interface nunca grava o banco diretamente. Sobreposições de horá
 são permitidas na criação, edição e remarcação de reuniões, inclusive em períodos
 anteriores e ao reabrir um registro encerrado.
 
+No workspace `politizai`, cada novo agendamento de vendedor ou pré-vendedor
+enfileira, na mesma transação, um aviso individual para `ejosemarquess@gmail.com`,
+`mattheusmendon@gmail.com` e `oswaldomuller701@gmail.com`. O assunto identifica
+quem agendou (Carlos é identificado como pré-vendedor); o corpo guarda cliente,
+data, horário, fuso e vendedor responsável no momento do agendamento.
+O worker de e-mails de reuniões envia pelo MillionSend usando remetente com
+SPF/DKIM/DMARC validados, supressões, chave idempotente por reunião/destinatário e
+até cinco tentativas. Edições, confirmações e remarcações não duplicam esse aviso.
+A classificação na caixa principal é controlada pelo Gmail do destinatário.
+
 No pipeline `Prospecção Ativa`, o resultado persistido na agenda também atualiza
 o card na mesma transação: reuniões realizadas seguem para `Reunião feita`;
 no-show e cancelamento seguem para `Noshow`; reabertura ou remarcação retorna o

@@ -37,6 +37,7 @@ import {
 import { stopColdCadenceInTransaction } from "@/modules/prospecting/application/prospecting-cadence-service";
 import { reconcileStageMeetingBookingInTransaction } from "@/modules/metrics/application/stage-meeting-booking-credit";
 import { enqueueGoogleCalendarSyncInTransaction } from "@/modules/integrations/application/google-calendar-service";
+import { scheduleMeetingBookingNotificationsInTransaction } from "@/modules/meetings/application/meeting-booking-notification";
 import {
   cancelMeetingParticipantEmailsInTransaction,
   scheduleMeetingParticipantEmailsInTransaction,
@@ -814,13 +815,14 @@ export function createMeetingService(options: MeetingServiceOptions) {
             functions: ["CLOSER"],
           }),
         },
-        select: { id: true },
+        select: { id: true, user: { select: { displayName: true } } },
       });
       if (!closer) notFound("Closer não encontrado ou indisponível.");
       const currentLead = await transaction.lead.findFirst({
         where: { id: lead.id, workspaceId: context.workspaceId, deletedAt: null },
         select: {
           id: true,
+          fullName: true,
           ownerMemberId: true,
           queueId: true,
           pipelineId: true,
@@ -1057,6 +1059,16 @@ export function createMeetingService(options: MeetingServiceOptions) {
           },
         );
       }
+      await scheduleMeetingBookingNotificationsInTransaction(transaction, {
+        context,
+        meetingId: meeting.id,
+        leadName: currentLead.fullName,
+        closerName: closer.user.displayName,
+        title: meeting.title,
+        startsAt,
+        timeZone: workspaceRow.timeZone,
+        occurredAt,
+      });
       await scheduleMeetingParticipantEmailsInTransaction(transaction, {
         workspaceId: context.workspaceId,
         meetingId: meeting.id,

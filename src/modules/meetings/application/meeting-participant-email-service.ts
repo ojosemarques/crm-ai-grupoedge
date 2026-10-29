@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { meetingGuests } from "@/modules/meetings/domain/meeting-participants";
 import { MillionSendProviderError, MillionSendTransport } from "@/modules/integrations/application/millionsend-transport";
 import { calculateRetryDelaySeconds } from "@/modules/integrations/domain/integration-policy";
+import { MEETING_BOOKING_NOTIFICATION_KIND, meetingBookingNotificationSchema, type MeetingBookingNotificationPayload } from "./meeting-booking-notification";
 
 const LEGACY_JOB_KIND = "MEETING_PARTICIPANT_EMAIL_V1";
 const JOB_KIND = "MEETING_PARTICIPANT_EMAIL_V2";
@@ -10,7 +11,7 @@ const REMINDER_MINUTES = [180, 60, 30, 0] as const;
 
 type Transaction = Prisma.TransactionClient;
 type EmailKind = "INVITATION" | "REMINDER";
-type JobPayload = Readonly<{
+type JobPayload = MeetingBookingNotificationPayload | Readonly<{
   kind: typeof JOB_KIND | typeof LEGACY_JOB_KIND;
   emailKind: EmailKind;
   meetingId: string;
@@ -33,6 +34,7 @@ const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.Inp
 
 function parsePayload(value: Prisma.JsonValue): JobPayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("MEETING_PARTICIPANT_EMAIL_JOB_INVALID");
+  if (value.kind === MEETING_BOOKING_NOTIFICATION_KIND) return meetingBookingNotificationSchema.parse(value);
   if (
     (value.kind !== JOB_KIND && value.kind !== LEGACY_JOB_KIND) ||
     (value.emailKind !== "INVITATION" && value.emailKind !== "REMINDER") ||
@@ -225,7 +227,7 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
       const rows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         SELECT "id" FROM "jobs"
         WHERE "type" = 'NOTIFICATION'
-          AND "payload"->>'kind' IN (${JOB_KIND}, ${LEGACY_JOB_KIND})
+          AND "payload"->>'kind' IN (${JOB_KIND}, ${LEGACY_JOB_KIND}, ${MEETING_BOOKING_NOTIFICATION_KIND})
           AND (("status" = 'PENDING' AND "runAt" <= ${now})
             OR ("status" = 'RUNNING' AND "lockExpiresAt" < ${now}))
         ORDER BY "priority" DESC, "runAt" ASC, "createdAt" ASC
@@ -282,10 +284,12 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
     if (!job) return { status: "IDLE" as const };
     try {
       const data = parsePayload(job.payload);
+      const bookingNotification = data.kind === MEETING_BOOKING_NOTIFICATION_KIND;
       if (job.cancelRequestedAt) return finishCancelled(job, workerId, "MEETING_PARTICIPANT_EMAIL_CANCEL_REQUESTED");
       const meeting = await options.database.meeting.findFirst({
         where: { id: data.meetingId, workspaceId: job.workspaceId, deletedAt: null },
         include: {
+          workspace: { select: { slug: true } },
           participants: { orderBy: { position: "asc" } },
           lead: { select: { fullName: true } },
           owner: { select: { user: { select: { displayName: true } } } },
@@ -296,7 +300,9 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
       const recipientEmail = data.recipientEmail ?? meeting?.participantEmail;
       // Confirming increments the revision without changing the invitation schedule.
       // Other edits cancel jobs transactionally; removed guests are revalidated here too.
-      if (!meeting || !recipientEmail || !meetingGuests(meeting).some((guest) => guest.email === recipientEmail) || !["SCHEDULED", "CONFIRMED"].includes(meeting.status) || meeting.endsAt <= now) {
+      if (!meeting || !recipientEmail || (bookingNotification
+        ? meeting.workspace.slug !== "politizai"
+        : !meetingGuests(meeting).some((guest) => guest.email === recipientEmail) || !["SCHEDULED", "CONFIRMED"].includes(meeting.status) || meeting.endsAt <= now)) {
         return finishCancelled(job, workerId, "MEETING_PARTICIPANT_EMAIL_STALE");
       }
       const [profile, suppression, currentJob] = await Promise.all([
@@ -307,7 +313,7 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
             spfStatus: "VERIFIED_EXTERNAL",
             dkimStatus: "VERIFIED_EXTERNAL",
             dmarcStatus: "VERIFIED_EXTERNAL",
-            connection: { enabled: true },
+            connection: { enabled: true, ...(bookingNotification ? { providerKey: "MILLIONSEND" } : {}) },
           },
           orderBy: [{ lastSuccessAt: "desc" }, { validatedAt: "desc" }, { createdAt: "asc" }],
         }),
@@ -321,7 +327,7 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
       if (!profile) throw new Error("MEETING_PARTICIPANT_EMAIL_SENDER_NOT_READY");
       if (suppression) return finishCancelled(job, workerId, "MEETING_PARTICIPANT_EMAIL_SUPPRESSED");
       if (currentJob?.cancelRequestedAt) return finishCancelled(job, workerId, "MEETING_PARTICIPANT_EMAIL_CANCEL_REQUESTED");
-      const content = buildMeetingParticipantEmail({
+      const content = data.kind === MEETING_BOOKING_NOTIFICATION_KIND ? { subject: data.subject, text: data.text } : buildMeetingParticipantEmail({
         emailKind: data.emailKind,
         reminderMinutes: data.reminderMinutes,
         title: meeting.title,
@@ -348,7 +354,7 @@ export function createMeetingParticipantEmailWorker(options: WorkerOptions) {
         });
         if (changed.count !== 1) return { status: "LOST_LOCK" as const };
         await transaction.emailConnectionProfile.update({ where: { id: profile.id }, data: { lastSuccessAt: completedAt, updatedByActorId: job.updatedByActorId } });
-        await transaction.auditLog.create({ data: { workspaceId: job.workspaceId, actorId: job.updatedByActorId, action: "meeting.participant_email_sent", entityType: "Meeting", entityId: meeting.id, origin: "SYSTEM", occurredAt: completedAt, changes: { provider: "MILLIONSEND", emailKind: data.emailKind, reminderMinutes: data.reminderMinutes, meetingRevision: data.meetingRevision } } });
+        await transaction.auditLog.create({ data: { workspaceId: job.workspaceId, actorId: job.updatedByActorId, action: bookingNotification ? "meeting.booking_notification_sent" : "meeting.participant_email_sent", entityType: "Meeting", entityId: meeting.id, origin: "SYSTEM", occurredAt: completedAt, changes: { provider: "MILLIONSEND", emailKind: data.emailKind, reminderMinutes: data.reminderMinutes, meetingRevision: data.meetingRevision } } });
         return { status: "SUCCEEDED" as const, emailKind: data.emailKind, reminderMinutes: data.reminderMinutes };
       });
     } catch (error) {
