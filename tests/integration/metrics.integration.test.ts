@@ -6,6 +6,7 @@ import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createDashboardMetricsService } from "@/modules/metrics/application/dashboard-metrics-service";
 import { createMetricsService } from "@/modules/metrics/application/metrics-service";
+import { recordCommercialMetricCorrectionInTransaction, recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { AccessDeniedError } from "@/modules/users/permissions/authorization-errors";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
@@ -615,6 +616,40 @@ function dashboard(context: AuthenticatedContext = manager, input: Record<string
 }
 
 describe("camada confiável de métricas", () => {
+  it("retira testes excluídos e estornados do histórico sem retirar exclusões comuns", async () => {
+    const isolatedSource = await database.leadSource.create({ data: {
+      workspaceId, key: `removed-test-${randomUUID()}`, name: "Fonte de teste excluído", type: "MANUAL",
+      createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
+    } });
+    const receivedAt = at("02T12:00");
+    const lead = await createLeadScenario({ label: "excluded-test", receivedAt, priority: "P1", automaticSeconds: 2, attemptSeconds: 30, connectedSeconds: 50, sourceId: isolatedSource.id });
+    const common = {
+      workspaceId, leadId: lead.leadId, eventType: "LEAD_CREATED" as const, occurredAt: receivedAt,
+      sourceEntityType: "Lead", sourceEntityId: lead.leadId, sourceId: isolatedSource.id,
+    };
+    const original = await database.$transaction((transaction) => recordCommercialMetricFactInTransaction(transaction, {
+      ...common, eventKey: `lead:${lead.leadId}:created:v1`,
+    }));
+    const service = createMetricsService({ database, authorization, now: () => now });
+    const query = { ...period, filters: { sourceIds: [isolatedSource.id] } };
+    const baseline = await service.getOverview(admin, query);
+    expect(baseline.leadsReceived.value).toBe(1);
+    expect(baseline.humanSla.sampleCount).toBe(1);
+
+    await database.lead.update({ where: { id: lead.leadId }, data: { deletedAt: at("05T12:00") } });
+    expect((await service.getOverview(admin, query)).leadsReceived.value).toBe(1);
+    await database.$transaction((transaction) => recordCommercialMetricCorrectionInTransaction(transaction, {
+      ...common, eventKey: `lead:${lead.leadId}:created:test-removal:reversal:v1`,
+      quantity: -1, correctionOfFactId: original.fact.id, reversalReason: "Exclusão de teste.",
+    }));
+
+    const result = await service.getOverview(admin, query);
+    expect(result.leadsReceived.value).toBe(0);
+    expect(result.humanSla.sampleCount).toBe(0);
+    expect(result.evidence.universeLeadIds).not.toContain(lead.leadId);
+    expect(result.stageTime).toHaveLength(0);
+  });
+
   it("mantém vendedor legado sem equipe visível nos filtros e no desempenho", async () => {
     const [role, systemActor] = await Promise.all([
       database.role.findFirstOrThrow({ where: { workspaceId, key: "closer", deletedAt: null } }),

@@ -582,9 +582,21 @@ export function createMetricsService(options: MetricsServiceOptions) {
         },
       },
     });
+    const deletedLeadIds = leads.filter((lead) => lead.deletedAt !== null).map((lead) => lead.id);
+    const deletedLeadBalances = deletedLeadIds.length ? await options.database.commercialMetricFact.groupBy({
+      by: ["leadId"],
+      where: { workspaceId: context.workspaceId, leadId: { in: deletedLeadIds }, eventType: "LEAD_CREATED" },
+      _sum: { quantity: true },
+    }) : [];
+    // A fully reversed test entry must also leave the historical entity-based reports.
+    // Ordinary deletions retain their historical participation until explicitly reversed.
+    const reversedDeletedLeadIds = new Set(deletedLeadBalances
+      .filter((group) => (group._sum.quantity ?? 0) <= 0)
+      .map((group) => group.leadId));
+    const reportableLeads = leads.filter((lead) => !reversedDeletedLeadIds.has(lead.id));
     const priorityFilteredLeads = query.filters.priorityCodes.length === 0
-      ? leads
-      : leads.filter((lead) => {
+      ? reportableLeads
+      : reportableLeads.filter((lead) => {
           const priority = lead.scores[0]?.priorityBandCode ?? lead.slaCycles[0]?.priorityBand.code;
           return priority ? query.filters.priorityCodes.includes(priority) : false;
         });
