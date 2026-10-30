@@ -46,7 +46,7 @@ describe("recorte temporal das métricas integradas", () => {
           valueCents: null,
         }]);
     const findJobs = vi.fn(async () => [{ id: jobId, scheduledAt }]);
-    const database = {
+    const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) },
       teamMember: { findMany: vi.fn(async () => []) },
       prospectingEmailJob: { findMany: findJobs },
       commercialMetricFact: { findMany: findFacts },

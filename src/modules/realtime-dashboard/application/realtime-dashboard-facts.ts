@@ -4,10 +4,12 @@ import { commercialFrontPipelineIds } from "@/modules/metrics/domain/commercial-
 import { realtimeDashboardEventTypes } from "../domain/realtime-dashboard-domain";
 import { realtimeFactPipelineId, type RealtimeDashboardFront } from "../domain/realtime-dashboard-front";
 import { advertisingMessageActivities } from "./realtime-advertising-activities";
+import { excludedMetricLeadIds, metricFactExclusionFilters } from "@/modules/metrics/application/metric-lead-exclusions";
 
 export type RealtimeFactScope = Readonly<{ where: Prisma.CommercialMetricFactWhereInput; leadWhere: Prisma.LeadWhereInput; memberIds: readonly string[] | null }>;
 
 export async function readRealtimeDashboardFacts(database: PrismaClient, workspaceId: string, from: Date, to: Date, front: RealtimeDashboardFront, scope?: RealtimeFactScope) {
+  const excludedIds = await excludedMetricLeadIds(database, workspaceId);
   const [candidateRows, pipelines] = await Promise.all([
     database.commercialMetricFact.findMany({
         where: {
@@ -15,6 +17,7 @@ export async function readRealtimeDashboardFacts(database: PrismaClient, workspa
           eventType: { in: [...realtimeDashboardEventTypes, ...(front === "ADVERTISING" ? ["LEAD_CREATED", "LEAD_SUBMISSION_ATTACHED"] as const : [])] },
           occurredAt: { gte: from, lt: to },
           AND: [
+            ...metricFactExclusionFilters(excludedIds),
             ...(scope ? [scope.where] : []),
             { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } },
             { NOT: { eventKey: { endsWith: ":test-removal:reversal:v1" } } },
@@ -61,7 +64,7 @@ export async function readRealtimeDashboardFacts(database: PrismaClient, workspa
   const selectedPipelineIds = new Set(commercialFrontPipelineIds(front, pipelines));
   const knownPipelineIds = new Set(commercialFrontPipelineIds("ALL", pipelines));
   const manualMessages = front === "ADVERTISING" ? await advertisingMessageActivities(database, workspaceId, from, to, selectedPipelineIds,
-    new Set(allFactRows.filter(fact => ["WHATSAPP_MESSAGE_SENT", "INSTAGRAM_MESSAGE_SENT"].includes(fact.eventType)).flatMap(fact => fact.activityId ? [fact.activityId] : [])), scope?.leadWhere) : [];
+    new Set(allFactRows.filter(fact => ["WHATSAPP_MESSAGE_SENT", "INSTAGRAM_MESSAGE_SENT"].includes(fact.eventType)).flatMap(fact => fact.activityId ? [fact.activityId] : [])), { AND: [scope?.leadWhere ?? {}, { id: { notIn: excludedIds } }] }) : [];
   return {
     factRows: [...allFactRows.filter(fact => selectedPipelineIds.has(realtimeFactPipelineId(fact) ?? "")), ...manualMessages],
     unclassified: allFactRows.filter(fact => !knownPipelineIds.has(realtimeFactPipelineId(fact) ?? "")).length,

@@ -1,3 +1,4 @@
+import { excludedMetricLeadIds, metricRelatedLeadFilter } from "@/modules/metrics/application/metric-lead-exclusions";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
@@ -145,6 +146,7 @@ export function createMediaPerformanceService(options: Options) {
 
   async function currentFacts(workspaceId: string, start: Date, end: Date) { return latestFacts(await options.database.marketingPerformanceFact.findMany({ where: { workspaceId, periodStart: { gte: start, lt: end } }, orderBy: [{ grainKey: "asc" },{ revision: "desc" }] })); }
   async function periodSummary(workspaceId: string, start: Date, end: Date) {
+    const excludedIds = await excludedMetricLeadIds(options.database, workspaceId);
     const current = await currentFacts(workspaceId,start,end);
     const metaFactIds = current.filter((fact) => fact.sourceProvider === "META_ADS").map((fact) => fact.id);
     const videoActions = metaFactIds.length ? await options.database.marketingProviderActionFact.findMany({ where: { workspaceId, performanceFactId: { in: metaFactIds }, actionType: "count:video_view" }, select: { performanceFactId: true, value: true } }) : [];
@@ -154,7 +156,7 @@ export function createMediaPerformanceService(options: Options) {
     const campaignIds=[...new Set(facts.flatMap(fact=>fact.campaignId?[fact.campaignId]:[]))];
     const bridges=campaignIds.length?await options.database.marketingCampaign.findMany({where:{workspaceId,id:{in:campaignIds},legacyAcquisitionCampaignId:{not:null}},select:{legacyAcquisitionCampaignId:true}}):[];
     const legacyCampaignIds=bridges.flatMap(item=>item.legacyAcquisitionCampaignId?[item.legacyAcquisitionCampaignId]:[]);
-    const submissionRows=legacyCampaignIds.length?await options.database.leadFormSubmission.findMany({where:{workspaceId,campaignId:{in:legacyCampaignIds},submittedAt:{gte:start,lt:end}},select:{leadId:true,marketingSessionId:true}}):[];
+    const submissionRows=legacyCampaignIds.length?await options.database.leadFormSubmission.findMany({where:{workspaceId,...metricRelatedLeadFilter(excludedIds),campaignId:{in:legacyCampaignIds},submittedAt:{gte:start,lt:end}},select:{leadId:true,marketingSessionId:true}}):[];
     const leadIds=[...new Set(submissionRows.flatMap(row=>row.leadId?[row.leadId]:[]))];
     const [qualified,opportunityRows,conversionGroups]=leadIds.length?await Promise.all([options.database.leadQualification.count({where:{workspaceId,leadId:{in:leadIds},validatedAt:{gte:start,lt:end}}}),options.database.opportunity.findMany({where:{workspaceId,leadId:{in:leadIds},deletedAt:null,OR:[{createdAt:{gte:start,lt:end}},{closedAt:{gte:start,lt:end}}]},select:{status:true,amountCents:true,createdAt:true,closedAt:true}}),options.database.attributionConversion.groupBy({by:["kind"],where:{workspaceId,status:"ACTIVE",leadId:{in:leadIds},occurredAt:{gte:start,lt:end}},_count:{_all:true}})]):[0,[],[]];
     const opportunities=opportunityRows.filter(row=>row.createdAt>=start&&row.createdAt<end).length;const wins=opportunityRows.filter(row=>row.status==="WON"&&row.closedAt&&row.closedAt>=start&&row.closedAt<end);const wonRevenue=wins.reduce((sum,row)=>sum+number(row.amountCents),0);const conversions=Object.fromEntries(conversionGroups.map(row=>[row.kind,row._count._all])) as Record<string,number>;

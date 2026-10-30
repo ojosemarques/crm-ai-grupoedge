@@ -8,6 +8,12 @@
 
 ## Contrato comum
 
+Uma marcação administrativa auditada `lead.metrics_excluded` para a entidade
+`Lead` exclui somente aquele ID, no seu workspace, das consultas analíticas de
+indicadores, metas, aquisição e tempo real. Vale para todo período e eventos
+futuros. O card, as respostas, tarefas e o histórico operacional permanecem
+disponíveis; novos leads incompletos não herdam essa exclusão.
+
 Todas as métricas da CRM-19 são calculadas por `MetricsService` a partir do
 PostgreSQL. A interface futura não deve reimplementar fórmulas. Cada resposta
 informa:

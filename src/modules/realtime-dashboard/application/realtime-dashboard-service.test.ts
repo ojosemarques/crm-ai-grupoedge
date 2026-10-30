@@ -23,7 +23,7 @@ describe("serviço do dashboard tempo real", () => {
       leadId: id, creditedMemberId: "member", performedByMemberId: null, bookedByMemberId: null, taskKind: null, result: null, cadenceStepKey: null, quantity,
       valueCents: eventType === "SALE_WON" ? BigInt(quantity * 10000) : null,
     });
-    const database = {
+    const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) },
       workspace: { findFirst: vi.fn().mockResolvedValue({ name: "Empresa", timeZone: "America/Sao_Paulo" }) },
       pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "ads", name: "Anúncios" }, { id: "pros", name: "Prospecção Ativa" }]) },
       activity: { findMany: vi.fn().mockResolvedValue([]) },
@@ -86,7 +86,7 @@ describe("serviço do dashboard tempo real", () => {
   it("nega TV sem configuração, workspace inexistente, compartilhamento ausente ou revogado", async () => {
     const findFirst = vi.fn().mockResolvedValue({ id: "workspace-configurado" });
     const findUnique = vi.fn();
-    const database = { workspace: { findFirst }, realtimeDashboardShare: { findUnique } };
+    const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) }, workspace: { findFirst }, realtimeDashboardShare: { findUnique } };
     const create = (publicWorkspaceSlug?: string) => createRealtimeDashboardService({
       database: database as never, authorization: authorization() as never, now: () => now, publicWorkspaceSlug,
     });
@@ -103,7 +103,7 @@ describe("serviço do dashboard tempo real", () => {
   });
 
   it("retorna snapshot público agregado sem IDs internos, token ou PII de contato", async () => {
-    const database = {
+    const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) },
       realtimeDashboardShare: { findUnique: vi.fn().mockResolvedValue({ workspaceId: "workspace-sentinel", revokedAt: null }) },
       workspace: { findFirst: vi.fn().mockResolvedValue({ id: "workspace-sentinel", name: "Empresa Exemplo", timeZone: "America/Sao_Paulo" }) },
       pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "pros", name: "Prospecção Ativa" }]) },
@@ -173,7 +173,7 @@ describe("serviço do dashboard tempo real", () => {
       { id: "admin", user: { displayName: "Administrador", normalizedEmail: "admin@example.test" }, role: { key: "administrator" }, teamMemberships: [{ teamId: "team", function: "SDR" }] },
       { id: "namesake", user: { displayName: "Carlos Henrique", normalizedEmail: "other@example.test" }, role: { key: "sdr" }, teamMemberships: [] },
     ];
-    const database = {
+    const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) },
       workspace: { findFirst: vi.fn().mockResolvedValue({ name: "Workspace", timeZone: "America/Sao_Paulo" }) },
       workspaceMember: { findMany: vi.fn().mockImplementation(({ where }) => Promise.resolve(where.id ? [{ id: "matheus", user: { displayName: "Matheus Mendon", normalizedEmail: "matheus@example.test" } }] : members)) },
       pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "pros", name: "Prospecção Ativa" }]) },
@@ -211,7 +211,7 @@ describe("serviço do dashboard tempo real", () => {
       realtimeDashboardShare: { findUnique: vi.fn().mockResolvedValue(null), create },
       auditLog: { create: auditCreate },
     };
-    const database = {
+    const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) },
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)),
       workspace: { findFirst: vi.fn().mockResolvedValue({ id: "workspace" }) },
     };

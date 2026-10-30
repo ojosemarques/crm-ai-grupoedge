@@ -15,6 +15,8 @@ import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-servi
 import { ensureAdvertisingPipeline } from "@/modules/settings/application/production-foundation-service";
 import { createAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
+import { createMetricsService } from "@/modules/metrics/application/metrics-service";
+import { METRIC_LEAD_EXCLUSION_ACTION } from "@/modules/metrics/application/metric-lead-exclusions";
 
 if (!/^politizai_test_/.test(process.env.PRISMA_TEST_SCHEMA ?? "")) throw new Error("Ephemeral schema required");
 const db = new PrismaClient({ adapter: createPostgresAdapter(process.env.DATABASE_URL!, { max: 8 }) });
@@ -76,6 +78,39 @@ it("retira os fatos do teste excluído sem diminuir as entradas reais do Tempo R
   expect.soft(arrivals.has(testLeadId)).toBe(false);
   expect.soft(arrivals.has(realLeadId)).toBe(true);
   expect.soft(after.factRows.some(fact => fact.leadId === testLeadId)).toBe(false);
+});
+
+it("exclusão analítica mantém o card ativo e retira cadastro, fatos e mensagens manuais dos indicadores e tempo real", async () => {
+  const from = new Date(clock);
+  const excluded = await newLead(), included = await newLead();
+  await db.lead.updateMany({ where: { id: { in: [excluded, included] } }, data: { createdAt: clock } });
+  const to = new Date(clock.getTime() + 1000);
+  const service = createMetricsService({ database: db, authorization, now: () => clock });
+  const query = { from: from.toISOString(), to: to.toISOString(), filters: { pipelineIds: [pipelineId] } };
+  const before = await service.getOverview(context, query);
+  expect(before.evidence.universeLeadIds).toContain(excluded);
+  const other = await db.workspace.create({ data: { slug: `metric-exclusion-${randomUUID()}`, name: "Outro tenant" } });
+  const actor = await db.actor.create({ data: { workspaceId: other.id, type: "SYSTEM", key: "system", displayName: "Sistema" } });
+  await db.auditLog.create({ data: { workspaceId: other.id, actorId: actor.id, action: METRIC_LEAD_EXCLUSION_ACTION, entityType: "Lead", entityId: included } });
+  await db.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: METRIC_LEAD_EXCLUSION_ACTION, entityType: "Lead", entityId: excluded } });
+  for (const leadId of [excluded, included]) await db.activity.create({ data: { workspaceId: context.workspaceId, leadId, type: "MESSAGE_SENT", direction: "OUTBOUND", result: "SENT", subject: "Contato manual", occurredAt: clock, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+  const after = await service.getOverview(context, query);
+  expect(after.leadsReceived.value).toBe(before.leadsReceived.value - 1);
+  expect(after.evidence.universeLeadIds).not.toContain(excluded);
+  expect(after.evidence.universeLeadIds).toContain(included);
+  const facts = await service.getIntegratedActivityFacts(context, query);
+  expect(facts.some(fact => fact.leadId === excluded)).toBe(false);
+  expect(facts.some(fact => fact.leadId === included)).toBe(true);
+  const evidence = await service.getCommercialFrontEvidence(context, { measure: "participations", query });
+  expect(JSON.stringify(evidence)).not.toContain(excluded);
+  const realtimeFacts = await readRealtimeDashboardFacts(db, context.workspaceId, from, to, "ADVERTISING");
+  expect(realtimeFacts.factRows.some(fact => fact.leadId === excluded)).toBe(false);
+  expect(realtimeFacts.factRows.some(fact => fact.leadId === included && fact.sourceEntityType === "AdvertisingMessageActivity")).toBe(true);
+  expect(await db.lead.findUniqueOrThrow({ where: { id: excluded }, select: { deletedAt: true, pipelineId: true } })).toEqual({ deletedAt: null, pipelineId });
+  expect((await createPreSalesPipelineService({ database: db, authorization, now: () => clock }).getLeadState(context, { leadId: excluded })).pipelineName).toBe("Anúncios");
+  const tomorrow = new Date(clock.getTime() + 86400000);
+  await db.$transaction(tx => recordCommercialMetricFactInTransaction(tx, { workspaceId: context.workspaceId, leadId: excluded, pipelineId, eventKey: randomUUID(), eventType: "CALL_ATTEMPTED", occurredAt: tomorrow, sourceEntityType: "Activity", sourceEntityId: randomUUID() }));
+  expect((await readRealtimeDashboardFacts(db, context.workspaceId, tomorrow, new Date(tomorrow.getTime() + 1000), "ADVERTISING")).factRows).toHaveLength(0);
 });
 
 it("movimento manual registra agendamento, no-show, realização e proposta sem duplicar resultados", async () => {

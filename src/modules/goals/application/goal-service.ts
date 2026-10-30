@@ -1,3 +1,4 @@
+import { excludedMetricLeadIds, metricFactExclusionFilters } from "@/modules/metrics/application/metric-lead-exclusions";
 import { Prisma, type GoalMetricKey, type GoalQuota, type OwnershipFunction, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createGoalPlanSchema, goalMetricCatalog, goalPeriodInstants, goalPlanActionSchema, goalProgress, goalQuerySchema, quotaTargetKey, resolveEffectiveQuota, updateGoalPlanSchema, type GoalProgressState, type GoalQuotaInput } from "@/modules/goals/domain/goal-contracts";
@@ -168,9 +169,10 @@ export function createGoalService(options: Options) {
       EXPANSION_MRR_CENTS: ["REVENUE_MOVEMENT_POSTED"], RENEWALS_COMPLETED: ["REVENUE_MOVEMENT_POSTED"], LEAD_TO_SALE_BPS: ["SALE_WON"],
     } as const;
     const eventTypes = [...typeMap[quota.metricKey]];
+    const excludedIds = await excludedMetricLeadIds(options.database, workspaceId);
     const facts = await options.database.commercialMetricFact.findMany({
       where: {
-        workspaceId, creditedMemberId: { in: memberIds }, occurredAt: { gte: periodStart, lt: to }, eventType: { in: eventTypes },
+        workspaceId, creditedMemberId: { in: memberIds }, occurredAt: { gte: periodStart, lt: to }, eventType: { in: eventTypes }, AND: metricFactExclusionFilters(excludedIds),
         ...(quota.metricKey === "NEW_MRR_CENTS" ? { result: "NEW" } : {}),
         ...(quota.metricKey === "EXPANSION_MRR_CENTS" ? { result: "EXPANSION" } : {}),
         ...(quota.metricKey === "RENEWALS_COMPLETED" ? { result: "RENEWAL" } : {}),
@@ -180,7 +182,7 @@ export function createGoalService(options: Options) {
     const evidenceCount = facts.reduce((sum, fact) => sum + fact.quantity, 0);
     const href = drilldown(quota.metricKey, memberIds, periodStart, to);
     if (quota.metricKey === "LEAD_TO_SALE_BPS") {
-      const leads = await options.database.commercialMetricFact.findMany({ where: { workspaceId, creditedMemberId: { in: memberIds }, occurredAt: { gte: periodStart, lt: to }, eventType: "LEAD_CREATED", leadId: { not: null } }, select: { leadId: true, quantity: true } });
+      const leads = await options.database.commercialMetricFact.findMany({ where: { workspaceId, creditedMemberId: { in: memberIds }, occurredAt: { gte: periodStart, lt: to }, eventType: "LEAD_CREATED", leadId: { not: null }, AND: metricFactExclusionFilters(excludedIds) }, select: { leadId: true, quantity: true } });
       const leadBalances = new Map<string, number>();
       for (const lead of leads) if (lead.leadId) leadBalances.set(lead.leadId, (leadBalances.get(lead.leadId) ?? 0) + lead.quantity);
       const cohort = new Set([...leadBalances].filter(([, balance]) => balance > 0).map(([leadId]) => leadId));

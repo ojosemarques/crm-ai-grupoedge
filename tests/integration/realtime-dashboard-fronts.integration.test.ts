@@ -17,7 +17,7 @@ describe("separação das frentes no tempo real", () => {
       database.pipeline.create({ data: { ...audit, name: "Prospecção Ativa", entityType: "LEAD" } }),
       database.pipeline.create({ data: { ...audit, name: "Vendas", entityType: "OPPORTUNITY" } }),
     ]);
-    const user = await database.user.create({ data: { email: "carloshenrique@politizai.com", normalizedEmail: "carloshenrique@politizai.com", displayName: "Vendedor" } });
+    const user = await database.user.upsert({ where: { normalizedEmail: "carloshenrique@politizai.com" }, update: {}, create: { email: "carloshenrique@politizai.com", normalizedEmail: "carloshenrique@politizai.com", displayName: "Vendedor" } });
     const role = await database.role.create({ data: { ...audit, key: "closer", name: "Closer" } });
     const member = await database.workspaceMember.create({ data: { ...audit, userId: user.id, roleId: role.id, status: "ACTIVE" } });
     const leadId = randomUUID();

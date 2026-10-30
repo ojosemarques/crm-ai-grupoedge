@@ -7,7 +7,7 @@ it("exclui originais substituídos sem limitar a data da correção e preserva a
   const replacement = { ...original, id: "replacement", pipelineId: null, safeMetadata: { _commercialFrontPipelineId: "ads" } };
   const reversal = { ...original, id: "reversal", pipelineId: null, quantity: -1, correctionSource: { pipelineId: "pros", safeMetadata: null } };
   const findMany = vi.fn().mockResolvedValueOnce([original, replacement, reversal]).mockResolvedValueOnce([{ correctionOfFactId: "original" }]);
-  const database = { commercialMetricFact: { findMany }, pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "pros", name: "Prospecção Ativa" }, { id: "ads", name: "Anúncios" }]) } };
+  const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) }, commercialMetricFact: { findMany }, pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "pros", name: "Prospecção Ativa" }, { id: "ads", name: "Anúncios" }]) } };
   const scope = { where: { creditedMemberId: "member" }, leadWhere: { ownerMemberId: "member" }, memberIds: ["member"] };
   const result = await readRealtimeDashboardFacts(database as never, "workspace", from, to, "PROSPECTING", scope);
   expect(result.factRows).toEqual([reversal]);
@@ -21,7 +21,7 @@ it("exclui originais substituídos sem limitar a data da correção e preserva a
 
 it("não consulta substituições quando o período não contém fatos", async () => {
   const findMany = vi.fn().mockResolvedValue([]);
-  const database = { commercialMetricFact: { findMany }, pipeline: { findMany: vi.fn().mockResolvedValue([]) } };
+  const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) }, commercialMetricFact: { findMany }, pipeline: { findMany: vi.fn().mockResolvedValue([]) } };
   expect(await readRealtimeDashboardFacts(database as never, "workspace", new Date(), new Date(), "PROSPECTING")).toEqual({ factRows: [], unclassified: 0 });
   expect(findMany).toHaveBeenCalledTimes(1);
 });

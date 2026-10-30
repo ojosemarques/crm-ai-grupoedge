@@ -12,6 +12,7 @@ import { createMarketingFormSubmissionService } from "@/modules/marketing-forms/
 import { createMarketingFormPartialLeadWorker, enqueuePartialLeadInTransaction, partialLeadKey, PARTIAL_LEAD_PLACEHOLDER } from "@/modules/marketing-forms/application/marketing-form-partial-lead-service";
 import { createEmptyMarketingFormDefinition } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import { loadAcquisitionFunnel } from "@/modules/marketing/application/acquisition-funnel-service";
+import { METRIC_LEAD_EXCLUSION_ACTION } from "@/modules/metrics/application/metric-lead-exclusions";
 
 if (!/^politizai_test_/.test(process.env.PRISMA_TEST_SCHEMA ?? "")) throw new Error("Ephemeral schema required");
 const db = new PrismaClient({ adapter: createPostgresAdapter(process.env.DATABASE_URL!, { max: 10 }) });
@@ -31,7 +32,7 @@ beforeAll(async () => {
   workspaceId = (await db.workspace.findUniqueOrThrow({ where: { slug: "politizai" } })).id;
   actorId = (await db.actor.findFirstOrThrow({ where: { workspaceId, key: "system" } })).id;
   const role = await db.role.findFirstOrThrow({ where: { workspaceId, key: "closer" } });
-  const user = await db.user.create({ data: { email: "carloshenrique@politizai.com", normalizedEmail: "carloshenrique@politizai.com", displayName: "Carlos Henrique" } });
+  const user = await db.user.upsert({ where: { normalizedEmail: "carloshenrique@politizai.com" }, update: {}, create: { email: "carloshenrique@politizai.com", normalizedEmail: "carloshenrique@politizai.com", displayName: "Carlos Henrique" } });
   memberId = (await db.workspaceMember.create({ data: { workspaceId, userId: user.id, roleId: role.id, status: "ACTIVE", createdByActorId: actorId, updatedByActorId: actorId } })).id;
   await ensureAdvertisingPipeline(db, workspaceId, actorId);
   const pipeline = await db.pipeline.findFirstOrThrow({ where: { workspaceId, name: "Anúncios" }, include: { stages: true } });
@@ -176,6 +177,9 @@ describe("formulários parciais em Anúncios", () => {
     await onlyPhone.record([{ key: "telefone", answer: phone }]);
     expect((await db.marketingFormPartialResponse.findUniqueOrThrow({ where: { id: partial.id } })).completedAt).not.toBeNull();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const completedFunnel = await loadAcquisitionFunnel(db, workspaceId, new Date(now.getTime() - 86400000), new Date(now.getTime() + 86400000), "Anúncios");
+    await db.auditLog.create({ data: { workspaceId, actorId, action: METRIC_LEAD_EXCLUSION_ACTION, entityType: "Lead", entityId: lead.id } });
+    expect((await loadAcquisitionFunnel(db, workspaceId, new Date(now.getTime() - 86400000), new Date(now.getTime() + 86400000), "Anúncios")).cohortSize).toBe(completedFunnel.cohortSize - 1);
     vi.unstubAllGlobals(); vi.unstubAllEnvs();
   });
 
@@ -195,6 +199,8 @@ describe("formulários parciais em Anúncios", () => {
     await db.job.update({ where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: partialLeadKey(partial.id) } }, data: { status: "PENDING", finishedAt: null } });
     await expect(worker.processPartial(workspaceId, partial.id)).resolves.toEqual({ status: "SUCCEEDED" });
     expect(await db.lead.count({ where: { workspaceId, normalizedPhone: "+5511981234433" } })).toBe(1);
+    await db.auditLog.create({ data: { workspaceId, actorId, action: METRIC_LEAD_EXCLUSION_ACTION, entityType: "Lead", entityId: submission.leadId! } });
+    await expect(loadAcquisitionFunnel(db, workspaceId, new Date(original.getTime() - 1000), new Date(original.getTime() + 1000), "Anúncios")).resolves.toMatchObject({ cohortSize: 0, incompleteCount: 0, registeredLeadCount: 0 });
     await db.marketingFormPartialResponse.update({ where: { id: partial.id }, data: { deletedAt: now } });
     await db.job.update({ where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: partialLeadKey(partial.id) } }, data: { status: "PENDING", finishedAt: null } });
     await expect(worker.processPartial(workspaceId, partial.id)).resolves.toEqual({ status: "CANCELLED" });

@@ -13,7 +13,7 @@ export async function loadAcquisitionFunnel(database: PrismaClient, workspaceId:
 async function loadAcquisitionFunnelSnapshot(database: Prisma.TransactionClient, workspaceId: string, start: Date, end: Date, pipelineName?: string) {
   const formArrivals = await loadAcquisitionFormArrivals(database, workspaceId, start, end, pipelineName);
   const candidates = await database.lead.findMany({
-    where: { workspaceId, deletedAt: null, OR: [{ createdAt: { gte: start, lt: end } }, ...(formArrivals.promotedIncompleteLeadIds.length ? [{ id: { in: formArrivals.promotedIncompleteLeadIds } }] : []), ...(formArrivals.completedReceiptIds.length ? [{ submissions: { some: { workspaceId, marketingFormReceiptId: { in: formArrivals.completedReceiptIds } } } }] : [])], ...(pipelineName ? { pipeline: { name: pipelineName, deletedAt: null } } : {}) },
+    where: { workspaceId, deletedAt: null, id: { notIn: formArrivals.excludedLeadIds }, OR: [{ createdAt: { gte: start, lt: end } }, ...(formArrivals.promotedIncompleteLeadIds.length ? [{ id: { in: formArrivals.promotedIncompleteLeadIds } }] : []), ...(formArrivals.completedReceiptIds.length ? [{ submissions: { some: { workspaceId, marketingFormReceiptId: { in: formArrivals.completedReceiptIds } } } }] : [])], ...(pipelineName ? { pipeline: { name: pipelineName, deletedAt: null } } : {}) },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 10_001,
     select: {
       id: true,

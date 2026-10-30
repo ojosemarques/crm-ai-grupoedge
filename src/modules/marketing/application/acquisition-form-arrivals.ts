@@ -2,13 +2,20 @@ import type { Prisma } from "@/generated/prisma/client";
 import { z } from "zod";
 import { marketingFormDefinitionSchema } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import type { FunnelLead } from "../domain/acquisition-funnel";
+import { excludedMetricLeadIds } from "@/modules/metrics/application/metric-lead-exclusions";
 
 const destinationSchema = z.object({ destination: marketingFormDefinitionSchema.shape.destination });
 
 /** Only aggregate attribution fields are read; respondent identities stay in Forms. */
 export async function loadAcquisitionFormArrivals(database: Prisma.TransactionClient, workspaceId: string, start: Date, end: Date, pipelineName?: string) {
+  const excludedIds = await excludedMetricLeadIds(database, workspaceId);
+  const excludedSubmissions = excludedIds.length ? await database.leadFormSubmission.findMany({
+    where: { workspaceId, leadId: { in: excludedIds } }, select: { idempotencyKey: true, marketingFormReceiptId: true },
+  }) : [];
+  const excludedPartialIds = excludedSubmissions.flatMap((submission) => /^marketing-form-partial-lead:[0-9a-f-]{36}$/.test(submission.idempotencyKey) ? [submission.idempotencyKey.slice("marketing-form-partial-lead:".length)] : []);
+  const excludedReceiptIds = excludedSubmissions.flatMap((submission) => submission.marketingFormReceiptId ? [submission.marketingFormReceiptId] : []);
   const responses = await database.marketingFormPartialResponse.findMany({
-    where: { workspaceId, deletedAt: null, firstAnsweredAt: { gte: start, lt: end } },
+    where: { workspaceId, deletedAt: null, firstAnsweredAt: { gte: start, lt: end }, id: { notIn: excludedPartialIds }, OR: [{ receiptId: null }, { receiptId: { notIn: excludedReceiptIds } }] },
     orderBy: [{ firstAnsweredAt: "asc" }, { id: "asc" }], take: 10_001,
     select: { id: true, marketingFormId: true, marketingFormVersionId: true, completedAt: true, receiptId: true, utmCampaign: true, utmContent: true },
   });
@@ -38,7 +45,7 @@ export async function loadAcquisitionFormArrivals(database: Prisma.TransactionCl
     if (!activeForms.has(response.marketingFormId) || !destination || !allowedPipelines.has(destination.pipelineId)) return [];
     return [{ id: `partial:${response.id}`, source: sourceByKey.get(destination.sourceKey) ?? null, campaign: null, creative: null, utmCampaign: response.utmCampaign, utmContent: response.utmContent, tags: [], meetings: [], wins: [] }];
   });
-  return { incomplete, promotedIncompleteLeadIds: promoted.flatMap((submission) => submission.leadId ? [submission.leadId] : []), completedReceiptIds: responses.flatMap((response) => response.completedAt && response.receiptId ? [response.receiptId] : []), truncated };
+  return { incomplete, excludedLeadIds: excludedIds, promotedIncompleteLeadIds: promoted.flatMap((submission) => submission.leadId ? [submission.leadId] : []), completedReceiptIds: responses.flatMap((response) => response.completedAt && response.receiptId ? [response.receiptId] : []), truncated };
 }
 
 /** Completion replaces the partial entry while retaining its first arrival day. */

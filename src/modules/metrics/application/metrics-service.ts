@@ -36,6 +36,7 @@ import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { z } from "zod";
+import { excludedMetricLeadIds, metricFactExclusionFilters } from "./metric-lead-exclusions";
 
 type AuthorizationPort = Readonly<{
   authorize: (
@@ -232,6 +233,7 @@ async function integratedFactWhere(
   scope: Readonly<{ scope: PermissionScope; teamIds: readonly string[] }>,
   query: MetricsQuery,
 ): Promise<Prisma.CommercialMetricFactWhereInput> {
+  const excludedIds = await excludedMetricLeadIds(database, context.workspaceId);
   const scopeMemberships = scope.scope === "TEAM" ? await database.teamMember.findMany({
     where: { workspaceId: context.workspaceId, teamId: { in: [...scope.teamIds] }, deletedAt: null },
     select: { workspaceMemberId: true },
@@ -297,6 +299,7 @@ async function integratedFactWhere(
     workspaceId: context.workspaceId,
     occurredAt: { gte: new Date(query.from), lt: new Date(query.to) },
     AND: [
+      ...metricFactExclusionFilters(excludedIds),
       { NOT: { eventKey: { endsWith: ":front-classification:reversal:v1" } } },
       // Removed test facts remain auditable in storage, outside operational metrics and records.
       { NOT: { eventKey: { endsWith: ":test-removal:reversal:v1" } } },
@@ -554,12 +557,14 @@ export function createMetricsService(options: MetricsServiceOptions) {
     if (channelGroups && channelGroups.length > 50_000) invalidInput("O canal excedeu 50 mil participações. Reduza o recorte.");
     const channelLeadIds = channelGroups?.filter((group) => (group._sum.quantity ?? 0) > 0).flatMap((group) => group.leadId ? [group.leadId] : []);
 
+    const excludedIds = await excludedMetricLeadIds(options.database, context.workspaceId);
     const leads = await options.database.lead.findMany({
       where: {
         workspaceId: context.workspaceId,
         createdAt: { lt: to },
         OR: [{ deletedAt: null }, { deletedAt: { gte: from } }],
         AND: [
+          { id: { notIn: excludedIds } },
           relationalVisibility(
             context,
             scope.scope,

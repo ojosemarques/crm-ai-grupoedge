@@ -1,3 +1,4 @@
+import { excludedMetricLeadIds, metricRelatedLeadFilter } from "@/modules/metrics/application/metric-lead-exclusions";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import {
@@ -48,18 +49,19 @@ export function createStrategyFunnelService(options: Options) {
   }
 
   async function nodeEvidence(context: AuthenticatedContext, node: StrategyFunnelDefinition["nodes"][number], start: Date, end: Date): Promise<Evidence> {
+    const excludedIds = await excludedMetricLeadIds(options.database, context.workspaceId);
     if (node.type === "LANDING_PAGE") {
-      const where = { workspaceId: context.workspaceId, landingPageId: node.referenceId!, kind: "PAGE_VIEW" as const, privacyDecision: "ALLOW" as const, occurredAt: { gte: start, lt: end } };
+      const where = { workspaceId: context.workspaceId, ...metricRelatedLeadFilter(excludedIds), landingPageId: node.referenceId!, kind: "PAGE_VIEW" as const, privacyDecision: "ALLOW" as const, occurredAt: { gte: start, lt: end } };
       const [volume, rows] = await Promise.all([options.database.marketingTouchpoint.count({ where }), options.database.marketingTouchpoint.findMany({ where, select: { sessionId: true, leadId: true }, take: 50_000 })]);
       return { volume, leadIds: new Set(rows.flatMap((row) => row.leadId ? [row.leadId] : [])), sessionIds: new Set(rows.flatMap((row) => row.sessionId ? [row.sessionId] : [])), provenance: "MarketingTouchpoint/PAGE_VIEW", coverage: volume > rows.length ? "PARTIAL" : "COMPLETE" };
     }
     if (node.type === "FORM") {
-      const where = { workspaceId: context.workspaceId, marketingFormId: node.referenceId!, submittedAt: { gte: start, lt: end } };
+      const where = { workspaceId: context.workspaceId, ...metricRelatedLeadFilter(excludedIds), marketingFormId: node.referenceId!, submittedAt: { gte: start, lt: end } };
       const [volume, rows] = await Promise.all([options.database.leadFormSubmission.count({ where }), options.database.leadFormSubmission.findMany({ where, select: { leadId: true, marketingSessionId: true }, take: 50_000 })]);
       return { volume, leadIds: new Set(rows.flatMap((row) => row.leadId ? [row.leadId] : [])), sessionIds: new Set(rows.flatMap((row) => row.marketingSessionId ? [row.marketingSessionId] : [])), provenance: "LeadFormSubmission/submittedAt", coverage: volume > rows.length ? "PARTIAL" : "COMPLETE" };
     }
     if (node.type === "WHATSAPP") {
-      const where = { workspaceId: context.workspaceId, channel: "WHATSAPP" as const, openedAt: { gte: start, lt: end }, deletedAt: null };
+      const where = { workspaceId: context.workspaceId, ...metricRelatedLeadFilter(excludedIds), channel: "WHATSAPP" as const, openedAt: { gte: start, lt: end }, deletedAt: null };
       const [volume, rows] = await Promise.all([options.database.conversation.count({ where }), options.database.conversation.findMany({ where, select: { leadId: true }, take: 50_000 })]);
       return { volume, leadIds: new Set(rows.flatMap((row) => row.leadId ? [row.leadId] : [])), sessionIds: new Set(), provenance: "Conversation/WHATSAPP/openedAt", coverage: volume > rows.length ? "PARTIAL" : "COMPLETE" };
     }
@@ -67,7 +69,8 @@ export function createStrategyFunnelService(options: Options) {
       where: { workspaceId: context.workspaceId, stageId: node.referenceId!, enteredAt: { gte: start, lt: end } },
       select: { leadId: true, opportunity: { select: { leadId: true } } }, take: 50_001,
     });
-    const leadIds = new Set(rows.flatMap((row) => row.leadId ? [row.leadId] : row.opportunity?.leadId ? [row.opportunity.leadId] : []));
+    const excluded = new Set(excludedIds);
+    const leadIds = new Set(rows.flatMap((row) => row.leadId ? [row.leadId] : row.opportunity?.leadId ? [row.opportunity.leadId] : []).filter(id => !excluded.has(id)));
     return { volume: leadIds.size, leadIds, sessionIds: new Set(), provenance: "StageHistory/enteredAt/distinctLead", coverage: rows.length > 50_000 ? "PARTIAL" : "COMPLETE" };
   }
 
