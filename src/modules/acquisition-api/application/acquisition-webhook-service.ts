@@ -12,6 +12,7 @@ import { META_ADS_DEFAULT_API_VERSION } from "@/modules/integrations/domain/meta
 import { metaNativeConfigurationSchema } from "@/modules/acquisition-api/domain/meta-native-contracts";
 import { assertMetaNativeTarget } from "./meta-native-target";
 import { isMetaNativeTestLead, metaNativeAnswers } from "../domain/meta-native-answers";
+import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
 
 type Options = Readonly<{ database: PrismaClient; secrets: SecretResolver; now: () => Date; intake: ReturnType<typeof getLeadIntakeService>; fetcher: typeof fetch }>;
 type Headers = Readonly<{ signature?: string; timestamp?: string }>;
@@ -115,6 +116,7 @@ export function createAcquisitionWebhookService(options: Options) {
       }
       if (!mapped.phone && phoneKey) mapped.phone = fields[phoneKey];
       for (const [canonical, key] of Object.entries(native.fieldMapping)) if (key && fields[key] !== undefined) mapped[canonical] = fields[key];
+      if (String(mapped.fullName ?? "").trim().length < 2 && normalizePhone(String(mapped.phone ?? "")).success) mapped.fullName = "Lead de formulário — nome não informado";
     }
     const sourceKey = String(configValue?.sourceKey ?? "");
     const actor = await options.database.actor.findFirst({ where: { workspaceId: connection.workspace.id, type: "SYSTEM" }, orderBy: { createdAt: "asc" } }); if (!actor) fail("Ator de sistema ausente.", "ACQUISITION_SYSTEM_ACTOR_MISSING", 503);

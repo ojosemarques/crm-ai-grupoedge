@@ -13,7 +13,7 @@ export async function loadAcquisitionFunnel(database: PrismaClient, workspaceId:
 async function loadAcquisitionFunnelSnapshot(database: Prisma.TransactionClient, workspaceId: string, start: Date, end: Date, pipelineName?: string) {
   const formArrivals = await loadAcquisitionFormArrivals(database, workspaceId, start, end, pipelineName);
   const candidates = await database.lead.findMany({
-    where: { workspaceId, deletedAt: null, OR: [{ createdAt: { gte: start, lt: end } }, ...(formArrivals.completedReceiptIds.length ? [{ submissions: { some: { workspaceId, marketingFormReceiptId: { in: formArrivals.completedReceiptIds } } } }] : [])], ...(pipelineName ? { pipeline: { name: pipelineName, deletedAt: null } } : {}) },
+    where: { workspaceId, deletedAt: null, OR: [{ createdAt: { gte: start, lt: end } }, ...(formArrivals.promotedIncompleteLeadIds.length ? [{ id: { in: formArrivals.promotedIncompleteLeadIds } }] : []), ...(formArrivals.completedReceiptIds.length ? [{ submissions: { some: { workspaceId, marketingFormReceiptId: { in: formArrivals.completedReceiptIds } } } }] : [])], ...(pipelineName ? { pipeline: { name: pipelineName, deletedAt: null } } : {}) },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 10_001,
     select: {
       id: true,
@@ -85,11 +85,13 @@ async function loadAcquisitionFunnelSnapshot(database: Prisma.TransactionClient,
   const incomplete = formArrivals.incomplete.slice(0, Math.max(10_000 - cohort.length, 0));
   if (incomplete.length < formArrivals.incomplete.length) truncated = true;
   cohort.push(...incomplete);
+  const promotedIncompleteIds = new Set(formArrivals.promotedIncompleteLeadIds);
+  const promotedIncompleteCount = leads.filter((lead) => promotedIncompleteIds.has(lead.id)).length;
   const dimensions: FunnelDimension[] = ["source", "campaign", "creative", "utmCampaign", "utmContent"];
   return {
     cohortSize: cohort.length,
-    registeredLeadCount: leads.length,
-    incompleteCount: incomplete.length,
+    registeredLeadCount: leads.length - promotedIncompleteCount,
+    incompleteCount: incomplete.length + promotedIncompleteCount,
     truncated,
     excludedReceiptCount: cohort.reduce((sum, lead) => sum + (lead.receipts?.excludedCount ?? 0), 0),
     receiptCurrency: "BRL" as const,

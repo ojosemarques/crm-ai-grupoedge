@@ -333,6 +333,7 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
     await connections.command(admin, { action: "ACTIVATE", connectionId: configured.id, revision: 1 });
     const leadId = "1234567890123456";
     const testLeadId = "1234567890123466";
+    const phoneOnlyId = "1234567890123477";
     const capturedAt = "2048-06-01T14:00:00.000Z";
     let wrongForm = false;
     const providerCalls: string[] = [];
@@ -340,6 +341,7 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
       expect(init?.headers).toMatchObject({ Authorization: "Bearer stage14-meta-enrichment-token" });
       const url = new URL(String(input)); providerCalls.push(url.pathname);
       if (url.pathname.endsWith(`/` + testLeadId)) return Response.json({ id: testLeadId, form_id: formId, created_time: capturedAt, field_data: [{ name: "full_name", values: ["Test Lead"] }, { name: "phone", values: ["<test lead: dummy data for phone>"] }] });
+      if (url.pathname.endsWith(`/` + phoneOnlyId)) return Response.json({ id: phoneOnlyId, form_id: formId, created_time: capturedAt, field_data: [{ name: "phone", values: ["+5511999981920"] }] });
       if (url.pathname.endsWith(`/` + leadId) || url.pathname.endsWith("/1234567890123499")) return Response.json({ id: url.pathname.split("/").at(-1), form_id: wrongForm ? "999999999" : formId, created_time: capturedAt, field_data: [{ name: "full_name", values: ["Lead nativo integrado"] }, { name: "phone", values: ["+5511999981919"] }, { name: "qual_é_o_desafio/atual?", values: ["Organizar o gabinete"] }] });
       if (url.pathname.endsWith(`/` + formId)) return Response.json({ id: formId, page_id: pageId, name: "Mandato nativo", questions: [{ key: "phone", type: "PHONE" }, { key: "qual_é_o_desafio/atual?", type: "CUSTOM", label: "Qual é o desafio?" }] });
       if (url.pathname.endsWith("/leadgen_forms")) return Response.json({ data: [{ id: formId, name: "Formulário nativo fixture", status: "ACTIVE", page_id: pageId }] });
@@ -377,6 +379,16 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
     expect(JSON.stringify(await database.webhookInbox.findMany({ where: { connectionId: configured.id } }))).not.toContain("+5511999981919");
     expect((await nativeService.list(admin)).find((row) => row.id === configured.id)?.forms[0]).toMatchObject({ id: formId, total: 1, today: 1 });
     expect(await nativeService.sync(admin, configured.id, true)).toMatchObject({ processed: 0, replayed: 2 });
+
+    const oldWebhooks = createAcquisitionWebhookService({ database, secrets: nativeSecrets, now: () => now, fetcher, intake: { intake: async () => ({ outcome: "REJECTED", code: "INVALID_PAYLOAD", issues: [{ field: "fullName", message: "Nome ausente" }] }) } as never });
+    const rawPhoneOnly = body(phoneOnlyId);
+    await expect(oldWebhooks.receive({ workspaceSlug: admin.workspaceSlug, connectionKey: key, rawBody: rawPhoneOnly, headers: { signature: metaSignature(rawPhoneOnly) } })).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+    expect(await database.webhookInbox.findFirst({ where: { connectionId: configured.id, providerEventId: phoneOnlyId } })).toMatchObject({ status: "DEAD_LETTER" });
+    await expect(nativeService.recoverNext("recover-phone-only")).resolves.toMatchObject({ status: "PROCESSED" });
+    await expect(nativeService.recoverNext("recover-replay")).resolves.toMatchObject({ status: "IDLE" });
+    const recovered = await database.leadFormSubmission.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, rawPayload: { path: ["eventId"], equals: phoneOnlyId } } });
+    expect(await database.lead.findUniqueOrThrow({ where: { id: recovered.leadId! } })).toMatchObject({ fullName: "Lead de formulário — nome não informado", normalizedPhone: "+5511999981920", pipelineId: pipeline.id });
+    expect(await receive(rawPhoneOnly)).toMatchObject({ status: "PROCESSED", idempotentReplay: true });
 
     const feedbackCalls: unknown[] = [];
     await database.integrationSecretReference.create({ data: { workspaceId: admin.workspaceId, connectionId: configured.id, alias: "conversion-token", referenceKey: "META_ADS_STAGE14_CONVERSION_TOKEN", present: true, createdByActorId: admin.actorId } });

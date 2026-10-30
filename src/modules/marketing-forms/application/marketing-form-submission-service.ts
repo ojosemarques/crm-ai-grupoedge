@@ -7,6 +7,7 @@ import { createOutboxEventInTransaction } from "@/modules/integrations/applicati
 import { canonicalJson } from "@/modules/integrations/domain/integration-policy";
 import { getLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { deliverTelegramReceiptAlertAfterCommit } from "@/modules/integrations/application/telegram-lead-alert-service";
+import { createMarketingFormPartialLeadWorker, enqueuePartialLeadInTransaction } from "./marketing-form-partial-lead-service";
 import { marketingFormDefinitionSchema, marketingFormSlugSchema, type MarketingFormDefinition } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import { publicFormEventSchema, publicFormSubmitSchema } from "@/modules/marketing-forms/domain/public-form-contracts";
 import { mapAnswersToLead, publicFormAnswerError, validatePublicFormAnswers } from "@/modules/marketing-forms/domain/public-form-validation";
@@ -318,6 +319,7 @@ export function createMarketingFormSubmissionService(options: Options) {
             select: { id: true, publicId: true },
           });
 
+      const partial = await tx.marketingFormPartialResponse.findUnique({ where: { workspaceId_marketingFormVersionId_sessionPublicId: { workspaceId: form.workspaceId, marketingFormVersionId: form.versionId, sessionPublicId: input.sessionPublicId } }, select: { id: true, completedAt: true, deletedAt: true } });
       const intake = await options.leadIntake.intake({
         channel: "FORM",
         idempotencyKey: `form:${form.id}:version:${form.versionId}:receipt:${receipt.id}`,
@@ -351,7 +353,8 @@ export function createMarketingFormSubmissionService(options: Options) {
           utmTerm: input.tracking.utmTerm,
           clickIds: input.tracking.clickIds,
         },
-      }, { workspaceId: form.workspaceId, actorId: actor.id, actorType: "SYSTEM", actorKey: actor.key }, tx);
+      }, { workspaceId: form.workspaceId, actorId: actor.id, actorType: "SYSTEM", actorKey: actor.key }, tx,
+        partial && !partial.completedAt && !partial.deletedAt ? { partialResponseId: partial.id } : undefined);
 
       if (intake.outcome === "REJECTED") {
         await tx.marketingFormReceipt.update({ where: { id: receipt.id }, data: { status: "FAILED", safeErrorCode: intake.code } });
@@ -438,22 +441,23 @@ export function createMarketingFormSubmissionService(options: Options) {
         if (error) fail(error, "MARKETING_FORM_EVENT_ANSWER_INVALID", 422);
       }
     }
-    return options.database.$transaction(async (tx) => {
+    const saved = await options.database.$transaction(async (tx) => {
+      let partialId: string | null = null;
       const actor = await tx.actor.findFirst({ where: { workspaceId: form.workspaceId, type: "SYSTEM", key: "system", userId: null }, select: { id: true } });
       if (!actor) fail("Formulário indisponível.", "MARKETING_FORM_SYSTEM_ACTOR_MISSING", 503);
+      const answeredEvents = input.events.filter((event) => event.kind === "QUESTION_ANSWERED" && event.questionKey && event.answer !== undefined);
+      if (answeredEvents.length) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`marketing-form-partial:${form.workspaceId}:${form.versionId}:${input.sessionPublicId}`}, 0))`;
       const earliest = input.events.reduce((value, event) => event.occurredAt < value ? event.occurredAt : value, input.events[0]!.occurredAt);
       const session = await tx.marketingSession.upsert({
         where: { workspaceId_publicId: { workspaceId: form.workspaceId, publicId: input.sessionPublicId } },
         create: { workspaceId: form.workspaceId, publicId: input.sessionPublicId, identityState: "ANONYMOUS", startedAt: new Date(earliest), lastSeenAt: now },
         update: { lastSeenAt: now },
       });
-      const answeredEvents = input.events.filter((event) => event.kind === "QUESTION_ANSWERED" && event.questionKey && event.answer !== undefined);
       if (answeredEvents.length) {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`marketing-form-partial:${form.workspaceId}:${form.versionId}:${input.sessionPublicId}`}, 0))`;
         const existing = await tx.marketingFormPartialResponse.findUnique({
           where: { workspaceId_marketingFormVersionId_sessionPublicId: { workspaceId: form.workspaceId, marketingFormVersionId: form.versionId, sessionPublicId: input.sessionPublicId } },
         });
-        if (!existing?.completedAt) {
+        if (!existing?.completedAt && !existing?.deletedAt) {
           const byQuestion = new Map(partialAnswers(existing?.answers ?? []).map((answer) => [answer.questionKey, answer]));
           for (const event of answeredEvents.sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))) {
             const current = byQuestion.get(event.questionKey!);
@@ -471,6 +475,8 @@ export function createMarketingFormSubmissionService(options: Options) {
           } else {
             await tx.marketingFormPartialResponse.create({ data: { workspaceId: form.workspaceId, marketingFormId: form.id, marketingFormVersionId: form.versionId, sessionPublicId: input.sessionPublicId, answers: json(merged), ...identity, utmSource: input.tracking.utmSource ?? null, utmMedium: input.tracking.utmMedium ?? null, utmCampaign: input.tracking.utmCampaign ?? null, utmContent: input.tracking.utmContent ?? null, utmTerm: input.tracking.utmTerm ?? null, referrerHost: referrerHost(input.tracking.referrerUrl), firstAnsweredAt, lastAnsweredAt, createdByActorId: actor.id } });
           }
+          const stored = await tx.marketingFormPartialResponse.findUniqueOrThrow({ where: { workspaceId_marketingFormVersionId_sessionPublicId: { workspaceId: form.workspaceId, marketingFormVersionId: form.versionId, sessionPublicId: input.sessionPublicId } }, select: { id: true } });
+          if (await enqueuePartialLeadInTransaction(tx, stored.id, form.workspaceId, actor.id, now)) partialId = stored.id;
         }
       }
       const result = await tx.marketingFormEvent.createMany({
@@ -494,8 +500,10 @@ export function createMarketingFormSubmissionService(options: Options) {
         })),
         skipDuplicates: true,
       });
-      return { accepted: result.count };
+      return { accepted: result.count, partialId };
     });
+    if (saved.partialId) await createMarketingFormPartialLeadWorker(options).processPartial(form.workspaceId, saved.partialId);
+    return { accepted: saved.accepted };
   }
 
   return Object.freeze({ submit, recordEvents });

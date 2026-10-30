@@ -900,6 +900,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
     payload: unknown,
     context: LeadIntakeActorContext,
     transactionOverride?: Prisma.TransactionClient,
+    formContinuation?: Readonly<{ partialResponseId: string }>,
   ): Promise<LeadIntakeResult> {
     const parsed = parseInput(payload, options.now());
     if (isRejectedResult(parsed)) return parsed;
@@ -1015,7 +1016,25 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         pipelineId: destinationPipeline?.id, email: parsed.normalizedEmail,
         fullName: parsed.fullName, jobTitle: parsed.jobTitle,
       });
-      const existingLead = parsed.channel === "OPEN_DOT" ? null : participation.existingLead;
+      // Only the form service can supply this continuation. The stored session,
+      // version, phone and destination must all agree; shared phone alone is insufficient.
+      const partial = formContinuation && transactionOverride && parsed.channel === "FORM" && !isHumanContext(context) && parsed.acquisition?.sessionPublicId && parsed.formIdentifier
+        ? await transaction.marketingFormPartialResponse.findFirst({ where: {
+            id: formContinuation.partialResponseId, workspaceId: context.workspaceId, completedAt: null, deletedAt: null,
+            sessionPublicId: parsed.acquisition?.sessionPublicId,
+          }, select: { id: true, marketingFormId: true, marketingFormVersionId: true } })
+        : null;
+      const partialSubmission = partial && parsed.acquisition?.sessionPublicId
+        ? await transaction.leadFormSubmission.findFirst({ where: {
+            workspaceId: context.workspaceId, idempotencyKey: `marketing-form-partial-lead:${partial.id}`,
+            marketingFormId: partial.marketingFormId, marketingFormVersionId: partial.marketingFormVersionId,
+            formIdentifier: parsed.formIdentifier ?? null, normalizedPhone: parsed.normalizedPhone,
+          }, select: { leadId: true } })
+        : null;
+      const continuedLead = partialSubmission?.leadId
+        ? phoneCandidates.find((lead) => lead.id === partialSubmission.leadId && lead.pipelineId === destinationPipeline?.id)
+        : null;
+      const existingLead = parsed.channel === "OPEN_DOT" ? null : continuedLead ?? participation.existingLead;
       const preparedScore = await prepareFormProvisionalScore(
         transaction,
         context.workspaceId,
@@ -1365,6 +1384,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       const lead = await transaction.lead.update({
         where: { id: existingLead.id },
         data: {
+          ...(continuedLead && existingLead.fullName === "Lead de formulário — nome não informado" ? { fullName: parsed.fullName } : {}),
           ...(isChronologicallyLatest
             ? {
                 latestSourceId: references.source.id,

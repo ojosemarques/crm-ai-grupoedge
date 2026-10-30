@@ -39,3 +39,17 @@ Somente o hash do código fica no banco. O webhook
 apenas em conversa privada e impede que outro chat reutilize o código.
 O aviso inclui nome, horário de recebimento e botão para a ficha autenticada;
 telefone e respostas do formulário permanecem no CRM. O bot não aborda o lead.
+
+No workspace `politizai`, respostas parciais de formulários com telefone válido
+geram o job `MARKETING_FORM_PARTIAL_LEAD_V1`. O processamento imediato após o
+commit e a recuperação pelo worker usam a mesma entrada canônica para Anúncios,
+com chave por resposta parcial, data de chegada original e aviso ao Carlos.
+Sem telefone não há card. A conclusão da mesma sessão e telefone reutiliza o
+card já vinculado. Respostas excluídas/concluídas antes do processamento são
+canceladas; excluir a resposta posteriormente preserva o lead operacional.
+O funil contabiliza a resposta incompleta uma única vez, mesmo com card criado.
+
+Formulários nativos Meta aceitam telefone válido sem nome, exibindo a ausência
+do nome no card. O worker pode recuperar recibos nativos verificados rejeitados
+por payload, com limite de tentativas, revalidação da Página e consulta dos dados
+na Meta. Entradas sintéticas da ferramenta de testes continuam excluídas.

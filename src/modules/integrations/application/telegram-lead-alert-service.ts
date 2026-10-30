@@ -73,12 +73,12 @@ export function createTelegramLeadAlertWorker(options: Options) {
     if (!job) return { status: "IDLE" as const };
     try {
       const payload = telegramLeadJobSchema.parse(job.payload);
-      const lead = await options.database.lead.findFirst({ where: { id: payload.leadId, workspaceId: job.workspaceId, deletedAt: null, pipeline: { name: ADVERTISING_PIPELINE_NAME, deletedAt: null } }, select: { id: true, fullName: true, workspace: { select: { timeZone: true } } } });
+      const lead = await options.database.lead.findFirst({ where: { id: payload.leadId, workspaceId: job.workspaceId, deletedAt: null, pipeline: { name: ADVERTISING_PIPELINE_NAME, deletedAt: null } }, select: { id: true, fullName: true, createdAt: true, submissions: { orderBy: [{ submittedAt: "asc" }, { id: "asc" }], take: 1, select: { submittedAt: true } }, workspace: { select: { timeZone: true } } } });
       if (!lead || job.cancelRequestedAt || payload.recipientMemberId !== binding.recipientMemberId) {
         await options.database.job.updateMany({ where: { id: job.id, status: "RUNNING", lockedBy: workerId }, data: { status: "CANCELLED", cancelledAt: now, finishedAt: now, lockedAt: null, lockedBy: null, lockExpiresAt: null, errorCode: "TELEGRAM_LEAD_ALERT_STALE" } });
         return { status: "CANCELLED" as const };
       }
-      const result = await transport.send({ chatId: binding.chatId, text: buildTelegramLeadAlert({ leadName: lead.fullName, receivedAt: job.createdAt, timeZone: lead.workspace.timeZone }), leadUrl: `${config.origin}/leads/${lead.id}/historico` });
+      const result = await transport.send({ chatId: binding.chatId, text: buildTelegramLeadAlert({ leadName: lead.fullName, receivedAt: lead.submissions[0]?.submittedAt ?? lead.createdAt, timeZone: lead.workspace.timeZone }), leadUrl: `${config.origin}/leads/${lead.id}/historico` });
       const finishedAt = options.now();
       await options.database.$transaction(async (tx) => {
         const changed = await tx.job.updateMany({ where: { id: job.id, status: "RUNNING", lockedBy: workerId }, data: { status: "SUCCEEDED", result, finishedAt, lockedAt: null, lockedBy: null, lockExpiresAt: null, errorCode: null, lastError: null } });

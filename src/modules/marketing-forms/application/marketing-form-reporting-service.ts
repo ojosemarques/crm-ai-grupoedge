@@ -168,9 +168,10 @@ export function createMarketingFormReportingService(options: Options) {
       UNION ALL
       SELECT 'PARTIAL'::text AS source, p.id, p."publicId", p."marketingFormVersionId", v.version,
         'INCOMPLETO'::text AS status, p."utmSource", p."utmMedium", p."utmCampaign", p."lastAnsweredAt" AS "submittedAt", NULL::timestamptz AS "acceptedAt",
-        p."respondentName" AS "submittedFullName", p."respondentEmail" AS "submittedEmail", p."respondentPhone" AS "submittedPhone", NULL::uuid AS "leadId", NULL::text AS "intakeOutcome"
+        p."respondentName" AS "submittedFullName", p."respondentEmail" AS "submittedEmail", p."respondentPhone" AS "submittedPhone", s."leadId", s."intakeOutcome"::text AS "intakeOutcome"
       FROM "marketing_form_partial_responses" p
       JOIN "marketing_form_versions" v ON v."workspaceId" = p."workspaceId" AND v.id = p."marketingFormVersionId"
+      LEFT JOIN "lead_form_submissions" s ON s."workspaceId"=p."workspaceId" AND s."idempotencyKey"='marketing-form-partial-lead:' || p.id::text
       WHERE p."workspaceId" = ${context.workspaceId}::uuid AND p."marketingFormId" = ${formId}::uuid AND p."completedAt" IS NULL AND p."deletedAt" IS NULL
     `;
     type UnifiedRow = { source: "RECEIPT" | "PARTIAL"; id: string; publicId: string; marketingFormVersionId: string; version: number; status: string; utmSource: string | null; utmMedium: string | null; utmCampaign: string | null; submittedAt: Date; acceptedAt: Date | null; submittedFullName: string | null; submittedEmail: string | null; submittedPhone: string | null; leadId: string | null; intakeOutcome: string | null };
@@ -211,6 +212,7 @@ export function createMarketingFormReportingService(options: Options) {
       const version = await options.database.marketingFormVersion.findFirst({ where: { id: partial.marketingFormVersionId, workspaceId: context.workspaceId, marketingFormId: formId } });
       if (!version) fail("Versão histórica não encontrada.", "MARKETING_FORM_VERSION_NOT_FOUND", 500);
       const definition = parsedDefinition(version.definition);
+      const linked = await options.database.leadFormSubmission.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey: `marketing-form-partial-lead:${partial.id}` } }, select: { leadId: true, contactId: true, intakeOutcome: true } });
       const rawAnswers = storedAnswers(partial.answers);
       const answers = definition.questions.map((question) => {
         const rawAnswer = rawAnswers.find((item) => item.questionKey === question.stableKey);
@@ -219,7 +221,7 @@ export function createMarketingFormReportingService(options: Options) {
       return {
         receipt: { publicId: partial.publicId, status: "INCOMPLETO", submittedAt: partial.lastAnsweredAt, acceptedAt: null, utmSource: partial.utmSource, utmMedium: partial.utmMedium, utmCampaign: partial.utmCampaign, utmContent: partial.utmContent, utmTerm: partial.utmTerm, referrerHost: partial.referrerHost, redirectKind: null },
         version: version.version,
-        submission: { leadId: null, contactId: null, intakeOutcome: null, submittedFullName: partial.respondentName, submittedEmail: partial.respondentEmail, submittedPhone: partial.respondentPhone },
+        submission: { leadId: linked?.leadId ?? null, contactId: linked?.contactId ?? null, intakeOutcome: linked?.intakeOutcome ?? null, submittedFullName: partial.respondentName, submittedEmail: partial.respondentEmail, submittedPhone: partial.respondentPhone },
         answers,
       };
     }
@@ -253,8 +255,10 @@ export function createMarketingFormReportingService(options: Options) {
         if (!partial) fail("Resposta não encontrada.", "MARKETING_FORM_RESPONSE_NOT_FOUND", 404);
         const removed = await transaction.marketingFormPartialResponse.updateMany({ where: { id: partial.id, workspaceId: context.workspaceId, marketingFormId: formId, completedAt: null, deletedAt: null }, data: { deletedAt } });
         if (removed.count !== 1) fail("Resposta não encontrada.", "MARKETING_FORM_RESPONSE_NOT_FOUND", 404);
-        await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "marketing.form.response_deleted", entityType: "MarketingFormPartialResponse", entityId: partial.id, changes: { formId, receiptPublicId: partial.publicId, previousStatus: "INCOMPLETO", leadPreserved: false } } });
-        return { publicId: partial.publicId, deletedAt, leadPreserved: false };
+        const linked = await transaction.leadFormSubmission.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey: `marketing-form-partial-lead:${partial.id}` } }, select: { leadId: true } });
+        const leadPreserved = Boolean(linked?.leadId);
+        await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "marketing.form.response_deleted", entityType: "MarketingFormPartialResponse", entityId: partial.id, changes: { formId, receiptPublicId: partial.publicId, previousStatus: "INCOMPLETO", leadPreserved } } });
+        return { publicId: partial.publicId, deletedAt, leadPreserved };
       }
       const removed = await transaction.marketingFormReceipt.updateMany({
         where: { id: receipt.id, workspaceId: context.workspaceId, marketingFormId: formId, deletedAt: null },

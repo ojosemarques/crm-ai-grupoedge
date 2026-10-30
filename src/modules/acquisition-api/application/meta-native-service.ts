@@ -11,6 +11,7 @@ import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { assertMetaNativeTarget } from "./meta-native-target";
+import { z } from "zod";
 
 function fail(code: string, message: string, statusCode = 422): never { throw new ApplicationError(message, { code, statusCode, expose: true }); }
 type Options = { database: PrismaClient; secrets: SecretResolver; fetcher: typeof fetch; now: () => Date; webhooks: Pick<ReturnType<typeof getAcquisitionWebhookService>, "receive"> };
@@ -124,7 +125,43 @@ export function createMetaNativeService(options: Options) {
     await options.database.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "acquisition.meta_native.synchronized", entityType: "IntegrationConnection", entityId: connection.id, changes: { forms: forms.length, processed, replayed, ignored, importToday, start: floor.toISOString(), end: end.toISOString() } } });
     return { forms: forms.length, processed, replayed, ignored, start: floor.toISOString(), end: end.toISOString() };
   }
-  return Object.freeze({ list, sync });
+  async function recoverNext(workerId: string) {
+    const now = options.now();
+    const item = await options.database.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT i.id FROM webhook_inbox i JOIN integration_connections c ON c.id=i."connectionId" AND c."workspaceId"=i."workspaceId"
+        JOIN workspaces w ON w.id=i."workspaceId"
+        JOIN integration_connection_config_versions v ON v."connectionId"=c.id AND v."workspaceId"=c."workspaceId" AND v.version=c."currentConfigVersion"
+        WHERE w.slug='politizai' AND w.status='ACTIVE' AND w."deletedAt" IS NULL
+          AND c."providerKey"='META_LEAD_ADS' AND c.enabled=true AND c.status IN ('ACTIVE_LOCAL','CONNECTED') AND v.config ? 'metaNative'
+          AND i."signatureStatus"='VERIFIED' AND i.attempts<i."maxAttempts"
+          AND ((i.status='DEAD_LETTER' AND i."errorCode"='INVALID_PAYLOAD' AND (i."nextRetryAt" IS NULL OR i."nextRetryAt"<=${now}))
+            OR (i.status='RETRY_PENDING' AND i."errorCode"='META_NATIVE_RECOVERY_FAILED' AND i."nextRetryAt"<=${now})
+            OR (i.status='PROCESSING' AND i."lockedBy" LIKE 'native-recovery:%' AND i."lockExpiresAt"<${now}))
+        ORDER BY i."receivedAt" FOR UPDATE OF i SKIP LOCKED LIMIT 1
+      `);
+      if (!rows[0]) return null;
+      return tx.webhookInbox.update({ where: { id: rows[0].id }, data: { status: "PROCESSING", lockedBy: `native-recovery:${workerId}`, lockedAt: now, lockExpiresAt: new Date(now.getTime() + 60000) }, include: { connection: { select: { key: true, secrets: { where: { alias: "webhook-hmac", present: true, disabledAt: null }, orderBy: { version: "desc" }, take: 1, select: { referenceKey: true } } } } } });
+    });
+    if (!item) return { status: "IDLE" };
+    try {
+      const payload = z.object({ pageId: metaIdSchema, formId: metaIdSchema, leadId: metaIdSchema, createdTime: z.iso.datetime() }).parse(item.payload);
+      if (payload.leadId !== item.providerEventId || new Date(payload.createdTime).getTime() !== item.externalOccurredAt?.getTime()) throw new Error("Recovery identity mismatch");
+      const reference = item.connection.secrets[0]?.referenceKey;
+      const secret = reference ? await options.secrets.resolve(reference) : null;
+      if (!secret) throw new Error("Missing recovery credential");
+      const rawBody = canonicalJson({ object: "page", entry: [{ id: payload.pageId, changes: [{ field: "leadgen", value: { page_id: payload.pageId, form_id: payload.formId, leadgen_id: payload.leadId, created_time: Math.floor(new Date(payload.createdTime).getTime() / 1000) } }] }] });
+      const result = await options.webhooks.receive({ workspaceSlug: "politizai", connectionKey: item.connection.key, rawBody, headers: { signature: `sha256=${createHmac("sha256", secret).update(rawBody).digest("hex")}` } });
+      await options.database.webhookInbox.updateMany({ where: { id: item.id, lockedBy: `native-recovery:${workerId}` }, data: { lockedAt: null, lockedBy: null, lockExpiresAt: null, nextRetryAt: null, errorClass: null, errorCode: null, errorMessage: null } });
+      return { status: String(result.status) };
+    } catch {
+      const latest = await options.database.webhookInbox.findUniqueOrThrow({ where: { id: item.id }, select: { attempts: true } });
+      const attempts = Math.max(item.attempts + 1, latest.attempts);
+      await options.database.webhookInbox.updateMany({ where: { id: item.id, lockedBy: `native-recovery:${workerId}` }, data: { attempts, status: attempts >= item.maxAttempts ? "DEAD_LETTER" : "RETRY_PENDING", nextRetryAt: new Date(now.getTime() + 300000), lockedAt: null, lockedBy: null, lockExpiresAt: null, errorCode: "META_NATIVE_RECOVERY_FAILED", errorMessage: "Falha ao recuperar lead nativo; revisar entrada e conexão." } });
+      return { status: attempts >= item.maxAttempts ? "DEAD_LETTER" : "RETRY_PENDING" };
+    }
+  }
+  return Object.freeze({ list, sync, recoverNext });
 }
 let singleton: ReturnType<typeof createMetaNativeService> | undefined;
 export function getMetaNativeService() { singleton ??= createMetaNativeService({ database: getDatabaseClient(), secrets: environmentSecretResolver, fetcher: fetch, now: () => new Date(), webhooks: getAcquisitionWebhookService() }); return singleton; }

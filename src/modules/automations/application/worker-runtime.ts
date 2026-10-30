@@ -23,6 +23,9 @@ import { getProspectingReconciliationService } from "@/modules/prospecting/appli
 import { createMillionSendProspectingWorker } from "@/modules/prospecting/application/millionsend-prospecting-worker";
 import { createMeetingParticipantEmailWorker } from "@/modules/meetings/application/meeting-participant-email-service";
 import { createTelegramLeadAlertWorker } from "@/modules/integrations/application/telegram-lead-alert-service";
+import { createMarketingFormPartialLeadWorker } from "@/modules/marketing-forms/application/marketing-form-partial-lead-service";
+import { getLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { getMetaNativeService } from "@/modules/acquisition-api/application/meta-native-service";
 import type { ApplicationConfig } from "@/shared/core/config/application-config";
 import { getDatabaseClient } from "@/shared/core/database/client";
 
@@ -58,6 +61,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
   const millionSendProspectingWorker = createMillionSendProspectingWorker();
   const meetingParticipantEmailWorker = createMeetingParticipantEmailWorker(common);
   const telegramLeadAlertWorker = createTelegramLeadAlertWorker(common);
+  const partialLeadWorker = createMarketingFormPartialLeadWorker({ ...common, leadIntake: getLeadIntakeService() });
 
   return Object.freeze({
     database,
@@ -65,6 +69,8 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
       scanDue: lifecycleScanner.scanDue,
       processors: [
         { key: "telegram-lead-alert", processNext: telegramLeadAlertWorker.processNext },
+        { key: "marketing-form-partial-lead", processNext: partialLeadWorker.processNext },
+        { key: "meta-native-intake-recovery", processNext: getMetaNativeService().recoverNext },
         { key: "meta-ads", processNext: getMetaAdsService().processDue },
         { key: "millionsend-prospecting-email", processNext: millionSendProspectingWorker.processNext },
         { key: "prospecting-reconciliation", processNext: prospectingReconciliationWorker.processNext },

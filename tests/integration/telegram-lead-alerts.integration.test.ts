@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { PrismaClient } from "@/generated/prisma/client";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
@@ -8,6 +8,10 @@ import { createAuthorizationService } from "@/modules/users/permissions/authoriz
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { createTelegramBindingService, createTelegramLeadAlertWorker } from "@/modules/integrations/application/telegram-lead-alert-service";
 import { TELEGRAM_CONFIG_VERSION, TELEGRAM_CONNECTION_KEY, TELEGRAM_LEAD_JOB_KIND } from "@/modules/integrations/domain/telegram-contracts";
+import { createMarketingFormSubmissionService } from "@/modules/marketing-forms/application/marketing-form-submission-service";
+import { createMarketingFormPartialLeadWorker, enqueuePartialLeadInTransaction, partialLeadKey, PARTIAL_LEAD_PLACEHOLDER } from "@/modules/marketing-forms/application/marketing-form-partial-lead-service";
+import { createEmptyMarketingFormDefinition } from "@/modules/marketing-forms/domain/marketing-form-contracts";
+import { loadAcquisitionFunnel } from "@/modules/marketing/application/acquisition-funnel-service";
 
 if (!/^politizai_test_/.test(process.env.PRISMA_TEST_SCHEMA ?? "")) throw new Error("Ephemeral schema required");
 const db = new PrismaClient({ adapter: createPostgresAdapter(process.env.DATABASE_URL!, { max: 10 }) });
@@ -36,6 +40,22 @@ beforeAll(async () => {
   connectionId = connection.id;
   await db.integrationConnectionConfigVersion.create({ data: { workspaceId, connectionId, version: 1, schemaVersion: TELEGRAM_CONFIG_VERSION, configHash: "fixture", config: { state: "PENDING", recipientMemberId: memberId, activationHash: createHash("sha256").update(activation).digest("hex"), expiresAt: new Date(now.getTime() + 86400000).toISOString() }, createdByActorId: actorId } });
 });
+
+async function partialForm() {
+  const slug = `telegram-parcial-${randomUUID().slice(0, 8)}`;
+  const definition = createEmptyMarketingFormDefinition();
+  definition.questions.push({ stableKey: "telefone", type: "PHONE", title: "Telefone", required: true, position: 1, mapping: "phone", config: { defaultCountry: "BR" } });
+  definition.destination = { sourceKey: "manual", pipelineId, initialStageId: stageId, queueId: null, tagIds: [], priorityBandCode: "P3" };
+  const form = await db.marketingForm.create({ data: { workspaceId, key: slug, name: "Form Telegram", publicSlug: slug, status: "ACTIVE", draftDefinition: definition, createdByActorId: actorId, updatedByActorId: actorId } });
+  const version = await db.marketingFormVersion.create({ data: { workspaceId, marketingFormId: form.id, version: 1, schemaVersion: "marketing-form.v1", definition, definitionHash: "fixture", publishedAt: now, publishedByActorId: actorId, createdByActorId: actorId } });
+  await db.marketingForm.update({ where: { id: form.id }, data: { publishedVersionId: version.id } });
+  const formService = createMarketingFormSubmissionService({ database: db, now: () => now, leadIntake: service() });
+  const sessionPublicId = randomUUID();
+  const record = (answers: { key: string; answer: string }[]) => formService.recordEvents(slug, { versionPublicId: version.publicId, sessionPublicId, tracking: {}, events: answers.map(({ key, answer }) => ({ eventId: randomUUID(), kind: "QUESTION_ANSWERED", questionKey: key, answer, occurredAt: now.toISOString() })) });
+  return { form, version, formService, sessionPublicId, record, slug };
+}
+
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 afterAll(async () => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); await db.$disconnect(); });
 
 describe("alertas Telegram para Carlos", () => {
@@ -118,5 +138,66 @@ describe("alertas Telegram para Carlos", () => {
     await db.workspaceMember.update({ where: { id: memberId }, data: { status: "INACTIVE" } });
     await expect(worker.processLead(workspaceId, result.leadId)).resolves.toEqual({ status: "IDLE" });
     await db.workspaceMember.update({ where: { id: memberId }, data: { status: "ACTIVE" } });
+  });
+});
+
+describe("formulários parciais em Anúncios", () => {
+  it("ignora só nome, aceita só telefone, completa o nome e conclui a mesma sessão sem duplicar card ou Telegram", async () => {
+    const f = await partialForm();
+    const name = `Parcial ${randomUUID().slice(0, 8)}`;
+    const phone = "+5511981234432";
+    await expect(f.record([{ key: "telefone", answer: "123" }])).rejects.toMatchObject({ code: "MARKETING_FORM_EVENT_ANSWER_INVALID" });
+    await f.record([{ key: "nome-completo", answer: name }]);
+    const first = await db.marketingFormPartialResponse.findFirstOrThrow({ where: { marketingFormId: f.form.id } });
+    expect(await db.job.count({ where: { workspaceId, idempotencyKey: partialLeadKey(first.id) } })).toBe(0);
+    // Another respondent supplies only a phone; the later name belongs to this session.
+    const onlyPhone = await partialForm();
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, result: { message_id: 10 } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchImpl);
+    await onlyPhone.record([{ key: "telefone", answer: phone }]);
+    const partial = await db.marketingFormPartialResponse.findFirstOrThrow({ where: { marketingFormId: onlyPhone.form.id } });
+    const submission = await db.leadFormSubmission.findUniqueOrThrow({ where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: partialLeadKey(partial.id) } } });
+    const lead = await db.lead.findUniqueOrThrow({ where: { id: submission.leadId! } });
+    expect(lead).toMatchObject({ fullName: PARTIAL_LEAD_PLACEHOLDER, normalizedPhone: phone, pipelineId, createdAt: partial.firstAnsweredAt });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(await db.marketingFormReceipt.count({ where: { marketingFormId: onlyPhone.form.id } })).toBe(0);
+    await onlyPhone.record([{ key: "nome-completo", answer: name }]);
+    expect((await db.lead.findUniqueOrThrow({ where: { id: lead.id } })).fullName).toBe(name);
+    const funnel = await loadAcquisitionFunnel(db, workspaceId, new Date(now.getTime() - 86400000), new Date(now.getTime() + 86400000), "Anúncios");
+    expect(funnel.incompleteCount).toBe(2);
+    const accepted = await onlyPhone.formService.submit(onlyPhone.slug, { versionPublicId: onlyPhone.version.publicId, sessionPublicId: onlyPhone.sessionPublicId, idempotencyToken: randomUUID(), startedAt: new Date(now.getTime() - 2000).toISOString(), tracking: {}, answers: [{ questionKey: "nome-completo", value: name }, { questionKey: "telefone", value: phone }] });
+    expect(accepted.outcome).toBe("ACCEPTED");
+    const completed = await db.leadFormSubmission.findFirstOrThrow({ where: { workspaceId, marketingFormId: onlyPhone.form.id, marketingFormReceiptId: { not: null } } });
+    expect(completed.leadId).toBe(lead.id);
+    expect(await db.lead.count({ where: { workspaceId, normalizedPhone: phone } })).toBe(1);
+    expect(await db.job.count({ where: { workspaceId, idempotencyKey: `telegram-ad-lead:${lead.id}:carlos` } })).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await onlyPhone.record([{ key: "telefone", answer: phone }]);
+    expect((await db.marketingFormPartialResponse.findUniqueOrThrow({ where: { id: partial.id } })).completedAt).not.toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals(); vi.unstubAllEnvs();
+  });
+
+  it("recupera retroativo, mantém a data, é idempotente e cancela resposta excluída", async () => {
+    const f = await partialForm();
+    const original = new Date(now.getTime() - 2 * 86400000);
+    const partial = await db.marketingFormPartialResponse.create({ data: { workspaceId, marketingFormId: f.form.id, marketingFormVersionId: f.version.id, sessionPublicId: f.sessionPublicId, answers: [], respondentName: "Retroativo Telegram", respondentPhone: "+5511981234433", firstAnsweredAt: original, lastAnsweredAt: original, createdByActorId: actorId } });
+    await db.$transaction((tx) => enqueuePartialLeadInTransaction(tx, partial.id, workspaceId, actorId, now));
+    const worker = createMarketingFormPartialLeadWorker({ database: db, now: () => now, leadIntake: service() });
+    await expect(worker.processPartial(workspaceId, partial.id)).resolves.toEqual({ status: "SUCCEEDED" });
+    await expect(worker.processPartial(workspaceId, partial.id)).resolves.toEqual({ status: "IDLE" });
+    const submission = await db.leadFormSubmission.findUniqueOrThrow({ where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: partialLeadKey(partial.id) } } });
+    expect(submission).toMatchObject({ marketingFormId: f.form.id, marketingFormVersionId: f.version.id, submittedAt: original });
+    expect((await db.lead.findUniqueOrThrow({ where: { id: submission.leadId! } })).createdAt).toEqual(original);
+    await db.lead.update({ where: { id: submission.leadId! }, data: { createdAt: now } });
+    await expect(loadAcquisitionFunnel(db, workspaceId, new Date(original.getTime() - 1000), new Date(original.getTime() + 1000), "Anúncios")).resolves.toMatchObject({ cohortSize: 1, incompleteCount: 1, registeredLeadCount: 0 });
+    await db.job.update({ where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: partialLeadKey(partial.id) } }, data: { status: "PENDING", finishedAt: null } });
+    await expect(worker.processPartial(workspaceId, partial.id)).resolves.toEqual({ status: "SUCCEEDED" });
+    expect(await db.lead.count({ where: { workspaceId, normalizedPhone: "+5511981234433" } })).toBe(1);
+    await db.marketingFormPartialResponse.update({ where: { id: partial.id }, data: { deletedAt: now } });
+    await db.job.update({ where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: partialLeadKey(partial.id) } }, data: { status: "PENDING", finishedAt: null } });
+    await expect(worker.processPartial(workspaceId, partial.id)).resolves.toEqual({ status: "CANCELLED" });
+    expect(await db.lead.count({ where: { id: submission.leadId!, deletedAt: null } })).toBe(1);
   });
 });
