@@ -179,6 +179,24 @@ function QuickLeadDialog({
   );
 }
 
+function ArrivalFilter({ filters, today }: Readonly<{ filters: PreSalesPipelineScreen["filters"]; today: string }>) {
+  const [preset, setPreset] = useState(filters.arrivalPreset);
+  const [from, setFrom] = useState(filters.arrivalFrom || today);
+  const [to, setTo] = useState(filters.arrivalTo || today);
+  return <>
+    <label className={styles.filter}>Chegada dos leads<select aria-label="Chegada dos leads" name="arrivalPreset" value={preset} onChange={(event) => {
+      const value = event.target.value as typeof preset;
+      setPreset(value);
+      if (value === "CUSTOM") event.stopPropagation();
+    }}><option value="ALL">Todos</option><option value="TODAY">Hoje</option><option value="WEEK">Esta semana</option><option value="CUSTOM">Personalizado</option></select></label>
+    {preset === "CUSTOM" ? <>
+      <label className={styles.filter}>De<input aria-label="Chegada a partir de" name="arrivalFrom" type="date" required max={to} value={from} onChange={(event) => { event.stopPropagation(); setFrom(event.target.value); }} /></label>
+      <label className={styles.filter}>Até<input aria-label="Chegada até" name="arrivalTo" type="date" required min={from} value={to} onChange={(event) => { event.stopPropagation(); setTo(event.target.value); }} /></label>
+      <Button size="sm" type="submit">Aplicar período</Button>
+    </> : <><input name="arrivalFrom" type="hidden" value="" /><input name="arrivalTo" type="hidden" value="" /></>}
+  </>;
+}
+
 export function PreSalesPipelineWorkspace({
   screen,
   initialView,
@@ -187,6 +205,7 @@ export function PreSalesPipelineWorkspace({
   showGenderFilter = false,
   showPhoneTypeFilter = false,
   showStateFilter = false,
+  showArrivalFilter = false,
   showSubmissionDetails = false,
 }: Readonly<{
   screen: PreSalesPipelineScreen;
@@ -196,6 +215,7 @@ export function PreSalesPipelineWorkspace({
   showGenderFilter?: boolean;
   showPhoneTypeFilter?: boolean;
   showStateFilter?: boolean;
+  showArrivalFilter?: boolean;
   showSubmissionDetails?: boolean;
 }>) {
   const router = useRouter();
@@ -212,6 +232,8 @@ export function PreSalesPipelineWorkspace({
   const [pending, setPending] = useState(false);
   const [loadingStageId, setLoadingStageId] = useState<string | null>(null);
   const loadingStageIdRef = useRef<string | null>(null);
+  const currentFilters = useRef(screen.filters);
+  useEffect(() => { currentFilters.current = screen.filters; }, [screen.filters]);
   const [notice, setNotice] = useState<Readonly<{ kind: "success" | "error"; message: string }> | null>(null);
   const [, startRefresh] = useTransition();
   const entryOptionsRequest = useRef<Promise<LeadEntryOptions> | null>(null);
@@ -233,6 +255,7 @@ export function PreSalesPipelineWorkspace({
     loadingStageIdRef.current = stage.id;
     setLoadingStageId(stage.id);
     setNotice(null);
+    const requestedFilters = screen.filters;
     try {
       const query = new URLSearchParams({
         pipelineId: screen.pipelineId,
@@ -243,11 +266,15 @@ export function PreSalesPipelineWorkspace({
         phoneType: screen.filters.phoneType,
         gender: screen.filters.gender,
         stateCode: screen.filters.stateCode,
+        arrivalPreset: screen.filters.arrivalPreset,
+        arrivalFrom: screen.filters.arrivalFrom,
+        arrivalTo: screen.filters.arrivalTo,
         offset: String(stage.leads.length),
         limit: String(stagePageBatchSize),
       });
       const response = await fetch(`/api/pipeline-stages/${stage.id}?${query.toString()}`, { cache: "no-store" });
       const page = await responseResult<LeadPipelineStagePage>(response);
+      if (currentFilters.current !== requestedFilters) return;
       setStages((current) => current.map((item) => item.id === stage.id ? {
         ...item,
         leads: [...item.leads, ...page.leads.filter((lead) => !item.leads.some((existing) => existing.id === lead.id))],
@@ -269,7 +296,7 @@ export function PreSalesPipelineWorkspace({
   }
 
   function columnScrollKey(stageId: string) {
-    return `pipeline-scroll:${screen.pipelineId}:${screen.filters.q}:${screen.filters.responsible}:${screen.filters.priority}:${screen.filters.stageCode}:${screen.filters.phoneType}:${screen.filters.gender}:${screen.filters.stateCode}:${stageId}`;
+    return `pipeline-scroll:${screen.pipelineId}:${screen.filters.q}:${screen.filters.responsible}:${screen.filters.priority}:${screen.filters.stageCode}:${screen.filters.phoneType}:${screen.filters.gender}:${screen.filters.stateCode}:${screen.filters.arrivalPreset}:${screen.filters.arrivalFrom}:${screen.filters.arrivalTo}:${stageId}`;
   }
 
   const loadEntryOptions = useCallback(() => {
@@ -475,10 +502,11 @@ export function PreSalesPipelineWorkspace({
       <InstantPipelineFilterForm
         action={basePath}
         className={styles.filters}
-        syncKey={`${screen.pipelineId}:${screen.filters.q}:${screen.filters.responsible}:${screen.filters.priority}:${screen.filters.stageCode}:${screen.filters.phoneType}:${screen.filters.gender}:${screen.filters.stateCode}`}
+        syncKey={`${screen.pipelineId}:${screen.filters.q}:${screen.filters.responsible}:${screen.filters.priority}:${screen.filters.stageCode}:${screen.filters.phoneType}:${screen.filters.gender}:${screen.filters.stateCode}:${screen.filters.arrivalPreset}:${screen.filters.arrivalFrom}:${screen.filters.arrivalTo}`}
       >
         {Object.entries(fixedQuery ?? {}).map(([name, value]) => <input key={name} name={name} type="hidden" value={value} />)}
         <input name="pipelineId" type="hidden" value={screen.pipelineId} />
+        {showArrivalFilter ? <ArrivalFilter key={`${screen.filters.arrivalPreset}:${screen.filters.arrivalFrom}:${screen.filters.arrivalTo}`} filters={screen.filters} today={new Intl.DateTimeFormat("en-CA", { timeZone: screen.timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(screen.generatedAt))} /> : null}
         <label className={styles.search}><span className="sr-only">Pesquisar negócios por nome ou telefone</span><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg><input defaultValue={screen.filters.q} name="q" placeholder="Nome ou telefone..." type="search" /></label>
         <label className={styles.filter}>Dono do negócio<select aria-label="Dono do negócio" defaultValue={screen.filters.responsible} name="responsible"><option value="">Todos</option>{screen.responsibleOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
         <label className={styles.filter}>Prioridade<select aria-label="Prioridade" defaultValue={screen.filters.priority} name="priority"><option value="ALL">Todas</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option></select></label>

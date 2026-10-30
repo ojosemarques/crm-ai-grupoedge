@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { CommercialHistory } from "@/components/leads/commercial-history";
 import { RouteAutoRefresh } from "@/components/layout/route-auto-refresh";
@@ -49,6 +50,7 @@ export default async function AdvertisingPage({ searchParams }: Readonly<{ searc
     });
   }
 
+  let pipelineError: string | null = null;
   let pipelineScreen = null;
   let workspaceScreen = null;
   try {
@@ -62,6 +64,9 @@ export default async function AdvertisingPage({ searchParams }: Readonly<{ searc
         phoneType: first(params.phoneType),
         gender: first(params.gender),
         stateCode: first(params.stateCode),
+        arrivalPreset: first(params.arrivalPreset),
+        arrivalFrom: first(params.arrivalFrom),
+        arrivalTo: first(params.arrivalTo),
       });
     } else {
       workspaceScreen = await getAdvertisingWorkspaceService().getScreen(context, {
@@ -78,7 +83,11 @@ export default async function AdvertisingPage({ searchParams }: Readonly<{ searc
     if (error instanceof ApplicationError && error.code === "INVALID_INPUT" && view === "metrics") {
       redirect("/anuncios?view=metrics&metricsPreset=LAST_30_DAYS");
     }
-    throw error;
+    if (error instanceof ApplicationError && error.code === "INVALID_INPUT" && view === "pipeline") {
+      pipelineError = "Filtro inválido. Confira as datas e informe um período válido.";
+    } else {
+      throw error;
+    }
   }
 
   return (
@@ -86,7 +95,8 @@ export default async function AdvertisingPage({ searchParams }: Readonly<{ searc
       <RouteAutoRefresh />
       <PageHeader description="Pipeline exclusivo para leads de anúncios, com atividades e indicadores separados da Prospecção Ativa." eyebrow="Trabalho" title={ADVERTISING_PIPELINE_NAME} />
       <AdvertisingNav active={view} />
-      {view === "pipeline" && pipelineScreen ? <PreSalesPipelineWorkspace basePath="/anuncios" fixedQuery={{ view: "pipeline" }} initialView="board" key={pipelineScreen.pipelineId} screen={pipelineScreen} showGenderFilter showPhoneTypeFilter showStateFilter showSubmissionDetails /> : null}
+      {pipelineError ? <p role="alert">{pipelineError} <Link href="/anuncios?view=pipeline">Limpar filtros</Link></p> : null}
+      {view === "pipeline" && pipelineScreen ? <PreSalesPipelineWorkspace basePath="/anuncios" fixedQuery={{ view: "pipeline" }} initialView="board" key={pipelineScreen.pipelineId} screen={pipelineScreen} showArrivalFilter showGenderFilter showPhoneTypeFilter showStateFilter showSubmissionDetails /> : null}
       {view === "stock" && workspaceScreen ? <AdvertisingStock screen={workspaceScreen} /> : null}
       {view === "activities" && workspaceScreen ? <AdvertisingActivities screen={workspaceScreen} /> : null}
       {view === "activities" ? <CommercialHistory basePath="/anuncios" context={context} params={params} pipelineName="Anúncios" /> : null}

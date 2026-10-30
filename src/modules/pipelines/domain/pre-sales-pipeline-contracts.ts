@@ -139,6 +139,9 @@ export type PreSalesPipelineScreen = Readonly<{
     phoneType: PipelinePhoneType;
     gender: PipelineGender;
     stateCode: string;
+    arrivalPreset: "ALL" | "TODAY" | "WEEK" | "CUSTOM";
+    arrivalFrom: string;
+    arrivalTo: string;
   }>;
   responsibleOptions: readonly Readonly<{ value: string; label: string }>[];
   stateOptions: readonly string[];

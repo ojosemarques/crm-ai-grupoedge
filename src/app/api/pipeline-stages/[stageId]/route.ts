@@ -24,6 +24,9 @@ export async function GET(request: NextRequest, routeContext: RouteContext) {
       phoneType: query.get("phoneType") ?? "ALL",
       gender: query.get("gender") ?? "ALL",
       stateCode: query.get("stateCode") ?? "",
+      arrivalPreset: query.get("arrivalPreset") ?? "ALL",
+      arrivalFrom: query.get("arrivalFrom") ?? "",
+      arrivalTo: query.get("arrivalTo") ?? "",
       offset: query.get("offset") ?? "0",
       limit: query.get("limit") ?? "20",
     });

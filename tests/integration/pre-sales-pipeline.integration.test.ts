@@ -416,6 +416,54 @@ describe("pipeline de pré-vendas e transições", () => {
     await expect(pipelineService().getScreen(managerContext, { stateCode: "SÃO PAULO" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
+  it("filtra a chegada original antes de contar e paginar, incluindo nativos e incompletos retroativos", async () => {
+    const label = `CRM14 chegada ${randomUUID().slice(0, 8)}`;
+    const today = await Promise.all(Array.from({ length: 14 }, () => createLead(label)));
+    const native = await createLead(label);
+    const partial = await createLead(label);
+    await database.lead.updateMany({ where: { workspaceId, id: { in: [...today, native, partial].map((lead) => lead.leadId) } }, data: { createdAt: clock } });
+    const before = await pipelineService().getScreen(managerContext, { q: label });
+    const stage = before.stages.find((item) => item.code === "NEW")!;
+    expect(stage.count).toBe(16);
+    const yesterday = new Date("2035-02-09T23:59:59-03:00");
+    await database.leadFormSubmission.updateMany({ where: { workspaceId, leadId: native.leadId }, data: { submittedAt: yesterday } });
+    const partialId = randomUUID();
+    const form = await database.marketingForm.create({ data: {
+      workspaceId, key: partialId, name: label, publicSlug: partialId,
+      createdByActorId: systemContext.actorId, updatedByActorId: systemContext.actorId,
+    } });
+    const version = await database.marketingFormVersion.create({ data: {
+      workspaceId, marketingFormId: form.id, version: 1, schemaVersion: "marketing-form.v1",
+      definition: {}, definitionHash: partialId, publishedAt: clock,
+      publishedByActorId: systemContext.actorId, createdByActorId: systemContext.actorId,
+    } });
+    await database.marketingFormPartialResponse.create({ data: {
+      id: partialId, workspaceId, marketingFormId: form.id, marketingFormVersionId: version.id,
+      sessionPublicId: randomUUID(), answers: {}, firstAnsweredAt: yesterday, lastAnsweredAt: yesterday,
+      createdByActorId: systemContext.actorId,
+    } });
+    await database.leadFormSubmission.updateMany({ where: { workspaceId, leadId: partial.leadId }, data: { idempotencyKey: `marketing-form-partial-lead:${partialId}` } });
+    const screen = await pipelineService().getScreen(managerContext, { q: label, arrivalPreset: "TODAY" });
+    const newStage = screen.stages.find((item) => item.id === stage.id)!;
+    expect(newStage.count).toBe(14);
+    expect(newStage.leads).toHaveLength(12);
+    const page = await pipelineService().getStagePage(managerContext, {
+      pipelineId: screen.pipelineId, stageId: stage.id, q: label, arrivalPreset: "TODAY", offset: 12,
+    });
+    expect(page.total).toBe(14);
+    expect(page.leads).toHaveLength(2);
+    expect(page.hasMore).toBe(false);
+    expect(new Set([...newStage.leads, ...page.leads].map((lead) => lead.id))).toEqual(new Set(today.map((lead) => lead.leadId)));
+    const custom = await pipelineService().getScreen(managerContext, {
+      q: label, arrivalPreset: "CUSTOM", arrivalFrom: "2035-02-09", arrivalTo: "2035-02-09",
+    });
+    expect(custom.stages.flatMap((item) => item.leads).map((lead) => lead.id).sort()).toEqual([native.leadId, partial.leadId].sort());
+    const week = await pipelineService().getScreen(managerContext, { q: label, arrivalPreset: "WEEK" });
+    expect(week.stages.reduce((count, item) => count + item.count, 0)).toBe(16);
+    await expect(pipelineService().getScreen(managerContext, { arrivalPreset: "CUSTOM" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(pipelineService().getStagePage(managerContext, { stageId: stage.id, arrivalPreset: "CUSTOM", arrivalFrom: "2035-02-11", arrivalTo: "2035-02-10" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
   it("transiciona pelo serviço, fecha intervalos e registra timeline e auditoria", async () => {
     const lead = await createLead("CRM14 histórico");
     const initial = await state(lead.leadId);

@@ -79,6 +79,65 @@ test("filtra os pipelines de leads automaticamente sem recarregar o documento", 
   prospectingNavigations.stop();
 });
 
+test("filtra a chegada dos anúncios por hoje, semana e período personalizado", async ({ page }) => {
+  await login(page, DEMO_USERS[1].email);
+  await page.goto("/anuncios?view=pipeline");
+  const prefix = `Chegada E2E ${randomUUID().slice(0, 8)}`;
+  const names = [`${prefix} hoje`, `${prefix} retroativo`] as const;
+  for (const name of names) {
+    await page.getByRole("button", { name: "Adicionar", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Nome", { exact: true }).fill(name);
+    await dialog.getByLabel("Telefone", { exact: true }).fill(uniquePhone(name));
+    await dialog.getByRole("button", { name: "Adicionar lead" }).click();
+    await expect(page.locator("article").filter({ hasText: name })).toBeVisible();
+  }
+  const database = getDatabaseClient();
+  const oldLead = await database.lead.findFirstOrThrow({ where: { workspace: { slug: "politizai" }, fullName: names[1] }, select: { id: true, workspaceId: true, pipelineId: true, currentStageId: true } });
+  const oldDate = new Date(Date.now() - 8 * 86_400_000);
+  const localDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(oldDate);
+  await database.leadFormSubmission.updateMany({ where: { workspaceId: oldLead.workspaceId, leadId: oldLead.id }, data: { submittedAt: new Date(`${localDay}T23:59:59.999-03:00`) } });
+  await page.getByRole("searchbox", { name: "Pesquisar negócios por nome ou telefone" }).fill(prefix);
+  const filter = page.getByLabel("Chegada dos leads", { exact: true });
+  const todayCard = page.locator("article").filter({ hasText: names[0]! });
+  const oldCard = page.locator("article").filter({ hasText: names[1]! });
+  await expect(oldCard).toBeVisible();
+  await filter.selectOption("TODAY");
+  await expect(page).toHaveURL(/arrivalPreset=TODAY/);
+  await expect(todayCard).toBeVisible();
+  await expect(oldCard).toHaveCount(0);
+  await filter.selectOption("WEEK");
+  await expect(page).toHaveURL(/arrivalPreset=WEEK/);
+  await expect(todayCard).toBeVisible();
+  await expect(oldCard).toHaveCount(0);
+  await filter.selectOption("CUSTOM");
+  await page.getByLabel("Chegada a partir de", { exact: true }).fill(localDay);
+  await page.getByLabel("Chegada até", { exact: true }).fill(localDay);
+  await page.getByRole("button", { name: "Aplicar período", exact: true }).click();
+  await expect(page).toHaveURL(/arrivalPreset=CUSTOM/);
+  await expect(oldCard).toBeVisible();
+  await expect(todayCard).toHaveCount(0);
+  await page.getByRole("button", { name: "Atualizar pipeline", exact: true }).click();
+  await expect(oldCard).toBeVisible();
+  await page.getByRole("button", { name: "Lista", exact: true }).click();
+  await expect(page.getByRole("table").getByText(names[1]!, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Quadro", exact: true }).click();
+  await page.screenshot({ path: ".cache/advertising-arrival-desktop.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(filter).toBeVisible();
+  await expect(page.getByRole("button", { name: "Aplicar período", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: ".cache/advertising-arrival-mobile.png", fullPage: true, animations: "disabled" });
+  const invalid = await page.request.get(`/api/pipeline-stages/${oldLead.currentStageId}?pipelineId=${oldLead.pipelineId}&arrivalPreset=CUSTOM&arrivalFrom=2026-10-30&arrivalTo=2026-10-29`);
+  expect(invalid.status()).toBe(400);
+  await filter.selectOption("ALL");
+  await expect(todayCard).toBeVisible();
+  await expect(oldCard).toBeVisible();
+  await page.reload();
+  await expect(filter).toHaveValue("ALL");
+  await expect(oldCard).toBeVisible();
+});
+
 test("opera o pipeline por quadro, lista e cartão sem exigir configurações auxiliares", async ({ page }) => {
   await login(page, DEMO_USERS[1].email);
   const leadName = `Lead pipeline E2E ${randomUUID().slice(0, 8)}`;

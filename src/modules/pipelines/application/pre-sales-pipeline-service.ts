@@ -1,3 +1,4 @@
+import { pipelineArrivalFields, pipelineArrivalWhere } from "./pipeline-arrival-filter";
 import { assertAdvertisingSchedulingAccess } from "@/modules/meetings/application/advertising-scheduling-access";
 import {
   Prisma,
@@ -57,6 +58,7 @@ type PreSalesPipelineServiceOptions = Readonly<{
 }>;
 
 const screenQuerySchema = z.object({
+  ...pipelineArrivalFields,
   pipelineId: z.union([z.literal(""), z.string().uuid()]).optional().default(""),
   q: z.string().trim().max(200).optional().default(""),
   responsible: z.string().trim().max(100).optional().default(""),
@@ -874,7 +876,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         invalidInput("Responsável inválido.");
       }
     }
-    const [scope, pipeline] = await Promise.all([
+    const [scope, pipeline, workspace] = await Promise.all([
       resolveLeadVisibilityScope(
         options.database,
         options.authorization,
@@ -882,6 +884,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         PermissionKeys.LEADS_READ,
       ),
       getPipeline(context.workspaceId, parsed.data.pipelineId),
+      options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } }),
     ]);
     const visibility = leadVisibilityWhere(context, scope);
     const phoneTypeLeadIds = parsed.data.phoneType === "ALL"
@@ -909,11 +912,12 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
     const phoneTypeFilter: Prisma.LeadWhereInput = phoneTypeLeadIds === null ? {} : { id: { in: phoneTypeLeadIds } };
     const genderFilter: Prisma.LeadWhereInput = genderLeadIds === null ? {} : { id: { in: genderLeadIds } };
     const stateFilter: Prisma.LeadWhereInput = parsed.data.stateCode ? { stateCode: parsed.data.stateCode } : {};
+    const arrivalFilter = await pipelineArrivalWhere(options.database, { workspaceId: context.workspaceId, pipelineId: pipeline.id, filters: parsed.data, now: options.now(), timeZone: workspace.timeZone });
     const baseWhere: Prisma.LeadWhereInput = {
       workspaceId: context.workspaceId,
       pipelineId: pipeline.id,
       deletedAt: null,
-      AND: [visibility, responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter, stateFilter],
+      AND: [visibility, responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter, stateFilter, arrivalFilter],
     };
     const cardLimitPerStage = 12;
     const pipelineResource: ResourceScope = {
@@ -923,8 +927,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
     };
     const now = options.now();
     const historySince = new Date(now.getTime() - conversionPeriodDays * 86_400_000);
-    const [workspace, groupedCounts, write, correct, ownerRefs, queueRefs, stateRows, stageRows, healthRows, transitionRows] = await Promise.all([
-      options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } }),
+    const [groupedCounts, write, correct, ownerRefs, queueRefs, stateRows, stageRows, healthRows, transitionRows] = await Promise.all([
       options.database.lead.groupBy({ by: ["currentStageId"], where: baseWhere, _count: { _all: true } }),
       options.authorization.authorize(context, PermissionKeys.LEADS_WRITE, pipelineResource),
       options.authorization.authorize(context, PermissionKeys.LEADS_ASSIGN, pipelineResource),
@@ -1054,9 +1057,10 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       const [kind, id, extra] = parsed.data.responsible.split(":");
       if (extra || (kind !== "member" && kind !== "queue") || !z.string().uuid().safeParse(id).success) invalidInput("Responsável inválido.");
     }
-    const [scope, pipeline] = await Promise.all([
+    const [scope, pipeline, workspace] = await Promise.all([
       resolveLeadVisibilityScope(options.database, options.authorization, context, PermissionKeys.LEADS_READ),
       getPipeline(context.workspaceId, parsed.data.pipelineId),
+      options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } }),
     ]);
     const stage = pipeline.stages.find((item) => item.id === parsed.data.stageId && isLeadStageCode(item.leadStageCode));
     if (!stage) notFound("Etapa do pipeline não encontrada.");
@@ -1083,12 +1087,13 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         });
     const genderFilter: Prisma.LeadWhereInput = genderLeadIds === null ? {} : { id: { in: genderLeadIds } };
     const stateFilter: Prisma.LeadWhereInput = parsed.data.stateCode ? { stateCode: parsed.data.stateCode } : {};
+    const arrivalFilter = await pipelineArrivalWhere(options.database, { workspaceId: context.workspaceId, pipelineId: pipeline.id, filters: parsed.data, now: options.now(), timeZone: workspace.timeZone });
     const where: Prisma.LeadWhereInput = {
       workspaceId: context.workspaceId,
       pipelineId: pipeline.id,
       currentStageId: stage.id,
       deletedAt: null,
-      AND: [leadVisibilityWhere(context, scope), responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter, stateFilter],
+      AND: [leadVisibilityWhere(context, scope), responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter, stateFilter, arrivalFilter],
     };
     const [total, rows] = await Promise.all([
       options.database.lead.count({ where }),

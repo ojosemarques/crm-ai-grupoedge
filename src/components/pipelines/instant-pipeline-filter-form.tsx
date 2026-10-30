@@ -48,6 +48,7 @@ export function InstantPipelineFilterForm({
   function navigate(form: HTMLFormElement) {
     if (debounceTimer.current !== null) window.clearTimeout(debounceTimer.current);
     debounceTimer.current = null;
+    if (!form.reportValidity()) return;
     const href = formHref(form);
     startTransition(() => router.replace(href, { scroll: false }));
   }
