@@ -25,3 +25,15 @@ it("não consulta substituições quando o período não contém fatos", async (
   expect(await readRealtimeDashboardFacts(database as never, "workspace", new Date(), new Date(), "PROSPECTING")).toEqual({ factRows: [], unclassified: 0 });
   expect(findMany).toHaveBeenCalledTimes(1);
 });
+
+it("permite consultar apenas agendamentos sem carregar mensagens ou outros tipos de evento", async () => {
+  const booking = { id: "booking", eventType: "MEETING_SCHEDULED", pipelineId: "ads", safeMetadata: null, quantity: 1, leadId: "lead", contactId: null };
+  const findMany = vi.fn().mockResolvedValueOnce([booking]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ ...booking, occurredAt: new Date("2026-10-30T12:00:00Z"), correctionOfFactId: null, lead: null, meetingId: "meeting" }]).mockResolvedValueOnce([]);
+  const database = { lead: { findMany: vi.fn().mockResolvedValue([{ id: "lead", contactId: null }]) }, auditLog: { findMany: vi.fn().mockResolvedValue([]) }, commercialMetricFact: { findMany }, pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "ads", name: "Anúncios" }]) } };
+  const from = new Date("2026-10-30T03:00:00Z"), to = new Date("2026-10-31T03:00:00Z");
+  const result = await readRealtimeDashboardFacts(database as never, "workspace", from, to, "ADVERTISING", undefined, ["MEETING_SCHEDULED"]);
+  expect(result.factRows).toEqual([booking]);
+  expect(findMany).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: expect.objectContaining({
+    workspaceId: "workspace", eventType: { in: ["MEETING_SCHEDULED"] }, occurredAt: { gte: from, lt: to },
+  }) }));
+});

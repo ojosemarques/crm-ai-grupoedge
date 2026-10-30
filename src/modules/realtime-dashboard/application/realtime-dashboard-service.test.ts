@@ -24,6 +24,7 @@ describe("serviço do dashboard tempo real", () => {
       valueCents: eventType === "SALE_WON" ? BigInt(quantity * 10000) : null,
     });
     const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) },
+      lead: { findMany: vi.fn().mockResolvedValue([]) },
       workspace: { findFirst: vi.fn().mockResolvedValue({ name: "Empresa", timeZone: "America/Sao_Paulo" }) },
       pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "ads", name: "Anúncios" }, { id: "pros", name: "Prospecção Ativa" }]) },
       activity: { findMany: vi.fn().mockResolvedValue([]) },
@@ -41,8 +42,8 @@ describe("serviço do dashboard tempo real", () => {
     const service = createRealtimeDashboardService({ database: database as never, authorization: authorization() as never, now: () => now });
     const prospecting = await service.publicSnapshot(validToken);
     const advertising = await service.publicSnapshot(validToken, "ADVERTISING");
-    expect(prospecting.today.totals).toMatchObject({ sales: 3, salesValueCents: "30000", tasksCompleted: 3, calls: 3, messages: 3, meetingsScheduled: 3 });
-    expect(advertising.today.totals).toMatchObject({ sales: 2, salesValueCents: "20000", tasksCompleted: 7, calls: 2, messages: 2, meetingsScheduled: 2 });
+    expect(prospecting.today.totals).toMatchObject({ sales: 3, salesValueCents: "30000", tasksCompleted: 3, calls: 3, messages: 3, meetingsScheduled: 1 });
+    expect(advertising.today.totals).toMatchObject({ sales: 2, salesValueCents: "20000", tasksCompleted: 7, calls: 2, messages: 2, meetingsScheduled: 1 });
     expect(prospecting.week.ranking[0]).toMatchObject({ sales: 3, tasksCompleted: 3, calls: 3 });
     expect(advertising.week.ranking[0]).toMatchObject({ sales: 2, tasksCompleted: 7, calls: 2 });
     expect(database.commercialMetricFact.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId: "workspace", AND: expect.arrayContaining([
@@ -105,6 +106,7 @@ describe("serviço do dashboard tempo real", () => {
   it("retorna snapshot público agregado sem IDs internos, token ou PII de contato", async () => {
     const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) },
       realtimeDashboardShare: { findUnique: vi.fn().mockResolvedValue({ workspaceId: "workspace-sentinel", revokedAt: null }) },
+      lead: { findMany: vi.fn().mockResolvedValue([]) },
       workspace: { findFirst: vi.fn().mockResolvedValue({ id: "workspace-sentinel", name: "Empresa Exemplo", timeZone: "America/Sao_Paulo" }) },
       pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "pros", name: "Prospecção Ativa" }]) },
       commercialMetricFact: { findMany: vi.fn().mockResolvedValue([{
@@ -174,6 +176,7 @@ describe("serviço do dashboard tempo real", () => {
       { id: "namesake", user: { displayName: "Carlos Henrique", normalizedEmail: "other@example.test" }, role: { key: "sdr" }, teamMemberships: [] },
     ];
     const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) },
+      lead: { findMany: vi.fn().mockResolvedValue([]) },
       workspace: { findFirst: vi.fn().mockResolvedValue({ name: "Workspace", timeZone: "America/Sao_Paulo" }) },
       workspaceMember: { findMany: vi.fn().mockImplementation(({ where }) => Promise.resolve(where.id ? [{ id: "matheus", user: { displayName: "Matheus Mendon", normalizedEmail: "matheus@example.test" } }] : members)) },
       pipeline: { findMany: vi.fn().mockResolvedValue([{ id: "pros", name: "Prospecção Ativa" }]) },
@@ -213,6 +216,7 @@ describe("serviço do dashboard tempo real", () => {
     };
     const database = { auditLog: { findMany: vi.fn().mockResolvedValue([]) },
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => unknown) => callback(transaction)),
+      lead: { findMany: vi.fn().mockResolvedValue([]) },
       workspace: { findFirst: vi.fn().mockResolvedValue({ id: "workspace" }) },
     };
     const service = createRealtimeDashboardService({

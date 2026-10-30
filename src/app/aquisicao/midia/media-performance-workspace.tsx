@@ -47,13 +47,13 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
   const strategy = strategies.find((row) => row.key === strategyKey) ?? strategies[0];
   const mediaAvailable = initial.missingInformation.length === 0;
   const advertisingRows = initial.advertisingFunnel.byDimension.source;
-  const scheduledLeads = advertisingRows.reduce((sum, row) => sum + row.scheduled, 0);
-  const costPerScheduledLead = mediaAvailable && !initial.advertisingFunnel.truncated && scheduledLeads > 0
-    ? Math.round(initial.totals.spendCents / scheduledLeads)
+  const scheduledMeetings = initial.advertisingBookings;
+  const costPerScheduledMeeting = mediaAvailable && scheduledMeetings > 0
+    ? Math.round(initial.totals.spendCents / scheduledMeetings)
     : null;
   const advertisingStages = [
     { key: "received", label: "Leads recebidos", value: initial.advertisingFunnel.cohortSize },
-    { key: "scheduled", label: "Agendaram reunião", value: scheduledLeads },
+    { key: "scheduled", label: "Pessoas agendadas no período", value: scheduledMeetings },
     { key: "completed", label: "Realizaram reunião", value: advertisingRows.reduce((sum, row) => sum + row.completed, 0) },
     { key: "buyers", label: "Compraram", value: advertisingRows.reduce((sum, row) => sum + row.buyers, 0) },
   ];
@@ -108,11 +108,13 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
       { label: "Leads recebidos no CRM", value: initial.advertisingFunnel.cohortSize.toLocaleString("pt-BR"), hint: `${initial.advertisingFunnel.registeredLeadCount} cadastros · ${initial.advertisingFunnel.incompleteCount} ${initial.advertisingFunnel.incompleteCount === 1 ? "resposta incompleta" : "respostas incompletas"}`, icon: "leads" as const },
       { label: "CPC", value: metricValue(initial.metrics.find((metric) => metric.key === "cpc")?.value ?? null, "BRL_CENTS"), hint: "Investimento / cliques reportados", icon: "receita" as const },
       { label: "CPL · custo por lead", value: metricValue(initial.metrics.find((metric) => metric.key === "cpl")?.value ?? null, "BRL_CENTS"), hint: `${initial.totals.reportedLeads.toLocaleString("pt-BR")} leads reportados · Investimento / leads da mídia`, icon: "leads" as const },
-      { label: "MQL · custo por reunião marcada", value: metricValue(costPerScheduledLead, "BRL_CENTS"), hint: initial.advertisingFunnel.truncated ? "Contagem parcial: reduza o período para calcular" : `${scheduledLeads.toLocaleString("pt-BR")} ${scheduledLeads === 1 ? "lead agendou" : "leads agendaram"} reunião · Investimento / agendamentos`, icon: "agenda" as const },
+      { label: "MQL · custo por reunião marcada", value: metricValue(costPerScheduledMeeting, "BRL_CENTS"), hint: `${scheduledMeetings.toLocaleString("pt-BR")} ${scheduledMeetings === 1 ? "pessoa agendada" : "pessoas agendadas"} no período · Investimento / pessoas agendadas`, icon: "agenda" as const },
     ].map((metric) => <article className={styles.stat} key={metric.label}><div><span>{metric.label}</span><Icon name={metric.icon} size={16} /></div><strong>{metric.value}</strong><small>{metric.hint}</small></article>)}</section>
 
     <div className={styles.primaryGrid}><Surface className={styles.panel}><SectionHeader title="Evolução da performance" description="Compare o comportamento dos seus indicadores ao longo dos dias." /><div aria-label="Indicador do gráfico" className={styles.chartTabs} role="group">{chartOptions.map((option) => <button aria-pressed={chartMetric === option.key} key={option.key} onClick={() => setChartMetric(option.key)} type="button">{option.label}</button>)}</div>{chartData.length ? <AnalyticsChart label={`Evolução diária de ${chartOptions.find((option) => option.key === chartMetric)?.label}`} points={chartData.map((point) => ({ label: point.date.slice(5).split("-").reverse().join("/"), values: { value: point.value } }))} series={[{ key: "value", label: chartOptions.find((option) => option.key === chartMetric)?.label ?? "Indicador", color: "#ff6b2c" }]} formatValue={(value) => chartMetric === "spendCents" ? money(value * 100) : value.toLocaleString("pt-BR")} /> : <div className={styles.chartEmpty}><Icon name="tendencia" size={28} /><strong>Acompanhe a evolução das campanhas</strong><span>Importe os dados de performance para visualizar o gráfico diário.</span></div>}<details className={styles.dataDetails}><summary>Ver dados em tabela</summary><DataTableShell className="mt-3"><table><thead><tr><th>Data</th><th>Investimento</th><th>Impressões</th><th>Cliques</th><th>Leads</th></tr></thead><tbody>{initial.trend.map((point) => <tr key={point.date}><td>{point.date}</td><td>{money(point.spendCents)}</td><td>{point.impressions}</td><td>{point.clicks}</td><td>{point.reportedLeads}</td></tr>)}</tbody></table></DataTableShell></details></Surface>
     <Surface className={styles.panel}><SectionHeader title="Funil de aquisição" description="Da mídia à jornada comercial no CRM." /><div className={styles.funnelGroups}>{[{ label: "Mídia", stages: initial.funnel.media }, { label: "CRM · Pipeline de Anúncios", stages: advertisingStages }, { label: "Resultados", stages: initial.funnel.outcomes }].map((group) => { const max = Math.max(...group.stages.map((stage) => stage.value), 1); return <section key={group.label}><h3>{group.label}</h3>{group.stages.map((stage) => <div className={styles.funnelRow} key={stage.key}><div><span>{stage.label}</span><strong>{stage.value.toLocaleString("pt-BR")}</strong></div><progress aria-label={`${stage.label}: ${stage.value}`} max={max} value={stage.value} /></div>)}</section>; })}</div></Surface></div>
+
+    <p className={styles.footnote}>Cada pessoa conta uma vez, na data do primeiro agendamento, inclusive para reuniões futuras e leads recebidos antes do período. Reagendamentos e novas reuniões com a mesma pessoa não aumentam a contagem.</p>
 
     <StrategyFunnelEditor initial={strategyInitial} />
 
@@ -141,12 +143,12 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
       {strategy ? <section aria-label="Workflow da estratégia selecionada">
         <label className={funnelStyles.selector}>Estratégia pela dimensão selecionada <select value={strategy.key} onChange={(event) => setStrategyKey(event.target.value)}>{strategies.map((row) => <option key={row.key} value={row.key}>{row.label}</option>)}</select></label>
         <ol className={funnelStyles.flow}>
-          {[{ label: "Leads recebidos", value: strategy.leads }, { label: "Agendaram reunião", value: strategy.scheduled }, { label: "Realizaram reunião", value: strategy.completed }, { label: "Compradores", value: strategy.buyers }].map((stage) => <li className={funnelStyles.stage} key={stage.label}><span>{stage.label}</span><strong>{stage.value}</strong><small>{cohortRate(stage.value, strategy.leads)} dos leads da estratégia</small></li>)}
+          {[{ label: "Leads recebidos", value: strategy.leads }, { label: "Pessoas que agendaram", value: strategy.scheduled }, { label: "Realizaram reunião", value: strategy.completed }, { label: "Compradores", value: strategy.buyers }].map((stage) => <li className={funnelStyles.stage} key={stage.label}><span>{stage.label}</span><strong>{stage.value}</strong><small>{cohortRate(stage.value, strategy.leads)} dos leads da estratégia</small></li>)}
         </ol>
         <div className={funnelStyles.branch}><span>↳ No-show registrado</span><strong>{strategy.noShow}</strong><small>{cohortRate(strategy.noShow, strategy.scheduled)} dos leads que agendaram</small></div>
         <p className={styles.footnote}>A mesma pessoa pode ter no-show e depois realizar reunião. Compradores são leads com venda ganha, mesmo quando não houve reunião registrada. As setas mostram a jornada esperada, sem inferir etapas ausentes.</p>
       </section> : null}
-      <DataTableShell className="mt-4"><table><thead><tr><th>Origem</th><th>Chegaram</th><th>Agendaram</th><th>No-show</th><th>Reunião realizada</th><th>Tier 1</th><th>Tier 2</th><th>Tier 3</th><th>Sem tier</th><th>Representantes</th><th>Compradores</th><th>Vendas</th><th>Vendas contratadas</th><th>Recebido bruto</th><th>Estornos no período</th><th>Recebido líquido</th></tr></thead><tbody>
+      <DataTableShell className="mt-4"><table><thead><tr><th>Origem</th><th>Chegaram</th><th>Pessoas que agendaram</th><th>No-show</th><th>Reunião realizada</th><th>Tier 1</th><th>Tier 2</th><th>Tier 3</th><th>Sem tier</th><th>Representantes</th><th>Compradores</th><th>Vendas</th><th>Vendas contratadas</th><th>Recebido bruto</th><th>Estornos no período</th><th>Recebido líquido</th></tr></thead><tbody>
         {initial.acquisitionFunnel.byDimension[funnelDimension].map((row) => <tr key={row.key}><td>{row.label}</td><td>{row.leads}</td><td>{row.scheduled}</td><td>{row.noShow}</td><td>{row.completed}</td><td>{row.tier1}</td><td>{row.tier2}</td><td>{row.tier3}</td><td>{row.unclassified}</td><td>{row.representatives}</td><td>{row.buyers}</td><td>{row.sales}</td><td>{money(row.revenueCents)}</td><td>{receiptMoney(row.receivedCents)}</td><td>{receiptMoney(row.reversedCents)}</td><td>{receiptMoney(row.netReceivedCents)}</td></tr>)}
         {!initial.acquisitionFunnel.cohortSize ? <tr><td colSpan={16}>Nenhum lead recebido no período.</td></tr> : null}
       </tbody></table></DataTableShell>

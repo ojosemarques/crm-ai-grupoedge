@@ -22,7 +22,7 @@ describe("separação das frentes no tempo real", () => {
     const member = await database.workspaceMember.create({ data: { ...audit, userId: user.id, roleId: role.id, status: "ACTIVE" } });
     const leadId = randomUUID();
     const occurredAt = new Date("2026-10-22T14:00:00Z");
-    const fact = (eventType: CommercialMetricEventType, quantity: number, pipelineId: string | null, frontId?: string, dimensions: { creditedMemberId?: string; meetingOwnerMemberIdAtEvent?: string } = {}) => database.commercialMetricFact.create({ data: {
+    const fact = (eventType: CommercialMetricEventType, quantity: number, pipelineId: string | null, frontId?: string, dimensions: { creditedMemberId?: string; meetingOwnerMemberIdAtEvent?: string; leadId?: string } = {}) => database.commercialMetricFact.create({ data: {
       workspaceId: workspace.id, leadId, eventKey: randomUUID(), eventType, occurredAt, sourceEntityType: "Task", sourceEntityId: randomUUID(), creditedMemberId: member.id,
       pipelineId, quantity, valueCents: eventType === "SALE_WON" ? BigInt(quantity * 10000) : null,
       inputFingerprint: "fixture", ...dimensions, ...(frontId ? { safeMetadata: { _commercialFrontPipelineId: frontId } } : {}),
@@ -48,8 +48,8 @@ describe("separação das frentes no tempo real", () => {
     const service = createRealtimeDashboardService({ database, authorization: { assertAuthorized: vi.fn(), authorize: vi.fn().mockResolvedValue({ allowed: true }) }, now: () => new Date("2026-10-22T15:00:00Z"), publicWorkspaceSlug: workspace.slug });
     const prospecting = await service.publicSnapshot(token);
     const advertising = await service.publicSnapshot(token, "ADVERTISING");
-    expect(prospecting.today.totals).toMatchObject({ tasksCompleted: 3, calls: 3, messages: 3, meetingsScheduled: 3, meetingsCompleted: 3, sales: 3, salesValueCents: "30000" });
-    expect(advertising.today.totals).toMatchObject({ tasksCompleted: 9, calls: 2, messages: 2, meetingsScheduled: 2, meetingsCompleted: 2, sales: 2, salesValueCents: "20000" });
+    expect(prospecting.today.totals).toMatchObject({ tasksCompleted: 3, calls: 3, messages: 3, meetingsScheduled: 1, meetingsCompleted: 3, sales: 3, salesValueCents: "30000" });
+    expect(advertising.today.totals).toMatchObject({ tasksCompleted: 9, calls: 2, messages: 2, meetingsScheduled: 1, meetingsCompleted: 2, sales: 2, salesValueCents: "20000" });
     expect(prospecting.week.ranking[0]).toMatchObject({ tasksCompleted: 3, sales: 3 });
     expect(advertising.week.ranking[0]).toMatchObject({ tasksCompleted: 9, sales: 2 });
     expect((await service.screen({ workspaceId: workspace.id } as never, "ADVERTISING")).snapshot).toEqual(advertising);
@@ -62,7 +62,7 @@ describe("separação das frentes no tempo real", () => {
     const jhon = await closer("jhoncunha@politizai.com", "Jhon");
     const ede = await closer("ederafael@politizai.com", "Ede");
     for (const [memberId, assigned, completed] of [[jhon.id, 5, 3], [ede.id, 3, 1]] as const) {
-      await fact("MEETING_SCHEDULED", assigned, ads.id, undefined, { meetingOwnerMemberIdAtEvent: memberId });
+      for (let index = 0; index < assigned; index += 1) await fact("MEETING_SCHEDULED", 1, ads.id, undefined, { meetingOwnerMemberIdAtEvent: memberId, leadId: randomUUID() });
       await fact("MEETING_COMPLETED", completed, ads.id, undefined, { creditedMemberId: memberId });
     }
     const dynamic = await service.publicSnapshot(token, "ADVERTISING");
