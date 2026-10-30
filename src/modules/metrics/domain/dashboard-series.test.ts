@@ -75,13 +75,16 @@ describe("séries comerciais do log integrado", () => {
     const facts = [
       fact({ id: "stage", eventType: "MEETING_SCHEDULED", sourceEntityType: "StageHistory", occurredAt: first }),
       fact({ id: "meeting", eventType: "MEETING_SCHEDULED", sourceEntityType: "MeetingHistory", occurredAt: first }),
+      fact({ id: "held-stage", eventType: "MEETING_COMPLETED", sourceEntityType: "StageHistory", occurredAt: first }),
+      fact({ id: "held-meeting", eventType: "MEETING_COMPLETED", sourceEntityType: "MeetingHistory", occurredAt: second }),
+      fact({ id: "held-correction", eventType: "MEETING_COMPLETED", sourceEntityType: "MeetingHistory", occurredAt: second, quantity: -1 }),
       fact({ id: "proposal-stage", eventType: "STAGE_ENTERED", sourceEntityType: "StageHistory", occurredAt: first }),
       fact({ id: "offer", eventType: "PROPOSAL_REACHED", sourceEntityType: "Offer", occurredAt: second }),
       fact({ id: "sale", eventType: "SALE_WON", sourceEntityType: "OpportunityOutcomeSnapshot", occurredAt: second, valueCents: "12500" }),
     ];
-    const result = mergeIntegratedActivitySeries([series("scheduled"), series("proposals"), series("sales"), series("revenue", "MONEY")], facts);
+    const result = mergeIntegratedActivitySeries([series("scheduled"), series("held"), series("proposals"), series("sales"), series("revenue", "MONEY")], facts);
     expect(result.map((item) => [item.id, item.points.map((point) => point.value)])).toEqual([
-      ["scheduled", [2, 0]], ["proposals", [0, 1]], ["sales", [0, 1]], ["revenue", ["0", "12500"]],
+      ["scheduled", [2, 0]], ["held", [1, 0]], ["proposals", [0, 1]], ["sales", [0, 1]], ["revenue", ["0", "12500"]],
     ]);
   });
 

@@ -685,6 +685,7 @@ export function createDashboardMetricsService(options: DashboardMetricsServiceOp
       connected: "outreach.effective_contacts",
       qualified: "qualification.leads",
       scheduled: "meetings.scheduled",
+      held: "meetings.completed",
       proposals: "sales.proposals",
       sales: "sales.won",
       revenue: "sales.won_value",

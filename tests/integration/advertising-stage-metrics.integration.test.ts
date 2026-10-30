@@ -17,6 +17,7 @@ import { createAuthorizationService } from "@/modules/users/permissions/authoriz
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
 import { createMetricsService } from "@/modules/metrics/application/metrics-service";
 import { METRIC_LEAD_EXCLUSION_ACTION } from "@/modules/metrics/application/metric-lead-exclusions";
+import { createDashboardMetricsService } from "@/modules/metrics/application/dashboard-metrics-service";
 
 if (!/^politizai_test_/.test(process.env.PRISMA_TEST_SCHEMA ?? "")) throw new Error("Ephemeral schema required");
 const db = new PrismaClient({ adapter: createPostgresAdapter(process.env.DATABASE_URL!, { max: 8 }) });
@@ -131,6 +132,9 @@ it("movimento manual registra agendamento, no-show, realização e proposta sem 
   const after = (await realtime().screen(context, "ADVERTISING")).snapshot.today.totals;
   expect(after.meetingsScheduled - before.meetingsScheduled).toBe(1);
   expect(after.meetingsCompleted - before.meetingsCompleted).toBe(1);
+  const dashboard = await createDashboardMetricsService({ database: db, authorization, now: () => clock }).getScreen(context, { mode: "ADVERTISING", from: "2026-10-28T03:00:00Z", to: new Date(clock.getTime() + 1000).toISOString() });
+  expect(dashboard.comparisons.find(item => item.id === "held")?.current).toMatchObject({ value: 1, drilldownId: "integrated:meetings.completed" });
+  expect(dashboard.timeSeries.find(item => item.id === "held")?.points.reduce((sum, point) => sum + Number(point.value), 0)).toBe(1);
   expect((await realtime().screen(context, "PROSPECTING")).snapshot.today.totals).toEqual(activeBefore);
   expect(await db.activity.count({ where: { leadId, type: "STAGE_CHANGE" } })).toBe(5);
   expect(await db.auditLog.count({ where: { workspaceId: context.workspaceId, entityId: leadId, action: "lead.stage.transitioned" } })).toBe(5);

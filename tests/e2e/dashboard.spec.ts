@@ -23,6 +23,22 @@ function uniquePhone(label: string) {
   return `+55119${suffix}`;
 }
 
+test("Anúncios reúne entrada, reuniões, propostas e vendas nos indicadores principais", async ({ page }) => {
+  await login(page);
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto("/dashboard/anuncios?preset=TODAY");
+  const overview = page.getByRole("region", { name: "Indicadores principais", exact: true });
+  const labels = ["Leads recebidos", "Reuniões agendadas", "Reuniões realizadas", "Propostas", "Vendas", "Receita"];
+  await expect(overview.locator("article")).toHaveCount(8);
+  for (const label of labels) await expect(overview.getByRole("link", { name: `${label}: ver fórmula e registros`, exact: true })).toBeVisible();
+  const orderedLabels = await overview.getByRole("link", { name: /ver fórmula e registros$/ }).evaluateAll(nodes => nodes.map(node => node.getAttribute("aria-label")));
+  expect(orderedLabels.slice(0, 6)).toEqual(labels.map(label => `${label}: ver fórmula e registros`));
+  await overview.screenshot({ path: ".cache/advertising-overview-desktop.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(overview.getByRole("link", { name: "Reuniões realizadas: abrir registros", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
 test("dashboard reconcilia KPI, filtros e drilldown com dados persistidos", async ({ page }) => {
   test.setTimeout(90_000);
   await login(page);

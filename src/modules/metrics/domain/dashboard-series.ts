@@ -255,6 +255,7 @@ export function mergeIntegratedActivitySeries(
     connected: { eventTypes: effectiveContactEventTypes, label: "Leads conectados", formula: "leads distintos com ligação atendida, mensagem recebida ou mensagem enviada por WhatsApp, Instagram ou e-mail", distinctLead: true, distinctLeadPerBucket: true },
     qualified: { eventTypes: ["LEAD_QUALIFIED"], label: "Qualificados", formula: "leads distintos com qualificação registrada no período", distinctLead: true },
     scheduled: { eventTypes: ["MEETING_SCHEDULED"], label: "Reuniões agendadas", formula: "agendamentos registrados pela agenda ou pelo movimento do card no período" },
+    held: { eventTypes: ["MEETING_COMPLETED"], label: "Reuniões realizadas", formula: "realizações confirmadas pela agenda ou pelo movimento do card no período" },
     proposals: { eventTypes: ["PROPOSAL_REACHED"], label: "Propostas", formula: "ofertas comerciais registradas no período", sourceEntityType: "Offer" },
     sales: { eventTypes: ["SALE_WON"], label: "Vendas", formula: "ganhos registrados no período" },
     revenue: { eventTypes: ["SALE_WON"], label: "Receita", formula: "valor vendido nos ganhos registrados no período", money: true },

@@ -109,6 +109,10 @@ function comparisonSentence(comparison: DashboardComparison) {
 }
 
 const comparisonIcons: Readonly<Record<string, IconName>> = {
+  leads: "leads",
+  scheduled: "agenda",
+  held: "agenda",
+  proposals: "pipeline",
   revenue: "receita",
   sales: "tendencia",
   "lead-to-meeting": "agenda",
@@ -254,7 +258,9 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
     q.filters.productIds.length > 0 ? `${q.filters.productIds.length} produto` : null,
   ].filter((value): value is string => value !== null);
   const comparisonById = new Map(screen.comparisons.map((comparison) => [comparison.id, comparison]));
-  const primaryComparisons = ["revenue", "sales", "lead-to-meeting"].flatMap((id) => comparisonById.get(id) ?? []);
+  const primaryComparisons = (q.mode === "ADVERTISING"
+    ? ["leads", "scheduled", "held", "proposals", "sales", "revenue", "lead-to-meeting"]
+    : ["revenue", "sales", "lead-to-meeting"]).flatMap((id) => comparisonById.get(id) ?? []);
   const saleConversions = ["lead-to-sale", "meeting-to-sale", ...(q.mode === "ADVERTISING" ? ["completed-meeting-to-sale"] : [])].flatMap((id) => comparisonById.get(id) ?? []);
   const kpiById = new Map(screen.kpis.map((metric) => [metric.id, metric]));
   const operationalPulse = [
@@ -263,6 +269,7 @@ export function DashboardView({ basePath, displayName, roleKey, roleName, screen
     ["outreach.effective_contacts", "Leads conectados"],
     ["qualification.leads", "Qualificados"],
     ["meetings.scheduled", "Reuniões agendadas"],
+    ["meetings.completed", "Reuniões realizadas"],
     ["outreach.instagram_follows", "Perfis seguidos"],
     ["sales.proposals", "Propostas"],
   ] as const;
