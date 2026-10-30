@@ -1,3 +1,4 @@
+import { readRealtimePeriodQuery } from "@/modules/realtime-dashboard/domain/realtime-period-filter";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest) {
   try {
     const context = await requireApiAuthentication(request);
     const front = realtimeDashboardFrontSchema.parse(request.nextUrl.searchParams.get("front") ?? undefined);
-    const result = await getRealtimeDashboardService().screen(context, front);
+    const result = await getRealtimeDashboardService().screen(context, front, readRealtimePeriodQuery(request.nextUrl.searchParams));
     return NextResponse.json({ result }, { headers: noStoreHeaders });
   } catch (error) {
     return handleRouteError(error, request);

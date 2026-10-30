@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { getDatabaseClient } from "@/shared/core/database/client";
+import { ensureAdvertisingPipeline } from "@/modules/settings/application/production-foundation-service";
+import { addLocalDays, workspaceDateAt, workspaceDayRange, workspaceWeekRange } from "@/shared/core/time/workspace-time";
 import { expect, test, type Page } from "@playwright/test";
 import { enterDemoCompany } from "./helpers/company-hub";
 import { browserRequest } from "./support/browser-request";
@@ -333,5 +337,89 @@ test("visual de TV unificado suporta dois temas e paginação de 32 profissionai
   offline = false;
   await page.clock.fastForward(120_000);
   await expect(page.getByText("Ao vivo", { exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+
+test("filtra o Tempo Real por hoje, ontem, semanas e intervalo personalizado", async ({ page }) => {
+  const database = getDatabaseClient();
+  const member = await database.workspaceMember.findFirstOrThrow({ where: { workspace: { slug: "politizai" }, user: { normalizedEmail: DEMO_USERS[1].email } } });
+  const actor = await database.actor.findFirstOrThrow({ where: { workspaceId: member.workspaceId, userId: member.userId, type: "HUMAN" } });
+  await ensureAdvertisingPipeline(database, member.workspaceId, actor.id);
+  const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId: member.workspaceId, name: "Anúncios", deletedAt: null } });
+  const now = new Date();
+  const today = workspaceDateAt(now, "America/Sao_Paulo");
+  const yesterday = addLocalDays(today, -1);
+  const oldWeek = workspaceWeekRange(addLocalDays(today, -7), "America/Sao_Paulo");
+  const repeatedPerson = randomUUID();
+  for (const row of [
+    { leadId: randomUUID(), occurredAt: now },
+    { leadId: repeatedPerson, occurredAt: new Date(workspaceDayRange(yesterday, "America/Sao_Paulo").end.getTime() - 1) },
+    { leadId: repeatedPerson, occurredAt: now },
+    { leadId: randomUUID(), occurredAt: new Date(oldWeek.end.getTime() - 1) },
+  ]) await database.commercialMetricFact.create({ data: {
+    workspaceId: member.workspaceId, eventKey: randomUUID(), sourceEntityType: "PeriodFilterE2E", sourceEntityId: randomUUID(),
+    eventType: "MEETING_SCHEDULED", pipelineId: pipeline.id, creditedMemberId: member.id, bookedByMemberId: member.id,
+    quantity: 1, inputFingerprint: "period-filter-e2e", ...row,
+  } });
+  await page.goto("/login");
+  await page.getByLabel("E-mail").fill(DEMO_USERS[1].email);
+  await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
+  await page.getByRole("button", { name: "Entrar" }).click();
+  await enterDemoCompany(page);
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/tempo-real");
+  const filter = page.getByRole("combobox", { name: "Período do painel", exact: true });
+  await expect(filter).toHaveValue("TODAY");
+  await expect(filter.locator("option")).toHaveText(["Hoje", "Ontem", "Essa semana", "Semana passada", "Personalizado"]);
+  await page.getByRole("button", { name: "Pausar apresentação", exact: true }).click();
+  await page.getByRole("button", { name: "Anúncios", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Métricas de hoje" }).locator('[data-metric="meetingsScheduled"] > strong')).toHaveText("1");
+  for (const [value, label] of [["YESTERDAY", "Ontem"], ["THIS_WEEK", "Essa semana"], ["LAST_WEEK", "Semana passada"]]) {
+    await filter.selectOption(value!);
+    const panel = page.getByRole("region", { name: `Métricas ${label}`, exact: true });
+    await expect(panel).toBeVisible();
+    await expect(page.getByRole("region", { name: "Métricas da semana", exact: true })).toHaveCount(0);
+    const response = await page.request.get(`/api/tempo-real?front=ADVERTISING&periodPreset=${value}`);
+    expect(response.ok()).toBe(true);
+    const result = (await response.json()).result.snapshot;
+    expect(result.selection.preset).toBe(value);
+    await expect(panel.locator('[data-metric="meetingsScheduled"] > strong')).toHaveText(String(result.today.totals.meetingsScheduled));
+    expect(result.today.goals.meetingsScheduled.targetValue).toBeNull();
+  }
+  await filter.selectOption("CUSTOM");
+  await page.getByLabel("Data inicial", { exact: true }).fill(yesterday);
+  await page.getByLabel("Data final", { exact: true }).fill(yesterday);
+  await page.getByRole("button", { name: "Aplicar período", exact: true }).click();
+  const selected = page.getByRole("region", { name: "Métricas Personalizado", exact: true });
+  await expect(selected.locator('[data-metric="meetingsScheduled"] > strong')).toHaveText("1");
+  await expect(page).toHaveURL(/periodPreset=CUSTOM/);
+  await page.getByRole("button", { name: "Editar período personalizado", exact: true }).click();
+  await expect(page.getByLabel("Data inicial", { exact: true })).toHaveValue(yesterday);
+  await page.getByRole("button", { name: "Aplicar período", exact: true }).click();
+  await expect(selected).toBeVisible();
+  await page.reload();
+  await expect(filter).toHaveValue("CUSTOM");
+  await page.getByRole("button", { name: "Anúncios", exact: true }).click();
+  await expect(selected.locator('[data-metric="meetingsScheduled"] > strong')).toHaveText("1");
+  const refreshed = page.waitForResponse(response => response.url().includes("/api/tempo-real?") && response.url().includes("front=ADVERTISING") && response.url().includes("periodPreset=CUSTOM"));
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  expect((await refreshed).ok()).toBe(true);
+  await expect(selected.locator('[data-metric="meetingsScheduled"] > strong')).toHaveText("1");
+  await page.getByRole("button", { name: "Tema claro", exact: true }).click();
+  await expectPanelLayout(page, true);
+  await page.screenshot({ path: ".cache/realtime-period-desktop.png", animations: "disabled" });
+  await page.getByRole("button", { name: "Ranking", exact: true }).click();
+  await expect(page.getByRole("table", { name: "Ranking da equipe no período", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Geral", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(filter).toBeVisible();
+  await expectPanelLayout(page, false);
+  await page.screenshot({ path: ".cache/realtime-period-mobile.png", fullPage: true, animations: "disabled" });
+  await filter.selectOption("TODAY");
+  await expect(page.getByRole("region", { name: "Métricas de hoje", exact: true })).toBeVisible();
+  expect((await page.request.get("/api/tempo-real?periodPreset=CUSTOM&periodFrom=2026-10-30&periodTo=2026-10-29")).status()).toBe(400);
   expect(errors).toEqual([]);
 });

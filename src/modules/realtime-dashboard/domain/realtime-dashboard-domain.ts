@@ -2,6 +2,7 @@ import { advertisingLeadArrivals, advertisingPeriodFacts, type RealtimeActivityF
 import { summarizeDashboardSellerActivity } from "@/modules/metrics/domain/dashboard-seller-activity";
 import { summarizeEffectiveContacts } from "@/modules/metrics/domain/effective-contact-metrics";
 import type {
+  RealtimeDashboardGoals,
   RealtimeDashboardPeriod,
   RealtimeDashboardRankingRow,
   RealtimeDashboardTotals,
@@ -15,6 +16,7 @@ import {
 } from "@/shared/core/time/workspace-time";
 import { buildRealtimeDashboardGoals, type RealtimeGoalConfiguration, type RealtimeSeller } from "./realtime-dashboard-goals";
 import { buildRealtimeSalesFunnel } from "./realtime-sales-funnel";
+import { realtimePeriodLabels, realtimePeriodQuerySchema, type RealtimePeriodSelection } from "./realtime-period-filter";
 
 export const realtimeDashboardEventTypes = Object.freeze([
   "TASK_COMPLETED",
@@ -30,6 +32,7 @@ export const realtimeDashboardEventTypes = Object.freeze([
 ] as const);
 
 export type RealtimeDashboardPeriods = Readonly<{
+  selection?: RealtimePeriodSelection;
   today: RealtimeDashboardPeriod;
   week: RealtimeDashboardPeriod;
   queryFrom: Date;
@@ -41,8 +44,25 @@ export type RealtimeDashboardPeriods = Readonly<{
 export function resolveRealtimeDashboardPeriods(
   now: Date,
   timeZone: string,
+  query: unknown = {},
 ): RealtimeDashboardPeriods {
+  const filter = realtimePeriodQuerySchema.parse(query);
   const todayDate = workspaceDateAt(now, timeZone);
+  if (filter.periodPreset !== "TODAY") {
+    const anchor = filter.periodPreset === "YESTERDAY" ? addLocalDays(todayDate, -1)
+      : filter.periodPreset === "LAST_WEEK" ? addLocalDays(todayDate, -7) : todayDate;
+    const week = workspaceWeekRange(anchor, timeZone);
+    const fromDate = filter.periodPreset === "CUSTOM" ? filter.periodFrom : filter.periodPreset === "YESTERDAY" ? anchor : week.startDate;
+    const toDate = filter.periodPreset === "CUSTOM" ? filter.periodTo : filter.periodPreset === "YESTERDAY" ? anchor : week.endDate;
+    const start = workspaceDayRange(fromDate, timeZone).start;
+    const end = workspaceDayRange(toDate, timeZone).end;
+    const to = filter.periodPreset === "THIS_WEEK" && now < end ? now : end;
+    const period = { from: start.toISOString(), to: to.toISOString(), fromDate, toDate, timeZone, interval: "HALF_OPEN" as const };
+    return {
+      selection: { preset: filter.periodPreset, label: realtimePeriodLabels[filter.periodPreset] },
+      today: period, week: period, queryFrom: start, queryTo: to, weekGoalEnd: end, weekPlanEnd: end,
+    };
+  }
   const todayRange = workspaceDayRange(todayDate, timeZone);
   const weekRange = workspaceWeekRange(todayDate, timeZone);
   const saturdayDate = addLocalDays(weekRange.startDate, 5);
@@ -173,6 +193,11 @@ export function aggregateRealtimeDashboard(
   const weekLeads = advertising ? advertisingLeadArrivals(weekFacts).size : undefined;
   const weekTotals = summarizeRealtimeDashboardTotals(weekFacts, sellers);
   const goals = buildRealtimeDashboardGoals({ sellers, todayFacts, weekFacts, weekFromDate: periods.week.fromDate, timeZone: periods.week.timeZone, configuration });
+  const filtered = Boolean(periods.selection);
+  // Historical filters report results without projecting today's goal settings
+  // onto a past day or an arbitrary interval.
+  const periodGoals = (value: RealtimeDashboardGoals): RealtimeDashboardGoals => filtered
+    ? Object.fromEntries(Object.entries(value).map(([key, goal]) => [key, { ...goal, targetValue: null, progressBasisPoints: null, source: null, label: "Metas disponíveis na visão Hoje" }])) as RealtimeDashboardGoals : value;
   // Visibility only affects individual rows, never the team's facts or targets.
   const rankingSellers = sellers.filter((seller) => seller.rankingVisible !== false);
   const dailyRows = new Map(rankedSellerActivity(todayFacts, rankingSellers).map((row) => [row.id, Object.freeze({ calls: row.calls, messages: row.messages, effectiveContacts: row.effectiveContacts, meetingsScheduled: row.meetingsBooked, meetingsCompleted: row.meetingsCompleted, sales: row.sales, salesValueCents: row.salesValueCents, tasksCompleted: row.tasksCompleted })]));
@@ -183,13 +208,13 @@ export function aggregateRealtimeDashboard(
       period: periods.today,
       ...(advertising ? { leadsReceived: todayLeads! } : {}),
       totals: summarizeRealtimeDashboardTotals(todayFacts, sellers),
-      goals: goals.today,
+      goals: periodGoals(goals.today),
     }),
     week: Object.freeze({
       period: periods.week,
       ...(advertising ? { leadsReceived: weekLeads! } : {}),
       endsAt: periods.weekGoalEnd.toISOString(),
-      daily: Object.freeze(Array.from({ length: 5 }, (_, index) => {
+      daily: Object.freeze(Array.from({ length: filtered ? Math.round((Date.parse(periods.week.toDate) - Date.parse(periods.week.fromDate)) / 86_400_000) + 1 : 5 }, (_, index) => {
         const date = addLocalDays(periods.week.fromDate, index);
         const range = workspaceDayRange(date, periods.week.timeZone);
         const to = new Date(Math.min(range.end.getTime(), Date.parse(periods.week.to)));
@@ -204,15 +229,17 @@ export function aggregateRealtimeDashboard(
       })),
       totals: weekTotals,
       funnel: buildRealtimeSalesFunnel(weekFacts, weekTotals, weekLeads),
-      goals: goals.week,
+      goals: periodGoals(goals.week),
       ranking: Object.freeze(weeklyRows.map((row, index) => {
         const memberId = orderedMembers[index]!.id;
         const role = sellers.find(seller => seller.id === memberId)?.advertisingRole;
-        return { ...row, today: dailyRows.get(memberId)!, goals: goals.byMember.get(memberId)!, ...(advertising && role ? { advertisingRole: role } : {}) };
+        const memberGoals = goals.byMember.get(memberId)!;
+        return { ...row, today: dailyRows.get(memberId)!, goals: { today: periodGoals(memberGoals.today), week: periodGoals(memberGoals.week) }, ...(advertising && role ? { advertisingRole: role } : {}) };
       }).sort((left, right) => {
         if (advertising) {
           const leftMetric = left.advertisingRole === "CLOSER" ? "meetingsCompleted" : "meetingsScheduled";
           const rightMetric = right.advertisingRole === "CLOSER" ? "meetingsCompleted" : "meetingsScheduled";
+          if (filtered) return right.today[rightMetric] - left.today[leftMetric] || left.name.localeCompare(right.name, "pt-BR");
           return (right.goals.today[rightMetric].progressBasisPoints ?? -1) - (left.goals.today[leftMetric].progressBasisPoints ?? -1)
             || right.today[rightMetric] - left.today[leftMetric]
             || (right.goals.week[rightMetric].progressBasisPoints ?? -1) - (left.goals.week[leftMetric].progressBasisPoints ?? -1)

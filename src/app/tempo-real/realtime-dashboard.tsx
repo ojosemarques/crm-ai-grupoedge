@@ -21,8 +21,21 @@ import { Avatar, BrandMark, Icon } from "./realtime-dashboard-icons";
 import { DashboardSummary, Leaderboard, Overview } from "./realtime-dashboard-visuals";
 import { readRealtimeTheme, setRealtimeTheme, subscribeRealtimeTheme } from "./realtime-dashboard-theme";
 import styles from "./realtime-dashboard.module.css";
+import { AccessibleDialog } from "@/components/ui/accessible-dialog";
+import { readRealtimePeriodQuery, realtimePeriodLabels, realtimePeriodQuerySchema, type RealtimePeriodQuery } from "@/modules/realtime-dashboard/domain/realtime-period-filter";
 
 type LoadState = "LOADING" | "LIVE" | "STALE" | "ERROR";
+const subscribePeriodUrl = (listener: () => void) => {
+  window.addEventListener("popstate", listener);
+  window.addEventListener("realtime-period-changed", listener);
+  return () => {
+    window.removeEventListener("popstate", listener);
+    window.removeEventListener("realtime-period-changed", listener);
+  };
+};
+const readPeriodUrl = () => window.location.search;
+const serverPeriodUrl = () => null;
+
 const initialSharing: RealtimeShareState = { active: false, revision: null, createdAt: null, rotatedAt: null, revokedAt: null };
 
 function relativeFreshness(value: number | null, now: number) {
@@ -43,6 +56,19 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const periodUrl = useSyncExternalStore(subscribePeriodUrl, readPeriodUrl, serverPeriodUrl);
+  const selectedPeriod = useMemo(() => {
+    if (publicMode) return { query: realtimePeriodQuerySchema.parse({}), error: null };
+    try { return { query: readRealtimePeriodQuery(new URLSearchParams(periodUrl ?? "")), error: null }; }
+    catch { return { query: realtimePeriodQuerySchema.parse({}), error: "Período inválido na URL. Selecione um intervalo válido." }; }
+  }, [periodUrl, publicMode]);
+  const period = selectedPeriod.query;
+  const periodReady = periodUrl !== null;
+  const [dateDialogOpen, setDateDialogOpen] = useState(false);
+  const [periodFrom, setPeriodFrom] = useState("");
+  const [periodTo, setPeriodTo] = useState("");
+  const [dateError, setPeriodError] = useState<string | null>(null);
+  const periodError = dateError ?? selectedPeriod.error;
   const [copied, setCopied] = useState(false);
   const [slide, setSlide] = useState(0);
   const front: RealtimeDashboardFront = slide < 2 ? "PROSPECTING" : "ADVERTISING";
@@ -60,8 +86,31 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
   const inFlight = useRef<AbortController | null>(null);
   const lastSuccessAt = useRef<number | null>(null);
   const failureCount = useRef(0);
-  const dialogOpen = settingsOpen || Boolean(shareUrl);
+  const shareDialogOpen = settingsOpen || Boolean(shareUrl);
+  const dialogOpen = shareDialogOpen || dateDialogOpen;
   const hasSnapshot = Boolean(snapshot);
+  const dismissDateDialog = useCallback(() => setDateDialogOpen(false), []);
+
+  function applyPeriod(next: RealtimePeriodQuery) {
+    const url = new URL(window.location.href);
+    for (const [key, value] of Object.entries(next)) {
+      if (value && !(key === "periodPreset" && value === "TODAY")) url.searchParams.set(key, value);
+      else url.searchParams.delete(key);
+    }
+    setPeriodError(null);
+    setDateDialogOpen(false);
+    if (url.search === window.location.search) return;
+    inFlight.current?.abort();
+    inFlight.current = null;
+    lastSuccessAt.current = null;
+    failureCount.current = 0;
+    setSnapshots(null);
+    setLoadState("LOADING");
+    setReceivedAt(null);
+    setRankingPage(0);
+    window.history.replaceState(window.history.state, "", url);
+    window.dispatchEvent(new Event("realtime-period-changed"));
+  }
 
   useEffect(() => {
     if (!tvMode) return;
@@ -93,6 +142,7 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
   }, [publicMode]);
 
   const load = useCallback(async () => {
+    if (!periodReady) return false;
     if (inFlight.current || (publicMode && !tvMode && !publicToken)) {
       if (publicMode && !tvMode && !publicToken) setLoadState("ERROR");
       return false;
@@ -107,7 +157,7 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
     try {
       const endpoint = tvMode ? "/api/public/tempo" : publicMode ? "/api/public/tempo-real" : "/api/tempo-real";
       const fetchFront = async (selectedFront: RealtimeDashboardFront) => {
-        const response = await fetch(`${endpoint}?front=${selectedFront}`, {
+        const response = await fetch(`${endpoint}?${new URLSearchParams({ front: selectedFront, ...(!publicMode ? period : {}) })}`, {
           cache: "no-store",
           ...(publicMode && !tvMode ? { headers: { Authorization: `Bearer ${publicToken}` } } : {}),
           signal: controller.signal,
@@ -148,7 +198,7 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
       window.clearTimeout(requestTimeout);
       if (inFlight.current === controller) inFlight.current = null;
     }
-  }, [publicMode, publicToken, tvMode]);
+  }, [publicMode, publicToken, tvMode, period, periodReady]);
 
   useEffect(() => {
     let active = true;
@@ -228,7 +278,7 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (dialogOpen || event.altKey || event.ctrlKey || event.metaKey || event.target instanceof HTMLElement && event.target.closest("input, textarea, button, a")) return;
+      if (dialogOpen || event.altKey || event.ctrlKey || event.metaKey || event.target instanceof HTMLElement && event.target.closest("input, textarea, select, button, a")) return;
       if (event.key === "ArrowRight" || event.key === "ArrowLeft") { event.preventDefault(); selectSlide((slide + (event.key === "ArrowRight" ? 1 : REALTIME_DASHBOARD_SLIDE_COUNT - 1)) % REALTIME_DASHBOARD_SLIDE_COUNT); }
       if (event.code === "Space") { event.preventDefault(); setPaused((value) => !value); setSlideStartedAt(Date.now()); }
     }
@@ -238,9 +288,9 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
 
   useEffect(() => {
     const dialog = dialogRef.current;
-    if (dialogOpen && dialog && !dialog.open) dialog.showModal();
-    else if (!dialogOpen && dialog?.open) dialog.close();
-  }, [dialogOpen]);
+    if (shareDialogOpen && dialog && !dialog.open) dialog.showModal();
+    else if (!shareDialogOpen && dialog?.open) dialog.close();
+  }, [shareDialogOpen]);
 
   async function manageShare(action: "ROTATE" | "REVOKE") {
     setShareBusy(true);
@@ -289,8 +339,32 @@ export function RealtimeDashboard({ mode }: Readonly<{ mode: "private" | "public
         <div className={styles.railBottom}>{!publicMode && canManageShare ? <button type="button" aria-label="Compartilhar painel" title="Compartilhar painel" onClick={() => setSettingsOpen(true)}><Icon name="link" /></button> : null}{!publicMode ? <Link href="/" aria-label="Sair do painel de TV" title="Voltar ao CRM"><Icon name="exit" /></Link> : null}</div>
       </nav>
       <div className={styles.presentation}>
-        <header className={styles.topbar}><div className={styles.screenName}><span>TEMPO REAL / {frontLabel.toLocaleUpperCase("pt-BR")}</span><h1>TEMPO REAL</h1></div><div className={styles.topbarRight}><span className={styles.liveStatus} data-state={statusTone} title={snapshot.quality.reason}><i />{qualityLabel}</span><div className={styles.themeSwitch} role="group" aria-label="Aparência do painel"><button type="button" aria-label="Tema escuro" aria-pressed={theme === "dark"} onClick={() => setRealtimeTheme("dark")}><Icon name="moon" />Escuro</button><button type="button" aria-label="Tema claro" aria-pressed={theme === "light"} onClick={() => setRealtimeTheme("light")}><Icon name="sun" />Claro</button></div><span className={styles.workspaceProfile}><Avatar initials={workspaceInitials} /><strong>{snapshot.workspaceName}</strong></span></div></header>
-        <div className={styles.viewHeading}><div><h2>{!ranking ? "O ritmo da equipe. O resultado de todos." : "Cada vendedor. Cada avanço."}</h2><p>{!ranking ? "Hoje e semana lado a lado, com atividade real e metas verificadas." : "Ranking semanal com resultados e metas diárias e semanais por profissional."}</p></div><div className={styles.viewTabs} role="group" aria-label="Visualização"><button type="button" aria-pressed={!ranking} onClick={() => selectSlide(front === "PROSPECTING" ? 0 : 2)}><Icon name="grid" />Geral</button><button type="button" aria-pressed={ranking} onClick={() => selectSlide(front === "PROSPECTING" ? 1 : 3)}><Icon name="trophy" />Ranking</button></div></div>
+        <header className={styles.topbar}><div className={styles.screenName}><span>TEMPO REAL / {frontLabel.toLocaleUpperCase("pt-BR")}</span><h1>TEMPO REAL</h1></div><div className={styles.topbarRight}><span className={styles.liveStatus} data-state={statusTone} title={snapshot.quality.reason}><i />{qualityLabel}</span><div className={styles.themeSwitch} role="group" aria-label="Aparência do painel"><button type="button" aria-label="Tema escuro" aria-pressed={theme === "dark"} onClick={() => setRealtimeTheme("dark")}><Icon name="moon" />Escuro</button><button type="button" aria-label="Tema claro" aria-pressed={theme === "light"} onClick={() => setRealtimeTheme("light")}><Icon name="sun" />Claro</button></div>{!publicMode ? <div className={styles.periodFilter}><Icon name="calendar" /><select aria-label="Período do painel" value={dateDialogOpen ? "CUSTOM" : period.periodPreset} onChange={(event) => {
+          const preset = event.target.value as RealtimePeriodQuery["periodPreset"];
+          if (preset === "CUSTOM") {
+            setPeriodFrom(period.periodFrom || snapshot.today.period.fromDate);
+            setPeriodTo(period.periodTo || snapshot.today.period.toDate);
+            setPeriodError(null);
+            setDateDialogOpen(true);
+          } else applyPeriod({ periodPreset: preset, periodFrom: "", periodTo: "" });
+        }}>{Object.entries(realtimePeriodLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>{period.periodPreset === "CUSTOM" ? <button type="button" aria-label="Editar período personalizado" onClick={() => { setPeriodFrom(period.periodFrom); setPeriodTo(period.periodTo); setDateDialogOpen(true); }}>Editar</button> : null}</div> : null}<span className={styles.workspaceProfile}><Avatar initials={workspaceInitials} /><strong>{snapshot.workspaceName}</strong></span></div></header>
+        <div className={styles.viewHeading}><div><h2>{!ranking ? "O ritmo da equipe. O resultado de todos." : "Cada vendedor. Cada avanço."}</h2><p>{snapshot.selection ? `${snapshot.selection.label} · ${snapshot.today.period.fromDate.split("-").reverse().join("/")} a ${snapshot.today.period.toDate.split("-").reverse().join("/")}` : !ranking ? "Hoje e semana lado a lado, com atividade real e metas verificadas." : "Ranking semanal com resultados e metas diárias e semanais por profissional."}</p></div><div className={styles.viewTabs} role="group" aria-label="Visualização"><button type="button" aria-pressed={!ranking} onClick={() => selectSlide(front === "PROSPECTING" ? 0 : 2)}><Icon name="grid" />Geral</button><button type="button" aria-pressed={ranking} onClick={() => selectSlide(front === "PROSPECTING" ? 1 : 3)}><Icon name="trophy" />Ranking</button></div></div>
+        {periodError && !dateDialogOpen ? <p role="alert">{periodError}</p> : null}
+        {dateDialogOpen ? <AccessibleDialog labelledBy="realtime-period-title" onDismiss={dismissDateDialog} className={styles.dateDialog!}>
+          <h2 id="realtime-period-title">Período personalizado</h2>
+          <button type="button" aria-label="Fechar período personalizado" onClick={() => setDateDialogOpen(false)}>Fechar</button>
+          <form className={styles.dateForm} onSubmit={(event) => {
+            event.preventDefault();
+            const parsed = realtimePeriodQuerySchema.safeParse({ periodPreset: "CUSTOM", periodFrom, periodTo });
+            if (!parsed.success) { setPeriodError(parsed.error.issues[0]?.message ?? "Confira o intervalo."); return; }
+            applyPeriod(parsed.data);
+          }}>
+            <label>De<input aria-label="Data inicial" type="date" required value={periodFrom} max={periodTo} onChange={(event) => setPeriodFrom(event.target.value)} /></label>
+            <label>Até<input aria-label="Data final" type="date" required value={periodTo} min={periodFrom} onChange={(event) => setPeriodTo(event.target.value)} /></label>
+            {periodError ? <p role="alert">{periodError}</p> : null}
+            <button type="submit">Aplicar período</button>
+          </form>
+        </AccessibleDialog> : null}
         <DashboardSummary snapshot={snapshot} front={front} />
         <section className={styles.stage} key={slide} aria-label={`Slide ${slide + 1} de ${REALTIME_DASHBOARD_SLIDE_COUNT}`}>
           {!ranking ? <Overview snapshot={snapshot} front={front} /> : <Leaderboard snapshot={snapshot} page={rankingPage} front={front} />}

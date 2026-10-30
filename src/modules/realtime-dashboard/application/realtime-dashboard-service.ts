@@ -90,7 +90,7 @@ function publicShareUrl(origin: string, token: string): string {
 }
 
 export function createRealtimeDashboardService(options: RealtimeDashboardServiceOptions) {
-  async function snapshotForWorkspace(workspaceId: string, front: RealtimeDashboardFront, scope?: RealtimeFactScope): Promise<RealtimeDashboardSnapshot> {
+  async function snapshotForWorkspace(workspaceId: string, front: RealtimeDashboardFront, scope?: RealtimeFactScope, periodQuery: unknown = {}): Promise<RealtimeDashboardSnapshot> {
     const now = options.now();
     const workspace = await options.database.workspace.findFirst({
       where: { id: workspaceId, status: "ACTIVE", deletedAt: null },
@@ -98,7 +98,7 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     });
     if (!workspace) publicNotFound();
 
-    const periods = resolveRealtimeDashboardPeriods(now, workspace.timeZone);
+    const periods = resolveRealtimeDashboardPeriods(now, workspace.timeZone, periodQuery);
     const [{ factRows, unclassified }, activeMembers, latestBackfill, latestReconciliation, goalPlan, profiles] = await Promise.all([
       readRealtimeDashboardFacts(options.database, workspaceId, periods.queryFrom, periods.queryTo, front, scope),
       options.database.workspaceMember.findMany({
@@ -172,6 +172,7 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     return Object.freeze({
       workspaceName: workspace.name,
       timeZone: workspace.timeZone,
+      ...(periods.selection ? { selection: periods.selection } : {}),
       generatedAt: now.toISOString(),
       freshnessAt: newestRecordedAt?.toISOString() ?? null,
       quality: Object.freeze({
@@ -201,14 +202,14 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     return snapshotForWorkspace(context.workspaceId, "ADVERTISING", scope);
   }
 
-  async function screen(context: AuthenticatedContext, front: RealtimeDashboardFront = "PROSPECTING"): Promise<RealtimeDashboardScreen> {
+  async function screen(context: AuthenticatedContext, front: RealtimeDashboardFront = "PROSPECTING", periodQuery: unknown = {}): Promise<RealtimeDashboardScreen> {
     await options.authorization.assertAuthorized(
       context,
       PermissionKeys.REALTIME_READ,
       resource(context.workspaceId),
     );
     const [snapshot, share, manageDecision] = await Promise.all([
-      snapshotForWorkspace(context.workspaceId, front),
+      snapshotForWorkspace(context.workspaceId, front, undefined, periodQuery),
       options.database.realtimeDashboardShare.findUnique({ where: { workspaceId: context.workspaceId } }),
       options.authorization.authorize(
         context,

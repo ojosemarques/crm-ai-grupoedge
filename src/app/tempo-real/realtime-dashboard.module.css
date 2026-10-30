@@ -29,6 +29,17 @@
 .themeSwitch button { align-items: center; background: transparent; border: 0; border-radius: .4em; color: var(--muted); display: flex; font-size: .65em; gap: .5em; padding: .6em .8em; }
 .themeSwitch button[aria-pressed="true"] { background: var(--surface); color: var(--ink); }
 .themeSwitch svg { height: 1.15em; width: 1.15em; }
+.periodFilter { align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: .65em; display: flex; gap: .4em; padding: .4em .6em; }
+.periodFilter svg { height: 1em; width: 1em; }
+.periodFilter select { background: var(--panel); border: 0; color: var(--ink); cursor: pointer; font: inherit; font-size: .7em; max-width: 12em; padding: .4em; }
+.periodFilter button { background: var(--surface); border: 1px solid var(--line); border-radius: .4em; font-size: .65em; padding: .35em .5em; }
+.dateDialog { background: var(--panel); color: var(--ink); max-width: min(92vw, 34em); padding: 2em; }
+.dateDialog > button { background: var(--surface); border: 1px solid var(--line); border-radius: .5em; margin: 1em 0; padding: .4em .8em; }
+.dateForm { display: flex; flex-direction: column; gap: 1em; }
+.dateForm label { display: flex; flex-direction: column; gap: .4em; }
+.dateForm input { background: var(--surface); border: 1px solid var(--line); border-radius: .5em; color: var(--ink); padding: .7em; color-scheme: dark; }
+.board[data-appearance="light"] .dateForm input { color-scheme: light; }
+.dateForm button { background: var(--accent); border: 0; border-radius: .5em; color: var(--bg); padding: .7em 1em; }
 .workspaceProfile { align-items: center; display: flex; font-size: .72em; gap: .6em; }
 .workspaceProfile strong { font-weight: 500; max-width: 14em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspaceProfile .avatar { height: 2.6em; width: 2.6em; }
@@ -53,6 +64,7 @@
 .summaryStrip .summaryGoal { border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
 .stage { min-height: 0; min-width: 0; }
 .overview { display: grid; gap: .8em; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .72fr); height: 100%; }
+.overview[data-filtered="true"] { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
 .periodPanel { background: var(--panel); border: 1px solid var(--line); border-radius: .85em; display: flex; flex-direction: column; gap: .7em; min-height: 0; min-width: 0; padding: 1em; }
 .periodPanel > header, .funnelCard > header, .rankingPanel > header { align-items: center; display: flex; justify-content: space-between; }
 .eyebrow { color: var(--muted); font-size: .48em; font-weight: 600; letter-spacing: .12em; }
@@ -210,6 +222,7 @@
   .summaryStrip article > strong { font-size: 1.4em; }
   .summaryStrip article > small { font-size: .5em; }
   .overview { grid-template-columns: 1fr; height: auto; }
+  .overview[data-filtered="true"] { grid-template-columns: 1fr; }
   .periodPanel { min-height: 40em; }
   .metricGrid { grid-template-rows: repeat(3, minmax(9.5em, 1fr)); }
   .metricTile { padding: .7em; }

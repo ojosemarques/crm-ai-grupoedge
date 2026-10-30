@@ -22,7 +22,7 @@ describe("separação das frentes no tempo real", () => {
     const member = await database.workspaceMember.create({ data: { ...audit, userId: user.id, roleId: role.id, status: "ACTIVE" } });
     const leadId = randomUUID();
     const occurredAt = new Date("2026-10-22T14:00:00Z");
-    const fact = (eventType: CommercialMetricEventType, quantity: number, pipelineId: string | null, frontId?: string, dimensions: { creditedMemberId?: string; meetingOwnerMemberIdAtEvent?: string; leadId?: string } = {}) => database.commercialMetricFact.create({ data: {
+    const fact = (eventType: CommercialMetricEventType, quantity: number, pipelineId: string | null, frontId?: string, dimensions: { creditedMemberId?: string; meetingOwnerMemberIdAtEvent?: string; leadId?: string; occurredAt?: Date } = {}) => database.commercialMetricFact.create({ data: {
       workspaceId: workspace.id, leadId, eventKey: randomUUID(), eventType, occurredAt, sourceEntityType: "Task", sourceEntityId: randomUUID(), creditedMemberId: member.id,
       pipelineId, quantity, valueCents: eventType === "SALE_WON" ? BigInt(quantity * 10000) : null,
       inputFingerprint: "fixture", ...dimensions, ...(frontId ? { safeMetadata: { _commercialFrontPipelineId: frontId } } : {}),
@@ -78,6 +78,24 @@ describe("separação das frentes no tempo real", () => {
     expect(own.today.totals.meetingsCompleted).toBe(2);
     const denied = createRealtimeDashboardService({ database, authorization: { assertAuthorized: vi.fn().mockRejectedValue(new Error("Acesso negado")), authorize: vi.fn().mockResolvedValue({ allowed: false, scope: null }) }, now: () => new Date("2026-10-22T15:00:00Z") });
     await expect(denied.advertisingSnapshot({ workspaceId: workspace.id, memberId: member.id } as never)).rejects.toThrow("Acesso negado");
+    const pastLead = randomUUID();
+    await fact("MEETING_SCHEDULED", 1, ads.id, undefined, { leadId: pastLead, occurredAt: new Date("2026-10-21T03:00:00Z") });
+    await fact("MEETING_SCHEDULED", 1, ads.id, undefined, { leadId: pastLead });
+    await fact("MEETING_SCHEDULED", 1, ads.id, undefined, { leadId: randomUUID(), occurredAt: new Date("2026-10-17T12:00:00Z") });
+    const yesterdayQuery = { periodPreset: "YESTERDAY" };
+    const yesterday = (await service.screen({ workspaceId: workspace.id } as never, "ADVERTISING", yesterdayQuery)).snapshot;
+    expect(yesterday.today.totals.meetingsScheduled).toBe(1);
+    expect(yesterday.week.totals.meetingsScheduled).toBe(1);
+    expect(yesterday.selection).toEqual({ preset: "YESTERDAY", label: "Ontem" });
+    expect(yesterday.today.goals.meetingsScheduled.targetValue).toBeNull();
+    expect(yesterday.week.daily).toHaveLength(1);
+    expect((await service.publicTvSnapshot("ADVERTISING")).selection).toBeUndefined();
+    expect((await service.publicSnapshot(token, "ADVERTISING")).selection).toBeUndefined();
+    expect((await service.screen({ workspaceId: workspace.id } as never, "ADVERTISING", yesterdayQuery)).snapshot).toEqual(yesterday);
+    expect((await service.screen({ workspaceId: workspace.id } as never, "ADVERTISING", { periodPreset: "LAST_WEEK" })).snapshot.today.totals.meetingsScheduled).toBe(1);
+    expect((await service.screen({ workspaceId: workspace.id } as never, "ADVERTISING", { periodPreset: "THIS_WEEK" })).snapshot.today.totals.meetingsScheduled).toBe(10);
+    expect((await service.screen({ workspaceId: workspace.id } as never, "ADVERTISING", { periodPreset: "CUSTOM", periodFrom: "2026-10-21", periodTo: "2026-10-21" })).snapshot.today.totals.meetingsScheduled).toBe(1);
+    await expect(service.screen({ workspaceId: workspace.id } as never, "ADVERTISING", { periodPreset: "CUSTOM", periodFrom: "2026-10-22", periodTo: "2026-10-21" })).rejects.toThrow();
     await database.pipeline.update({ where: { id: ads.id }, data: { deletedAt: occurredAt } });
     expect((await service.publicSnapshot(token, "ADVERTISING")).today.totals).toMatchObject({ tasksCompleted: 0, sales: 0 });
     expect((await service.publicSnapshot(token)).today.totals).toEqual(prospecting.today.totals);

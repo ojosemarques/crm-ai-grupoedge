@@ -1,3 +1,5 @@
+import type { RealtimePeriodSelection } from "./realtime-period-filter";
+
 export type RealtimeDashboardTotals = Readonly<{
   tasksCompleted: number;
   calls: number;
@@ -60,6 +62,7 @@ export type RealtimeDashboardRankingRow = Readonly<{
 }>;
 
 export type RealtimeDashboardSnapshot = Readonly<{
+  selection?: RealtimePeriodSelection;
   workspaceName: string;
   timeZone: string;
   generatedAt: string;
