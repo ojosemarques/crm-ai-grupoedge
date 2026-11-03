@@ -219,6 +219,35 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     }
   });
 
+  it("recupera a coleta após indisponibilidade prolongada da Meta, com pausa maior entre tentativas", async () => {
+    const fixture = fixtureAdapter();
+    let clock = new Date(now.getTime() + 4 * 3_600_000);
+    const service = createMetaAdsService({ database, adapter: fixture.adapter, secrets: new EphemeralSecretResolver({ META_ADS_ACCESS_TOKEN: "fixture-only" }), now: () => clock });
+    const prior = await database.integrationConnection.findUniqueOrThrow({ where: { workspaceId_key: { workspaceId, key: "meta-ads" } } });
+    const configured = await service.configure(admin, { revision: prior.revision, config: { selectedAccountIds: ["act_123456"], autoSyncEnabled: true, initialSince: "2046-04-19" } });
+    await service.testConnection(admin);
+    const pull = vi.spyOn(fixture.adapter, "pull");
+    try {
+      for (let index = 0; index < 3; index += 1) {
+        clock = new Date(clock.getTime() + (index === 0 ? 16 : 6) * 60_000);
+        pull.mockRejectedValueOnce(new MetaAdsAdapterError({ classification: "TRANSIENT", code: "META_TRANSIENT_400_2_1504044", safeMessage: "Falha temporária fixture" }));
+        expect(await service.processDue()).toEqual({ status: "FAILED" });
+        expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({ status: "DEGRADED", enabled: true });
+      }
+      const attempts = pull.mock.calls.length;
+      clock = new Date(clock.getTime() + 6 * 60_000);
+      expect(await service.processDue()).toEqual({ status: "IDLE" });
+      expect(pull).toHaveBeenCalledTimes(attempts);
+      clock = new Date(clock.getTime() + 55 * 60_000);
+      expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
+      expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({ status: "CONNECTED", enabled: true, currentErrorCode: null });
+      const media = await createMediaPerformanceService({ database, now: () => clock }).getScreen(admin, { periodStart: "2046-04-19", periodEnd: "2046-04-19" });
+      expect(media.totals.spendCents).toBeGreaterThan(0);
+      expect(media.totals.impressions).toBeGreaterThan(0);
+      expect(media.mediaSync).toMatchObject({ enabled: true, automatic: true, error: null });
+    } finally { pull.mockRestore(); }
+  });
+
   it("limita falhas consecutivas e preserva bloqueios de permissão e pausa durante coleta", async () => {
     const fixture = fixtureAdapter();
     let clock = new Date(now.getTime() + 6 * 3_600_000);

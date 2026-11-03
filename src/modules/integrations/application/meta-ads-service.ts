@@ -39,6 +39,7 @@ const OBJECT_TYPE = "meta_ads_daily_insights";
 const AUTO_SYNC_INTERVAL_MS = 15 * 60_000;
 const AUTO_SYNC_RETRY_MS = 5 * 60_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
+const AUTO_SYNC_OUTAGE_RETRY_MS = 60 * 60_000;
 const retryableFailures: MetaAdsFailure["classification"][] = ["TRANSIENT", "RATE_LIMIT", "INTERNAL"];
 const json = (value: unknown) => JSON.parse(JSON.stringify(redactSensitive(value))) as Prisma.InputJsonValue;
 
@@ -216,7 +217,8 @@ export function createMetaAdsService(options: Options) {
       const current = await tx.integrationConnection.findUniqueOrThrow({ where: { workspaceId_id: { workspaceId: context.workspaceId, id: connectionId } } });
       const retryable = automatic && retryableFailures.includes(failure.classification);
       const failures = retryable ? await tx.integrationDeliveryAttempt.count({ where: { workspaceId: context.workspaceId, kind: "SYNC", syncRun: { connectionId, objectType: OBJECT_TYPE }, status: "FAILED", finishedAt: { gt: current.lastSucceededAt ?? new Date(0) } } }) : 0;
-      const retryScheduled = retryable && current.enabled && !current.disabledAt && failures < MAX_CONSECUTIVE_FAILURES;
+      const providerOutage = failure.classification === "TRANSIENT" || failure.classification === "RATE_LIMIT";
+      const retryScheduled = retryable && current.enabled && !current.disabledAt && (providerOutage || failures < MAX_CONSECUTIVE_FAILURES);
       const manuallyPaused = current.status === "PAUSED" || current.disabledAt !== null;
       await tx.integrationConnection.update({ where: { id: connectionId }, data: { status: manuallyPaused ? current.status : errorStatus(failure), enabled: retryScheduled, lastErroredAt: now, currentErrorClass: failure.classification, currentErrorCode: failure.code, currentErrorMessage: failure.safeMessage, revision: { increment: 1 }, updatedByActorId: context.actorId } });
       await audit(tx, context, { action: "integration.meta_ads.failed", entityId: connectionId, ...(requestId ? { requestId } : {}), changes: { classification: failure.classification, code: failure.code, retryAfterSeconds: failure.retryAfterSeconds ?? null, retryScheduled, consecutiveFailures: failures, secretIncluded: false } });
@@ -395,7 +397,9 @@ export function createMetaAdsService(options: Options) {
       if (!config.autoSyncEnabled || config.selectedAccountIds.length === 0) continue;
       if (connection.status === "DEGRADED" && connection.lastErroredAt) {
         const attempt = await options.database.integrationDeliveryAttempt.findFirst({ where: { workspaceId: connection.workspaceId, syncRun: { connectionId: connection.id, objectType: OBJECT_TYPE }, status: "FAILED" }, orderBy: { finishedAt: "desc" }, select: { retryAfterSeconds: true } });
-        if (connection.lastErroredAt.getTime() + Math.max(AUTO_SYNC_RETRY_MS, (attempt?.retryAfterSeconds ?? 0) * 1000) > options.now().getTime()) continue;
+        const failures = await options.database.integrationDeliveryAttempt.count({ where: { workspaceId: connection.workspaceId, kind: "SYNC", syncRun: { connectionId: connection.id, objectType: OBJECT_TYPE }, status: "FAILED", finishedAt: { gt: connection.lastSucceededAt ?? new Date(0) } } });
+        const cooldown = failures >= MAX_CONSECUTIVE_FAILURES ? AUTO_SYNC_OUTAGE_RETRY_MS : AUTO_SYNC_RETRY_MS;
+        if (connection.lastErroredAt.getTime() + Math.max(cooldown, (attempt?.retryAfterSeconds ?? 0) * 1000) > options.now().getTime()) continue;
       }
       const actor = await options.database.actor.findFirst({ where: { id: connection.updatedByActorId, workspaceId: connection.workspaceId, type: "HUMAN" }, select: { id: true, userId: true } });
       const member = actor?.userId ? await options.database.workspaceMember.findFirst({ where: { workspaceId: connection.workspaceId, userId: actor.userId, status: "ACTIVE", deletedAt: null, user: { status: "ACTIVE", deletedAt: null }, workspace: { status: "ACTIVE", deletedAt: null }, role: { deletedAt: null } }, select: { id: true, userId: true, roleId: true, role: { select: { key: true, name: true } }, user: { select: { displayName: true } }, workspace: { select: { slug: true } } } }) : null;

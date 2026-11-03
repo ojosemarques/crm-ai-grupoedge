@@ -78,6 +78,45 @@ describe("CRM-40 adaptador Meta Ads somente leitura", () => {
     expect(delays).toEqual([3_000]);
   });
 
+  it.each([undefined, false])("repete código Meta 2 com HTTP 400 mesmo com is_transient=%s", async (isTransient) => {
+    let attempts = 0;
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const adapter = new MetaAdsReadAdapter({ random: () => 0, sleep, fetcher: async () => {
+      attempts += 1;
+      return new Response(JSON.stringify({ error: { code: 2, error_subcode: 1504044, ...(isTransient === undefined ? {} : { is_transient: isTransient }), message: "provider diagnostic must stay private" } }), { status: 400 });
+    } });
+    await expect(adapter.testConnection(config, credentials)).rejects.toMatchObject({ failure: {
+      classification: "TRANSIENT", code: "META_TRANSIENT_400_2_1504044",
+    } });
+    expect(attempts).toBe(3);
+    expect(sleep.mock.calls.map(call => call[0])).toEqual([1_000, 2_000]);
+  });
+
+  it("recupera uma consulta após indisponibilidade temporária sem avançar com erro", async () => {
+    let attempts = 0;
+    const adapter = new MetaAdsReadAdapter({ random: () => 0, sleep: async () => undefined, fetcher: async input => {
+      attempts += 1;
+      if (attempts === 1) return new Response(JSON.stringify({ error: { code: 2, error_subcode: 1504044 } }), { status: 400 });
+      return new URL(String(input)).pathname.endsWith("/me") ? ok({ id: "123456" }) : ok({ data: [] });
+    } });
+    await expect(adapter.testConnection({ ...config, selectedAccountIds: [] }, credentials)).resolves.toMatchObject({ identity: { id: "123456" } });
+    expect(attempts).toBe(3);
+  });
+
+  it("devolve falhas lentas ao agendador sem ultrapassar o tempo seguro com novas tentativas", async () => {
+    let clock = 10_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const fetcher = vi.fn(async () => {
+      clock += 30_000;
+      return new Response(JSON.stringify({ error: { code: 2, error_subcode: 1504044 } }), { status: 400 });
+    });
+    const adapter = new MetaAdsReadAdapter({ random: () => 0, sleep, fetcher });
+    await expect(adapter.testConnection({ ...config, requestTimeoutMs: 30_000 }, credentials)).rejects.toMatchObject({ failure: { classification: "TRANSIENT" } });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("classifica autenticação, payload inválido e resposta grande", async () => {
     const auth = new MetaAdsReadAdapter({ fetcher: async () => new Response(JSON.stringify({ error: { code: 190 } }), { status: 401 }) });
     await expect(auth.testConnection(config, credentials)).rejects.toMatchObject({ failure: { classification: "AUTHENTICATION" } });

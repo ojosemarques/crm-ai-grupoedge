@@ -25,6 +25,7 @@ import {
 } from "@/modules/integrations/domain/meta-ads-contracts";
 
 const GRAPH_ORIGIN = "https://graph.facebook.com";
+const MAX_REQUEST_RETRY_WINDOW_MS = 45_000;
 const RETRYABLE = new Set<MetaAdsFailure["classification"]>(["TRANSIENT", "RATE_LIMIT"]);
 const graphPageSchema = z.object({
   data: z.array(z.unknown()),
@@ -78,7 +79,9 @@ function failureFromResponse(response: Response, payload: unknown): MetaAdsFailu
   }
   if (response.status === 403 || [10, 200, 294].includes(code ?? -1)) return { classification: "PERMISSION", code: `META_PERMISSION_${suffix}`, safeMessage: "A credencial não possui permissão de leitura suficiente para esta conta Meta." };
   if (response.status === 404) return { classification: "ACCOUNT_INACCESSIBLE", code: `META_ACCOUNT_${suffix}`, safeMessage: "A conta de anúncios selecionada não está acessível para esta credencial." };
-  if (response.status >= 500 || transient) return { classification: "TRANSIENT", code: `META_TRANSIENT_${suffix}`, safeMessage: "A Meta apresentou uma falha transitória. Nenhum cursor foi avançado." };
+  // Graph code 2 is service unavailable, including HTTP 400 responses whose
+  // is_transient flag is missing or false.
+  if (response.status >= 500 || transient || code === 2) return { classification: "TRANSIENT", code: `META_TRANSIENT_${suffix}`, safeMessage: "A Meta apresentou uma falha transitória. Nenhum cursor foi avançado." };
   if (response.status >= 400) return { classification: "PERMANENT", code: `META_REQUEST_${suffix}`, safeMessage: "A Meta rejeitou a consulta de leitura. Revise versão, conta e permissões." };
   return { classification: "INVALID_PAYLOAD", code: "META_INVALID_RESPONSE", safeMessage: "A Meta retornou um contrato inesperado. Nenhum dado foi persistido." };
 }
@@ -116,7 +119,7 @@ export class MetaAdsReadAdapter {
     return { classification: "INTERNAL", code: "META_INTERNAL", safeMessage: "A sincronização Meta falhou de forma controlada." };
   }
 
-  async #request(config: MetaAdsConfiguration, credentials: MetaAdsCredentials, path: string, params: Readonly<Record<string, string>>, attempt = 1, batch?: ReadBatch): Promise<unknown> {
+  async #request(config: MetaAdsConfiguration, credentials: MetaAdsCredentials, path: string, params: Readonly<Record<string, string>>, attempt = 1, batch?: ReadBatch, startedAt = Date.now()): Promise<unknown> {
     if (!pathAllowed(path)) throw new MetaAdsAdapterError({ classification: "CONFIGURATION", code: "META_PATH_REJECTED", safeMessage: "A rota Meta solicitada não pertence à allowlist de leitura." });
     const url = new URL(`${GRAPH_ORIGIN}/${config.graphApiVersion}${path}`);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
@@ -143,8 +146,13 @@ export class MetaAdsReadAdapter {
         const failure = failureFromResponse(response, payload);
         if (attempt < 3 && RETRYABLE.has(failure.classification)) {
           const base = (failure.retryAfterSeconds ?? 2 ** (attempt - 1)) * 1_000;
-          await this.#sleep(Math.min(30_000, Math.round(base + base * 0.2 * this.#random())));
-          return this.#request(config, credentials, path, params, attempt + 1, batch);
+          const delay = Math.min(30_000, Math.round(base + base * 0.2 * this.#random()));
+          // Leave time for the worker to persist failure before its invocation
+          // ends; longer outages are retried by the durable scheduler.
+          if (Date.now() - startedAt + delay + config.requestTimeoutMs <= MAX_REQUEST_RETRY_WINDOW_MS) {
+            await this.#sleep(delay);
+            return this.#request(config, credentials, path, params, attempt + 1, batch, startedAt);
+          }
         }
         throw new MetaAdsAdapterError(failure);
       }
