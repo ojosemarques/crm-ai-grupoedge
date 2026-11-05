@@ -57,7 +57,7 @@ try {
    }
    await tx.externalObjectMapping.upsert({ where: { workspaceId_connectionId_externalObjectType_externalId: { workspaceId: workspace.id, connectionId: connection.id, externalObjectType: "lead", externalId: row.id } }, create: { workspaceId: workspace.id, connectionId: connection.id, externalObjectType: "lead", externalId: row.id, internalEntityType: "LEAD", internalEntityId: accepted.leadId, externalVersion: new Date(row.updated_at).toISOString(), externalHash: createHash("sha256").update(JSON.stringify(rawPayload)).digest("hex"), firstRecognizedAt: new Date(), lastRecognizedAt: new Date(), createdByActorId: actor.id, updatedByActorId: actor.id }, update: {} });
    return accepted;
-  }, { timeout: 20000 });
+  }, { timeout: 120000 });
   output.push({ sourceId: row.id, quiz: row.origem, status: result.idempotentReplay ? "ALREADY_PRESENT" : "IMPORTED", completed: row.completed, leadId: result.leadId, submissionId: result.submissionId });
   writeFileSync(outputFile, JSON.stringify(output, null, 2), { mode: 0o600 });
  }
