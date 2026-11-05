@@ -149,6 +149,17 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
       createRealtimeDashboardService(options).advertisingSnapshot(context),
       resolveIntegratedActivityReadScope(options, context, period.start, to),
     ]);
+    const quizSubmissions = await options.database.leadFormSubmission.findMany({
+      where: { workspaceId: context.workspaceId, lead: leadWhere, submittedAt: { gte: period.start, lt: to }, formIdentifier: { in: ["site-chatmandato", "site-quizmandato"] }, intakeOutcome: { in: ["CREATED", "ATTACHED"] } },
+      select: { leadId: true, formIdentifier: true, intakeOutcome: true },
+    });
+    const quizIds = ["chatmandato", "quizmandato"] as const;
+    const idsByQuiz = quizIds.map((id) => new Set(quizSubmissions.filter((s) => s.formIdentifier === `site-${id}`).flatMap((s) => s.leadId ? [s.leadId] : [])));
+    const quizBreakdown = quizIds.map((id, index) => {
+      const rows = quizSubmissions.filter((s) => s.formIdentifier === `site-${id}`);
+      return { id, name: id === "chatmandato" ? "ChatMandato" : "QuizMandato", submissions: rows.length, newLeads: rows.filter((s) => s.intakeOutcome === "CREATED").length, attached: rows.filter((s) => s.intakeOutcome === "ATTACHED").length, uniqueLeads: idsByQuiz[index]!.size };
+    });
+    const quizOverlap = [...idsByQuiz[0]!].filter((id) => idsByQuiz[1]!.has(id)).length;
     const selected = await readRealtimeDashboardFacts(options.database, context.workspaceId, period.start, to, "ADVERTISING", metricScope);
     const selectedFacts = advertisingPeriodFacts(selected.factRows.map(realtimeActivityFact));
     const selectedTotals = summarizeRealtimeDashboardTotals(selectedFacts, []);
@@ -216,6 +227,8 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
         })),
       },
       metrics: {
+        quizBreakdown,
+        quizOverlap,
         period: {
           preset: period.preset,
           fromDate: period.fromDate,

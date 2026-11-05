@@ -139,6 +139,7 @@ export type PreSalesPipelineScreen = Readonly<{
     phoneType: PipelinePhoneType;
     gender: PipelineGender;
     stateCode: string;
+    quizId?: "ALL" | "chatmandato" | "quizmandato";
     arrivalPreset: "ALL" | "TODAY" | "WEEK" | "CUSTOM";
     arrivalFrom: string;
     arrivalTo: string;

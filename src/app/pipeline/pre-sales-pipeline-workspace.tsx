@@ -266,6 +266,7 @@ export function PreSalesPipelineWorkspace({
         phoneType: screen.filters.phoneType,
         gender: screen.filters.gender,
         stateCode: screen.filters.stateCode,
+        quizId: screen.filters.quizId ?? "ALL",
         arrivalPreset: screen.filters.arrivalPreset,
         arrivalFrom: screen.filters.arrivalFrom,
         arrivalTo: screen.filters.arrivalTo,
@@ -296,7 +297,7 @@ export function PreSalesPipelineWorkspace({
   }
 
   function columnScrollKey(stageId: string) {
-    return `pipeline-scroll:${screen.pipelineId}:${screen.filters.q}:${screen.filters.responsible}:${screen.filters.priority}:${screen.filters.stageCode}:${screen.filters.phoneType}:${screen.filters.gender}:${screen.filters.stateCode}:${screen.filters.arrivalPreset}:${screen.filters.arrivalFrom}:${screen.filters.arrivalTo}:${stageId}`;
+    return `pipeline-scroll:${screen.pipelineId}:${screen.filters.q}:${screen.filters.responsible}:${screen.filters.priority}:${screen.filters.stageCode}:${screen.filters.phoneType}:${screen.filters.gender}:${screen.filters.stateCode}:${screen.filters.quizId ?? "ALL"}:${screen.filters.arrivalPreset}:${screen.filters.arrivalFrom}:${screen.filters.arrivalTo}:${stageId}`;
   }
 
   const loadEntryOptions = useCallback(() => {
@@ -502,7 +503,7 @@ export function PreSalesPipelineWorkspace({
       <InstantPipelineFilterForm
         action={basePath}
         className={styles.filters}
-        syncKey={`${screen.pipelineId}:${screen.filters.q}:${screen.filters.responsible}:${screen.filters.priority}:${screen.filters.stageCode}:${screen.filters.phoneType}:${screen.filters.gender}:${screen.filters.stateCode}:${screen.filters.arrivalPreset}:${screen.filters.arrivalFrom}:${screen.filters.arrivalTo}`}
+        syncKey={`${screen.pipelineId}:${screen.filters.q}:${screen.filters.responsible}:${screen.filters.priority}:${screen.filters.stageCode}:${screen.filters.phoneType}:${screen.filters.gender}:${screen.filters.stateCode}:${screen.filters.quizId ?? "ALL"}:${screen.filters.arrivalPreset}:${screen.filters.arrivalFrom}:${screen.filters.arrivalTo}`}
       >
         {Object.entries(fixedQuery ?? {}).map(([name, value]) => <input key={name} name={name} type="hidden" value={value} />)}
         <input name="pipelineId" type="hidden" value={screen.pipelineId} />
@@ -512,6 +513,7 @@ export function PreSalesPipelineWorkspace({
         <label className={styles.filter}>Prioridade<select aria-label="Prioridade" defaultValue={screen.filters.priority} name="priority"><option value="ALL">Todas</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option></select></label>
         {showPhoneTypeFilter ? <label className={styles.filter}>Tipo de número<select aria-label="Tipo de número" defaultValue={screen.filters.phoneType} name="phoneType"><option value="ALL">Todos</option><option value="FIXED">Número fixo</option><option value="WHATSAPP">Número WhatsApp</option></select></label> : null}
         {showGenderFilter ? <label className={styles.filter}>Gênero<select aria-label="Gênero" defaultValue={screen.filters.gender} name="gender"><option value="ALL">Todos</option><option value="MALE">Homens</option><option value="FEMALE">Mulheres</option></select></label> : null}
+        {showSubmissionDetails ? <label className={styles.filter}>Quiz<select aria-label="Quiz" defaultValue={screen.filters.quizId ?? "ALL"} name="quizId"><option value="ALL">Todos</option><option value="chatmandato">ChatMandato</option><option value="quizmandato">QuizMandato</option></select></label> : null}
         {showStateFilter ? <label className={styles.filter}>UF<select aria-label="UF" defaultValue={screen.filters.stateCode} name="stateCode"><option value="">Todas</option>{screen.stateOptions.map((stateCode) => <option key={stateCode} value={stateCode}>{stateCode}</option>)}</select></label> : null}
         <label className={styles.filter}>Etapa<select aria-label="Etapa" defaultValue={screen.filters.stageCode} name="stageCode"><option value="ALL">Todas as etapas</option>{screen.stages.map((stage) => <option key={stage.id} value={stage.code}>{stage.name} ({stage.count})</option>)}</select></label>
         {!fixedQuery?.view ? <input name="view" type="hidden" value={view} /> : null}

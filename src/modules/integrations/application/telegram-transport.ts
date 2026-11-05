@@ -19,13 +19,13 @@ export class TelegramTransport {
           ...(input.leadUrl ? { reply_markup: { inline_keyboard: [[{ text: "Abrir lead no CRM", url: input.leadUrl }]] } } : {}),
         }),
       });
-    } catch { throw new TelegramTransportError("TELEGRAM_NETWORK_UNCERTAIN", true); }
+    } catch { throw new TelegramTransportError("TELEGRAM_NETWORK_UNCERTAIN", false); }
     let payload: unknown;
     try {
       const raw = await response.text();
       if (raw.length > 65536) throw new Error("OVERSIZED");
       payload = JSON.parse(raw);
-    } catch { throw new TelegramTransportError("TELEGRAM_RESPONSE_UNCERTAIN", true); }
+    } catch { throw new TelegramTransportError("TELEGRAM_RESPONSE_UNCERTAIN", false); }
     const result = z.object({ ok: z.boolean(), result: z.object({ message_id: z.number().int() }).optional(), parameters: z.object({ retry_after: z.number().int().positive().max(86400).optional() }).optional() }).safeParse(payload);
     if (!response.ok || !result.success || !result.data.ok || !result.data.result) {
       throw new TelegramTransportError(`TELEGRAM_HTTP_${response.status}`, response.status === 429 || response.status >= 500, result.success ? result.data.parameters?.retry_after : undefined);

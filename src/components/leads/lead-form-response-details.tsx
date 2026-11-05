@@ -24,6 +24,12 @@ export function LeadFormResponseDetails({
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >
+      {responses.filter((response) => response.responseKind === "EXTERNAL_QUIZ").map((response) => (
+        <div className="mb-2 grid gap-1" key={response.receiptId}>
+          <span className="font-semibold">{response.formName}</span>
+          <span className="whitespace-pre-wrap break-words">{response.summary}</span>
+        </div>
+      ))}
       <details>
         <summary className="cursor-pointer font-semibold text-primary">
           {responses.length === 1 ? "Ver respostas do formulário" : `Ver ${responses.length} respostas do formulário`}
@@ -32,6 +38,7 @@ export function LeadFormResponseDetails({
           {responses.map((response) => (
             <section className="grid gap-1 rounded-md border bg-muted/20 p-2" key={response.receiptId}>
               <p className="font-semibold">{response.formName} · {formatDate(response.submittedAt, timeZone)}</p>
+              {response.result ? <p>Resultado do quiz: {response.result.label}</p> : null}
               {response.answers.map((answer) => (
                 <div className="grid gap-0.5" key={answer.questionKey}>
                   <span className="text-muted-foreground">{answer.question}</span>

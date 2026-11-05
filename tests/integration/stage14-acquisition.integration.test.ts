@@ -6,6 +6,7 @@ import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createAcquisitionConnectionService } from "@/modules/acquisition-api/application/acquisition-connection-service";
 import { createAcquisitionWebhookService } from "@/modules/acquisition-api/application/acquisition-webhook-service";
+import { createAdvertisingWorkspaceService } from "@/modules/advertising/application/advertising-workspace-service";
 import { responsesByLead } from "@/modules/marketing-forms/application/marketing-form-response-summary-service";
 import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { ensureAdvertisingPipeline } from "@/modules/settings/application/production-foundation-service";
@@ -422,5 +423,69 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
     expect(feedbackCalls).toHaveLength(2);
     await expect(receive(body())).rejects.toMatchObject({ code: "ACQUISITION_WEBHOOK_NOT_FOUND" });
     expect(providerCalls.some((url) => url.endsWith(`/` + leadId))).toBe(true);
+  });
+});
+
+describe("quizzes externos de mandato", () => {
+  it("encaminha ambos a Anúncios, preserva respostas/atribuição e deduplica concorrência e identidade", async () => {
+    const ads = await ensureAdvertisingPipeline(database, admin.workspaceId, admin.actorId);
+    const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, name: "Anúncios", deletedAt: null }, include: { stages: { where: { type: "OPEN", deletedAt: null }, orderBy: { position: "asc" }, take: 1 } } });
+    void ads;
+    const keys = ["chatmandato", "quizmandato"] as const;
+    const requests: Parameters<typeof webhooks.receive>[0][] = [];
+    const results: Record<string, unknown>[] = [];
+    for (const quizId of keys) {
+      const key = `site-${quizId}`;
+      const configured = await connections.configure(admin, { key, displayName: quizId, provider: "FORM", sourceKey, secretReferenceKey: "ACQUISITION_STAGE14_FORM_SECRET", externalQuiz: { quizId, pipelineId: pipeline.id, initialStageId: pipeline.stages[0]!.id }, mapping: Object.fromEntries(["fullName", "phone", "email", "jobTitle", "interestSummary", "city", "stateCode", "sessionPublicId", "landingUrl", "referrerUrl", "utmSource", "utmMedium", "utmCampaign", "utmContent", "utmTerm"].map((k) => [k, k])) });
+      await connections.command(admin, { action: "ACTIVATE", connectionId: configured.id, revision: 1 });
+      const submissionId = randomUUID();
+      const body = { contractVersion: "quiz-lead.v1", eventId: `quiz:${quizId}:${submissionId}:completed:v1`, submissionId, occurredAt: now.toISOString(), fullName: "Validação Integração Mandato", phone: "+5511988882468", email: "mandato-identity@example.test", jobTitle: "Vereador(a)", city: "São Paulo", stateCode: "SP", interestSummary: "Desafio: organizar demandas; prazo: nos próximos 30 dias.", quiz: { id: quizId, name: quizId === "chatmandato" ? "ChatMandato" : "QuizMandato", version: "1", url: `https://site.politizai.com/${quizId}` }, answers: ["nome", "cargo", "whatsapp", "localidade", "desafio", "organizacao", "frequencia", "presenca_digital", "prioridade", "prazo", "investimento_mensal"].map((questionKey) => ({ questionKey, question: `Pergunta ${questionKey}`, value: `Resposta ${questionKey}`, displayValue: `Resposta ${questionKey}` })), landingUrl: `https://site.politizai.com/${quizId}`, sessionPublicId: submissionId, referrerUrl: "https://example.test/origem", utmSource: "google", utmMedium: "cpc", utmCampaign: "mandato", utmContent: "criativo", utmTerm: "gabinete" };
+      const rawBody = JSON.stringify(body);
+      const request = { workspaceSlug: admin.workspaceSlug, connectionKey: key, rawBody, headers: { timestamp: now.toISOString(), signature: formSignature(rawBody, now.toISOString()) } };
+      await expect(webhooks.receive({ ...request, headers: { ...request.headers, signature: "bad" } })).rejects.toMatchObject({ code: "ACQUISITION_SIGNATURE_INVALID" });
+      await expect(webhooks.receive({ ...request, headers: { timestamp: "2000-01-01T00:00:00Z", signature: formSignature(rawBody, "2000-01-01T00:00:00Z") } })).rejects.toMatchObject({ code: "ACQUISITION_SIGNATURE_INVALID" });
+      const invalidBody = JSON.stringify({ ...body, quiz: { ...body.quiz, id: quizId === "chatmandato" ? "quizmandato" : "chatmandato" } });
+      await expect(webhooks.receive({ ...request, rawBody: invalidBody, headers: { timestamp: now.toISOString(), signature: formSignature(invalidBody, now.toISOString()) } })).rejects.toMatchObject({ code: "EXTERNAL_QUIZ_INVALID" });
+      requests.push(request);
+      const concurrent = await Promise.all([webhooks.receive(request), webhooks.receive(request)]);
+      expect(concurrent.every((r) => r.status === "PROCESSED")).toBe(true);
+      const primary = concurrent.find((result) => result.submissionId) ?? concurrent[0]!;
+      results.push(primary);
+      expect(await webhooks.receive(request)).toMatchObject({ status: "PROCESSED", idempotentReplay: true });
+      expect(await database.webhookInbox.count({ where: { connectionId: configured.id } })).toBe(1);
+      expect(await database.leadFormSubmission.count({ where: { idempotencyKey: `acq:${configured.id}:external:${submissionId}` } })).toBe(1);
+      const differentBody = rawBody + " ";
+      await expect(webhooks.receive({ ...request, rawBody: differentBody, headers: { timestamp: now.toISOString(), signature: formSignature(differentBody, now.toISOString()) } })).rejects.toMatchObject({ code: "ACQUISITION_IDEMPOTENCY_CONFLICT" });
+      const submission = await database.leadFormSubmission.findUniqueOrThrow({ where: { id: primary.submissionId as string } });
+      expect(submission).toMatchObject({ submittedCity: "São Paulo", submittedStateCode: "SP", submittedInterestSummary: body.interestSummary });
+      expect(submission.rawPayload).toMatchObject({ quizResponse: { quiz: body.quiz, answers: body.answers } });
+      const session = await database.marketingTouchpoint.findUniqueOrThrow({ where: { id: submission.marketingTouchpointId! } });
+      expect(session).toMatchObject({ utmSource: "google", utmMedium: "cpc", utmCampaign: "mandato", utmContent: "criativo", utmTerm: "gabinete", referrerHost: "example.test", landingPath: `/${quizId}` });
+    }
+    expect(results[0]!.leadId).toBe(results[1]!.leadId);
+    const leadId = results[0]!.leadId as string;
+    expect(await database.lead.findUniqueOrThrow({ where: { id: leadId } })).toMatchObject({ pipelineId: pipeline.id, currentStageId: pipeline.stages[0]!.id });
+    const summaries = await responsesByLead(database, admin.workspaceId, [leadId]);
+    expect(summaries.get(leadId)).toHaveLength(2);
+    expect(new Set(summaries.get(leadId)!.map((r) => r.quizId))).toEqual(new Set(keys));
+    expect(summaries.get(leadId)!.every((r) => r.answers.length === 11 && r.summary)).toBe(true);
+    const another = JSON.parse(requests[0]!.rawBody) as Record<string, unknown>;
+    const otherId = randomUUID();
+    const rawOther = JSON.stringify({ ...another, submissionId: otherId, sessionPublicId: otherId, eventId: `quiz:shared-phone:${otherId}`, fullName: "Outra Pessoa Distinta" });
+    const otherResult = await webhooks.receive({ ...requests[0]!, rawBody: rawOther, headers: { timestamp: now.toISOString(), signature: formSignature(rawOther, now.toISOString()) } });
+    expect(otherResult.leadId).not.toBe(leadId);
+    expect(await database.commercialMetricFact.count({ where: { leadId, eventType: "LEAD_CREATED" } })).toBe(1);
+    expect(await database.commercialMetricFact.count({ where: { leadId, eventType: "LEAD_SUBMISSION_ATTACHED" } })).toBe(1);
+    const screen = await createAdvertisingWorkspaceService({ database, authorization, now: () => now }).getScreen(admin, { pipelineId: pipeline.id, metricsPreset: "TODAY" });
+    expect(screen.metrics.quizBreakdown).toEqual([
+      { id: "chatmandato", name: "ChatMandato", submissions: 2, newLeads: 2, attached: 0, uniqueLeads: 2 },
+      { id: "quizmandato", name: "QuizMandato", submissions: 1, newLeads: 0, attached: 1, uniqueLeads: 1 },
+    ]);
+    expect(screen.metrics.quizOverlap).toBe(1);
+
+  });
+
+  it("recusa etapa de outro workspace na configuração", async () => {
+    await expect(connections.configure(admin, { key: `quiz-invalid-${randomUUID().slice(0, 8)}`, displayName: "Quiz inválido", provider: "FORM", sourceKey, secretReferenceKey: "ACQUISITION_STAGE14_FORM_SECRET", mapping: { fullName: "fullName", phone: "phone" }, externalQuiz: { quizId: "quizmandato", pipelineId: randomUUID(), initialStageId: randomUUID() } })).rejects.toMatchObject({ code: "META_NATIVE_DESTINATION_INVALID" });
   });
 });

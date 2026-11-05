@@ -60,6 +60,7 @@ type PreSalesPipelineServiceOptions = Readonly<{
 const screenQuerySchema = z.object({
   ...pipelineArrivalFields,
   pipelineId: z.union([z.literal(""), z.string().uuid()]).optional().default(""),
+  quizId: z.enum(["ALL", "chatmandato", "quizmandato"]).optional().default("ALL"),
   q: z.string().trim().max(200).optional().default(""),
   responsible: z.string().trim().max(100).optional().default(""),
   priority: z.enum(["ALL", "P1", "P2", "P3"]).optional().default("ALL"),
@@ -911,13 +912,14 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       : { currentScore: { leadScore: { priorityBandCode: parsed.data.priority } } };
     const phoneTypeFilter: Prisma.LeadWhereInput = phoneTypeLeadIds === null ? {} : { id: { in: phoneTypeLeadIds } };
     const genderFilter: Prisma.LeadWhereInput = genderLeadIds === null ? {} : { id: { in: genderLeadIds } };
+    const quizFilter: Prisma.LeadWhereInput = parsed.data.quizId === "ALL" ? {} : { submissions: { some: { workspaceId: context.workspaceId, formIdentifier: `site-${parsed.data.quizId}`, rawPayload: { path: ["quizResponse", "quiz", "id"], equals: parsed.data.quizId } } } };
     const stateFilter: Prisma.LeadWhereInput = parsed.data.stateCode ? { stateCode: parsed.data.stateCode } : {};
     const arrivalFilter = await pipelineArrivalWhere(options.database, { workspaceId: context.workspaceId, pipelineId: pipeline.id, filters: parsed.data, now: options.now(), timeZone: workspace.timeZone });
     const baseWhere: Prisma.LeadWhereInput = {
       workspaceId: context.workspaceId,
       pipelineId: pipeline.id,
       deletedAt: null,
-      AND: [visibility, responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter, stateFilter, arrivalFilter],
+      AND: [visibility, responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter, stateFilter, arrivalFilter, quizFilter],
     };
     const cardLimitPerStage = 12;
     const pipelineResource: ResourceScope = {
@@ -1086,6 +1088,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
           gender: parsed.data.gender,
         });
     const genderFilter: Prisma.LeadWhereInput = genderLeadIds === null ? {} : { id: { in: genderLeadIds } };
+    const quizFilter: Prisma.LeadWhereInput = parsed.data.quizId === "ALL" ? {} : { submissions: { some: { workspaceId: context.workspaceId, formIdentifier: `site-${parsed.data.quizId}`, rawPayload: { path: ["quizResponse", "quiz", "id"], equals: parsed.data.quizId } } } };
     const stateFilter: Prisma.LeadWhereInput = parsed.data.stateCode ? { stateCode: parsed.data.stateCode } : {};
     const arrivalFilter = await pipelineArrivalWhere(options.database, { workspaceId: context.workspaceId, pipelineId: pipeline.id, filters: parsed.data, now: options.now(), timeZone: workspace.timeZone });
     const where: Prisma.LeadWhereInput = {
@@ -1093,7 +1096,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       pipelineId: pipeline.id,
       currentStageId: stage.id,
       deletedAt: null,
-      AND: [leadVisibilityWhere(context, scope), responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter, stateFilter, arrivalFilter],
+      AND: [leadVisibilityWhere(context, scope), responsibleFilter, searchFilter, priorityFilter, phoneTypeFilter, genderFilter, stateFilter, arrivalFilter, quizFilter],
     };
     const [total, rows] = await Promise.all([
       options.database.lead.count({ where }),

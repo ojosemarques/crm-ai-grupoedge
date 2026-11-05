@@ -29,11 +29,12 @@ export function createAcquisitionConnectionService(database: PrismaClient, secre
       let source = await tx.leadSource.findFirst({ where: { workspaceId: context.workspaceId, key: input.sourceKey, deletedAt: null } });
       if (!source && input.metaNative) source = await tx.leadSource.create({ data: { workspaceId: context.workspaceId, key: input.sourceKey, name: input.displayName, type: "PAID_MEDIA", externalRef: `meta-page:${input.metaNative.pageId}`, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
       if (!source) fail("Origem não encontrada.", "ACQUISITION_SOURCE_NOT_FOUND", 422);
-      if (input.metaNative) {
-        const destination = await tx.pipelineStage.findFirst({ where: { id: input.metaNative.initialStageId, workspaceId: context.workspaceId, pipelineId: input.metaNative.pipelineId, deletedAt: null, type: "OPEN", pipeline: { workspaceId: context.workspaceId, entityType: "LEAD", deletedAt: null } } });
+      const target = input.externalQuiz ?? input.metaNative;
+      if (target) {
+        const destination = await tx.pipelineStage.findFirst({ where: { id: target.initialStageId, workspaceId: context.workspaceId, pipelineId: target.pipelineId, deletedAt: null, type: "OPEN", pipeline: { workspaceId: context.workspaceId, entityType: "LEAD", deletedAt: null } } });
         if (!destination) fail("Frente ou etapa de entrada nativa inválida.", "META_NATIVE_DESTINATION_INVALID", 422);
       }
-      const config = { provider: input.provider, sourceKey: input.sourceKey, retry: { maxAttempts: 5, strategy: "EXPONENTIAL_CAPPED" }, ordering: "EXTERNAL_OCCURRED_AT", mappingVersion: 1, ...(input.provider === "META_LEAD_ADS" ? { graphApiVersion: META_ADS_DEFAULT_API_VERSION } : {}), ...(input.metaNative ? { metaNative: input.metaNative } : {}) };
+      const config = { provider: input.provider, sourceKey: input.sourceKey, retry: { maxAttempts: 5, strategy: "EXPONENTIAL_CAPPED" }, ordering: "EXTERNAL_OCCURRED_AT", mappingVersion: 1, ...(input.provider === "META_LEAD_ADS" ? { graphApiVersion: META_ADS_DEFAULT_API_VERSION } : {}), ...(input.metaNative ? { metaNative: input.metaNative } : {}), ...(input.externalQuiz ? { externalQuiz: input.externalQuiz } : {}) };
       const connection = await tx.integrationConnection.create({ data: { workspaceId: context.workspaceId, key: input.key, providerKey: input.provider, adapterKey: `acquisition-${input.provider.toLocaleLowerCase().replaceAll("_", "-")}-v1`, displayName: input.displayName, environment: "PRODUCTION", status: "AWAITING_CREDENTIAL", capabilityLevel: "IMPLEMENTED", enabled: false, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
       await tx.integrationConnectionConfigVersion.create({ data: { workspaceId: context.workspaceId, connectionId: connection.id, version: 1, schemaVersion: ACQUISITION_CONTRACT_VERSION, config: json(config), configHash: sha256(canonicalJson(config)), createdByActorId: context.actorId } });
       await tx.integrationConnectionCapability.create({ data: { workspaceId: context.workspaceId, connectionId: connection.id, capability: "WEBHOOK_RECEIVE" } });

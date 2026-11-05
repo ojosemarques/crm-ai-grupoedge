@@ -18,6 +18,7 @@ export async function GET(request: NextRequest, routeContext: RouteContext) {
       stageId,
       pipelineId: query.get("pipelineId") ?? "",
       q: query.get("q") ?? "",
+      quizId: query.get("quizId") ?? "ALL",
       responsible: query.get("responsible") ?? "",
       priority: query.get("priority") ?? "ALL",
       stageCode: query.get("stageCode") ?? "ALL",

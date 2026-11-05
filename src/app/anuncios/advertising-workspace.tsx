@@ -125,6 +125,13 @@ export function AdvertisingMetrics({ screen }: Readonly<{ screen: Screen }>) {
         <form className={styles.customPeriodForm} method="get"><input name="view" type="hidden" value="metrics" /><input name="metricsPreset" type="hidden" value="CUSTOM" /><label>De<input defaultValue={selected.fromDate} max={screen.today} name="metricsFrom" required type="date" /></label><label>Até<input defaultValue={selected.toDate} max={screen.today} name="metricsTo" required type="date" /></label><button className={styles.button} type="submit">Personalizar</button></form>
       </section>
 
+      <section className={styles.section} aria-label="Respostas dos quizzes">
+        <h2>Respostas dos quizzes no período</h2>
+        <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Quiz</th><th>Respostas concluídas recebidas</th><th>Novos leads</th><th>Submissões anexadas</th><th>Leads únicos no quiz</th></tr></thead><tbody>
+          {screen.metrics.quizBreakdown.map((quiz) => <tr key={quiz.id}><td><Link href={`/anuncios?view=pipeline&quizId=${quiz.id}`}>{quiz.name}</Link></td><td>{quiz.submissions}</td><td>{quiz.newLeads}</td><td>{quiz.attached}</td><td>{quiz.uniqueLeads}</td></tr>)}
+        </tbody></table></div>
+        <p>{screen.metrics.quizOverlap} leads responderam aos dois quizzes neste período. Os recortes de leads únicos podem se sobrepor. Novos leads seguem a identidade canônica do CRM. Conversão por visita e investimento não estão disponíveis nesta integração.</p>
+      </section>
       <section className={styles.grid} aria-label="Métricas do período de Anúncios">{cards.map(([label, value]) => <article className={styles.card} key={label}><h2>{label}</h2><div className={styles.metric}>{value}</div><p>No período selecionado</p></article>)}</section>
       <p>Contatos, ligações e mensagens consideram os leads recebidos no período selecionado. Mensagens somam os registros de envio; contatos contam cada lead uma única vez.</p>
       {(["today", "week"] as const).map(period => <section className={styles.section} aria-label={period === "today" ? "Metas diárias de Anúncios" : "Metas semanais de Anúncios"} key={period}>

@@ -58,6 +58,7 @@ export default async function AdvertisingPage({ searchParams }: Readonly<{ searc
       pipelineScreen = await getPreSalesPipelineService().getScreen(context, {
         pipelineId: pipeline.id,
         q: first(params.q),
+        quizId: first(params.quizId),
         responsible: first(params.responsible),
         priority: first(params.priority),
         stageCode: first(params.stageCode),

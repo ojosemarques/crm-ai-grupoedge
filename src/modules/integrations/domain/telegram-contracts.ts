@@ -31,7 +31,7 @@ export function loadTelegramConfig(environment: Readonly<Record<string, string |
   return { token, webhookSecret, origin: url.origin };
 }
 
-export function buildTelegramLeadAlert(input: Readonly<{ leadName: string; receivedAt: Date; timeZone: string }>) {
+export function buildTelegramLeadAlert(input: Readonly<{ leadName: string; receivedAt: Date; timeZone: string; quizName?: string; summary?: string }>) {
   const when = new Intl.DateTimeFormat("pt-BR", { timeZone: input.timeZone, dateStyle: "short", timeStyle: "short" }).format(input.receivedAt);
-  return `🚨 Chegou um novo lead de anúncio!\n\nCarlos, há um novo lead para você abordar.\nNome: ${input.leadName}\nRecebido em: ${when} (${input.timeZone})\n\nAbra o CRM e inicie o contato agora.`;
+  return `🚨 Chegou um novo lead de anúncio!\n\nCarlos, há um novo lead para você abordar.\nNome: ${input.leadName.slice(0, 200)}${input.quizName ? `\nOrigem: Quiz · ${input.quizName.slice(0, 100)}` : ""}${input.summary ? `\nResumo: ${input.summary.slice(0, 1200)}` : ""}\nRecebido em: ${when} (${input.timeZone})\n\nAbra o CRM e inicie o contato agora.`;
 }

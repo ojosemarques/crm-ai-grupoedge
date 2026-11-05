@@ -12,6 +12,10 @@ export type MarketingFormResponseAnswer = Readonly<{
 
 export type MarketingFormResponseSummary = Readonly<{
   receiptId: string;
+  responseKind?: "EXTERNAL_QUIZ";
+  quizId?: "chatmandato" | "quizmandato";
+  summary?: string;
+  result?: Readonly<{ key: string; label: string }>;
   formName: string;
   submittedAt: string;
   phone: string | null;

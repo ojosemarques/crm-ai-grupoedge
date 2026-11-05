@@ -52,3 +52,12 @@ describe("Etapa 14 — contrato de aquisição", () => {
     expect(acquisitionConnectionCommandSchema.safeParse({ action: "REVOKE", connectionId, revision: 4, reason: "Credencial comprometida" }).success).toBe(true);
   });
 });
+
+describe("destino de quiz externo", () => {
+  it("aceita destino por conexão FORM e rejeita outro provider ou campos de privilégio", () => {
+    const externalQuiz = { quizId: "chatmandato", pipelineId: connectionId, initialStageId: connectionId };
+    expect(acquisitionConnectionSchema.safeParse({ ...base, externalQuiz }).success).toBe(true);
+    expect(acquisitionConnectionSchema.safeParse({ ...base, externalQuiz: { ...externalQuiz, workspaceId: connectionId } }).success).toBe(false);
+    expect(acquisitionConnectionSchema.safeParse({ ...base, provider: "TYPEFORM", externalQuiz }).success).toBe(false);
+  });
+});
