@@ -489,3 +489,42 @@ describe("quizzes externos de mandato", () => {
     await expect(connections.configure(admin, { key: `quiz-invalid-${randomUUID().slice(0, 8)}`, displayName: "Quiz inválido", provider: "FORM", sourceKey, secretReferenceKey: "ACQUISITION_STAGE14_FORM_SECRET", mapping: { fullName: "fullName", phone: "phone" }, externalQuiz: { quizId: "quizmandato", pipelineId: randomUUID(), initialStageId: randomUUID() } })).rejects.toMatchObject({ code: "META_NATIVE_DESTINATION_INVALID" });
   });
 });
+
+describe("carga histórica somente no pipeline", () => {
+ it("preserva parcial, completa o mesmo cadastro e não alimenta Tempo Real/metas", async () => {
+  const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, name: "Anúncios", deletedAt: null }, include: { stages: { where: { type: "OPEN", deletedAt: null }, orderBy: { position: "asc" }, take: 1 } } });
+  const key = `historical-quiz-${randomUUID().slice(0,8)}`;
+  const configured = await connections.configure(admin, { key, displayName: "Histórico parcial", provider: "FORM", sourceKey, secretReferenceKey: "ACQUISITION_STAGE14_FORM_SECRET", externalQuiz: { quizId: "quizmandato", pipelineId: pipeline.id, initialStageId: pipeline.stages[0]!.id }, mapping: { fullName: "fullName", phone: "phone", interestSummary: "interestSummary", sessionPublicId: "sessionPublicId" } });
+  await connections.command(admin, { action: "ACTIVATE", connectionId: configured.id, revision: 1 });
+  const sourceId = randomUUID();
+  const systemActor = await database.actor.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, type: "SYSTEM", userId: null } });
+  const automatic = { workspaceId: admin.workspaceId, actorId: systemActor.id, actorType: "SYSTEM" as const, actorKey: systemActor.key };
+  const quiz = { id: "quizmandato", name: "QuizMandato", version: "1", url: "https://site.politizai.com/quizmandato" };
+  const answers = ["nome","cargo","whatsapp","localidade","desafio","organizacao","frequencia","presenca_digital","prioridade","prazo","investimento_mensal"].map(questionKey=>({questionKey,question:`Pergunta ${questionKey}`,value:`Resposta ${questionKey}`,displayValue:`Resposta ${questionKey}`}));
+  const idempotencyKey = `acq:${configured.id}:external:${sourceId}`;
+  const initial = await database.$transaction(async(tx)=>{
+   const result = await intake.intake({ channel:"FORM", idempotencyKey, formIdentifier:key, fullName:"Histórico parcial mandato", phone:"+5511987660102", sourceKey, pipelineId:pipeline.id, initialStageId:pipeline.stages[0]!.id, interestSummary:"Diagnóstico incompleto", rawPayload:{provider:"FORM",historicalImport:true,externalSubmissionId:sourceId,quizResponse:{quiz,completionStatus:"PARTIAL",answers:answers.slice(0,3)},interestSummary:"Diagnóstico incompleto"},priorityBandCode:"P3" },automatic,tx);
+   if(result.outcome==="REJECTED")throw Error(result.code);
+   await tx.auditLog.create({data:{workspaceId:admin.workspaceId,actorId:systemActor.id,action:"lead.metrics_excluded",entityType:"Lead",entityId:result.leadId,reason:"Carga histórica somente pipeline"}});
+   await tx.job.updateMany({where:{workspaceId:admin.workspaceId,idempotencyKey:`telegram-ad-lead:${result.leadId}:carlos`,status:"PENDING"},data:{status:"CANCELLED",cancelledAt:now,errorCode:"HISTORICAL_PIPELINE_ONLY"}});
+   return result;
+  });
+  const partial = await responsesByLead(database,admin.workspaceId,[initial.leadId]);
+  expect(partial.get(initial.leadId)![0]!.answers).toHaveLength(3);
+  expect(partial.get(initial.leadId)![0]!.formName).toContain("incompleto");
+  const before=await createAdvertisingWorkspaceService({database,authorization,now:()=>now}).getScreen(admin,{pipelineId:pipeline.id,metricsPreset:"TODAY"});
+  const rawBody=JSON.stringify({contractVersion:"quiz-lead.v1",eventId:`quiz:quizmandato:${sourceId}:completed:v1`,submissionId:sourceId,occurredAt:now.toISOString(),quiz,answers,fullName:"Histórico parcial mandato",phone:"+5511987660102",interestSummary:"Diagnóstico completo",landingUrl:quiz.url,sessionPublicId:sourceId});
+  const request={workspaceSlug:admin.workspaceSlug,connectionKey:key,rawBody,headers:{timestamp:now.toISOString(),signature:formSignature(rawBody,now.toISOString())}};
+  expect(await webhooks.receive(request)).toMatchObject({status:"PROCESSED",leadId:initial.leadId,submissionId:initial.submissionId,idempotentReplay:true});
+  expect(await webhooks.receive(request)).toMatchObject({status:"PROCESSED",idempotentReplay:true});
+  expect(await database.leadFormSubmission.count({where:{workspaceId:admin.workspaceId,idempotencyKey}})).toBe(1);
+  const responses=await responsesByLead(database,admin.workspaceId,[initial.leadId]);
+  expect(responses.get(initial.leadId)![0]!.answers).toHaveLength(11);
+  expect(responses.get(initial.leadId)![0]!.formName).not.toContain("incompleto");
+  const after=await createAdvertisingWorkspaceService({database,authorization,now:()=>now}).getScreen(admin,{pipelineId:pipeline.id,metricsPreset:"TODAY"});
+  expect(after.metrics.totals).toEqual(before.metrics.totals);
+  expect(after.metrics.live.today.leadsReceived).toBe(before.metrics.live.today.leadsReceived);
+  expect(after.metrics.quizBreakdown).toEqual(before.metrics.quizBreakdown);
+  expect(await database.auditLog.count({where:{workspaceId:admin.workspaceId,entityId:initial.leadId,action:"lead.external_quiz_completed"}})).toBe(1);
+ });
+});

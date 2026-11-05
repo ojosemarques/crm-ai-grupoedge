@@ -1,3 +1,4 @@
+import { externalQuizResponseSchema } from "@/modules/acquisition-api/domain/external-quiz-contracts";
 import type {
   ContactPreference,
   LeadAssignmentType,
@@ -971,6 +972,8 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         select: {
           id: true,
           normalizedPhone: true,
+          rawPayload: true,
+          formIdentifier: true,
           intakeOutcome: true,
           lead: { select: { id: true, conversionCount: true } },
           identityReview: {
@@ -988,6 +991,26 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         },
       });
       if (priorSubmission) {
+        const priorRaw = priorSubmission.rawPayload as Record<string, unknown> | null;
+        const oldQuiz = externalQuizResponseSchema.safeParse(priorRaw?.quizResponse);
+        const newQuiz = externalQuizResponseSchema.safeParse(parsed.rawPayload.quizResponse);
+        // A historical partial import owns this submission identity. Completion refreshes
+        // its snapshot without creating another lead, SLA cycle, metric or alert.
+        if (priorSubmission.lead && !isHumanContext(context) && parsed.channel === "FORM" && priorRaw?.historicalImport === true
+          && priorRaw.provider === "FORM" && parsed.rawPayload.provider === "FORM"
+          && oldQuiz.success && oldQuiz.data.completionStatus === "PARTIAL" && newQuiz.success && newQuiz.data.completionStatus !== "PARTIAL"
+          && oldQuiz.data.quiz.id === newQuiz.data.quiz.id && priorSubmission.formIdentifier === parsed.formIdentifier
+          && priorSubmission.normalizedPhone === parsed.normalizedPhone
+          && typeof priorRaw.externalSubmissionId === "string" && priorRaw.externalSubmissionId === parsed.rawPayload.externalSubmissionId) {
+          await transaction.leadFormSubmission.update({ where: { id: priorSubmission.id }, data: {
+            rawPayload: { ...parsed.rawPayload, historicalImport: true },
+            submittedInterestSummary: parsed.interestSummary ?? null,
+            submittedAt: parsed.submittedAt ?? parsed.receivedAt,
+          } });
+          await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId,
+            action: "lead.external_quiz_completed", entityType: "Lead", entityId: priorSubmission.lead.id,
+            origin: "SYSTEM", changes: { submissionId: priorSubmission.id, quizId: newQuiz.data.quiz.id, historicalImport: true } } });
+        }
         const replay = acceptedReplay(priorSubmission);
         return (
           replay ??

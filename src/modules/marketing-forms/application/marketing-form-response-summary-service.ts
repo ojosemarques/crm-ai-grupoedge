@@ -60,7 +60,7 @@ export async function responsesByLead(
       const quiz = externalQuizResponseSchema.safeParse(raw.quizResponse);
       if (quiz.success) {
         const current = result.get(submission.leadId) ?? [];
-        current.push({ receiptId: submission.id, responseKind: "EXTERNAL_QUIZ", quizId: quiz.data.quiz.id, formName: `Quiz · ${quiz.data.quiz.name}`, submittedAt: submission.submittedAt.toISOString(), phone: submission.submittedPhone, answers: quiz.data.answers, ...(typeof raw.interestSummary === "string" ? { summary: raw.interestSummary } : {}), ...(quiz.data.result ? { result: quiz.data.result } : {}) });
+        current.push({ receiptId: submission.id, responseKind: "EXTERNAL_QUIZ", quizId: quiz.data.quiz.id, formName: `Quiz · ${quiz.data.quiz.name}${quiz.data.completionStatus === "PARTIAL" ? " · Diagnóstico incompleto" : ""}`, submittedAt: submission.submittedAt.toISOString(), phone: submission.submittedPhone, answers: quiz.data.answers, ...(typeof raw.interestSummary === "string" ? { summary: raw.interestSummary } : {}), ...(quiz.data.result ? { result: quiz.data.result } : {}) });
         result.set(submission.leadId, current);
       }
       continue;

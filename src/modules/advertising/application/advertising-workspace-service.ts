@@ -1,3 +1,4 @@
+import { excludedMetricLeadIds } from "@/modules/metrics/application/metric-lead-exclusions";
 import { createRealtimeDashboardService } from "@/modules/realtime-dashboard/application/realtime-dashboard-service";
 import { readRealtimeDashboardFacts, realtimeActivityFact } from "@/modules/realtime-dashboard/application/realtime-dashboard-facts";
 import { advertisingLeadArrivals, advertisingPeriodFacts } from "@/modules/realtime-dashboard/domain/realtime-advertising-metrics";
@@ -149,8 +150,9 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
       createRealtimeDashboardService(options).advertisingSnapshot(context),
       resolveIntegratedActivityReadScope(options, context, period.start, to),
     ]);
+    const excludedIds = await excludedMetricLeadIds(options.database, context.workspaceId);
     const quizSubmissions = await options.database.leadFormSubmission.findMany({
-      where: { workspaceId: context.workspaceId, lead: leadWhere, submittedAt: { gte: period.start, lt: to }, formIdentifier: { in: ["site-chatmandato", "site-quizmandato"] }, intakeOutcome: { in: ["CREATED", "ATTACHED"] } },
+      where: { workspaceId: context.workspaceId, lead: { AND: [leadWhere, { id: { notIn: excludedIds } }] }, submittedAt: { gte: period.start, lt: to }, formIdentifier: { in: ["site-chatmandato", "site-quizmandato"] }, intakeOutcome: { in: ["CREATED", "ATTACHED"] } },
       select: { leadId: true, formIdentifier: true, intakeOutcome: true },
     });
     const quizIds = ["chatmandato", "quizmandato"] as const;
