@@ -19,7 +19,7 @@ const db = new PrismaClient({ adapter: createPostgresAdapter(process.env.DATABAS
 const now = new Date();
 const activation = "c".repeat(43);
 const env = { TELEGRAM_ENABLED: "true", TELEGRAM_BOT_TOKEN: `123456789:${"a".repeat(35)}`, TELEGRAM_WEBHOOK_SECRET: "w".repeat(40), APP_CANONICAL_URL: "https://crm.example.test" };
-const topSendEnv = { TOPSEND_VOICE_ENABLED: "true", TOPSEND_API_TOKEN: "fixture-voice-token", TOPSEND_VOICE_AUDIO_ID: "fixture-audio", TOPSEND_VOICE_AUDIO_URL: "https://example.test/voice.mp3" };
+const topSendEnv = { TOPSEND_VOICE_ENABLED: "true", TOPSEND_API_TOKEN: "fixture-voice-token", TOPSEND_VOICE_AUDIO_URL: "https://example.test/voice.mp3" };
 const authorization = createAuthorizationService({ database: db });
 let workspaceId: string, actorId: string, memberId: string, connectionId: string, pipelineId: string, stageId: string;
 let counter = 0;

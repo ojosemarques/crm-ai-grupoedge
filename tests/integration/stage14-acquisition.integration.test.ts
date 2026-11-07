@@ -72,9 +72,13 @@ afterEach(() => vi.unstubAllEnvs());
 const topSendEnv = {
   TOPSEND_VOICE_ENABLED: "true",
   TOPSEND_API_TOKEN: "fixture-voice-token",
-  TOPSEND_VOICE_AUDIO_ID: "fixture-audio",
   TOPSEND_VOICE_AUDIO_URL: "https://example.test/voice.mp3",
 };
+
+const fixtureMp3Bytes = new Uint8Array([0x49, 0x44, 0x33]);
+const fixtureMp3 = () => new Response(fixtureMp3Bytes, {
+  headers: { "Content-Type": "audio/mpeg", "Content-Length": String(fixtureMp3Bytes.length) },
+});
 
 function enableTopSendFixture() {
   for (const [name, value] of Object.entries(topSendEnv)) vi.stubEnv(name, value);
@@ -406,12 +410,13 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
     expect(await database.job.findFirst({ where: { workspaceId: admin.workspaceId, idempotencyKey: `topsend-voice:${recovered.leadId}:v1` } })).toMatchObject({
       status: "PENDING", runAt: new Date(now.getTime() + 30_000),
     });
-    const voiceFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 500 }));
+    const voiceFetch = vi.fn<typeof fetch>().mockResolvedValueOnce(fixtureMp3()).mockResolvedValueOnce(new Response(null, { status: 500 }));
     const voiceWorker = createTopSendVoiceWorker({ database, now: () => new Date(now.getTime() + 30_000), environment: topSendEnv, fetcher: voiceFetch });
     const voiceTarget = { workspaceId: admin.workspaceId, leadId: recovered.leadId! };
     expect(await voiceWorker.processNext("voice-http-error", voiceTarget)).toEqual({ status: "FAILED" });
     expect(await voiceWorker.processNext("voice-http-error-repeat", voiceTarget)).toEqual({ status: "IDLE" });
-    expect(voiceFetch).toHaveBeenCalledTimes(1);
+    expect(voiceFetch).toHaveBeenCalledTimes(2);
+    expect(await database.job.findFirst({ where: { workspaceId: admin.workspaceId, idempotencyKey: `topsend-voice:${recovered.leadId}:v1` } })).toMatchObject({ errorCode: "TOPSEND_HTTP_500" });
     expect(await database.lead.findUniqueOrThrow({ where: { id: recovered.leadId! } })).toMatchObject({ fullName: "Lead de formulário — nome não informado", normalizedPhone: "+5511999981920", pipelineId: pipeline.id });
     expect(await receive(rawPhoneOnly)).toMatchObject({ status: "PROCESSED", idempotentReplay: true });
 
@@ -491,21 +496,26 @@ describe("quizzes externos de mandato", () => {
     const leadId = results[0]!.leadId as string;
     const target = { workspaceId: admin.workspaceId, leadId };
     let dispatchTime = new Date(now.getTime() + 29_999);
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: "fixture-campaign", status: "PENDING" }));
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(fixtureMp3()).mockResolvedValueOnce(Response.json({ id: "fixture-campaign", status: "PENDING" }));
     const worker = createTopSendVoiceWorker({ database, now: () => dispatchTime, environment: topSendEnv, fetcher });
     expect(await worker.processNext("voice-early", target)).toEqual({ status: "IDLE" });
     expect(fetcher).not.toHaveBeenCalled();
     dispatchTime = new Date(now.getTime() + 30_000);
     const outcomes = await Promise.all([worker.processNext("voice-a", target), worker.processNext("voice-b", target)]);
     expect(outcomes.map(({ status }) => status).sort()).toEqual(["IDLE", "SUCCEEDED"]);
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    const [url, request] = fetcher.mock.calls[0]!;
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[0]?.[0]).toBe(topSendEnv.TOPSEND_VOICE_AUDIO_URL);
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).has("Authorization")).toBe(false);
+    const [url, request] = fetcher.mock.calls[1]!;
     expect(url).toBe("https://api.topsend.io/api/v1/campaign/audio/send");
     const body = request!.body as FormData;
+    const audio = body.get("file");
+    expect(audio).toBeInstanceOf(File);
+    expect(audio).toMatchObject({ name: "audio-politizai-1.mp3", type: "audio/mpeg", size: fixtureMp3Bytes.length });
+    expect(new Uint8Array(await (audio as File).arrayBuffer())).toEqual(fixtureMp3Bytes);
     expect(JSON.parse(String(body.get("data")))).toEqual({
       title: expect.stringMatching(/^Politizai - [0-9a-f-]+$/),
-      audio_id: "fixture-audio", audio_url: "https://example.test/voice.mp3",
-      start_date: "2048-06-01T12:00:30", type: "TVOZ", numbers: ["5511988882468"],
+      start_date: "2048-06-01T15:00:30Z", type: "TVOZ", numbers: ["5511988882468"],
     });
     expect(await database.job.findFirst({ where: { workspaceId: target.workspaceId, idempotencyKey: `topsend-voice:${leadId}:v1` } })).toMatchObject({
       status: "SUCCEEDED", attempts: 1, result: { id: "fixture-campaign", status: "PENDING" },
@@ -522,7 +532,7 @@ describe("quizzes externos de mandato", () => {
     expect(otherResult.leadId).not.toBe(leadId);
     await database.lead.update({ where: { id: otherResult.leadId as string }, data: { contactPreference: "DO_NOT_CONTACT", contactPreferenceUpdatedAt: now } });
     expect(await worker.processNext("voice-opt-out", { ...target, leadId: otherResult.leadId as string })).toEqual({ status: "CANCELLED" });
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(2);
     expect(await database.commercialMetricFact.count({ where: { leadId, eventType: "LEAD_CREATED" } })).toBe(1);
     expect(await database.commercialMetricFact.count({ where: { leadId, eventType: "LEAD_SUBMISSION_ATTACHED" } })).toBe(1);
     const screen = await createAdvertisingWorkspaceService({ database, authorization, now: () => now }).getScreen(admin, { pipelineId: pipeline.id, metricsPreset: "TODAY" });

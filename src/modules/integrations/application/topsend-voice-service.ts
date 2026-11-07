@@ -10,13 +10,9 @@ import { logger } from "@/shared/core/logging/logger";
 const API_URL = "https://api.topsend.io/api/v1/campaign/audio/send";
 const JOB_KIND = "TOPSEND_LEAD_VOICE_V1";
 const TOPSEND_VOICE_DELAY_MS = 30_000;
+const MAX_AUDIO_BYTES = 10_000_000;
 const campaignSchema = z.object({ id: z.string().min(1), status: z.string().min(1) });
 const payloadSchema = z.object({ leadId: z.string().uuid() });
-const startDateFormat = new Intl.DateTimeFormat("sv-SE", {
-  timeZone: "America/Sao_Paulo",
-  dateStyle: "short",
-  timeStyle: "medium",
-});
 
 type Target = Readonly<{ workspaceId: string; leadId: string }>;
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -30,10 +26,27 @@ type Options = Readonly<{
 function loadConfig(environment: Environment) {
   if (environment.TOPSEND_VOICE_ENABLED !== "true") return null;
   const token = environment.TOPSEND_API_TOKEN?.trim();
-  const audioId = environment.TOPSEND_VOICE_AUDIO_ID?.trim();
-  const audioUrl = environment.TOPSEND_VOICE_AUDIO_URL?.trim();
-  if (!token || !audioId || !audioUrl?.startsWith("https://")) return null;
-  return { token, audioId, audioUrl };
+  const audioUrl = URL.parse(environment.TOPSEND_VOICE_AUDIO_URL?.trim() ?? "");
+  if (!token || audioUrl?.protocol !== "https:" || audioUrl.username || audioUrl.password) return null;
+  return { token, audioUrl: audioUrl.href };
+}
+
+async function downloadAudio(url: string, fetcher: typeof fetch) {
+  const response = await fetcher(url, {
+    headers: { Accept: "audio/mpeg", "Accept-Encoding": "identity" },
+    redirect: "error",
+    signal: AbortSignal.timeout(5_000),
+  });
+  const size = Number(response.headers.get("content-length"));
+  const type = response.headers.get("content-type")?.split(";")[0]?.trim();
+  const encoding = response.headers.get("content-encoding");
+  if (!response.ok || type !== "audio/mpeg" || (encoding && encoding !== "identity")
+    || !Number.isSafeInteger(size) || size <= 0 || size > MAX_AUDIO_BYTES) {
+    await response.body?.cancel();
+    return null;
+  }
+  const bytes = await response.arrayBuffer();
+  return bytes.byteLength === size ? new Blob([bytes], { type }) : null;
 }
 
 function idempotencyKey(leadId: string) {
@@ -147,12 +160,14 @@ export function createTopSendVoiceWorker(options: Options) {
     }
     if (!phone) return finish("CANCELLED", "TOPSEND_TARGET_UNAVAILABLE_OR_BLOCKED");
 
+    const audio = await downloadAudio(config.audioUrl, fetcher).catch(() => null);
+    if (!audio) return finish("FAILED", "TOPSEND_AUDIO_UNAVAILABLE");
+
     const body = new FormData();
+    body.set("file", audio, "audio-politizai-1.mp3");
     body.set("data", JSON.stringify({
       title: `Politizai - ${jobId}`,
-      audio_id: config.audioId,
-      audio_url: config.audioUrl,
-      start_date: startDateFormat.format(now()).replace(" ", "T"),
+      start_date: now().toISOString().replace(/\.\d{3}Z$/, "Z"),
       type: "TVOZ",
       numbers: [phone],
     }));
