@@ -116,7 +116,7 @@ export function createMetaNativeService(options: Options) {
         if (String(lead.form_id) !== form.id) fail("META_NATIVE_LEAD_MISMATCH", "Lead retornado pertence a outro formulário.");
         const id = metaIdSchema.parse(String(lead.id));
         const rawBody = canonicalJson({ object: "page", entry: [{ id: native.pageId, changes: [{ field: "leadgen", value: { page_id: native.pageId, form_id: form.id, leadgen_id: id, created_time: Math.floor(at.getTime() / 1000) } }] }] });
-        const result = await options.webhooks.receive({ workspaceSlug: context.workspaceSlug, connectionKey: connection.key, rawBody, headers: { signature: `sha256=${createHmac("sha256", signingSecret).update(rawBody).digest("hex")}` } });
+        const result = await options.webhooks.receive({ workspaceSlug: context.workspaceSlug, connectionKey: connection.key, rawBody, headers: { signature: `sha256=${createHmac("sha256", signingSecret).update(rawBody).digest("hex")}` }, historicalImport: true });
         if (result.idempotentReplay) replayed++;
         else if (result.status === "PROCESSED") processed++;
         else if (result.status === "IGNORED") ignored++;

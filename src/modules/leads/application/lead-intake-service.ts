@@ -19,6 +19,7 @@ import type {
 } from "@/modules/automations/domain/automation-contracts";
 import { getAutomationEngineService } from "@/modules/automations/application/automation-engine-service";
 import { deliverTelegramLeadAlertAfterCommit, enqueueTelegramLeadAlertInTransaction } from "@/modules/integrations/application/telegram-lead-alert-service";
+import { enqueueTopSendVoiceInTransaction, wakeTopSendVoiceAfterResponse } from "@/modules/integrations/application/topsend-voice-service";
 import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
 import {
@@ -901,7 +902,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
     payload: unknown,
     context: LeadIntakeActorContext,
     transactionOverride?: Prisma.TransactionClient,
-    formContinuation?: Readonly<{ partialResponseId: string }>,
+    intakeOptions?: Readonly<{ partialResponseId?: string; scheduleTopSendVoice?: boolean }>,
   ): Promise<LeadIntakeResult> {
     const parsed = parseInput(payload, options.now());
     if (isRejectedResult(parsed)) return parsed;
@@ -1041,9 +1042,9 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       });
       // Only the form service can supply this continuation. The stored session,
       // version, phone and destination must all agree; shared phone alone is insufficient.
-      const partial = formContinuation && transactionOverride && parsed.channel === "FORM" && !isHumanContext(context) && parsed.acquisition?.sessionPublicId && parsed.formIdentifier
+      const partial = intakeOptions?.partialResponseId && transactionOverride && parsed.channel === "FORM" && !isHumanContext(context) && parsed.acquisition?.sessionPublicId && parsed.formIdentifier
         ? await transaction.marketingFormPartialResponse.findFirst({ where: {
-            id: formContinuation.partialResponseId, workspaceId: context.workspaceId, completedAt: null, deletedAt: null,
+            id: intakeOptions.partialResponseId, workspaceId: context.workspaceId, completedAt: null, deletedAt: null,
             sessionPublicId: parsed.acquisition?.sessionPublicId,
           }, select: { id: true, marketingFormId: true, marketingFormVersionId: true } })
         : null;
@@ -1344,6 +1345,13 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         }
         if (references.pipeline.name === ADVERTISING_PIPELINE_NAME) {
           await enqueueTelegramLeadAlertInTransaction(transaction, { workspaceId: context.workspaceId, leadId: lead.id, actorId: context.actorId, occurredAt: parsed.receivedAt });
+        }
+        if (intakeOptions?.scheduleTopSendVoice && parsed.normalizedPhone && contactPreference !== "DO_NOT_CONTACT") {
+          const target = { workspaceId: context.workspaceId, leadId: lead.id };
+          const queued = await enqueueTopSendVoiceInTransaction(transaction, {
+            ...target, actorId: context.actorId, receivedAt: parsed.receivedAt, phone: parsed.normalizedPhone,
+          });
+          if (queued) wakeTopSendVoiceAfterResponse(options.database, target, parsed.receivedAt);
         }
         await options.afterInitialOperationsPersisted?.();
         await transaction.auditLog.create({

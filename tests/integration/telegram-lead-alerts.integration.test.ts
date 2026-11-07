@@ -19,6 +19,7 @@ const db = new PrismaClient({ adapter: createPostgresAdapter(process.env.DATABAS
 const now = new Date();
 const activation = "c".repeat(43);
 const env = { TELEGRAM_ENABLED: "true", TELEGRAM_BOT_TOKEN: `123456789:${"a".repeat(35)}`, TELEGRAM_WEBHOOK_SECRET: "w".repeat(40), APP_CANONICAL_URL: "https://crm.example.test" };
+const topSendEnv = { TOPSEND_VOICE_ENABLED: "true", TOPSEND_API_TOKEN: "fixture-voice-token", TOPSEND_VOICE_AUDIO_ID: "fixture-audio", TOPSEND_VOICE_AUDIO_URL: "https://example.test/voice.mp3" };
 const authorization = createAuthorizationService({ database: db });
 let workspaceId: string, actorId: string, memberId: string, connectionId: string, pipelineId: string, stageId: string;
 let counter = 0;
@@ -144,6 +145,7 @@ describe("alertas Telegram para Carlos", () => {
 
 describe("formulários parciais em Anúncios", () => {
   it("ignora só nome, aceita só telefone, completa o nome e conclui a mesma sessão sem duplicar card ou Telegram", async () => {
+    for (const [key, value] of Object.entries(topSendEnv)) vi.stubEnv(key, value);
     const f = await partialForm();
     const name = `Parcial ${randomUUID().slice(0, 8)}`;
     const phone = "+5511981234432";
@@ -161,6 +163,8 @@ describe("formulários parciais em Anúncios", () => {
     const submission = await db.leadFormSubmission.findUniqueOrThrow({ where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: partialLeadKey(partial.id) } } });
     const lead = await db.lead.findUniqueOrThrow({ where: { id: submission.leadId! } });
     expect(lead).toMatchObject({ fullName: PARTIAL_LEAD_PLACEHOLDER, normalizedPhone: phone, pipelineId, createdAt: partial.firstAnsweredAt });
+    const voiceJobWhere = { workspaceId, idempotencyKey: `topsend-voice:${lead.id}:v1` };
+    expect(await db.job.findFirst({ where: voiceJobWhere })).toMatchObject({ status: "PENDING", runAt: new Date(now.getTime() + 30_000) });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(await db.marketingFormReceipt.count({ where: { marketingFormId: onlyPhone.form.id } })).toBe(0);
     await onlyPhone.record([{ key: "nome-completo", answer: name }]);
@@ -173,6 +177,7 @@ describe("formulários parciais em Anúncios", () => {
     expect(completed.leadId).toBe(lead.id);
     expect(await db.lead.count({ where: { workspaceId, normalizedPhone: phone } })).toBe(1);
     expect(await db.job.count({ where: { workspaceId, idempotencyKey: `telegram-ad-lead:${lead.id}:carlos` } })).toBe(1);
+    expect(await db.job.count({ where: voiceJobWhere })).toBe(1);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     await onlyPhone.record([{ key: "telefone", answer: phone }]);
     expect((await db.marketingFormPartialResponse.findUniqueOrThrow({ where: { id: partial.id } })).completedAt).not.toBeNull();
@@ -181,6 +186,21 @@ describe("formulários parciais em Anúncios", () => {
     await db.auditLog.create({ data: { workspaceId, actorId, action: METRIC_LEAD_EXCLUSION_ACTION, entityType: "Lead", entityId: lead.id } });
     expect((await loadAcquisitionFunnel(db, workspaceId, new Date(now.getTime() - 86400000), new Date(now.getTime() + 86400000), "Anúncios")).cohortSize).toBe(completedFunnel.cohortSize - 1);
     vi.unstubAllGlobals(); vi.unstubAllEnvs();
+  });
+
+  it("agenda o torpedo ao concluir um formulário Politizai sem cadastro parcial", async () => {
+    for (const [key, value] of Object.entries(topSendEnv)) vi.stubEnv(key, value);
+    const form = await partialForm();
+    const accepted = await form.formService.submit(form.slug, {
+      versionPublicId: form.version.publicId, sessionPublicId: form.sessionPublicId, idempotencyToken: randomUUID(),
+      startedAt: new Date(now.getTime() - 2000).toISOString(), tracking: {},
+      answers: [{ questionKey: "nome-completo", value: "Formulário completo" }, { questionKey: "telefone", value: "+5511981234434" }],
+    });
+    expect(accepted.outcome).toBe("ACCEPTED");
+    const submission = await db.leadFormSubmission.findFirstOrThrow({ where: { workspaceId, marketingFormId: form.form.id } });
+    expect(await db.job.findFirst({ where: { workspaceId, idempotencyKey: `topsend-voice:${submission.leadId}:v1` } })).toMatchObject({
+      status: "PENDING", runAt: new Date(now.getTime() + 30_000),
+    });
   });
 
   it("recupera retroativo, mantém a data, é idempotente e cancela resposta excluída", async () => {

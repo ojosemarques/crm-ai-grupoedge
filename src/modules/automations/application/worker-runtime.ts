@@ -23,6 +23,7 @@ import { getProspectingReconciliationService } from "@/modules/prospecting/appli
 import { createMillionSendProspectingWorker } from "@/modules/prospecting/application/millionsend-prospecting-worker";
 import { createMeetingParticipantEmailWorker } from "@/modules/meetings/application/meeting-participant-email-service";
 import { createTelegramLeadAlertWorker } from "@/modules/integrations/application/telegram-lead-alert-service";
+import { createTopSendVoiceWorker } from "@/modules/integrations/application/topsend-voice-service";
 import { createMarketingFormPartialLeadWorker } from "@/modules/marketing-forms/application/marketing-form-partial-lead-service";
 import { getLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { getMetaNativeService } from "@/modules/acquisition-api/application/meta-native-service";
@@ -61,6 +62,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
   const millionSendProspectingWorker = createMillionSendProspectingWorker();
   const meetingParticipantEmailWorker = createMeetingParticipantEmailWorker(common);
   const telegramLeadAlertWorker = createTelegramLeadAlertWorker(common);
+  const topSendVoiceWorker = createTopSendVoiceWorker(common);
   const partialLeadWorker = createMarketingFormPartialLeadWorker({ ...common, leadIntake: getLeadIntakeService() });
 
   return Object.freeze({
@@ -68,6 +70,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
     runner: createWorkerBatchRunner({
       scanDue: lifecycleScanner.scanDue,
       processors: [
+        { key: "topsend-voice", processNext: topSendVoiceWorker.processNext },
         { key: "telegram-lead-alert", processNext: telegramLeadAlertWorker.processNext },
         { key: "marketing-form-partial-lead", processNext: partialLeadWorker.processNext },
         { key: "meta-native-intake-recovery", processNext: getMetaNativeService().recoverNext },

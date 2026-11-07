@@ -354,7 +354,7 @@ export function createMarketingFormSubmissionService(options: Options) {
           clickIds: input.tracking.clickIds,
         },
       }, { workspaceId: form.workspaceId, actorId: actor.id, actorType: "SYSTEM", actorKey: actor.key }, tx,
-        partial && !partial.completedAt && !partial.deletedAt ? { partialResponseId: partial.id } : undefined);
+        { scheduleTopSendVoice: true, ...(partial && !partial.completedAt && !partial.deletedAt ? { partialResponseId: partial.id } : {}) });
 
       if (intake.outcome === "REJECTED") {
         await tx.marketingFormReceipt.update({ where: { id: receipt.id }, data: { status: "FAILED", safeErrorCode: intake.code } });

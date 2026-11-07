@@ -63,7 +63,7 @@ export function createMarketingFormPartialLeadWorker(options: Options) {
       acquisition: { sessionPublicId: current.sessionPublicId, marketingFormKey: form.key, marketingFormVersion: version.version,
         ...(current.utmSource ? { utmSource: current.utmSource } : {}), ...(current.utmMedium ? { utmMedium: current.utmMedium } : {}),
         ...(current.utmCampaign ? { utmCampaign: current.utmCampaign } : {}), ...(current.utmContent ? { utmContent: current.utmContent } : {}), ...(current.utmTerm ? { utmTerm: current.utmTerm } : {}) },
-    }, { workspaceId, actorId: actor.id, actorType: "SYSTEM", actorKey: "system" }, tx);
+    }, { workspaceId, actorId: actor.id, actorType: "SYSTEM", actorKey: "system" }, tx, { scheduleTopSendVoice: true });
     if (result.outcome === "REJECTED") throw new ApplicationError("Entrada parcial rejeitada.", { code: result.code, statusCode: 422 });
     const session = await tx.marketingSession.findUnique({ where: { workspaceId_publicId: { workspaceId, publicId: current.sessionPublicId } }, select: { id: true } });
     await tx.leadFormSubmission.update({ where: { id: result.submissionId }, data: { marketingFormId: current.marketingFormId, marketingFormVersionId: current.marketingFormVersionId, marketingSessionId: session?.id ?? null } });
