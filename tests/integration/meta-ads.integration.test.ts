@@ -248,6 +248,48 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     } finally { pull.mockRestore(); }
   });
 
+  it("retoma uma coleta abandonada e mantém o gasto novo se a tentativa antiga responder", async () => {
+    const fixture = fixtureAdapter();
+    let clock = new Date("2046-04-20T20:31:00Z");
+    const service = createMetaAdsService({ database, adapter: fixture.adapter, secrets: new EphemeralSecretResolver({ META_ADS_ACCESS_TOKEN: "fixture-only" }), now: () => clock });
+    const prior = await database.integrationConnection.findUniqueOrThrow({ where: { workspaceId_key: { workspaceId, key: "meta-ads" } } });
+    const configured = await service.configure(admin, { revision: prior.revision, config: { selectedAccountIds: ["act_123456"], autoSyncEnabled: true, initialSince: "2046-04-19" } });
+    await service.testConnection(admin);
+
+    const pull = fixture.adapter.pull.bind(fixture.adapter);
+    let notifyOldPullReady!: () => void;
+    let releaseOldPull!: () => void;
+    const oldPullReady = new Promise<void>((resolve) => { notifyOldPullReady = resolve; });
+    const oldPullReleased = new Promise<void>((resolve) => { releaseOldPull = resolve; });
+    const pullSpy = vi.spyOn(fixture.adapter, "pull").mockImplementationOnce(async (...args) => {
+      const oldPayload = await pull(...args);
+      notifyOldPullReady();
+      await oldPullReleased;
+      return oldPayload;
+    });
+    clock = new Date("2046-04-20T20:46:01Z");
+    const abandoned = service.processDue();
+    try {
+      await Promise.race([
+        oldPullReady,
+        abandoned.then(() => { throw new Error("A primeira tentativa terminou antes da leitura."); }),
+      ]);
+      const pending = await database.integrationSyncRun.findFirstOrThrow({ where: { workspaceId, connectionId: configured.id, status: "RUNNING" } });
+      expect(await service.processDue()).toEqual({ status: "IDLE" });
+      fixture.updateSpend("413.72");
+      clock = new Date("2046-04-20T20:52:00Z");
+      expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
+      expect(await database.integrationDeliveryAttempt.findFirstOrThrow({ where: { syncRunId: pending.id, attemptNumber: 1 } })).toMatchObject({ status: "FAILED", errorCode: "META_SYNC_EXPIRED" });
+    } finally {
+      releaseOldPull();
+      await abandoned;
+      pullSpy.mockRestore();
+    }
+    const media = await createMediaPerformanceService({ database, now: () => clock }).getScreen(admin, { periodStart: "2046-04-19", periodEnd: "2046-04-19" });
+    expect(media.totals.spendCents).toBe(41372);
+    expect(media.mediaSync).toMatchObject({ status: "CONNECTED", lastCollectedAt: clock.toISOString(), error: null });
+  });
+
   it("limita falhas consecutivas e preserva bloqueios de permissão e pausa durante coleta", async () => {
     const fixture = fixtureAdapter();
     let clock = new Date(now.getTime() + 6 * 3_600_000);
