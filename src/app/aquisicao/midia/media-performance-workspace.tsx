@@ -20,6 +20,7 @@ import { StrategyFunnelEditor, type StrategyFunnelScreen } from "./strategy-funn
 type Screen = Awaited<ReturnType<ReturnType<typeof getMediaPerformanceService>["getScreen"]>>;
 type ChartMetric = "spendCents" | "impressions" | "clicks" | "reportedLeads";
 const money = (cents: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
+const dateLabel = (date: string) => date.split("-").reverse().join("/");
 function receiptMoney(cents: string) {
   const value = BigInt(cents);
   const absolute = value < 0n ? -value : value;
@@ -46,6 +47,9 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
   const strategies = initial.acquisitionFunnel.byDimension[funnelDimension];
   const strategy = strategies.find((row) => row.key === strategyKey) ?? strategies[0];
   const mediaAvailable = initial.missingInformation.length === 0;
+  const { startDate, endDate, previousStart, previousEnd, timeZone } = initial.period;
+  const previousStartDate = workspaceDateAt(new Date(previousStart), timeZone);
+  const previousEndDate = workspaceDateAt(new Date(Date.parse(previousEnd) - 1), timeZone);
   const advertisingRows = initial.advertisingFunnel.byDimension.source;
   const scheduledMeetings = initial.advertisingBookings;
   const costPerScheduledMeeting = mediaAvailable && scheduledMeetings > 0
@@ -98,7 +102,7 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
     <MarketingPeriodFilter basePath={basePath} from={initial.period.startDate} key={`${initial.period.startDate}:${initial.period.endDate}`} to={initial.period.endDate} today={workspaceDateAt(new Date(), initial.period.timeZone)} />
     {initial.mediaSync ? <p className={styles.footnote} role="status">Última coleta Meta: {initial.mediaSync.lastCollectedAt ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: initial.period.timeZone }).format(new Date(initial.mediaSync.lastCollectedAt)) : "nenhuma sincronização concluída"}. {initial.mediaSync.automatic && initial.mediaSync.enabled ? "Coleta automática a cada 15 minutos. Tela atualizada automaticamente." : "Coleta automática desativada."}</p> : null}
     {initial.mediaSync?.error ? <p className={styles.feedback} role="alert">{initial.mediaSync.enabled && initial.mediaSync.automatic ? "Coleta com falha; uma nova tentativa automática será feita após o intervalo de segurança." : "Coleta interrompida. Revalide a conexão em Integrações → Meta Ads."} {initial.mediaSync.error}</p> : null}
-    <div className={styles.toolbar}><div><Icon name="agenda" size={15} /><span>{initial.period.start.slice(0, 10)} — {initial.period.end.slice(0, 10)}</span><small>vs. {initial.period.previousStart.slice(0, 10)} — {initial.period.previousEnd.slice(0, 10)}</small></div>{initial.permissions.canImport ? <Button onClick={() => setImportOpen(true)} size="sm"><Icon name="mais" size={14} /> Importar performance</Button> : null}</div>
+    <div className={styles.toolbar}><div><Icon name="agenda" size={15} /><span>{dateLabel(startDate)} — {dateLabel(endDate)}</span><small>vs. {dateLabel(previousStartDate)} — {dateLabel(previousEndDate)}</small></div>{initial.permissions.canImport ? <Button onClick={() => setImportOpen(true)} size="sm"><Icon name="mais" size={14} /> Importar performance</Button> : null}</div>
     {feedback && !importOpen ? <p className={styles.feedback} role="status">{feedback}</p> : null}
     <section aria-label="Resumo de mídia" className={styles.kpis}>{[
       { label: "Investimento", value: mediaAvailable ? money(initial.totals.spendCents) : "Sem dados", hint: "Total no período", icon: "receita" as const },
@@ -136,7 +140,7 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
     </Surface>
 
     <Surface className={styles.panel}>
-      <SectionHeader title="Origem dos resultados comerciais" description={`${initial.acquisitionFunnel.cohortSize} entradas recebidas no período, incluindo ${initial.acquisitionFunnel.incompleteCount} respostas incompletas, acompanhadas até ${initial.period.end.slice(0, 10)}.`} />
+      <SectionHeader title="Origem dos resultados comerciais" description={`${initial.acquisitionFunnel.cohortSize} entradas recebidas no período, incluindo ${initial.acquisitionFunnel.incompleteCount} respostas incompletas, acompanhadas até ${dateLabel(endDate)}.`} />
       <div className={styles.chartTabs} role="group" aria-label="Agrupar funil por">
         {([{ key: "source", label: "Canal" }, { key: "campaign", label: "Campanha" }, { key: "creative", label: "Criativo" }, { key: "utmCampaign", label: "UTM campanha" }, { key: "utmContent", label: "UTM criativo" }] as const).map((item) => <button key={item.key} type="button" aria-pressed={funnelDimension === item.key} onClick={() => setFunnelDimension(item.key)}>{item.label}</button>)}
       </div>
