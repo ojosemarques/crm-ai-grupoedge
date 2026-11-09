@@ -158,7 +158,7 @@ describe("serviço administrativo de formulários", () => {
     const form = await service.create(context, { name: "Agenda", publicSlug: slug });
     const saved = await service.updateDraft(context, form.id, {
       name: form.name, expectedRevision: form.revision,
-      definition: { ...publishableDefinition(fixture), redirects: { automaticKind: "AGENDA" } },
+      definition: { ...publishableDefinition(fixture), redirects: { automaticKind: "AGENDA", afterAgenda: { kind: "URL", url: "https://example.com/obrigado" } } },
     });
     await expect(service.publish(context, form.id, saved.revision)).rejects.toMatchObject({ code: "MARKETING_FORM_AGENDA_STAGE_REQUIRED" });
     await database.pipelineStage.update({ where: { id: stageId }, data: { leadStageCode: "NEW" } });
@@ -203,6 +203,9 @@ describe("serviço administrativo de formulários", () => {
         bookPublicAgenda(response.receiptPublicId, { startsAt: "2033-03-15T17:00:00.000Z" }),
       ]);
       expect(results.filter((result) => "startsAt" in result)).toHaveLength(1);
+      expect(results).toContainEqual(expect.objectContaining({
+        booked: true, redirect: { kind: "URL", url: "https://example.com/obrigado" },
+      }));
       const meetings = await database.meeting.findMany({ where: { workspaceId }, include: { googleCalendarLink: true } });
       expect(meetings).toHaveLength(1);
       expect(meetings[0]).toMatchObject({ ownerMemberId: member.id, durationMinutes: 30, googleCalendarLink: { syncState: "PENDING_PUSH" } });

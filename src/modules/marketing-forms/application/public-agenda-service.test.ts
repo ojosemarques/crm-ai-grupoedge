@@ -5,6 +5,7 @@ const setup = vi.hoisted(() => {
   const db = {
     marketingFormReceipt: { findMany: vi.fn() },
     marketingForm: { findFirst: vi.fn() },
+    marketingFormVersion: { findUnique: vi.fn() },
     leadFormSubmission: { findFirst: vi.fn() },
     actor: { findFirst: vi.fn() },
     workspaceMember: { findMany: vi.fn() },
@@ -36,8 +37,9 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-11-09T11:50:00Z"));
-  setup.db.marketingFormReceipt.findMany.mockResolvedValue([{ id: "receipt", marketingFormId: "form", workspaceId: "workspace" }]);
+  setup.db.marketingFormReceipt.findMany.mockResolvedValue([{ id: "receipt", marketingFormId: "form", marketingFormVersionId: "published", workspaceId: "workspace" }]);
   setup.db.marketingForm.findFirst.mockResolvedValue({ id: "form" });
+  setup.db.marketingFormVersion.findUnique.mockResolvedValue({ definition: {} });
   setup.db.leadFormSubmission.findFirst.mockResolvedValue({ leadId: "lead", normalizedEmail: "lead@example.com" });
   setup.db.actor.findFirst.mockResolvedValue({ id: "system" });
   setup.db.workspaceMember.findMany.mockResolvedValue([
@@ -82,6 +84,27 @@ describe("reserva pelo formulário", () => {
     await expect(bookPublicAgenda(receipt, { startsAt: morning })).rejects.toMatchObject({ statusCode: 409 });
     expect(setup.lockCloser).toHaveBeenCalledWith(setup.db, "workspace", jhon);
     expect(setup.schedule).not.toHaveBeenCalled();
+  });
+
+  it("só entrega o destino do WhatsApp depois de confirmar a reserva", async () => {
+    setup.db.marketingFormVersion.findUnique.mockResolvedValue({
+      definition: { redirects: { afterAgenda: { kind: "WHATSAPP", phone: "+5511999999999", message: "Olá, confirmei." } } },
+    });
+    await expect(listPublicAgenda(receipt)).resolves.not.toHaveProperty("redirect");
+    expect(setup.db.marketingFormVersion.findUnique).not.toHaveBeenCalled();
+    const confirmation = await bookPublicAgenda(receipt, { startsAt: morning });
+    expect(confirmation).toMatchObject({
+      booked: true,
+      redirect: { kind: "WHATSAPP", url: "https://wa.me/5511999999999?text=Ol%C3%A1%2C+confirmei." },
+    });
+    expect(setup.db.marketingFormVersion.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { workspaceId_marketingFormId_id: { workspaceId: "workspace", marketingFormId: "form", id: "published" } },
+    }));
+    setup.db.meeting.findFirst.mockResolvedValue({
+      createdByActorId: "system", title: "Reunião de diagnóstico", startsAt: new Date(morning), status: "SCHEDULED", deletedAt: null,
+    });
+    await expect(bookPublicAgenda(receipt, { startsAt: morning })).resolves.toEqual(confirmation);
+    expect(setup.schedule).toHaveBeenCalledTimes(1);
   });
 
   it("escolhe o outro vendedor em um horário compartilhado e bloqueia repetição do lead", async () => {

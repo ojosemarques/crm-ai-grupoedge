@@ -6,6 +6,8 @@ import { PUBLIC_AGENDA_MINUTES, PUBLIC_AGENDA_TITLE, PUBLIC_AGENDA_ZONE } from "
 import mark from "../../../../../public/brand/politizai-mark.png";
 import styles from "./agenda.module.css";
 
+type ConfirmationRedirect = { kind: "WHATSAPP" | "URL"; url: string };
+
 type Availability = { today: string; days: string[]; booked: boolean; slots: { day: string; startsAt: string }[] };
 
 const dateLabel = new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long" });
@@ -33,6 +35,7 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
   const [bookingError, setBookingError] = useState("");
   const [booking, setBooking] = useState(false);
   const [booked, setBooked] = useState(false);
+  const [redirect, setRedirect] = useState<ConfirmationRedirect | null>(null);
   const [confirmedTime, setConfirmedTime] = useState<string | null>(null);
   const endpoint = `/api/public/agenda/${encodeURIComponent(receipt)}`;
 
@@ -53,6 +56,18 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
     return () => controller.abort();
   }, [endpoint, revision]);
 
+  useEffect(() => {
+    if (!redirect) return;
+    const timer = window.setTimeout(() => {
+      try {
+        (window.top ?? window).location.href = redirect.url;
+      } catch {
+        // An embedded form may be prevented from navigating the parent page.
+      }
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [redirect]);
+
   async function confirm(time: string) {
     setBooking(true);
     setBookingError("");
@@ -71,9 +86,10 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
         }
         return;
       }
-      const result: { startsAt?: string } = await response.json();
+      const result: { startsAt?: string; redirect?: ConfirmationRedirect } = await response.json();
       setConfirmedTime(result.startsAt ?? null);
       setBooked(true);
+      setRedirect(result.redirect ?? null);
     } catch {
       setBookingError("Não foi possível confirmar. Tente novamente.");
     } finally {
@@ -106,6 +122,9 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
           <p>{confirmedTime && selectedDay
             ? `${dateLabel.format(asDay(selectedDay))}, às ${clock.format(new Date(confirmedTime))} (horário de Brasília).`
             : "Já existe uma reunião para este cadastro."}</p>
+          {redirect && <a className={styles.continue} href={redirect.url} target="_blank" rel="noopener noreferrer">
+            {redirect.kind === "WHATSAPP" ? "Abrir WhatsApp" : "Continuar para o link"}
+          </a>}
         </div> : <>
           <h2>Selecione uma data e horário</h2>
           {loadError ? <div role="alert"><p>{loadError}</p><button type="button" onClick={() => { setLoadError(""); setRevision((value) => value + 1); }}>Tentar novamente</button></div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createEmptyMarketingFormDefinition, marketingFormDefinitionSchema } from "@/modules/marketing-forms/domain/marketing-form-contracts";
+import { agendaConfirmationRedirectSchema, createEmptyMarketingFormDefinition, marketingFormDefinitionSchema } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 
 describe("contrato de formulários de marketing", () => {
   it("produz um rascunho inicial válido", () => {
@@ -18,6 +18,11 @@ describe("contrato de formulários de marketing", () => {
     expect(marketingFormDefinitionSchema.safeParse({ ...definition, style: { ...definition.style, logoUrl: "http://127.0.0.1/logo.png" } }).success).toBe(false);
     expect(marketingFormDefinitionSchema.safeParse({ ...definition, redirects: { automaticKind: "URL" } }).success).toBe(false);
   });
+
+  it.each(["javascript:alert(1)", "http://example.com", "https://usuario:senha@example.com"])(
+    "rejeita destino inválido após agendar: %s",
+    (url) => expect(agendaConfirmationRedirectSchema.safeParse({ kind: "URL", url }).success).toBe(false),
+  );
 
   it("rejeita opção duplicada e limites incoerentes", () => {
     const definition = createEmptyMarketingFormDefinition();

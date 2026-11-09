@@ -57,6 +57,24 @@ export const marketingFormQuestionSchema = z.discriminatedUnion("type", question
 
 const httpsUrlSchema = z.url().max(2_048).refine((value) => new URL(value).protocol === "https:", "Use uma URL HTTPS.");
 
+const whatsappPhoneSchema = z.string().trim().regex(/^\+[1-9]\d{7,14}$/, "Informe o telefone com código do país, por exemplo +5511999999999.");
+export const agendaConfirmationRedirectSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("WHATSAPP"), phone: whatsappPhoneSchema, message: optionalText(1_000) }).strict(),
+  z.object({
+    kind: z.literal("URL"),
+    url: httpsUrlSchema.refine((value) => {
+      const url = new URL(value);
+      return !url.username && !url.password;
+    }, "Use um link sem credenciais."),
+  }).strict(),
+]);
+
+export function buildMarketingWhatsAppUrl(phone: string, message?: string): string {
+  const url = new URL(`https://wa.me/${phone.replace(/\D/g, "")}`);
+  if (message) url.searchParams.set("text", message);
+  return url.toString();
+}
+
 export const marketingFormDefinitionSchema = z.object({
   schema: z.literal(MARKETING_FORM_SCHEMA_VERSION),
   questions: z.array(marketingFormQuestionSchema).min(1).max(200),
@@ -78,6 +96,7 @@ export const marketingFormDefinitionSchema = z.object({
   redirects: z.object({
     automaticKind: z.enum(["NONE", "GROUP", "WHATSAPP", "URL", "AGENDA"]).default("NONE"),
     url: httpsUrlSchema.optional(),
+    afterAgenda: agendaConfirmationRedirectSchema.optional(),
     whatsapp: z.object({ phone: z.string().trim().regex(/^\+[1-9]\d{7,14}$/), message: optionalText(1_000) }).strict().optional(),
     group: z.object({ url: httpsUrlSchema.refine((value) => new URL(value).hostname === "chat.whatsapp.com", "Use um link de grupo do WhatsApp."), label: optionalText(120) }).strict().optional(),
     rotation: z.object({ targets: z.array(z.object({ stableKey: stableKeySchema, phone: z.string().trim().regex(/^\+[1-9]\d{7,14}$/), label: optionalText(120) }).strict()).min(2).max(50) }).strict().optional(),

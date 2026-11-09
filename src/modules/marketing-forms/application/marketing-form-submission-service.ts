@@ -8,7 +8,7 @@ import { canonicalJson } from "@/modules/integrations/domain/integration-policy"
 import { getLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { deliverTelegramReceiptAlertAfterCommit } from "@/modules/integrations/application/telegram-lead-alert-service";
 import { createMarketingFormPartialLeadWorker, enqueuePartialLeadInTransaction } from "./marketing-form-partial-lead-service";
-import { marketingFormDefinitionSchema, marketingFormSlugSchema, type MarketingFormDefinition } from "@/modules/marketing-forms/domain/marketing-form-contracts";
+import { buildMarketingWhatsAppUrl, marketingFormDefinitionSchema, marketingFormSlugSchema, type MarketingFormDefinition } from "@/modules/marketing-forms/domain/marketing-form-contracts";
 import { publicFormEventSchema, publicFormSubmitSchema } from "@/modules/marketing-forms/domain/public-form-contracts";
 import { mapAnswersToLead, publicFormAnswerError, validatePublicFormAnswers } from "@/modules/marketing-forms/domain/public-form-validation";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -96,12 +96,6 @@ async function closePartialResponse(
   });
 }
 
-function whatsappUrl(phone: string, message?: string): string {
-  const url = new URL(`https://wa.me/${phone.replace(/\D/g, "")}`);
-  if (message) url.searchParams.set("text", message);
-  return url.toString();
-}
-
 async function chooseRedirect(
   tx: Prisma.TransactionClient,
   form: ResolvedForm,
@@ -134,10 +128,10 @@ async function chooseRedirect(
       where: { id: state.id },
       data: { nextIndex: (state.nextIndex + 1) % redirects.rotation.targets.length, totalAssignments: { increment: 1 }, revision: { increment: 1 } },
     });
-    return { kind: "WHATSAPP", url: whatsappUrl(target.phone, redirects.whatsapp?.message), rotationTargetKey: target.stableKey, rotationAppliedAt: appliedAt } as const;
+    return { kind: "WHATSAPP", url: buildMarketingWhatsAppUrl(target.phone, redirects.whatsapp?.message), rotationTargetKey: target.stableKey, rotationAppliedAt: appliedAt } as const;
   }
   if (redirects.whatsapp) {
-    return { kind: "WHATSAPP", url: whatsappUrl(redirects.whatsapp.phone, redirects.whatsapp.message), rotationTargetKey: null, rotationAppliedAt: null } as const;
+    return { kind: "WHATSAPP", url: buildMarketingWhatsAppUrl(redirects.whatsapp.phone, redirects.whatsapp.message), rotationTargetKey: null, rotationAppliedAt: null } as const;
   }
   return null;
 }
