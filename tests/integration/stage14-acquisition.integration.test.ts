@@ -544,6 +544,60 @@ describe("quizzes externos de mandato", () => {
 
   });
 
+  it("captura quiz parcial só com telefone e completa o mesmo lead sem reagendar a ligação", async () => {
+    enableTopSendFixture();
+    const pipeline = await database.pipeline.findFirstOrThrow({
+      where: { workspaceId: admin.workspaceId, name: "Anúncios", deletedAt: null },
+      include: { stages: { where: { type: "OPEN", deletedAt: null }, orderBy: { position: "asc" }, take: 1 } },
+    });
+    const connectionKey = `quiz-partial-${randomUUID().slice(0, 8)}`;
+    const connection = await connections.configure(admin, {
+      key: connectionKey, displayName: "Quiz parcial", provider: "FORM", sourceKey,
+      secretReferenceKey: "ACQUISITION_STAGE14_FORM_SECRET",
+      externalQuiz: { quizId: "quizmandato", pipelineId: pipeline.id, initialStageId: pipeline.stages[0]!.id },
+      mapping: { fullName: "fullName", phone: "phone", sessionPublicId: "sessionPublicId", interestSummary: "interestSummary" },
+    });
+    await connections.command(admin, { action: "ACTIVATE", connectionId: connection.id, revision: 1 });
+    const submissionId = randomUUID();
+    const quiz = { id: "quizmandato", name: "QuizMandato", version: "1", url: "https://site.politizai.com/quizmandato" };
+    const partial = {
+      contractVersion: "quiz-lead.v1", submissionId, quiz, phone: "+5511987660301", sessionPublicId: submissionId,
+      eventId: `quiz:quizmandato:${submissionId}:partial:v1`, occurredAt: now.toISOString(),
+      completionStatus: "PARTIAL", interestSummary: "Diagnóstico incompleto", landingUrl: quiz.url, answers: [],
+    };
+    const send = (payload: unknown) => {
+      const rawBody = JSON.stringify(payload);
+      return webhooks.receive({ workspaceSlug: admin.workspaceSlug, connectionKey, rawBody,
+        headers: { timestamp: now.toISOString(), signature: formSignature(rawBody, now.toISOString()) } });
+    };
+    const initial = await send(partial);
+    expect(initial).toMatchObject({ status: "PROCESSED", outcome: "CREATED" });
+    const leadId = initial.leadId as string;
+    const submissionKey = `acq:${connection.id}:external:${submissionId}`;
+    const jobWhere = { workspaceId: admin.workspaceId, idempotencyKey: `topsend-voice:${leadId}:v1` };
+    expect(await database.lead.findUniqueOrThrow({ where: { id: leadId } })).toMatchObject({ fullName: "Lead de quiz — nome não informado" });
+    expect(await database.job.findFirst({ where: jobWhere })).toMatchObject({ runAt: new Date(now.getTime() + 30_000) });
+    expect(await send(partial)).toMatchObject({ status: "PROCESSED", leadId, submissionId: initial.submissionId, idempotentReplay: true });
+
+    const complete = { ...partial, completionStatus: "COMPLETED", fullName: "Nome do diagnóstico",
+      eventId: `quiz:quizmandato:${submissionId}:completed:v1`, occurredAt: new Date(now.getTime() + 1000).toISOString(),
+      answers: Array.from({ length: 11 }, (_, index) => ({ questionKey: `resposta_${index}`, question: "Pergunta", value: "Resposta", displayValue: "Resposta" })) };
+    expect(await send(complete)).toMatchObject({ status: "PROCESSED", leadId, submissionId: initial.submissionId });
+    expect(await database.leadFormSubmission.findFirst({ where: { idempotencyKey: submissionKey } })).toMatchObject({
+      leadId, submittedFullName: complete.fullName, rawPayload: { quizResponse: { completionStatus: "COMPLETED", answers: complete.answers } },
+    });
+    expect(await database.lead.findUniqueOrThrow({ where: { id: leadId } })).toMatchObject({ fullName: complete.fullName });
+    expect(await database.job.count({ where: jobWhere })).toBe(1);
+
+    const historicalId = randomUUID();
+    const historical = await send({ ...partial, historicalImport: true, submissionId: historicalId, sessionPublicId: historicalId,
+      phone: "+5511987660302", eventId: `quiz:quizmandato:${historicalId}:partial:v1` });
+    expect(historical).toMatchObject({ status: "PROCESSED", outcome: "CREATED" });
+    expect(await database.job.count({ where: { workspaceId: admin.workspaceId, idempotencyKey: { in: [
+      `topsend-voice:${historical.leadId}:v1`, `telegram-ad-lead:${historical.leadId}:carlos`,
+    ] } } })).toBe(0);
+  });
+
   it("recusa etapa de outro workspace na configuração", async () => {
     await expect(connections.configure(admin, { key: `quiz-invalid-${randomUUID().slice(0, 8)}`, displayName: "Quiz inválido", provider: "FORM", sourceKey, secretReferenceKey: "ACQUISITION_STAGE14_FORM_SECRET", mapping: { fullName: "fullName", phone: "phone" }, externalQuiz: { quizId: "quizmandato", pipelineId: randomUUID(), initialStageId: randomUUID() } })).rejects.toMatchObject({ code: "META_NATIVE_DESTINATION_INVALID" });
   });

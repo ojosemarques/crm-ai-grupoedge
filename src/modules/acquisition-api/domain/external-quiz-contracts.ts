@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const EXTERNAL_QUIZ_UNNAMED_LEAD = "Lead de quiz — nome não informado";
+
 export const externalQuizConfigurationSchema = z.object({
   quizId: z.enum(["chatmandato", "quizmandato"]),
   pipelineId: z.string().uuid(),
@@ -19,7 +21,7 @@ const externalQuizResponseBase = z.object({
     question: z.string().min(1).max(1000),
     value: z.string().min(1).max(500),
     displayValue: z.string().min(1).max(500),
-  }).strict()).min(3).max(11).refine((answers) => new Set(answers.map((a) => a.questionKey)).size === answers.length),
+  }).strict()).max(11).refine((answers) => new Set(answers.map((a) => a.questionKey)).size === answers.length),
   result: z.object({ key: z.string().min(1).max(100), label: z.string().min(1).max(1000) }).strict().optional(),
 }).strict();
 
@@ -28,9 +30,10 @@ export const externalQuizResponseSchema = externalQuizResponseBase.refine((respo
 export const externalQuizEventSchema = externalQuizResponseBase.extend({
   contractVersion: z.literal("quiz-lead.v1"),
   eventId: z.string().regex(/^[A-Za-z0-9_.:-]{8,160}$/),
+  historicalImport: z.literal(true).optional(),
   submissionId: z.string().uuid(),
   occurredAt: z.iso.datetime(),
-  fullName: z.string().trim().min(2).max(200),
+  fullName: z.string().trim().min(2).max(200).optional(),
   email: z.string().email().max(200).optional(),
   phone: z.string().regex(/^\+55[1-9]{2}[0-9]{8,9}$/),
   jobTitle: z.string().max(200).optional(),
@@ -45,4 +48,6 @@ export const externalQuizEventSchema = externalQuizResponseBase.extend({
   utmCampaign: z.string().max(2048).optional(),
   utmContent: z.string().max(2048).optional(),
   utmTerm: z.string().max(2048).optional(),
-}).strict().refine((event) => event.completionStatus !== "PARTIAL" && event.answers.length === 11);
+}).strict().refine((event) => event.completionStatus === "PARTIAL"
+  ? event.answers.length < 11
+  : !event.historicalImport && Boolean(event.fullName) && event.answers.length === 11);

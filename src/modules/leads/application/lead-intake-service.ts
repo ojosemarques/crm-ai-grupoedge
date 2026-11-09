@@ -1,4 +1,4 @@
-import { externalQuizResponseSchema } from "@/modules/acquisition-api/domain/external-quiz-contracts";
+import { EXTERNAL_QUIZ_UNNAMED_LEAD, externalQuizResponseSchema } from "@/modules/acquisition-api/domain/external-quiz-contracts";
 import type {
   ContactPreference,
   LeadAssignmentType,
@@ -902,7 +902,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
     payload: unknown,
     context: LeadIntakeActorContext,
     transactionOverride?: Prisma.TransactionClient,
-    intakeOptions?: Readonly<{ partialResponseId?: string; scheduleTopSendVoice?: boolean }>,
+    intakeOptions?: Readonly<{ partialResponseId?: string; scheduleTopSendVoice?: boolean; suppressTelegramAlert?: boolean }>,
   ): Promise<LeadIntakeResult> {
     const parsed = parseInput(payload, options.now());
     if (isRejectedResult(parsed)) return parsed;
@@ -995,22 +995,30 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         const priorRaw = priorSubmission.rawPayload as Record<string, unknown> | null;
         const oldQuiz = externalQuizResponseSchema.safeParse(priorRaw?.quizResponse);
         const newQuiz = externalQuizResponseSchema.safeParse(parsed.rawPayload.quizResponse);
-        // A historical partial import owns this submission identity. Completion refreshes
+        // A partial quiz owns this submission identity. Completion refreshes
         // its snapshot without creating another lead, SLA cycle, metric or alert.
-        if (priorSubmission.lead && !isHumanContext(context) && parsed.channel === "FORM" && priorRaw?.historicalImport === true
-          && priorRaw.provider === "FORM" && parsed.rawPayload.provider === "FORM"
+        if (priorSubmission.lead && !isHumanContext(context) && parsed.channel === "FORM"
+          && priorRaw?.provider === "FORM" && parsed.rawPayload.provider === "FORM"
           && oldQuiz.success && oldQuiz.data.completionStatus === "PARTIAL" && newQuiz.success && newQuiz.data.completionStatus !== "PARTIAL"
           && oldQuiz.data.quiz.id === newQuiz.data.quiz.id && priorSubmission.formIdentifier === parsed.formIdentifier
           && priorSubmission.normalizedPhone === parsed.normalizedPhone
           && typeof priorRaw.externalSubmissionId === "string" && priorRaw.externalSubmissionId === parsed.rawPayload.externalSubmissionId) {
           await transaction.leadFormSubmission.update({ where: { id: priorSubmission.id }, data: {
-            rawPayload: { ...parsed.rawPayload, historicalImport: true },
+            rawPayload: { ...parsed.rawPayload, ...(priorRaw.historicalImport === true ? { historicalImport: true } : {}) },
+            submittedFullName: parsed.fullName,
+            submittedJobTitle: parsed.jobTitle ?? null,
+            submittedCity: parsed.city ?? null,
+            submittedStateCode: parsed.stateCode ?? null,
             submittedInterestSummary: parsed.interestSummary ?? null,
             submittedAt: parsed.submittedAt ?? parsed.receivedAt,
           } });
+          await transaction.lead.updateMany({
+            where: { id: priorSubmission.lead.id, workspaceId: context.workspaceId, fullName: EXTERNAL_QUIZ_UNNAMED_LEAD, deletedAt: null },
+            data: { fullName: parsed.fullName, updatedByActorId: context.actorId },
+          });
           await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId,
             action: "lead.external_quiz_completed", entityType: "Lead", entityId: priorSubmission.lead.id,
-            origin: "SYSTEM", changes: { submissionId: priorSubmission.id, quizId: newQuiz.data.quiz.id, historicalImport: true } } });
+            origin: "SYSTEM", changes: { submissionId: priorSubmission.id, quizId: newQuiz.data.quiz.id, historicalImport: priorRaw.historicalImport === true } } });
         }
         const replay = acceptedReplay(priorSubmission);
         return (
@@ -1343,7 +1351,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
             action: "lead.score.form_provisional_calculated",
           });
         }
-        if (references.pipeline.name === ADVERTISING_PIPELINE_NAME) {
+        if (references.pipeline.name === ADVERTISING_PIPELINE_NAME && !intakeOptions?.suppressTelegramAlert) {
           await enqueueTelegramLeadAlertInTransaction(transaction, { workspaceId: context.workspaceId, leadId: lead.id, actorId: context.actorId, occurredAt: parsed.receivedAt });
         }
         if (intakeOptions?.scheduleTopSendVoice && parsed.normalizedPhone && contactPreference !== "DO_NOT_CONTACT") {
