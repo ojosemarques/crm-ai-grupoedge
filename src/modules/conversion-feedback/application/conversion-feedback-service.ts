@@ -53,7 +53,7 @@ async function privacyEvidence(tx: Tx, input: { workspaceId: string; actorId: st
     workspaceId: input.workspaceId, contactId: input.contactId, purposeVersionId: version?.id ?? null,
     channel: "OTHER", intendedAction: "META_CONVERSION_SIGNAL", outcome: allowed ? "ALLOW" : "DENY",
     mode: "ENFORCED", legalBasisStatus: version?.legalBasis?.status ?? null, consentState: consent?.state ?? "UNKNOWN",
-    reasonCodes: reasons, missingEvidence: allowed ? [] : reasons, ruleVersion: "stage14-meta-conversion-v1", actorId: input.actorId,
+    reasonCodes: reasons, missingEvidence: allowed ? [] : reasons, ruleVersion: "stage14-meta-conversion-v1", actorId: input.actorId, evaluatedAt: input.now,
   } });
   return { allowed, purposeVersionId: version?.id ?? null, consentState: consent?.state ?? "UNKNOWN", reasons };
 }
@@ -146,6 +146,36 @@ function classifyMetaFailure(response: Response, body: unknown) {
 export function createConversionFeedbackService(options: Options) {
   const authorization = getAuthorizationService();
   const authorize = (context: AuthenticatedContext, permission: (typeof PermissionKeys)[keyof typeof PermissionKeys]) => authorization.assertAuthorized(context, permission, resource(context));
+
+  async function getDeliveryDiagnostics(workspaceId: string) {
+    const since = new Date(options.now().getTime() - 2 * 60 * 60 * 1000);
+    const [connection, stages, decisions, deliveries] = await Promise.all([
+      options.database.integrationConnection.findUnique({
+        where: { workspaceId_key: { workspaceId, key: "meta-ads" } },
+        select: { enabled: true, status: true, capabilityLevel: true, disabledAt: true,
+          capabilities: { where: { capability: "SYNC_PUSH", enabled: true }, select: { capability: true } } },
+      }),
+      options.database.stageHistory.count({
+        where: { workspaceId, enteredAt: { gte: since }, leadId: { not: null }, pipeline: { name: "Anúncios" }, stage: { leadStageCode: "MEETING_COMPLETED" } },
+      }),
+      options.database.privacyDecision.groupBy({
+        by: ["outcome", "reasonCodes"],
+        where: { workspaceId, evaluatedAt: { gte: since }, intendedAction: "META_CONVERSION_SIGNAL" },
+        _count: { _all: true },
+      }),
+      options.database.outboxEvent.groupBy({
+        by: ["status", "errorClass"],
+        where: { workspaceId, createdAt: { gte: since }, eventType: META_CONVERSION_EVENT_TYPE, aggregateType: "Lead" },
+        _count: { _all: true },
+      }),
+    ]);
+    return {
+      connection: { active: connection?.enabled === true && !connection.disabledAt && connection.status === "CONNECTED" && connection.capabilityLevel === "CONNECTED", syncPush: Boolean(connection?.capabilities.length) },
+      meetingCompletedTransitions: stages,
+      decisions: decisions.map(({ outcome, reasonCodes, _count }) => ({ outcome, reasonCodes, count: _count._all })),
+      deliveries: deliveries.map(({ status, errorClass, _count }) => ({ status, errorClass, count: _count._all })),
+    };
+  }
 
   async function validateMetaWriteCapability(context: AuthenticatedContext) {
     await authorize(context, PermissionKeys.INTEGRATIONS_MANAGE);
@@ -369,7 +399,7 @@ export function createConversionFeedbackService(options: Options) {
     return { provider: "GOOGLE_ADS", importRead: "IMPLEMENTED_AND_GATED_BY_CONNECTION", conversionWrite: "BLOCKED_NOT_VALIDATED_IN_TRIAL_OR_API", canQueue: false, missingEvidence: ["Conta de avaliação ou credencial Google Ads com permissão de upload", "Teste real da ação de conversão e deduplicação pelo order_id"], externalEgress: false };
   }
 
-  return Object.freeze({ getReconciliation, validateMetaWriteCapability, queueMetaConversion, cancelPending, processNext, googleWriteGate });
+  return Object.freeze({ getReconciliation, validateMetaWriteCapability, queueMetaConversion, cancelPending, processNext, getDeliveryDiagnostics, googleWriteGate });
 }
 
 let singleton: ReturnType<typeof createConversionFeedbackService> | null = null;

@@ -31,8 +31,17 @@ async function runTick(request: Request): Promise<NextResponse> {
 
       const workspace = z.uuid().safeParse(process.env.META_ADS_REPORTING_WORKSPACE_ID);
       if (!workspace.success) throw new ConfigurationError(["META_ADS_REPORTING_WORKSPACE_ID"]);
-      const { status } = await getConversionFeedbackService().processNext(`meta-cron:${correlationId}`, workspace.data);
+      const service = getConversionFeedbackService();
+      const { status } = await service.processNext(`meta-cron:${correlationId}`, workspace.data);
       logger.info({ correlationId, code: status }, "Tick de conversões Meta concluído");
+      if (process.env.META_ADS_CONVERSIONS_DIAGNOSTICS_ENABLED === "true") {
+        try {
+          const diagnostics = await service.getDeliveryDiagnostics(workspace.data);
+          logger.info({ correlationId, diagnostics }, "META_CONVERSION_DIAGNOSTICS");
+        } catch {
+          logger.warn({ correlationId }, "META_CONVERSION_DIAGNOSTICS_UNAVAILABLE");
+        }
+      }
       return NextResponse.json({ status }, {
         headers: { ...correlationResponseHeaders(correlationId), "Cache-Control": "no-store" },
       });

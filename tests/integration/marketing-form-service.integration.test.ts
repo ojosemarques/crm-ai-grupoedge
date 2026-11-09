@@ -332,6 +332,10 @@ describe("serviço administrativo de formulários", () => {
     }
     expect(deliveries).toEqual(expect.arrayContaining([...events, ...milestones].map(({ id }) => ({ id, status: "DELIVERED_EXTERNAL" }))));
     expect(await worker.processNext("marketing-form-meta-fixture")).toEqual({ status: "IDLE" });
+    expect(await worker.getDeliveryDiagnostics(tenantA.context.workspaceId)).toMatchObject({
+      connection: { active: true, syncPush: true },
+      decisions: expect.arrayContaining([expect.objectContaining({ outcome: "DENY" })]),
+    });
     expect(requests).toHaveLength(3);
     expect(requests.map(({ data }) => data)).toEqual(expect.arrayContaining([
       [expect.objectContaining({ event_name: "Lead", event_id: replay.providerEventIds?.meta })],
