@@ -105,6 +105,11 @@ const agendaQuerySchema = z.object({
 
 const leadMeetingsQuerySchema = z.object({ leadId: z.string().uuid() }).strict();
 const meetingQuerySchema = z.object({ meetingId: z.string().uuid() }).strict();
+const reassignCompletedSchema = meetingQuerySchema.extend({
+  closerId: z.string().uuid(),
+  expectedRevision: z.number().int().positive(),
+  reason: z.string().trim().min(3).max(2_000),
+}).strict();
 const leadOptionSearchSchema = z.object({ query: z.string().trim().min(2).max(80) }).strict();
 const scheduleSchema = z.object({
   leadId: z.string().uuid(),
@@ -625,6 +630,9 @@ export function createMeetingService(options: MeetingServiceOptions) {
     ]);
     const scheduleScope = schedulingScope(context, writeDecision);
     const schedulingClosers = scheduleScope ? await closerOptions(context, scheduleScope) : [];
+    const reassignmentClosers = writeDecision.allowed && writeDecision.scope !== "OWN"
+      ? writeDecision.scope === readDecision.scope ? visibleClosers : await closerOptions(context, writeDecision.scope)
+      : [];
     const allowedCloserIds = new Set(visibleClosers.map((closer) => closer.id));
     if (parsed.data.closerId && !allowedCloserIds.has(parsed.data.closerId)) {
       await options.authorization.assertAuthorized(context, PermissionKeys.MEETINGS_READ, {
@@ -701,6 +709,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       canFilterCloser: readDecision.scope !== "OWN",
       closerOptions: visibleClosers,
       schedulingCloserOptions: schedulingClosers,
+      reassignmentCloserOptions: reassignmentClosers,
       leadOptions: leads,
       meetings: rows.map((row, index) => serializeMeeting(row, options.now(), permissions[index]?.allowed ?? false)),
       externalEvents: externalRows.map((row) => serializeGoogleCalendarEvent(row, context.memberId)),
@@ -1095,6 +1104,54 @@ export function createMeetingService(options: MeetingServiceOptions) {
 
   type PipelineMove = Readonly<{ leadId: string; targetStageId: string; expectedLeadUpdatedAt: Date; managerCorrection: boolean }>;
 
+  async function reassignCompleted(context: AuthenticatedContext, payload: unknown) {
+    const parsed = reassignCompletedSchema.safeParse(payload);
+    if (!parsed.success) invalidInput(parsed.error);
+    const { meetingId, closerId, expectedRevision, reason } = parsed.data;
+    const { workspaceId, actorId } = context;
+    const authorized = await getMeetingForAuthorization(meetingId, workspaceId);
+    const decision = await options.authorization.authorize(context, PermissionKeys.MEETINGS_WRITE, meetingResource(workspaceId, authorized));
+    if (!decision.allowed || decision.scope === "OWN") {
+      throw new ApplicationError("Seu perfil não pode alterar o responsável desta reunião.", { code: "MEETING_REASSIGN_DENIED", statusCode: 403, expose: true });
+    }
+    const teams = decision.scope === "TEAM" ? await teamIds(context) : null;
+    const now = options.now();
+    return options.database.$transaction(async (transaction) => {
+      await lockCloser(transaction, workspaceId, authorized.ownerMemberId);
+      const meeting = await transaction.meeting.findFirst({
+        where: { id: meetingId, workspaceId, deletedAt: null },
+        select: { ownerMemberId: true, revision: true, status: true },
+      });
+      if (!meeting) notFound("Reunião não encontrada.");
+      if (meeting.revision !== expectedRevision || meeting.ownerMemberId !== authorized.ownerMemberId) {
+        conflict("MEETING_VERSION_CONFLICT", "A reunião mudou. Recarregue antes de continuar.");
+      }
+      if (meeting.status !== "COMPLETED") conflict("MEETING_NOT_COMPLETED", "Esta alteração é exclusiva de reuniões realizadas.");
+      if (meeting.ownerMemberId === closerId) return { meetingId, revision: meeting.revision };
+      const closer = await transaction.workspaceMember.findFirst({
+        where: { id: closerId, ...commercialMemberWhere({ workspaceId, functions: ["CLOSER"], ...(teams ? { teamIds: teams } : {}) }) },
+        select: { id: true },
+      });
+      if (!closer) throw new ApplicationError("Vendedor indisponível no seu escopo.", { code: "MEETING_OWNER_SCOPE_DENIED", statusCode: 403, expose: true });
+      const updated = await transaction.meeting.update({
+        where: { id: meetingId },
+        data: { ownerMemberId: closer.id, revision: { increment: 1 }, updatedByActorId: actorId, updatedAt: now },
+        select: { revision: true },
+      });
+      await transaction.task.updateMany({
+        where: { workspaceId, meetingId, kind: "MEETING", deletedAt: null },
+        data: { assigneeMemberId: closer.id, updatedByActorId: actorId, updatedAt: now },
+      });
+      // Preserve the original outcome, credit and external event as records of what occurred.
+      await transaction.auditLog.create({ data: {
+        workspaceId, actorId, action: "meeting.owner_changed", entityType: "Meeting", entityId: meetingId, occurredAt: now,
+        changes: { previousOwnerMemberId: meeting.ownerMemberId, newOwnerMemberId: closer.id, reason },
+        metadata: { revision: updated.revision },
+      } });
+      return { meetingId, revision: updated.revision };
+    });
+  }
+
   async function executeAction(context: AuthenticatedContext, payload: unknown, pipelineMove?: PipelineMove) {
     const parsed = actionSchema.safeParse(payload);
     if (!parsed.success) invalidInput(parsed.error);
@@ -1116,7 +1173,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         if (!destination) notFound("Etapa de resultado não encontrada.");
         if (meeting.startsAt > now) conflict("MEETING_NOT_STARTED", "Registre o resultado somente após o início da reunião.");
       }
-      if (meeting.revision !== parsed.data.expectedRevision) {
+      if (meeting.revision !== parsed.data.expectedRevision || meeting.ownerMemberId !== authorizedMeeting.ownerMemberId) {
         conflict("MEETING_VERSION_CONFLICT", "A reunião mudou. Recarregue antes de continuar.");
       }
       if (parsed.data.action !== "EDIT" && meeting.status !== "SCHEDULED" && meeting.status !== "CONFIRMED") {
@@ -1131,7 +1188,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
       }
       const correctedHistory = parsed.data.action === "EDIT" && (!pipelineMove || meeting.status !== "SCHEDULED" && meeting.status !== "CONFIRMED")
         ? await transaction.meetingHistory.findFirst({
-          where: { workspaceId: context.workspaceId, meetingId: meeting.id, meetingRevision: meeting.revision },
+          where: { workspaceId: context.workspaceId, meetingId: meeting.id, meetingRevision: { lte: meeting.revision } },
+          orderBy: { meetingRevision: "desc" },
         })
         : null;
 
@@ -1854,7 +1912,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
     });
   }
 
-  return Object.freeze({ getAgenda, getLeadMeetings, searchLeadOptions, schedule, act, recordPipelineOutcome, getBriefing, recordTranscript });
+  return Object.freeze({ getAgenda, getLeadMeetings, searchLeadOptions, schedule, act, reassignCompleted, recordPipelineOutcome, getBriefing, recordTranscript });
 }
 
 let service: ReturnType<typeof createMeetingService> | undefined;

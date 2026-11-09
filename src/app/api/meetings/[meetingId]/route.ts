@@ -29,10 +29,13 @@ export async function POST(request: NextRequest, routeContext: MeetingRouteConte
     const { meetingId } = await routeContext.params;
     const body: unknown = await request.json().catch(() => null);
     const action = z.object({ action: z.string() }).passthrough().safeParse(body);
-    const transcriptPayload = action.success ? Object.fromEntries(Object.entries(action.data).filter(([key]) => key !== "action")) : {};
-    const result = action.success && action.data.action === "RECORD_TRANSCRIPT"
-      ? await getMeetingService().recordTranscript(context, { ...transcriptPayload, meetingId })
-      : await getMeetingService().act(context, { ...(body && typeof body === "object" ? body : {}), meetingId });
+    const service = getMeetingService();
+    const actionPayload = action.success ? Object.fromEntries(Object.entries(action.data).filter(([key]) => key !== "action")) : {};
+    const result = action.success && action.data.action === "REASSIGN"
+      ? await service.reassignCompleted(context, { ...actionPayload, meetingId })
+      : action.success && action.data.action === "RECORD_TRANSCRIPT"
+        ? await service.recordTranscript(context, { ...actionPayload, meetingId })
+        : await service.act(context, { ...(body && typeof body === "object" ? body : {}), meetingId });
     return NextResponse.json({ result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return handleRouteError(error);

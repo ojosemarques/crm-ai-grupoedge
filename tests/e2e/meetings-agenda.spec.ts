@@ -11,13 +11,61 @@ import { pactoDimensions } from "@/modules/qualification/domain/pacto-contracts"
 import { browserRequest } from "./support/browser-request";
 import { getDatabaseClient } from "@/shared/core/database/client";
 
-async function login(page: import("@playwright/test").Page) {
+async function login(page: import("@playwright/test").Page, email: string = DEMO_USERS[1].email) {
   await page.goto("/login");
-  await page.getByLabel("E-mail").fill(DEMO_USERS[1].email);
+  await page.getByLabel("E-mail").fill(email);
   await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);
   await page.getByRole("button", { name: "Entrar" }).click(); await enterDemoCompany(page);
   await expect(page).toHaveURL(/\/$/);
 }
+
+test("Agenda troca o vendedor de uma reunião realizada e preserva o resultado", async ({ page }) => {
+  expect(new URL(process.env.DATABASE_URL!).searchParams.get("schema")).toMatch(/^politizai_test_e2e_/);
+  const database = getDatabaseClient();
+  const workspace = await database.workspace.findUniqueOrThrow({ where: { slug: "politizai" } });
+  const meeting = await database.meeting.findFirstOrThrow({
+    where: { workspaceId: workspace.id, status: "COMPLETED", deletedAt: null },
+    include: { lead: { select: { fullName: true, ownerMemberId: true } } },
+  });
+  const closer = await database.workspaceMember.findFirstOrThrow({
+    where: { workspaceId: workspace.id, role: { key: "closer" }, id: { not: meeting.ownerMemberId }, status: "ACTIVE" },
+    include: { user: true },
+  });
+  const title = `Reunião realizada ${randomUUID().slice(0, 8)}`;
+  await database.meeting.update({ where: { id: meeting.id }, data: { title } });
+  const linkedTask = await database.task.create({ data: {
+    workspaceId: workspace.id, leadId: meeting.leadId, meetingId: meeting.id, assigneeMemberId: meeting.ownerMemberId,
+    title, kind: "MEETING", status: "COMPLETED", dueAt: meeting.startsAt, completedAt: meeting.completedAt,
+    createdByActorId: meeting.createdByActorId, updatedByActorId: meeting.updatedByActorId,
+  } });
+  await login(page, DEMO_USERS[0].email);
+  const date = new Intl.DateTimeFormat("sv-SE", { timeZone: meeting.timeZone, dateStyle: "short" }).format(meeting.startsAt);
+  await page.goto(`/agenda?view=day&date=${date}`);
+  await page.locator('button[data-status="COMPLETED"]').filter({ hasText: title }).click();
+  const card = page.getByRole("dialog", { name: title, exact: true });
+  await card.getByRole("button", { name: "Alterar vendedor", exact: true }).click();
+  await card.getByLabel("Novo vendedor").selectOption(closer.id);
+  const reason = "Ajuste do vendedor responsável no CRM.";
+  await card.getByLabel("Motivo da alteração").fill(reason);
+  await card.getByRole("button", { name: "Salvar alterações" }).click();
+  await expect(card.getByText(`${meeting.lead.fullName} · ${closer.user.displayName}`, { exact: true })).toBeVisible();
+  await expect(card.getByText("Realizada", { exact: true })).toBeVisible();
+  const stored = await database.meeting.findUniqueOrThrow({ where: { id: meeting.id } });
+  expect(stored).toMatchObject({ ownerMemberId: closer.id, status: "COMPLETED", startsAt: meeting.startsAt, outcome: meeting.outcome, revision: meeting.revision + 1 });
+  const task = await database.task.findUniqueOrThrow({ where: { id: linkedTask.id } });
+  expect(task).toMatchObject({ assigneeMemberId: closer.id, status: "COMPLETED", completedAt: linkedTask.completedAt });
+  expect((await database.lead.findUniqueOrThrow({ where: { id: meeting.leadId } })).ownerMemberId).toBe(meeting.lead.ownerMemberId);
+  const audit = await database.auditLog.findFirstOrThrow({ where: { workspaceId: workspace.id, entityId: meeting.id, action: "meeting.owner_changed" } });
+  expect(audit.changes).toMatchObject({ previousOwnerMemberId: meeting.ownerMemberId, newOwnerMemberId: closer.id, reason });
+
+  const payload = { action: "REASSIGN", expectedRevision: meeting.revision, closerId: meeting.ownerMemberId, reason };
+  const path = `/api/meetings/${meeting.id}`;
+  expect((await browserRequest(page).post(path, { data: payload })).status()).toBe(409);
+  expect((await browserRequest(page).post(path, { data: { ...payload, expectedRevision: stored.revision, closerId: randomUUID() } })).status()).toBe(403);
+  await page.context().clearCookies();
+  await login(page, closer.user.email);
+  expect((await browserRequest(page).post(path, { data: { ...payload, expectedRevision: stored.revision } })).status()).toBe(403);
+});
 
 function uniquePhone(label: string) {
   const hash = createHash("sha256").update(`${label}:${randomUUID()}`).digest("hex");

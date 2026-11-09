@@ -3,11 +3,11 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import type { MeetingListItem } from "@/modules/meetings/domain/meeting-contracts";
+import type { CloserOption, MeetingListItem } from "@/modules/meetings/domain/meeting-contracts";
 import { participantEmailsFromForm } from "@/modules/meetings/domain/meeting-participants";
 import { MeetingParticipantField } from "./meeting-participant-field";
 
-type Action = "RESCHEDULE" | "CANCEL" | "ATTENDED" | "NO_SHOW" | "EDIT";
+type Action = "RESCHEDULE" | "CANCEL" | "ATTENDED" | "NO_SHOW" | "EDIT" | "REASSIGN";
 type Notice = Readonly<{ kind: "success" | "error"; message: string }>;
 
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
@@ -40,12 +40,14 @@ export function MeetingActions({
   meeting,
   onCommitted,
   onOpenLead,
-}: Readonly<{ meeting: MeetingListItem; onCommitted: () => Promise<void>; onOpenLead?: () => void }>) {
+  reassignmentCloserOptions = [],
+}: Readonly<{ meeting: MeetingListItem; onCommitted: () => Promise<void>; onOpenLead?: () => void; reassignmentCloserOptions?: readonly CloserOption[] }>) {
   const [action, setAction] = useState<Action | null>(null);
   const [editStatus, setEditStatus] = useState(meeting.status);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const active = meeting.status === "SCHEDULED" || meeting.status === "CONFIRMED";
+  const reassignmentTargets = reassignmentCloserOptions.filter((closer) => closer.id !== meeting.ownerMemberId);
 
   async function post(payload: Record<string, unknown>) {
     setPending(true);
@@ -72,6 +74,10 @@ export function MeetingActions({
     if (!action) return;
     const data = new FormData(event.currentTarget);
     const common = { action };
+    if (action === "REASSIGN") {
+      await post({ ...common, closerId: data.get("closerId"), reason: data.get("reason") });
+      return;
+    }
     if (action === "EDIT") {
       await post({
         ...common,
@@ -127,6 +133,9 @@ export function MeetingActions({
           <Button disabled={pending} onClick={() => setAction("NO_SHOW")} size="sm" type="button" variant="secondary">No-show</Button>
         </> : null}
         <Button disabled={pending} onClick={() => { setEditStatus(meeting.status); setAction("EDIT"); }} size="sm" type="button" variant="secondary">Editar reunião</Button>
+        {meeting.status === "COMPLETED" && reassignmentTargets.length > 0 ? (
+          <Button disabled={pending} onClick={() => setAction("REASSIGN")} size="sm" type="button" variant="secondary">Alterar vendedor</Button>
+        ) : null}
         </> : null}
         {onOpenLead ? <Button disabled={pending} onClick={onOpenLead} size="sm" type="button" variant="secondary">Ir ao lead</Button> : null}
       </div>
@@ -145,6 +154,11 @@ export function MeetingActions({
               <label className="text-sm sm:col-span-2">Motivo da correção<textarea className={inputClass} minLength={3} name="reason" required /></label>
               <p className="text-xs text-muted-foreground sm:col-span-2">A alteração gera uma nova revisão e preserva o registro anterior no histórico.</p>
             </>
+          ) : action === "REASSIGN" ? (
+            <>
+              <label className="text-sm sm:col-span-2">Novo vendedor<select className={inputClass} defaultValue="" name="closerId" required><option value="" disabled>Selecione o vendedor</option>{reassignmentTargets.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
+              <label className="text-sm sm:col-span-2">Motivo da alteração<textarea className={inputClass} minLength={3} maxLength={2000} name="reason" required /></label>
+            </>
           ) : action === "RESCHEDULE" ? (
             <>
               <label className="text-sm">Nova data e hora<input className={inputClass} name="startsAtLocal" required type="datetime-local" /></label>
@@ -161,7 +175,7 @@ export function MeetingActions({
             </>
           )}
           <div className="flex gap-2 sm:col-span-2">
-            <Button disabled={pending} size="sm" type="submit">{pending ? "Salvando…" : action === "EDIT" ? "Salvar alterações" : "Confirmar ação"}</Button>
+            <Button disabled={pending} size="sm" type="submit">{pending ? "Salvando…" : action === "EDIT" || action === "REASSIGN" ? "Salvar alterações" : "Confirmar ação"}</Button>
             <Button onClick={() => setAction(null)} size="sm" type="button" variant="secondary">Voltar</Button>
           </div>
         </form>

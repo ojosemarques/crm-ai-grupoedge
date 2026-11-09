@@ -80,6 +80,7 @@ export type AgendaScreen = Readonly<{
   canFilterCloser: boolean;
   closerOptions: readonly CloserOption[];
   schedulingCloserOptions: readonly CloserOption[];
+  reassignmentCloserOptions: readonly CloserOption[];
   leadOptions: readonly LeadOption[];
   meetings: readonly MeetingListItem[];
   externalEvents: readonly GoogleCalendarAgendaItem[];
