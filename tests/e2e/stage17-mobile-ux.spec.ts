@@ -48,7 +48,7 @@ test("jornadas críticas permanecem operáveis na web móvel", async ({ page }) 
 test("360 abre ligação governada e agendamento com lead selecionado", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
-  await page.goto("/contas");
+  await page.goto("/contas?view=empresas");
   await page
     .getByRole("row")
     .filter({ hasText: "Gestão Pública do Vale" })

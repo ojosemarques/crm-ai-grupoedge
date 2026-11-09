@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { calculateRetryDelaySeconds } from "@/modules/integrations/domain/integration-policy";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { reconcileCloserCompensation } from "@/modules/finance/application/closer-compensation-reconciliation";
 import { reconcileCommissionsInTransaction } from "@/modules/finance/application/finance-service";
 import {
   localPaymentSandbox,
@@ -212,7 +213,7 @@ export function createPaymentWorkerService(options: Options) {
         await tx.invoice.update({ where: { id: invoice.id }, data: { paidCents, status, paidAt: status === "PAID" ? new Date(event.occurredAt) : null, revision: { increment: 1 }, updatedByActorId: actor.id } });
         if (attempt) await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { status: "CONFIRMED", confirmedAt: new Date(event.occurredAt) } });
         await appendPaymentEventInTransaction(tx, { workspaceId: job.workspaceId, invoiceId: invoice.id, attemptId: attempt?.id ?? null, paymentId: payment.id, type: "PAYMENT_CONFIRMED", actorId: actor.id, reason: "Pagamento confirmado por webhook local assinado e reconciliado.", idempotencyKey: `payment-event:${event.eventId}`, correlationId: receipt.correlationId, causationId: attempt?.id ?? null, providerEventId: event.eventId, occurredAt: new Date(event.occurredAt), safeMetadata: { amountCents: amount.toString(), currency: event.currency, externalEgress: false, revenueMovementCreated: false } });
-        await reconcileCommissionsInTransaction(tx, { workspaceId: job.workspaceId, actorId: actor.id } as AuthenticatedContext, new Date(event.occurredAt));
+        await reconcileCommissionsInTransaction(tx, { workspaceId: job.workspaceId, actorId: actor.id } as AuthenticatedContext, new Date(event.occurredAt), undefined, options.now());
       } else {
         const payment = await tx.payment.findFirstOrThrow({ where: { workspaceId: job.workspaceId, providerKey: "LOCAL_PAYMENT_SANDBOX", externalPaymentId: event.externalPaymentId } });
         const nextPaymentStatus = event.eventType === "CHARGEBACK_RECORDED" ? "CHARGEBACK" : "REVERSED";
@@ -221,6 +222,7 @@ export function createPaymentWorkerService(options: Options) {
         const status = invoiceStatusAfterPayment(currentInvoice.totalCents, paidCents);
         await tx.invoice.update({ where: { id: invoice.id }, data: { paidCents, status, paidAt: null, revision: { increment: 1 }, updatedByActorId: actor.id } });
         await appendPaymentEventInTransaction(tx, { workspaceId: job.workspaceId, invoiceId: invoice.id, attemptId: attempt?.id ?? null, paymentId: payment.id, type: event.eventType, actorId: actor.id, reason: event.reasonCode ?? "Evento compensatório recebido.", idempotencyKey: `payment-event:${event.eventId}`, correlationId: receipt.correlationId, providerEventId: event.eventId, occurredAt: new Date(event.occurredAt), safeMetadata: { amountCents: amount.toString(), currency: event.currency, externalEgress: false, revenueMovementCreated: false } });
+        await reconcileCloserCompensation(tx, job.workspaceId, options.now());
       }
       await tx.paymentWebhookReceipt.update({ where: { id: receipt.id }, data: { status: "PROCESSED", processedAt: options.now(), attempts: job.attempts, errorCode: null, errorMessage: null, lockedAt: null, lockedBy: null, lockExpiresAt: null } });
       await tx.job.updateMany({ where: { id: job.id, workspaceId: job.workspaceId, status: "RUNNING", lockedBy: workerId }, data: { status: "SUCCEEDED", result: { eventType: event.eventType, invoiceId: invoice.id, externalEgress: false }, finishedAt: options.now(), lockedAt: null, lockedBy: null, lockExpiresAt: null, errorCode: null, lastError: null, updatedByActorId: actor.id } });

@@ -15,6 +15,8 @@ export const previewReceiptSchema = z.object({
   financialAccountId: z.string().uuid(),
   expectedRevision: z.number().int().positive().optional(),
   amountCents: z.coerce.bigint().positive().max(BigInt(Number.MAX_SAFE_INTEGER)),
+  netSettledCents: z.string().regex(/^(0|[1-9]\d{0,15})$/).transform(BigInt).optional(),
+  netUpfrontCents: z.string().regex(/^(0|[1-9]\d{0,15})$/).transform(BigInt).optional(),
   receivedAt: z.coerce.date(),
   method: z.enum(receiptMethods),
   reference: z.string().trim().min(3).max(180),
@@ -24,6 +26,35 @@ export const recordReceiptSchema = previewReceiptSchema.extend({
   confirmed: z.literal(true),
   idempotencyKey: z.string().uuid(),
 });
+
+export function paymentCashCents(payment: { amountCents: bigint; netSettledCents?: bigint | null }) {
+  // O caixa histórico preserva o valor já exibido quando o líquido não foi registrado.
+  // A elegibilidade comercial deve consultar a evidência líquida diretamente.
+  return payment.netSettledCents ?? payment.amountCents;
+}
+
+export const reallocateInvoiceScheduleSchema = z.object({
+  idempotencyKey: z.string().uuid(),
+  reason: z.string().trim().min(8).max(500),
+  installments: z.array(z.object({
+    invoiceId: z.string().uuid(),
+    expectedRevision: z.number().int().positive(),
+    amountCents: z.string().regex(/^[1-9]\d{0,15}$/).transform(BigInt).refine((value) => value <= BigInt(Number.MAX_SAFE_INTEGER)),
+    dueOn: z.iso.date().optional(),
+  }).strict()).min(1).max(60),
+  amendment: z.object({
+    expectedContractRevision: z.number().int().positive(),
+    totalCents: z.string().regex(/^[1-9]\d{0,15}$/).transform(BigInt).refine((value) => value <= BigInt(Number.MAX_SAFE_INTEGER)),
+    upfrontCents: z.string().regex(/^(0|[1-9]\d{0,15})$/).transform(BigInt).optional(),
+    paymentTerms: z.string().trim().min(5).max(2000),
+    acceptedByName: z.string().trim().min(2).max(200),
+    acceptedByRole: z.string().trim().min(2).max(200),
+    evidenceText: z.string().trim().min(5).max(2000),
+  }).strict().optional(),
+}).strict().refine(({ installments }) => new Set(installments.map((item) => item.invoiceId)).size === installments.length,
+  "Selecione cada cobrança uma única vez.")
+  .refine(({ installments, amendment }) => amendment !== undefined || installments.length >= 2,
+    "Selecione pelo menos duas parcelas para redistribuir.");
 
 export const paymentSandboxScenarios = [
   "SUCCESS",
@@ -64,6 +95,8 @@ export const invoiceActionSchema = z.discriminatedUnion("action", [
     idempotencyKey: z.string().trim().min(8).max(180),
   }),
   z.object({ action: z.literal("VOID"), expectedRevision: z.number().int().positive(), reason: z.string().trim().min(8).max(500) }),
+  z.object({ action: z.literal("NOT_RECEIVED"), expectedRevision: z.number().int().positive(), reason: z.string().trim().max(500).optional() }).strict(),
+  z.object({ action: z.literal("RESCHEDULE"), expectedRevision: z.number().int().positive(), dueOn: z.iso.date(), reason: z.string().trim().min(8).max(500) }).strict(),
   z.object({ action: z.literal("REPLAY"), attemptId: z.string().uuid(), reason: z.string().trim().min(8).max(500) }),
 ]);
 

@@ -17,7 +17,11 @@ export async function GET(request: NextRequest) {
     const context = await requireApiAuthentication(request);
     const from = request.nextUrl.searchParams.get("from");
     const to = request.nextUrl.searchParams.get("to");
-    const result = await getFinanceService().screen(context, { ...(from ? { from } : {}), ...(to ? { to } : {}) });
+    const compensation = Object.fromEntries(["sellerId", "customerId", "saleId", "kind", "status"].flatMap((key) => {
+      const value = request.nextUrl.searchParams.get(key);
+      return value ? [[key, value]] : [];
+    }));
+    const result = await getFinanceService().screen(context, { ...(from ? { from } : {}), ...(to ? { to } : {}), compensation });
     return NextResponse.json({ result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return handleRouteError(error);

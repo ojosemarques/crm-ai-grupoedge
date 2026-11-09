@@ -1,11 +1,12 @@
-import type { PrismaClient } from "@/generated/prisma/client";
+import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { metricFactExclusionFilters } from "@/modules/metrics/application/metric-lead-exclusions";
 import { firstMeetingBookingIds } from "../domain/unique-meeting-bookings";
 import { realtimeFactPipelineId } from "../domain/realtime-dashboard-front";
 
-export async function uniqueMeetingBookingFactIds(database: PrismaClient, input: Readonly<{
+export async function uniqueMeetingBookingFactIds(database: PrismaClient | Prisma.TransactionClient, input: Readonly<{
   workspaceId: string;
   to: Date;
+  recordedThrough?: Date;
   pipelineIds: ReadonlySet<string>;
   candidates: readonly { id: string; leadId: string | null; contactId: string | null }[];
   excludedLeadIds: readonly string[];
@@ -26,6 +27,7 @@ export async function uniqueMeetingBookingFactIds(database: PrismaClient, input:
   const history = await database.commercialMetricFact.findMany({
     where: {
       workspaceId: input.workspaceId, eventType: "MEETING_SCHEDULED", occurredAt: { lt: input.to },
+      ...(input.recordedThrough ? { recordedAt: { lte: input.recordedThrough } } : {}),
       OR: [
         { id: { in: input.candidates.map(row => row.id) } },
         { leadId: { in: allLeadIds } },
@@ -44,7 +46,7 @@ export async function uniqueMeetingBookingFactIds(database: PrismaClient, input:
     },
   });
   const replacements = history.length ? await database.commercialMetricFact.findMany({
-    where: { workspaceId: input.workspaceId, correctionOfFactId: { in: history.map(row => row.id) }, OR: [
+    where: { workspaceId: input.workspaceId, ...(input.recordedThrough ? { recordedAt: { lte: input.recordedThrough } } : {}), correctionOfFactId: { in: history.map(row => row.id) }, OR: [
       { eventKey: { endsWith: ":front-classification:replacement:v1" } },
       { eventKey: { endsWith: ":test-removal:reversal:v1" } },
     ] }, select: { correctionOfFactId: true },

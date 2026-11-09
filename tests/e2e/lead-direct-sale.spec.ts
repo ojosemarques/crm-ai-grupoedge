@@ -121,6 +121,61 @@ test(`marca vendido no card em um envio (${role}, negócio ${existing ? "prepara
   expect(contracts).toHaveLength(1);
   const invoices = await database.invoice.aggregate({ where: { contractId: contracts[0]!.id }, _sum: { totalCents: true } });
   expect(invoices._sum.totalCents).toBe(custom ? 1960000n : 765432n);
+  if (role === "administrator" && !existing && !custom) {
+    await page.goto(`/contas/${opportunity.accountId}/vendas/${opportunity.id}`);
+    await expect(page.getByRole("heading", { name: "Parcelas do contrato" })).toBeVisible();
+    const last = await database.invoice.findFirstOrThrow({
+      where: { contractId: contracts[0]!.id, dueAt: { gt: new Date() }, totalCents: 100000n },
+      orderBy: { dueAt: "desc" },
+    });
+    const entry = await database.invoice.findFirstOrThrow({
+      where: { contractId: contracts[0]!.id, totalCents: 165432n },
+    });
+    await page.getByText("Redistribuir parcelas futuras", { exact: true }).click();
+    await page.getByLabel("Corrigir total contratual antes da confirmação").check();
+    await page.getByRole("checkbox", { name: last.invoiceNumber, exact: true }).check();
+    await page.getByRole("checkbox", { name: entry.invoiceNumber, exact: true }).check();
+    await page.getByLabel(`Valor (R$) · ${last.invoiceNumber}`, { exact: true }).fill("980,00");
+    await page.getByLabel("Novo total (R$)", { exact: true }).fill("7634,32");
+    await page.getByLabel("Entrada revisada (R$)", { exact: true }).fill("600,00");
+    await page.getByLabel("Quem aceitou a revisão").fill("Cliente sintético");
+    await page.getByLabel("Cargo ou papel").fill("Responsável");
+    await page.getByLabel("Evidência do aceite", { exact: true }).fill("Aceite comercial sintético para o desconto.");
+    await page.getByRole("textbox", { name: "Condição revisada", exact: true }).fill("Entrada de R$ 600 e desconto de R$ 20 na última parcela.");
+    await page.getByLabel("Motivo da revisão", { exact: true }).fill("Desconto comercial sintético acordado");
+    const amended = page.waitForResponse((res) => res.url().endsWith("/schedule") && res.request().method() === "POST");
+    await page.getByRole("button", { name: "Salvar revisão contratual" }).click();
+    expect(await (await amended).json()).toMatchObject({ result: { changed: 2, replayed: false } });
+    await expect(page.getByText("Condição contratada: Entrada de R$ 600 e desconto de R$ 20 na última parcela.")).toBeVisible();
+    await page.getByLabel("Modalidade").selectOption("ANNUAL_INSTALLMENTS");
+    await expect(page.getByLabel("Entrada negociada (R$)")).toHaveValue("600,00");
+    await page.getByLabel("Aceite efetivo").fill("2025-11-07T14:00");
+    await page.getByLabel("Evidência da origem").fill("Origem comercial sintética");
+    await page.getByLabel("Motivo e evidência do aceite").fill("Confirmação de aceite sintético");
+    const confirmation = page.waitForResponse((res) => res.url().endsWith("/confirmation") && res.request().method() === "POST");
+    await page.getByRole("button", { name: "Salvar confirmação" }).click();
+    expect(await (await confirmation).json()).toMatchObject({ result: { revision: 1, replayed: false } });
+    await expect(page.getByText(/Última confirmação: revisão 1/)).toBeVisible();
+    const future = await database.invoice.findMany({
+      where: { contractId: contracts[0]!.id, dueAt: { gt: new Date() }, totalCents: 100000n },
+      orderBy: { dueAt: "asc" }, take: 2,
+    });
+    expect(future).toHaveLength(2);
+    await page.getByText("Redistribuir parcelas futuras", { exact: true }).click();
+    await page.getByRole("checkbox", { name: future[0]!.invoiceNumber, exact: true }).check();
+    await page.getByRole("checkbox", { name: future[1]!.invoiceNumber, exact: true }).check();
+    await page.getByLabel(`Valor (R$) · ${future[0]!.invoiceNumber}`, { exact: true }).fill("1100,00");
+    await page.getByLabel(`Valor (R$) · ${future[1]!.invoiceNumber}`, { exact: true }).fill("900,00");
+    await page.getByLabel("Motivo da revisão", { exact: true }).fill("Redistribuição sintética acordada");
+    const reallocated = page.waitForResponse((res) => res.url().endsWith("/schedule") && res.request().method() === "POST");
+    await page.getByRole("button", { name: "Salvar redistribuição" }).click();
+    expect(await (await reallocated).json()).toMatchObject({ result: { changed: 2, replayed: false } });
+    await expect(page.getByRole("row").filter({ hasText: future[0]!.invoiceNumber })).toContainText(/1\.100,00/);
+    await page.getByRole("link", { name: "Conferir parcela", exact: true }).first().click();
+    await expect(page.getByRole("heading", { name: "Registrar recebimento" })).toBeVisible();
+    await page.goto(`/contas?search=${encodeURIComponent(name)}&status=AWAITING_RECEIPT`);
+    await expect(page.getByRole("cell", { name: "Aguardando primeiro recebimento" })).toBeVisible();
+  }
   if (custom) {
     const rows = await database.invoice.findMany({ where: { contractId: contracts[0]!.id }, orderBy: { dueAt: "asc" } });
     expect(rows.map(row => row.totalCents)).toEqual([220000n, 120000n, 120000n, 250000n, 250000n, 250000n, 250000n, 250000n, 250000n]);

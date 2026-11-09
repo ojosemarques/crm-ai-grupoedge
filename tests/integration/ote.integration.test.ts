@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createOteService } from "@/modules/ote/application/ote-service";
+import { createFinanceService } from "@/modules/finance/application/finance-service";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
@@ -127,4 +128,62 @@ describe("OTE individual e administrativo", () => {
     await service.command(admin, { action: "QUALIFY_MEETING", meetingId: meeting.id, sdrMemberId: sdr.memberId, qualified: false, evidence: "Revisão remove o crédito desta reunião", expectedRevision: 0 });
     expect((await service.screen(sdr, { month: "2026-10" })).summary?.meetingCount).toBe(before.summary!.meetingCount);
   });
+});
+
+it("expõe os mesmos títulos no Meu OTE e no Financeiro com escopo pessoal e rampa comprovada", async () => {
+  const at = new Date("2026-12-02T15:00:00Z");
+  const individual = createOteService({ database, authorization, now: () => at });
+  const finance = createFinanceService({ database, authorization, now: () => at });
+  const policy = await database.commercialCompensationPolicy.create({ data: {
+    workspaceId, version: "ote-comercial-teste", effectiveDate: new Date("2026-11-09"), recordedById: admin.actorId,
+  } });
+  const priorPlan = await database.otePlan.findUnique({
+    where: { workspaceId_memberId_effectiveMonth: { workspaceId, memberId: jhon.memberId, effectiveMonth: "2026-11" } },
+  });
+  await individual.command(admin, planInput(jhon.memberId, {
+    effectiveMonth: "2026-11", expectedRevision: priorPlan?.revision ?? 0,
+    ramp: { month: "2026-11", evidence: "Registro interno sintético de entrada" },
+  }));
+  await individual.command(admin, planInput(sdr.memberId, {
+    effectiveMonth: "2026-11", role: "SDR", label: "Anúncios de teste", fixedCents: "15000", quotaCents: "0", bonusCents: "0",
+    advertising: { band60Cents: "1200", band80Cents: "2200", band100Cents: "3500", bonusCents: "500" },
+  }));
+  const ownSale = await createSale(jhon.memberId, "2026-11-12T12:00:00Z");
+  const otherSale = await createSale(ede.memberId, "2026-11-12T12:00:00Z");
+  const otherTitle = `closer:sale:${otherSale.id}`;
+  const ownTitle = `closer:sale:${ownSale.id}`;
+  await database.commercialCompensationObligation.createMany({ data: [
+    { sellerMemberId: jhon.memberId, opportunityId: ownSale.id, obligationKey: ownTitle, amountCents: 123n },
+    { sellerMemberId: ede.memberId, opportunityId: otherSale.id, obligationKey: otherTitle, amountCents: 9876n },
+  ].map((title) => ({
+    workspaceId, policyVersion: policy.version, kind: "SALE_COMMISSION", status: "APPROVED", competenceMonth: "2026-11",
+    sourceFacts: { privateBankReference: "referência-restrita" }, ...title,
+  })) });
+  await database.sdrAdvertisingSnapshot.create({ data: {
+    workspaceId, memberId: sdr.memberId, policyVersion: policy.version,
+    periodKind: "MONTH", periodStartOn: new Date("2026-11-01"), periodEndOn: new Date("2026-12-01"),
+    revision: 1, fingerprint: "a".repeat(64), evaluatedAt: at,
+    facts: {
+      counts: { leads: 200, bookedLeads: 100, eligibleMeetings: 100, heldMeetings: 100, pendingMeetings: 0, missingEvidence: 0 },
+      attainment: { coverage: "READY", band: 100, attainmentBps: 12500, progressBps: 10000 },
+      leadIds: ["id-operacional-restrito"],
+    },
+  } });
+  const personal = await individual.screen(jhon, { month: "2026-11" });
+  expect(personal.commercial).toMatchObject({
+    memberId: jhon.memberId, role: "CLOSER", ramp: true, rampVerified: true, goalCents: null,
+    titles: [{ key: ownTitle, amountCents: "123", status: "APPROVED" }],
+  });
+  expect(JSON.stringify(personal)).not.toMatch(/9876|referência-restrita|Registro interno sintético/);
+  await expect(individual.screen(jhon, { month: "2026-11", memberId: ede.memberId })).rejects.toThrow();
+  await expect(finance.goals(jhon, "2026-11")).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+  const workspace = await finance.goals(admin, "2026-11");
+  expect(workspace.people.find((person) => person.memberId === jhon.memberId)).toEqual(personal.commercial);
+  expect(workspace.people.find((person) => person.memberId === ede.memberId)?.titles[0]?.key).toBe(otherTitle);
+  const sdrView = await individual.screen(sdr, { month: "2026-11" });
+  expect(sdrView.commercial).toMatchObject({
+    role: "SDR", targetOteCents: "19000", metrics: [{ facts: { attainment: { attainmentBps: 12500, progressBps: 10000 } } }],
+  });
+  expect(JSON.stringify(sdrView)).not.toContain("id-operacional-restrito");
+  expect((await individual.screen(jhon, { month: "2026-10" })).commercial).toBeNull();
 });

@@ -2,9 +2,14 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@/generated/prisma/client";
+import { createAccountService } from "@/modules/accounts/application/account-service";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createSaleCompletionService } from "@/modules/opportunities/application/sale-completion-service";
 import { createOpportunityService } from "@/modules/opportunities/application/opportunity-service";
+import { createFinanceService, reconcileCommissionsInTransaction } from "@/modules/finance/application/finance-service";
+import { createCloserCompensationWorker } from "@/modules/finance/application/closer-compensation-worker";
+import { applyLegacyCompensation } from "@/modules/finance/application/legacy-compensation-import";
+import { legacyManifestSchema, previewLegacyCompensation } from "@/modules/finance/application/legacy-compensation-preview";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { createPaymentService } from "@/modules/payments/application/payment-service";
 import { createRevenueService } from "@/modules/revenue/application/revenue-service";
@@ -13,6 +18,7 @@ import { createAuthorizationService } from "@/modules/users/permissions/authoriz
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
 import { ensureActiveProspectingPipeline } from "@/modules/settings/application/production-foundation-service";
 import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
+import { addLocalDays, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 
 if (!/^politizai_test_/.test(process.env.PRISMA_TEST_SCHEMA ?? "")) throw new Error("Ephemeral schema required.");
 const database = new PrismaClient({ adapter: createPostgresAdapter(process.env.DATABASE_URL!, { max: 8 }) });
@@ -35,6 +41,103 @@ beforeAll(async () => {
 });
 afterAll(async () => { await database.$disconnect(); });
 
+it("preserva revisões de confirmação e impede vínculos entre workspaces", async () => {
+  const { opportunityId } = await fixture();
+  const confirmation = {
+    workspaceId,
+    opportunityId,
+    revision: 1,
+    sellerMemberId: admin.memberId,
+    modality: "ANNUAL_INSTALLMENTS" as const,
+    netContractCents: 2500000n,
+    upfrontCents: 100000n,
+    selfSourced: false,
+    sourceEvidence: "Referência sintética do pipeline",
+    acceptedAt: new Date("2026-09-29T15:00:00Z"),
+    confirmationReason: "Aceite operacional sintético",
+    confirmedAt: now,
+    confirmedByActorId: admin.actorId,
+    idempotencyKey: randomUUID(),
+  };
+
+  await database.commercialSaleConfirmation.create({ data: confirmation });
+  await expect(database.commercialSaleConfirmation.create({
+    data: { ...confirmation, revision: 2 },
+  })).rejects.toMatchObject({ code: "P2002" });
+  await expect(database.commercialSaleConfirmation.create({
+    data: { ...confirmation, workspaceId: randomUUID() },
+  })).rejects.toMatchObject({ code: "P2003" });
+  await expect(database.commercialSaleConfirmation.create({
+    data: { ...confirmation, revision: 2, idempotencyKey: randomUUID(), upfrontCents: confirmation.netContractCents + 1n },
+  })).rejects.toThrow(/commercial_sale_confirmation_values/);
+
+  await database.commercialSaleConfirmation.create({
+    data: { ...confirmation, revision: 2, idempotencyKey: randomUUID(), activationAt: now },
+  });
+  const revisions = await database.commercialSaleConfirmation.findMany({
+    where: { workspaceId, opportunityId },
+    orderBy: { revision: "asc" },
+  });
+  expect(revisions.map(({ revision, activationAt }) => ({ revision, activationAt }))).toEqual([
+    { revision: 1, activationAt: null },
+    { revision: 2, activationAt: now },
+  ]);
+});
+
+it("registra uma vigência por data local e impede atribuir um ator de outro workspace", async () => {
+  const policy = {
+    workspaceId,
+    version: "synthetic-policy-v1",
+    effectiveDate: new Date("2026-11-09T00:00:00Z"),
+    recordedById: admin.actorId,
+  };
+  await database.commercialCompensationPolicy.create({ data: policy });
+  await expect(database.commercialCompensationPolicy.create({
+    data: { ...policy, version: "synthetic-policy-v2" },
+  })).rejects.toMatchObject({ code: "P2002" });
+  const otherWorkspace = await database.workspace.create({
+    data: { slug: `comp-policy-test-${randomUUID()}`, name: "Workspace sintético separado" },
+  });
+  const otherActor = await database.actor.create({
+    data: { workspaceId: otherWorkspace.id, type: "SYSTEM", key: "test", displayName: "Ator sintético" },
+  });
+  await expect(database.commercialCompensationPolicy.create({
+    data: { ...policy, version: "synthetic-policy-v2", effectiveDate: new Date("2026-12-01T00:00:00Z"), recordedById: otherActor.id },
+  })).rejects.toMatchObject({ code: "P2003" });
+});
+
+it("identifica obrigação e revisão de forma estável e impede vincular venda externa", async () => {
+  const { opportunityId } = await fixture();
+  const { version } = await database.commercialCompensationPolicy.create({
+    data: {
+      workspaceId, version: "synthetic-obligations-v1",
+      effectiveDate: new Date("2026-12-01T00:00:00Z"), recordedById: admin.actorId,
+    },
+  });
+  const obligation = {
+    workspaceId, obligationKey: randomUUID(), policyVersion: version, opportunityId,
+    sellerMemberId: admin.memberId, kind: "SALE_COMMISSION" as const,
+    competenceMonth: "2026-12", amountCents: 150_000n, sourceFacts: { opportunityId },
+  };
+  await database.commercialCompensationObligation.create({ data: obligation });
+  await expect(database.commercialCompensationObligation.create({ data: obligation }))
+    .rejects.toMatchObject({ code: "P2002" });
+  await expect(database.commercialCompensationObligation.create({
+    data: { ...obligation, obligationKey: randomUUID(), opportunityId: randomUUID() },
+  })).rejects.toMatchObject({ code: "P2003" });
+  await expect(database.commercialCompensationObligation.create({
+    data: { ...obligation, obligationKey: randomUUID(), opportunityId: null },
+  })).rejects.toThrow(/commercial_compensation_obligation_values/);
+
+  const review = {
+    workspaceId, obligationKey: obligation.obligationKey,
+    sourceEventKey: "synthetic-payment-reversal", reason: "Estorno sintético",
+  };
+  await database.commercialCompensationReview.create({ data: review });
+  await expect(database.commercialCompensationReview.create({ data: review }))
+    .rejects.toMatchObject({ code: "P2002" });
+});
+
 async function fixture(pipelineId?: string) {
   const actor = await database.actor.findFirstOrThrow({ where: { workspaceId, type: "SYSTEM" } });
   const intake = await createLeadIntakeService({ database, authorization: createAuthorizationService({ database }), now: () => now }).intake({ channel: "MANUAL", idempotencyKey: `sale-test:${randomUUID()}`, fullName: "Cliente integrado", phone: `+55119${Math.floor(Math.random() * 90000000 + 10000000)}`, sourceKey: "manual", priorityBandCode: "P1", interestSummary: "Venda integrada de teste", ...(pipelineId ? { pipelineId } : {}), rawPayload: { test: true } }, { workspaceId, actorId: actor.id, actorKey: actor.key, actorType: "SYSTEM" });
@@ -48,9 +151,182 @@ async function fixture(pipelineId?: string) {
   const opportunity = await database.opportunity.create({ data: { workspaceId, leadId: lead.id, accountId: account.id, pipelineId: stage.pipelineId, currentStageId: stage.id, ownerMemberId: admin.memberId, productId: product.id, name: "Venda integrada", status: "OPEN", amountCents: 2500000n, mrrCents: 300000n, tcvCents: 2500000n, probabilityBps: 8000, createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
   await database.stageHistory.create({ data: { workspaceId, pipelineId: stage.pipelineId, stageId: stage.id, opportunityId: opportunity.id, enteredAt: new Date("2026-09-01T12:00:00Z"), enteredByActorId: admin.actorId } });
   await database.offer.create({ data: { workspaceId, opportunityId: opportunity.id, productId: product.id, name: "Plano seis meses", quantity: 1, unitPriceCents: 2500000n, totalCents: 2500000n, createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
-  const template = await database.contractTemplateVersion.findFirstOrThrow({ where: { workspaceId } });
+  const template = await database.contractTemplateVersion.findFirstOrThrow({ where: { workspaceId, version: 1 }, orderBy: { id: "asc" } });
   return { opportunityId: opportunity.id, expectedRevision: 1, sellerMemberId: admin.memberId, totalCents: "2500000", monthlyCents: "300000", upfrontCents: "700000", receivedCents: "0", paymentMethod: "PIX" as const, paymentCondition: "Entrada e seis parcelas mensais", durationMonths: 6, startsAt: now.toISOString(), templateVersionId: template.id, acceptance: { acceptedByName: "Cliente integrado", acceptedByRole: "Diretor", evidenceText: "Aceite comercial documentado no teste." } };
 }
+
+it("corrige o total antes da confirmação, versiona contrato e concilia parcelas e MRR", async () => {
+  const input = await fixture();
+  await service.execute(admin, { ...input, confirmed: true, idempotencyKey: randomUUID() });
+  const contract = await database.commercialContract.findFirstOrThrow({ where: { workspaceId, opportunityId: input.opportunityId } });
+  const invoice = await database.invoice.findFirstOrThrow({
+    where: { workspaceId, contractId: contract.id, dueAt: { lte: now } }, orderBy: { dueAt: "desc" },
+  });
+  const subscription = await database.subscription.findFirstOrThrow({ where: { workspaceId, contractId: contract.id } });
+  const authorization = createAuthorizationService({ database });
+  const collection = createPaymentService({ database, authorization, now: () => now });
+  const command = {
+    idempotencyKey: randomUUID(), reason: "Desconto acordado antes da confirmação",
+    installments: [{ invoiceId: invoice.id, expectedRevision: invoice.revision, amountCents: String(invoice.totalCents - 60_000n) }],
+    amendment: {
+      expectedContractRevision: contract.revision, totalCents: String(BigInt(input.totalCents) - 60_000n),
+      upfrontCents: "650000",
+      paymentTerms: "Desconto de R$ 600 na parcela do dia, conforme aceite registrado.",
+      acceptedByName: "Cliente sintético", acceptedByRole: "Responsável", evidenceText: "Aceite comercial sintético registrado.",
+    },
+  };
+  const revise = (payload: unknown) => collection.reallocateCustomerSchedule(admin, contract.accountId, input.opportunityId, payload);
+  await expect(revise({ ...command, amendment: { ...command.amendment, expectedContractRevision: contract.revision - 1 } }))
+    .rejects.toMatchObject({ code: "PAYMENT_AMENDMENT_STALE" });
+  await expect(revise(command)).resolves.toEqual({ changed: 1, replayed: false });
+  await expect(revise(command)).resolves.toEqual({ changed: 1, replayed: true });
+
+  const versions = await database.contractVersion.findMany({ where: { workspaceId, contractId: contract.id }, orderBy: { versionNumber: "asc" } });
+  expect(versions).toMatchObject([
+    { id: contract.currentVersionId, state: "SUPERSEDED", totalCents: 2_500_000n },
+    { state: "ISSUED", totalCents: 2_440_000n, mrrCents: 298_333n },
+  ]);
+  await expect(database.commercialContract.findUniqueOrThrow({ where: { id: contract.id } }))
+    .resolves.toMatchObject({ status: "ACCEPTED", currentVersionId: versions[1]!.id });
+  await expect(database.subscription.findUniqueOrThrow({ where: { id: subscription.id } }))
+    .resolves.toMatchObject({ currentContractVersionId: versions[1]!.id, currentMrrCents: 298_333n });
+  await expect(database.opportunity.findUniqueOrThrow({ where: { id: input.opportunityId } }))
+    .resolves.toMatchObject({ tcvCents: 2_440_000n, mrrCents: 298_333n });
+  await expect(database.invoice.findUniqueOrThrow({ where: { id: invoice.id } }))
+    .resolves.toMatchObject({ revisedUpfrontCents: 650_000n });
+  expect((await database.invoice.aggregate({ where: { workspaceId, contractId: contract.id }, _sum: { totalCents: true } }))._sum.totalCents)
+    .toBe(2_440_000n);
+  expect((await database.invoiceLine.aggregate({ where: { workspaceId, invoiceId: invoice.id }, _sum: { totalCents: true } }))._sum.totalCents)
+    .toBe(invoice.totalCents);
+  expect(await database.revenueMovement.count({ where: { workspaceId, subscriptionId: subscription.id, type: "CONTRACTION", deltaMrrCents: -1_667n } })).toBe(1);
+  const opportunities = createOpportunityService({ database, authorization, now: () => now });
+  await expect(opportunities.confirmCustomerSale(admin, contract.accountId, input.opportunityId, {
+    expectedRevision: 0, sellerMemberId: admin.memberId, modality: "ANNUAL_INSTALLMENTS",
+    netContractCents: "2440000", upfrontCents: "650000", selfSourced: false,
+    sourceEvidence: "Origem sintética", acceptedAtLocal: "2026-09-30T11:00", activationAtLocal: null,
+    confirmationReason: "Aceite sintético da versão revisada", idempotencyKey: randomUUID(),
+  })).resolves.toMatchObject({ revision: 1 });
+  await expect(revise({
+    ...command, idempotencyKey: randomUUID(),
+    installments: [{ invoiceId: invoice.id, expectedRevision: invoice.revision + 1, amountCents: String(invoice.totalCents - 60_001n) }],
+    amendment: { ...command.amendment, expectedContractRevision: contract.revision + 5, totalCents: "2439999" },
+  })).rejects.toMatchObject({ code: "PAYMENT_AMENDMENT_REQUIRES_REVIEW" });
+  const account = await database.financialAccount.create({
+    data: { workspaceId, name: "Caixa da entrada revisada", type: "BANK", openingBalanceCents: 0n,
+      createdByActorId: admin.actorId, updatedByActorId: admin.actorId },
+  });
+  const receipt = {
+    invoiceId: invoice.id, financialAccountId: account.id, expectedRevision: invoice.revision + 1,
+    amountCents: "650001", netSettledCents: "650001", netUpfrontCents: "650001",
+    receivedAt: now.toISOString(), method: "PIX", reference: "Comprovante sintético da entrada revisada",
+  };
+  await expect(collection.previewReceipt(admin, receipt)).rejects.toMatchObject({ code: "PAYMENT_RECEIPT_UPFRONT_ALLOCATION" });
+  await expect(collection.recordReceipt(admin, { ...receipt, netUpfrontCents: "650000", confirmed: true, idempotencyKey: randomUUID() }))
+    .resolves.toMatchObject({ payment: { netUpfrontCents: 650_000n } });
+});
+
+it("classifica a venda ganha na fila pela confirmação e pelo recebimento real", async () => {
+  const input = await fixture();
+  const search = `Fila de clientes ${randomUUID()}`;
+  const opportunity = await database.opportunity.update({
+    where: { id: input.opportunityId }, data: { name: search },
+  });
+  await database.account.update({ where: { id: opportunity.accountId! }, data: { name: search } });
+  const authorization = createAuthorizationService({ database });
+  const opportunities = createOpportunityService({ database, authorization, now: () => now });
+  const accounts = createAccountService({ database, authorization, now: () => now });
+  expect((await accounts.list(admin, { search })).total).toBe(1);
+  expect((await opportunities.listCustomerSales(admin, { search })).total).toBe(0);
+  await expect(opportunities.listCustomerSales({ ...admin, workspaceId: randomUUID() }, { search }))
+    .rejects.toMatchObject({ code: "ACCESS_DENIED" });
+
+  await service.execute(admin, { ...input, confirmed: true, idempotencyKey: randomUUID() });
+  await expect(opportunities.listCustomerSales(admin, { search, status: "TO_CONFIRM" }))
+    .resolves.toMatchObject({ total: 1, items: [{ id: input.opportunityId, status: "TO_CONFIRM" }] });
+  const confirmation = {
+    expectedRevision: 0, sellerMemberId: admin.memberId, modality: "ANNUAL_INSTALLMENTS",
+    netContractCents: input.totalCents, upfrontCents: input.upfrontCents, selfSourced: false,
+    sourceEvidence: "Origem sintética", acceptedAtLocal: "2026-09-30T11:00", activationAtLocal: null,
+    confirmationReason: "Aceite sintético conferido", idempotencyKey: randomUUID(),
+  };
+  const confirm = (payload: unknown) => opportunities.confirmCustomerSale(admin, opportunity.accountId!, input.opportunityId, payload);
+  await expect(confirm({ ...confirmation, netContractCents: "9999999" })).rejects.toMatchObject({ code: "CUSTOMER_CONTRACT_TERMS_MISMATCH" });
+  await expect(opportunities.confirmCustomerSale(admin, randomUUID(), input.opportunityId, confirmation))
+    .rejects.toMatchObject({ code: "NOT_FOUND" });
+  await expect(opportunities.confirmCustomerSale(viewer, opportunity.accountId!, input.opportunityId, confirmation))
+    .rejects.toMatchObject({ code: "ACCESS_DENIED" });
+  const results = await Promise.all([confirm(confirmation), confirm(confirmation)]);
+  expect(results).toEqual(expect.arrayContaining([{ revision: 1, replayed: false }, { revision: 1, replayed: true }]));
+  await expect(confirm({ ...confirmation, sourceEvidence: "Outra origem" })).rejects.toMatchObject({ code: "CUSTOMER_CONFIRMATION_KEY_CONFLICT" });
+  await expect(confirm({ ...confirmation, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: "CUSTOMER_CONFIRMATION_STALE" });
+  await expect(opportunities.getCustomerSale(admin, opportunity.accountId!, input.opportunityId)).resolves.toMatchObject({
+    confirmation: { revision: 1, acceptedAt: "2026-09-30T14:00:00.000Z", confirmedAt: now.toISOString(), activationAt: null },
+    installments: expect.arrayContaining([expect.objectContaining({ canRead: true, paidCents: "0", status: "OPEN" })]),
+  });
+
+  const future = await database.invoice.findMany({
+    where: { workspaceId, contract: { opportunityId: input.opportunityId }, dueAt: { gt: now } },
+    orderBy: { dueAt: "asc" }, take: 2,
+  });
+  expect(future).toHaveLength(2);
+  const [firstFuture, secondFuture] = [future[0]!, future[1]!];
+  const collection = createPaymentService({ database, authorization, now: () => now });
+  const workspace = await database.workspace.findUniqueOrThrow({ where: { id: workspaceId }, select: { timeZone: true } });
+  const dueOn = addLocalDays(workspaceDateAt(firstFuture.dueAt, workspace.timeZone), 3);
+  const redistribute = (payload: unknown) => collection.reallocateCustomerSchedule(admin, opportunity.accountId!, input.opportunityId, payload);
+  const reallocation = {
+    idempotencyKey: randomUUID(), reason: "Redistribuição contratual sintética",
+    installments: [
+      { invoiceId: firstFuture.id, expectedRevision: firstFuture.revision, amountCents: String(firstFuture.totalCents + 500n), dueOn },
+      { invoiceId: secondFuture.id, expectedRevision: secondFuture.revision, amountCents: String(secondFuture.totalCents - 500n) },
+    ],
+  };
+  await expect(collection.reallocateCustomerSchedule(viewer, opportunity.accountId!, input.opportunityId, reallocation))
+    .rejects.toMatchObject({ code: "ACCESS_DENIED" });
+  await expect(redistribute({ ...reallocation, installments: [
+    reallocation.installments[0], { ...reallocation.installments[1], invoiceId: randomUUID() },
+  ] })).rejects.toMatchObject({ code: "PAYMENT_SCHEDULE_INVOICE_NOT_FOUND" });
+  await expect(redistribute({ ...reallocation, installments: [
+    reallocation.installments[0], { ...reallocation.installments[1], amountCents: String(secondFuture.totalCents) },
+  ] })).rejects.toMatchObject({ code: "PAYMENT_SCHEDULE_TOTAL_MISMATCH" });
+  expect(await Promise.all([redistribute(reallocation), redistribute(reallocation)])).toEqual(expect.arrayContaining([
+    { changed: 2, replayed: false }, { changed: 2, replayed: true },
+  ]));
+  await expect(redistribute({ ...reallocation, idempotencyKey: randomUUID() }))
+    .rejects.toMatchObject({ code: "PAYMENT_VERSION_CONFLICT" });
+  await expect(database.invoice.findUniqueOrThrow({ where: { id: firstFuture.id } })).resolves.toMatchObject({
+    totalCents: firstFuture.totalCents + 500n, revision: firstFuture.revision + 1, billingPeriodStart: firstFuture.billingPeriodStart,
+    dueAt: workspaceDayRange(dueOn, workspace.timeZone).start,
+  });
+  expect((await database.invoiceLine.aggregate({
+    where: { workspaceId, invoiceId: firstFuture.id }, _sum: { totalCents: true },
+  }))._sum.totalCents).toBe(firstFuture.totalCents);
+  expect(await database.paymentEvent.count({
+    where: { workspaceId, type: "INVOICE_BALANCE_REALLOCATED", invoiceId: { in: future.map((invoice) => invoice.id) } },
+  })).toBe(2);
+  await expect(opportunities.listCustomerSales(admin, { search, status: "AWAITING_RECEIPT" }))
+    .resolves.toMatchObject({ total: 1, items: [{ id: input.opportunityId, status: "AWAITING_RECEIPT" }] });
+
+  const invoice = await database.invoice.findFirstOrThrow({
+    where: { workspaceId, contract: { opportunityId: input.opportunityId } }, orderBy: { dueAt: "asc" },
+  });
+  const financialAccount = await database.financialAccount.create({
+    data: {
+      workspaceId, name: "Conta sintética da fila", type: "BANK", openingBalanceCents: 0n,
+      createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
+    },
+  });
+  const { payment } = await createPaymentService({ database, authorization, now: () => now }).recordReceipt(admin, {
+    invoiceId: invoice.id, financialAccountId: financialAccount.id, expectedRevision: invoice.revision,
+    amountCents: "100", receivedAt: now.toISOString(), method: "PIX", reference: randomUUID(),
+    confirmed: true, idempotencyKey: randomUUID(),
+  });
+  await expect(opportunities.listCustomerSales(admin, { search, status: "CONFIRMED" }))
+    .resolves.toMatchObject({ total: 1, items: [{ id: input.opportunityId, status: "CONFIRMED" }] });
+  await database.payment.update({ where: { id: payment.id }, data: { status: "REVERSED", reversedAt: now } });
+  await expect(opportunities.listCustomerSales(admin, { search, status: "CONFIRMED" }))
+    .resolves.toMatchObject({ total: 0 });
+});
 
 describe("venda integrada atômica", () => {
   for (const profile of ["administrator", "closer"] as const) {
@@ -461,4 +737,194 @@ describe("venda integrada atômica", () => {
     expect(await database.account.count({ where: { workspaceId, name: customerName } })).toBe(0);
     expect((await database.lead.findUniqueOrThrow({ where: { id: opportunity.leadId } })).accountId).toBeNull();
   });
+});
+
+it("reconcilia obrigação de closer com recebimento efetivo, replay e estorno sem gerar comissão legada", async () => {
+  const cutoff = new Date("2026-11-09T00:00:00Z");
+  const closeAt = new Date("2026-11-10T15:00:00Z");
+  const evaluationAt = new Date("2026-11-12T15:00:00Z");
+  await database.commercialCompensationPolicy.upsert({
+    where: { workspaceId_effectiveDate: { workspaceId, effectiveDate: cutoff } },
+    create: { workspaceId, version: "synthetic-policy-v1", effectiveDate: cutoff, recordedById: admin.actorId },
+    update: {},
+  });
+  await database.otePlan.create({ data: {
+    workspaceId, memberId: admin.memberId, effectiveMonth: "2026-11", label: "Plano sintético",
+    role: "CLOSER", fixedCents: 5000n, quotaCents: 2_500_000n, bonusCents: 2000n, updatedByActorId: admin.actorId,
+  } });
+  const rule = await database.commissionRule.create({ data: {
+    workspaceId, sellerMemberId: admin.memberId, percentageBps: 600, effectiveFrom: new Date("2026-11-01T03:00:00Z"),
+    active: false, effectiveTo: new Date("2026-12-31T03:00:00Z"),
+    createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
+  } });
+  const input = await fixture();
+  await createSaleCompletionService({ database, now: () => closeAt }).execute(admin, {
+    ...input, monthlyCents: "150000", durationMonths: 12, startsAt: closeAt.toISOString(),
+    confirmed: true, idempotencyKey: randomUUID(),
+  });
+  expect(await database.commission.count({ where: { opportunityId: input.opportunityId, ruleId: rule.id } })).toBe(0);
+  const invoice = await database.invoice.findFirstOrThrow({
+    where: { workspaceId, contract: { opportunityId: input.opportunityId } },
+    orderBy: { dueAt: "asc" },
+  });
+  const authorization = createAuthorizationService({ database });
+  const opportunities = createOpportunityService({ database, authorization, now: () => evaluationAt });
+  await opportunities.confirmCustomerSale(admin, invoice.accountId, input.opportunityId, {
+    expectedRevision: 0, sellerMemberId: admin.memberId, modality: "ANNUAL_INSTALLMENTS",
+    netContractCents: input.totalCents, upfrontCents: input.upfrontCents, selfSourced: false,
+    sourceEvidence: "Origem sintética", acceptedAtLocal: "2026-11-10T12:00", activationAtLocal: "2026-11-10T12:00",
+    confirmationReason: "Aceite sintético conferido", idempotencyKey: randomUUID(),
+  });
+  const where = { workspaceId_obligationKey: { workspaceId, obligationKey: `closer:sale:${input.opportunityId}` } };
+  expect(await database.commercialCompensationObligation.findUnique({ where })).toBeNull();
+
+  const financialAccount = await database.financialAccount.create({ data: {
+    workspaceId, name: "Conta sintética da apuração", type: "BANK", openingBalanceCents: 0n,
+    createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
+  } });
+  const payments = createPaymentService({ database, authorization, now: () => evaluationAt });
+  const receipt = {
+    invoiceId: invoice.id, financialAccountId: financialAccount.id, expectedRevision: invoice.revision,
+    amountCents: invoice.totalCents.toString(), receivedAt: closeAt.toISOString(), method: "PIX",
+    reference: randomUUID(), confirmed: true, idempotencyKey: randomUUID(),
+    netSettledCents: "840000", netUpfrontCents: "690000",
+  };
+  const { payment } = await payments.recordReceipt(admin, receipt);
+  await expect(payments.recordReceipt(admin, receipt)).resolves.toMatchObject({ idempotent: true });
+  const obligation = await database.commercialCompensationObligation.findUniqueOrThrow({ where });
+  expect(obligation).toMatchObject({
+    amountCents: 150_000n, basisCents: 2_500_000n, status: "PENDING", competenceMonth: "2026-11",
+    milestoneOn: new Date("2027-02-08"), revision: 1,
+    sourceFacts: { d0: closeAt.toISOString(), settlements: [{ id: payment.id, netCents: "840000", upfrontNetCents: "690000" }] },
+  });
+  const reconcile = () => database.$transaction((tx) => reconcileCommissionsInTransaction(tx, admin, evaluationAt));
+  await reconcile();
+  await expect(database.commercialCompensationObligation.findUniqueOrThrow({ where })).resolves.toMatchObject({ revision: 1 });
+  expect(await database.commission.count({ where: { opportunityId: input.opportunityId, ruleId: rule.id } })).toBe(0);
+
+  const bonusWhere = { workspaceId_obligationKey: { workspaceId, obligationKey: `closer:bonus:${admin.memberId}:2026-11` } };
+  expect(await database.commercialCompensationObligation.findUnique({ where: bonusWhere })).toBeNull();
+  const afterCutoff = new Date("2026-12-01T15:00:00Z");
+  const reconcileClosedMonth = () => database.$transaction((tx) => reconcileCommissionsInTransaction(tx, admin, afterCutoff));
+  await reconcileClosedMonth();
+  await reconcileClosedMonth();
+  await expect(database.commercialCompensationObligation.findUniqueOrThrow({ where: bonusWhere })).resolves.toMatchObject({
+    kind: "CLOSER_BONUS", opportunityId: null, amountCents: 2000n, basisCents: 2_500_000n, status: "PENDING", revision: 1,
+    dueOn: null, eligibleAt: null,
+  });
+  await database.commercialCompensationPolicy.update({
+    where: { workspaceId_effectiveDate: { workspaceId, effectiveDate: cutoff } },
+    data: { calendarVerifiedThrough: new Date("2027-03-31"), calendarHolidays: [new Date("2026-12-01")], calendarEvidence: "Calendário sintético" },
+  });
+  const worker = createCloserCompensationWorker({ database, now: () => afterCutoff });
+  expect(await Promise.all([worker.processNext(), worker.processNext()])).toEqual(
+    expect.arrayContaining([{ status: "SUCCEEDED" }, { status: "IDLE" }]),
+  );
+  await expect(database.commercialCompensationObligation.findUniqueOrThrow({ where: bonusWhere })).resolves.toMatchObject({
+    status: "ELIGIBLE", revision: 2, dueOn: new Date("2026-12-08"), eligibleAt: new Date("2026-12-01T03:00:00Z"),
+  });
+  const finance = createFinanceService({ database, authorization, now: () => afterCutoff });
+  const bonusKey = bonusWhere.workspaceId_obligationKey.obligationKey;
+  const approve = { action: "APPROVE_COMPENSATION", obligationKey: bonusKey, expectedRevision: 2 };
+  await expect(finance.command(viewer, approve)).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+  await expect(finance.command(admin, approve)).resolves.toMatchObject({ status: "APPROVED", revision: 3 });
+  const recorded = new Date("2026-12-01T14:00:00Z");
+  const category = await database.financialCategory.create({ data: {
+    workspaceId, key: "remuneracao_teste", name: "Remuneração de teste", kind: "EXPENSE",
+    createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
+  } });
+  const entry = await database.financialEntry.create({ data: {
+    workspaceId, categoryId: category.id, financialAccountId: financialAccount.id, direction: "EXPENSE", status: "SETTLED",
+    description: "Despesa já conciliada", amountCents: 600n, competenceAt: recorded, dueAt: recorded, settledAt: recorded,
+    idempotencyKey: randomUUID(), createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
+  } });
+  const partial = {
+    action: "SETTLE_COMPENSATION", obligationKey: bonusKey, expectedRevision: 3, financialAccountId: financialAccount.id,
+    financialEntryId: entry.id, amountCents: "600", settledAt: recorded.toISOString(), evidence: "Comprovante sintético",
+    reference: "transferência parcial sintética", idempotencyKey: randomUUID(),
+  };
+  expect(await Promise.all([finance.command(admin, partial), finance.command(admin, partial)])).toEqual(expect.arrayContaining([
+    { status: "APPROVED", revision: 4, replayed: false }, { status: "APPROVED", revision: 4, replayed: true },
+  ]));
+  await expect(finance.command(admin, { ...partial, amountCents: "599" })).rejects.toMatchObject({ code: "FINANCE_COMPENSATION_KEY_CONFLICT" });
+  const finalPayment = {
+    ...partial, financialEntryId: undefined, expectedRevision: 4,
+    reference: "transferência final sintética", idempotencyKey: randomUUID(),
+  };
+  await expect(finance.command(admin, { ...finalPayment, amountCents: "1401" })).rejects.toMatchObject({ code: "FINANCE_COMPENSATION_PAYMENT_AMOUNT" });
+  await expect(finance.command(admin, { ...finalPayment, amountCents: "1400" })).resolves.toMatchObject({ status: "PAID", revision: 5 });
+  const screen = await finance.screen(admin, { from: "2026-12-01T03:00:00Z", to: "2027-01-01T03:00:00Z" });
+  expect(screen.compensation).toEqual(expect.arrayContaining([expect.objectContaining({
+    key: bonusKey, status: "PAID", paidCents: "2000", balanceCents: "0", periodPaidCents: "2000",
+    payments: expect.arrayContaining([expect.objectContaining({ entryId: entry.id, amountCents: "600" })]),
+  })]));
+  await expect(finance.screen(admin, { compensation: { sellerId: randomUUID(), status: "PAID" } }))
+    .resolves.toMatchObject({ compensation: [] });
+  expect(await database.financialEntry.count({ where: { workspaceId, description: "Baixa de remuneração comercial" } })).toBe(1);
+  await database.payment.update({ where: { id: payment.id }, data: { status: "REVERSED", reversedAt: afterCutoff } });
+  await reconcileClosedMonth();
+  await reconcileClosedMonth();
+  await expect(database.commercialCompensationObligation.findUniqueOrThrow({ where })).resolves.toMatchObject({
+    amountCents: 150_000n, status: "REVIEW", revision: 2,
+  });
+  await expect(database.commercialCompensationObligation.findUniqueOrThrow({ where: bonusWhere })).resolves.toMatchObject({
+    status: "PAID", revision: 5,
+  });
+  expect(await database.commercialCompensationReview.count({ where: { workspaceId, obligationKey: bonusKey } })).toBe(1);
+  expect(await database.commercialCompensationReview.count({ where: { workspaceId, obligationKey: obligation.obligationKey } })).toBe(1);
+});
+
+it("confere a prévia histórica sem criar título nem deduzir o pagamento informado", async () => {
+  const input = await fixture();
+  await service.execute(admin, { ...input, confirmed: true, idempotencyKey: randomUUID() });
+  const contract = await database.commercialContract.findFirstOrThrow({ where: { workspaceId, opportunityId: input.opportunityId } });
+  const manifest = legacyManifestSchema.parse({
+    workspaceId, version: "synthetic-policy-v1", cutoverOn: "2026-11-09", calendar: null,
+    sales: [{
+      opportunityId: input.opportunityId, contractId: contract.id, sellerMemberId: admin.memberId,
+      acvCents: input.totalCents, evidence: "Condições sintéticas verificadas",
+      reported: { on: "2026-11-06", stages: [30, 60], evidence: "Baixa informada, sem comprovante sintético" },
+    }],
+  });
+  await database.commercialCompensationPolicy.upsert({
+    where: { workspaceId_version: { workspaceId, version: manifest.version } },
+    create: { workspaceId, version: manifest.version, effectiveDate: new Date(manifest.cutoverOn), recordedById: admin.actorId },
+    update: {},
+  });
+  const preview = () => database.$transaction((tx) => previewLegacyCompensation(tx, manifest));
+  const first = await preview();
+  expect(first.sales).toMatchObject([{
+    d0: null, stages: [
+      { days: 30, paidCents: 0n, dueOn: null, reason: expect.stringContaining("Pagamento informado") },
+      { days: 60, paidCents: 0n, dueOn: null, reason: expect.stringContaining("Pagamento informado") },
+      { days: 90, paidCents: 0n, dueOn: null, reason: expect.stringContaining("sem comprovação") },
+    ],
+  }]);
+  expect((await preview()).fingerprint).toBe(first.fingerprint);
+  expect(await database.commercialCompensationObligation.count({ where: { workspaceId, opportunityId: input.opportunityId } })).toBe(0);
+  const finance = createFinanceService({ database, authorization: createAuthorizationService({ database }), now: () => now });
+  const account = await finance.command(admin, { action: "CREATE_ACCOUNT", name: "Banco legado sintético", type: "BANK", openingBalanceCents: "0" }) as { id: string };
+  const category = await finance.command(admin, { action: "CREATE_CATEGORY", name: "Legado sintético", key: "legado_sintetico", kind: "EXPENSE" }) as { id: string };
+  const expense = await finance.command(admin, {
+    action: "CREATE_ENTRY", categoryId: category.id, financialAccountId: account.id, direction: "EXPENSE", status: "SETTLED",
+    description: "Despesa legada sintética", amountCents: "52500", competenceAt: "2026-09-30", dueAt: "2026-11-06",
+    settledAt: "2026-11-06", idempotencyKey: randomUUID(),
+  }) as { id: string };
+  const evidenced = { ...manifest, sales: manifest.sales.map((sale) => ({
+    ...sale, allocations: [{ days: 90 as const, financialEntryId: expense.id, amountCents: 52500n, settledOn: "2026-11-06", evidence: "Comprovante sintético independente" }],
+  })) };
+  const withExpense = await database.$transaction((tx) => previewLegacyCompensation(tx, evidenced));
+  await expect(applyLegacyCompensation(database, evidenced, admin.actorId, first.fingerprint)).rejects.toThrow("A prévia mudou");
+  const results = await Promise.all([
+    applyLegacyCompensation(database, evidenced, admin.actorId, withExpense.fingerprint),
+    applyLegacyCompensation(database, evidenced, admin.actorId, withExpense.fingerprint),
+  ]);
+  expect(results).toEqual(expect.arrayContaining([
+    { created: 3, allocated: 1, replayed: false }, { created: 0, allocated: 0, replayed: true },
+  ]));
+  expect(await database.commercialCompensationObligation.count({
+    where: { workspaceId, opportunityId: input.opportunityId, kind: "LEGACY_STAGE", status: "REVIEW" },
+  })).toBe(2);
+  expect(await database.commercialCompensationAllocation.count({ where: { workspaceId, financialEntryId: expense.id } })).toBe(1);
+
 });

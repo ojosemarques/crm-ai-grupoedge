@@ -11,7 +11,11 @@ BEGIN
     SELECT tablename
     FROM pg_tables
     WHERE schemaname = 'crm'
-      AND tablename NOT IN ('_prisma_migrations', 'request_rate_limits')
+      AND tablename NOT IN (
+        '_prisma_migrations', 'request_rate_limits', 'commercial_sale_confirmations',
+        'commercial_compensation_policies', 'commercial_compensation_obligations',
+        'commercial_compensation_allocations', 'commercial_compensation_reviews', 'sdr_advertising_snapshots'
+      )
   LOOP
     EXECUTE format(
       'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE crm.%I TO crm_politizai_runtime',

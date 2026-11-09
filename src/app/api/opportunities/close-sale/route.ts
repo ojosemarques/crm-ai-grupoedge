@@ -9,6 +9,9 @@ import { enforceRateLimit, readLimitedJson, sensitiveEndpointPolicies } from "@/
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 const commandSchema = z.object({ action: z.enum(["PREVIEW", "EXECUTE", "COMPLETE_LEAD"]), payload: z.unknown() }).strict();
+const pipelinePayload = z.object({
+  receivedCents: z.literal("0", { error: "Registre o recebimento pela cobrança do cliente após a venda." }).optional(),
+}).passthrough();
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,6 +28,7 @@ export async function POST(request: NextRequest) {
     const context = await requireApiAuthentication(request);
     await enforceRateLimit("sale-completion", `${context.workspaceId}:${context.memberId}`, sensitiveEndpointPolicies.paymentAction);
     const command = commandSchema.parse(await readLimitedJson(request, 32 * 1024));
+    pipelinePayload.parse(command.payload);
     const service = getSaleCompletionService();
     const result = command.action === "COMPLETE_LEAD" ? await service.completeLeadSale(context, command.payload)
       : command.action === "PREVIEW" ? await service.preview(context, command.payload) : await service.execute(context, command.payload);

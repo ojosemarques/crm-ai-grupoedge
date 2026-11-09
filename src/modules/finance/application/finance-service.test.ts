@@ -8,6 +8,7 @@ describe("finance service", () => {
   it("inclui saldo histórico, títulos vencidos e projeção sem duplicar entradas antigas", async () => {
     const entry = { id: "entry", categoryId: "category", financialAccountId: "bank", customerAccountId: null, direction: "INCOME", status: "SETTLED", description: "Receita", counterparty: null, amountCents: 200n, competenceAt: new Date("2026-09-02"), dueAt: new Date("2026-09-02"), settledAt: new Date("2026-08-31"), revision: 1 };
     const database = {
+      commercialCompensationObligation: { findMany: vi.fn().mockResolvedValue([]) },
       workspace: { findUniqueOrThrow: vi.fn().mockResolvedValue({ timeZone: "UTC" }) },
       financialCategory: { findMany: vi.fn().mockResolvedValue([{ id: "category", name: "Vendas", kind: "INCOME", dreGroup: null }]) },
       financialAccount: { findMany: vi.fn().mockResolvedValue([{ id: "bank", name: "Banco", openingBalanceCents: 1_000n }]) },
@@ -42,6 +43,7 @@ describe("finance service", () => {
 
   it("concilia regra histórica pela vigência da venda e ignora comissão já registrada", async () => {
     const tx = {
+      commercialCompensationPolicy: { findFirst: vi.fn().mockResolvedValue(null) },
       $executeRaw: vi.fn().mockResolvedValue(1),
       commissionRule: { findMany: vi.fn().mockResolvedValue([{ id: "old", sellerMemberId: "seller", active: false, percentageBps: 500, basis: "TCV", trigger: "SALE", effectiveFrom: new Date("2026-01-01"), effectiveTo: new Date("2026-09-01") }]) },
       opportunity: { findMany: vi.fn().mockResolvedValue([{ id: "sale", amountCents: 100n, mrrCents: 0n, tcvCents: 100n, currency: "BRL", closedAt: new Date("2026-08-20") }]) },
@@ -57,6 +59,7 @@ describe("finance service", () => {
   it("gera comissão proporcional para cada recebimento confirmado sem ultrapassar a base", async () => {
     const create = vi.fn().mockResolvedValue({ id: "commission" });
     const tx = {
+      commercialCompensationPolicy: { findFirst: vi.fn().mockResolvedValue(null) },
       $executeRaw: vi.fn().mockResolvedValue(1),
       commissionRule: { findMany: vi.fn().mockResolvedValue([{ id: "receipt-rule", sellerMemberId: "seller", active: true, percentageBps: 1_000, basis: "SALE_AMOUNT", trigger: "RECEIPT", effectiveFrom: new Date("2026-01-01"), effectiveTo: null }]) },
       opportunity: { findMany: vi.fn().mockResolvedValue([{ id: "sale", amountCents: 10_000n, mrrCents: 1_000n, tcvCents: 12_000n, currency: "BRL", closedAt: new Date("2026-08-20") }]) },

@@ -5,6 +5,8 @@ import type {
 } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { reconcileCommissionsInTransaction } from "@/modules/finance/application/finance-service";
+import { reconcileCloserCompensation } from "@/modules/finance/application/closer-compensation-reconciliation";
+import { invoiceUpfrontAmounts } from "@/modules/payments/application/invoice-upfront";
 import { isCatalogItemSellable } from "@/modules/catalog/domain/catalog-sellability-policy";
 import { projectOpportunityOwnership } from "@/modules/lifecycle/application/lifecycle-projection-writer";
 import { assertPipelineRequiredFields } from "@/modules/pipeline-templates/application/opportunity-required-fields";
@@ -45,6 +47,7 @@ import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import {
   parseWorkspaceLocalDateTime,
+  workspaceDateAt,
   workspaceDayRange,
 } from "@/shared/core/time/workspace-time";
 import { z } from "zod";
@@ -724,6 +727,290 @@ export async function recordOpportunityMeetingHeldInTransaction(
 }
 
 export function createOpportunityService(options: OpportunityServiceOptions) {
+  async function customerSaleScope(context: AuthenticatedContext): Promise<Prisma.OpportunityWhereInput[]> {
+    const accountResource = { workspaceId: context.workspaceId, resourceType: "Account", ownerMemberId: context.memberId };
+    const accountScope = await options.authorization.authorize(context, PermissionKeys.ACCOUNTS_READ, accountResource);
+    if (!accountScope.allowed) {
+      await options.authorization.assertAuthorized(context, PermissionKeys.ACCOUNTS_READ, accountResource);
+      throw new Error("Unreachable authorization branch");
+    }
+    const opportunityScope = await resolveScope(options.database, options.authorization, context, PermissionKeys.OPPORTUNITIES_READ);
+    const visibility = await originVisibility(options.database, context, opportunityScope.scope);
+    const accountOwners = accountScope.scope === "TEAM"
+      ? opportunityScope.scope === "TEAM" ? opportunityScope.ownerIds : await teamOwnerIds(options.database, context)
+      : [];
+    return [
+      scopeWhere(opportunityScope.scope, context, opportunityScope.ownerIds),
+      scopeWhere(accountScope.scope, context, accountOwners),
+      originVisibilityWhere(opportunityScope.scope, visibility),
+    ];
+  }
+
+  async function readCustomerSale(database: PrismaClient | Prisma.TransactionClient, context: AuthenticatedContext, accountId: string, opportunityId: string) {
+    const row = await database.opportunity.findFirst({
+      where: {
+        id: opportunityId, workspaceId: context.workspaceId, accountId, status: "WON",
+        closedAt: { not: null }, deletedAt: null, account: { deletedAt: null }, lead: { deletedAt: null },
+        AND: await customerSaleScope(context),
+      },
+      include: {
+        account: { select: { name: true } },
+        owner: { select: { user: { select: { displayName: true } } } },
+        lead: { select: { sourceId: true, queue: { select: { teamId: true } }, routingQueue: { select: { teamId: true } } } },
+        commercialContract: { select: { id: true, currentVersionId: true, ownerMemberId: true, status: true, revision: true } },
+        saleConfirmations: {
+          take: 1, orderBy: { revision: "desc" },
+          include: { seller: { select: { user: { select: { displayName: true } } } } },
+        },
+      },
+    });
+    if (!row) notFound("Venda ganha não encontrada nesta conta.");
+    const resource = opportunityResource(context.workspaceId, row);
+    await options.authorization.assertAuthorized(context, PermissionKeys.ACCOUNTS_READ, { ...resource, resourceType: "Account", resourceId: accountId });
+    return { row, resource };
+  }
+
+  async function getCustomerSale(context: AuthenticatedContext, accountId: string, opportunityId: string) {
+    const { row, resource } = await readCustomerSale(options.database, context, accountId, opportunityId);
+    const contract = row.commercialContract;
+    const contractResource = contract
+      ? { ...resource, resourceType: "CommercialContract", resourceId: contract.id, ownerMemberId: contract.ownerMemberId }
+      : null;
+    const [access, read, assign, finance, timeZone] = await Promise.all([
+      contractResource ? options.authorization.authorize(context, PermissionKeys.CONTRACTS_ACCEPT_RECORD, contractResource) : { allowed: false },
+      contractResource ? options.authorization.authorize(context, PermissionKeys.CONTRACTS_READ, contractResource) : { allowed: false },
+      options.authorization.authorize(context, PermissionKeys.OWNERSHIP_ASSIGN, resource),
+      options.authorization.authorize(context, PermissionKeys.FINANCE_MANAGE, { workspaceId: context.workspaceId, resourceType: "Finance", resourceId: context.workspaceId }),
+      getWorkspaceTimeZone(options.database, context.workspaceId),
+    ]);
+    const [version, invoices] = await Promise.all([
+      (read.allowed || access.allowed) && contract?.currentVersionId ? options.database.contractVersion.findFirst({
+        where: { id: contract.currentVersionId, workspaceId: context.workspaceId, contractId: contract.id },
+        select: { totalCents: true, paymentTerms: true },
+      }) : null,
+      contract ? options.database.invoice.findMany({
+        where: { workspaceId: context.workspaceId, accountId, contractId: contract.id, status: { notIn: ["VOIDED", "CANCELLED"] } },
+        orderBy: [{ dueAt: "asc" }, { id: "asc" }],
+        select: { id: true, ownerMemberId: true, invoiceNumber: true, dueAt: true, totalCents: true, paidCents: true, status: true, revision: true, revisedUpfrontCents: true },
+      }) : [],
+    ]);
+    const scheduleUpfront = read.allowed || access.allowed
+      ? [...(await invoiceUpfrontAmounts(options.database, context.workspaceId, invoices)).values()].reduce((sum, amount) => sum + amount, 0n).toString()
+      : null;
+    const latest = row.saleConfirmations[0];
+    const canAmend = !latest && finance.allowed && access.allowed && contract?.status === "ACCEPTED" && contractResource
+      ? (await Promise.all([PermissionKeys.CONTRACTS_VERSION_CREATE, PermissionKeys.CONTRACTS_DRAFT_WRITE, PermissionKeys.CONTRACTS_ISSUE]
+        .map((permission) => options.authorization.authorize(context, permission, contractResource)))).every((decision) => decision.allowed)
+      : false;
+    const now = options.now();
+    const today = workspaceDayRange(workspaceDateAt(now, timeZone), timeZone).start;
+    const installments = (await Promise.all(invoices.map(async (invoice) => {
+      const invoiceResource = {
+        workspaceId: context.workspaceId, resourceType: "Payment", resourceId: invoice.id, ownerMemberId: invoice.ownerMemberId,
+      };
+      const canRead = await options.authorization.authorize(context, PermissionKeys.PAYMENTS_READ, invoiceResource);
+      if (!canRead.allowed && !read.allowed && !access.allowed) return null;
+      const canReallocate = finance.allowed && canRead.allowed && invoice.paidCents === 0n
+        && ["DRAFT", "OPEN"].includes(invoice.status) && (invoice.dueAt > now || (canAmend && invoice.dueAt >= today))
+        && (await options.authorization.authorize(context, PermissionKeys.PAYMENTS_MANAGE, invoiceResource)).allowed;
+      return {
+        id: invoice.id, number: invoice.invoiceNumber, dueAt: invoice.dueAt.toISOString(),
+        totalCents: invoice.totalCents.toString(), paidCents: canRead.allowed ? invoice.paidCents.toString() : null,
+        status: canRead.allowed ? invoice.status : null, canRead: canRead.allowed, canReallocate,
+        priceOnly: invoice.dueAt <= now, revision: invoice.revision,
+      };
+    }))).filter((invoice) => invoice !== null);
+    const sellers = access.allowed && assign.allowed ? await options.database.workspaceMember.findMany({
+      where: commercialMemberWhere({ workspaceId: context.workspaceId, functions: ["SDR", "CLOSER"] }),
+      orderBy: { user: { displayName: "asc" } }, select: { id: true, user: { select: { displayName: true } } },
+    }) : [];
+    const currentSeller = latest
+      ? { id: latest.sellerMemberId, name: latest.seller.user.displayName }
+      : { id: row.ownerMemberId, name: row.owner.user.displayName };
+    const sellerOptions = [currentSeller,
+      ...sellers.filter((seller) => seller.id !== currentSeller.id).map((seller) => ({ id: seller.id, name: seller.user.displayName }))];
+    return {
+      id: row.id, name: row.name, accountName: row.account!.name, sellerName: row.owner.user.displayName,
+      sellerMemberId: currentSeller.id, timeZone, sellerOptions,
+      canConfirm: access.allowed && version !== null && version.totalCents > 0n && !["REJECTED", "VOIDED", "SUPERSEDED", "EXPIRED"].includes(contract!.status),
+      terms: version?.paymentTerms ?? null,
+      netContractCents: version?.totalCents.toString() ?? null, installments,
+      scheduleUpfrontCents: invoices.length ? scheduleUpfront : null,
+      amendment: canAmend && version && contract ? {
+        revision: contract.revision, totalCents: version.totalCents.toString(), paymentTerms: version.paymentTerms,
+        upfrontCents: scheduleUpfront ?? "0",
+      } : null,
+      confirmation: latest ? {
+        revision: latest.revision, modality: latest.modality, upfrontCents: latest.upfrontCents.toString(),
+        acceptedAt: latest.acceptedAt.toISOString(), activationAt: latest.activationAt?.toISOString() ?? null,
+        confirmedAt: latest.confirmedAt.toISOString(), sourceEvidence: access.allowed ? latest.sourceEvidence : "",
+        confirmationReason: access.allowed ? latest.confirmationReason : "", selfSourced: latest.selfSourced,
+      } : null,
+    };
+  }
+
+  async function confirmCustomerSale(context: AuthenticatedContext, accountId: string, opportunityId: string, raw: unknown) {
+    const input = z.object({
+      expectedRevision: z.number().int().min(0).max(2_147_483_646),
+      idempotencyKey: z.string().uuid(),
+      sellerMemberId: z.string().uuid(),
+      modality: z.enum(["ANNUAL_PREPAID", "ANNUAL_INSTALLMENTS", "PROJECT", "EXPANSION", "NEGOTIATED_RENEWAL", "AUTOMATIC_RENEWAL", "AUTOMATIC_LOW_TICKET"]),
+      netContractCents: z.string().regex(/^[1-9]\d{0,15}$/).transform(BigInt),
+      upfrontCents: z.string().regex(/^(0|[1-9]\d{0,15})$/).transform(BigInt),
+      selfSourced: z.boolean(), sourceEvidence: z.string().trim().min(3).max(1000),
+      acceptedAtLocal: z.string().max(16), activationAtLocal: z.string().max(16).nullable(),
+      confirmationReason: z.string().trim().min(3).max(1000),
+    }).strict().parse(raw);
+    const timeZone = await getWorkspaceTimeZone(options.database, context.workspaceId);
+    const acceptedAt = parseWorkspaceLocalDateTime(input.acceptedAtLocal, timeZone);
+    const activationAt = input.activationAtLocal ? parseWorkspaceLocalDateTime(input.activationAtLocal, timeZone) : null;
+    const { expectedRevision } = input;
+    const terms = {
+      idempotencyKey: input.idempotencyKey, sellerMemberId: input.sellerMemberId, modality: input.modality,
+      netContractCents: input.netContractCents, upfrontCents: input.upfrontCents, selfSourced: input.selfSourced,
+      sourceEvidence: input.sourceEvidence, confirmationReason: input.confirmationReason,
+    };
+    const now = options.now();
+    if (acceptedAt > now || (activationAt && activationAt > now) || input.upfrontCents > input.netContractCents) {
+      invalidInput("Revise as datas efetivas e o valor de entrada.");
+    }
+    return options.database.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`commercial-confirmation:${context.workspaceId}:${input.idempotencyKey}`}, 0))`;
+      await lockOpportunity(tx, context.workspaceId, opportunityId);
+      const { row, resource } = await readCustomerSale(tx, context, accountId, opportunityId);
+      const [contract] = await tx.$queryRaw<Array<{ id: string; currentVersionId: string | null; ownerMemberId: string; status: string }>>`
+        SELECT id, "currentVersionId", "ownerMemberId", status FROM commercial_contracts
+        WHERE "workspaceId" = ${context.workspaceId}::uuid AND "opportunityId" = ${row.id}::uuid FOR SHARE
+      `;
+      if (!contract) conflict("CUSTOMER_CONTRACT_MISSING", "A venda não possui contrato comercial.");
+      const contractResource = { ...resource, resourceType: "CommercialContract", resourceId: contract.id, ownerMemberId: contract.ownerMemberId };
+      const decision = await options.authorization.authorize(context, PermissionKeys.CONTRACTS_ACCEPT_RECORD, contractResource);
+      await options.authorization.assertAuthorized(context, PermissionKeys.CONTRACTS_ACCEPT_RECORD, contractResource);
+      await assertOriginCapability(tx, context, decision, row.lead.sourceId, "canTransition");
+      const replay = await tx.commercialSaleConfirmation.findUnique({
+        where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey: input.idempotencyKey } },
+      });
+      if (replay) {
+        if (replay.opportunityId !== row.id || replay.confirmedByActorId !== context.actorId
+          || replay.revision !== expectedRevision + 1
+          || Object.entries(terms).some(([key, value]) => replay[key as keyof typeof terms] !== value)
+          || replay.acceptedAt.getTime() !== acceptedAt.getTime() || replay.activationAt?.getTime() !== activationAt?.getTime()) {
+          conflict("CUSTOMER_CONFIRMATION_KEY_CONFLICT", "A chave de confirmação já foi utilizada com outros dados.");
+        }
+        return { revision: replay.revision, replayed: true };
+      }
+      if ((row.saleConfirmations[0]?.revision ?? 0) !== expectedRevision) {
+        conflict("CUSTOMER_CONFIRMATION_STALE", "A confirmação mudou. Recarregue a venda antes de salvar.");
+      }
+      const attributedSellerId = row.saleConfirmations[0]?.sellerMemberId ?? row.ownerMemberId;
+      if (input.sellerMemberId !== attributedSellerId) {
+        await options.authorization.assertAuthorized(context, PermissionKeys.OWNERSHIP_ASSIGN, resource);
+      }
+      if (["REJECTED", "VOIDED", "SUPERSEDED", "EXPIRED"].includes(contract.status)) {
+        conflict("CUSTOMER_CONTRACT_INACTIVE", "O contrato comercial não está vigente para confirmação.");
+      }
+      const version = contract.currentVersionId && await tx.contractVersion.findFirst({
+        where: { workspaceId: context.workspaceId, contractId: contract.id, id: contract.currentVersionId },
+        select: { totalCents: true },
+      });
+      if (!version || version.totalCents !== input.netContractCents) {
+        conflict("CUSTOMER_CONTRACT_TERMS_MISMATCH", "O valor informado precisa corresponder ao contrato comercial vigente.");
+      }
+      const invoices = await tx.invoice.findMany({
+        where: { workspaceId: context.workspaceId, accountId, contractId: contract.id, status: { notIn: ["VOIDED", "CANCELLED"] } },
+        select: { id: true, revisedUpfrontCents: true },
+      });
+      if (invoices.length) {
+        const upfront = await invoiceUpfrontAmounts(tx, context.workspaceId, invoices);
+        if ([...upfront.values()].reduce((sum, amount) => sum + amount, 0n) !== input.upfrontCents) {
+          conflict("CUSTOMER_CONTRACT_UPFRONT_MISMATCH", "Revise a entrada no cronograma contratual antes de confirmar a venda.");
+        }
+      }
+      if (input.sellerMemberId !== attributedSellerId) {
+        const seller = await tx.workspaceMember.findFirst({
+          where: commercialMemberWhere({ workspaceId: context.workspaceId, functions: ["SDR", "CLOSER"], memberId: input.sellerMemberId }),
+          select: { id: true },
+        });
+        if (!seller) notFound("Vendedor ativo não encontrado neste workspace.");
+      }
+      const revision = expectedRevision + 1;
+      await tx.commercialSaleConfirmation.create({ data: {
+        ...terms, workspaceId: context.workspaceId, opportunityId: row.id, revision,
+        acceptedAt, activationAt, confirmedAt: now, confirmedByActorId: context.actorId,
+      } });
+      await tx.auditLog.create({ data: {
+        workspaceId: context.workspaceId, actorId: context.actorId, origin: "DOMAIN",
+        action: "sale.customer.confirmed", entityType: "Opportunity", entityId: row.id,
+        changes: { revision, previousRevision: expectedRevision, sellerMemberId: input.sellerMemberId },
+      } });
+      await reconcileCloserCompensation(tx, context.workspaceId, now);
+      return { revision, replayed: false };
+    });
+  }
+
+  async function listCustomerSales(context: AuthenticatedContext, payload: unknown) {
+    const query = z.object({
+      search: z.string().trim().max(200).default(""),
+      status: z.enum(["ALL", "TO_CONFIRM", "AWAITING_RECEIPT", "CONFIRMED"]).default("ALL"),
+      page: z.coerce.number().int().min(1).max(10_000).default(1),
+    }).parse(payload);
+    const receiptWhere: Prisma.PaymentWhereInput = {
+      status: "CONFIRMED", reversedAt: null, amountCents: { gt: 0n },
+      providerKey: { not: "LOCAL_PAYMENT_SANDBOX" }, occurredAt: { lte: options.now() },
+    };
+    const hasReceipt: Prisma.OpportunityWhereInput = {
+      commercialContract: { invoices: { some: { payments: { some: receiptWhere } } } },
+    };
+    const filters: Record<typeof query.status, Prisma.OpportunityWhereInput> = {
+      ALL: {},
+      TO_CONFIRM: { saleConfirmations: { none: {} } },
+      AWAITING_RECEIPT: { saleConfirmations: { some: {} }, NOT: hasReceipt },
+      CONFIRMED: { saleConfirmations: { some: {} }, ...hasReceipt },
+    };
+    const where: Prisma.OpportunityWhereInput = {
+      workspaceId: context.workspaceId, status: "WON", closedAt: { not: null }, accountId: { not: null }, deletedAt: null,
+      lead: { deletedAt: null },
+      account: { deletedAt: null },
+      AND: [
+        ...await customerSaleScope(context),
+        filters[query.status],
+        ...(query.search ? [{ OR: [
+          { name: { contains: query.search, mode: "insensitive" as const } },
+          { account: { name: { contains: query.search, mode: "insensitive" as const } } },
+          { account: { legalName: { contains: query.search, mode: "insensitive" as const } } },
+        ] }] : []),
+      ],
+    };
+    const pageSize = 25;
+    const [rows, total] = await options.database.$transaction([
+      options.database.opportunity.findMany({
+        where, orderBy: [{ closedAt: "desc" }, { id: "asc" }], skip: (query.page - 1) * pageSize, take: pageSize,
+        select: {
+          id: true, name: true, closedAt: true,
+          account: { select: { id: true, name: true } },
+          owner: { select: { user: { select: { displayName: true } } } },
+          saleConfirmations: {
+            orderBy: { revision: "desc" }, take: 1,
+            select: { seller: { select: { user: { select: { displayName: true } } } } },
+          },
+          commercialContract: {
+            select: { invoices: { where: { payments: { some: receiptWhere } }, take: 1, select: { id: true } } },
+          },
+        },
+      }),
+      options.database.opportunity.count({ where }),
+    ], { isolationLevel: "RepeatableRead" });
+    return {
+      total, page: query.page, pageSize,
+      items: rows.map((row) => ({
+        id: row.id, name: row.name, account: row.account!, closedAt: row.closedAt!.toISOString(),
+        sellerName: row.saleConfirmations[0]?.seller.user.displayName ?? row.owner.user.displayName,
+        status: row.saleConfirmations.length === 0 ? "TO_CONFIRM" as const
+          : row.commercialContract?.invoices.length ? "CONFIRMED" as const : "AWAITING_RECEIPT" as const,
+      })),
+    };
+  }
+
   async function permissionsForRows(context: AuthenticatedContext, rows: readonly OpportunityRow[]) {
     return Promise.all(rows.map(async (row) => {
       const resource = opportunityResource(context.workspaceId, row);
@@ -1388,7 +1675,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
         },
       });
       if (targetCode === "WON") {
-        await reconcileCommissionsInTransaction(transaction, context, effectiveAt, opportunity.id);
+        await reconcileCommissionsInTransaction(transaction, context, effectiveAt, opportunity.id, options.now());
       }
       if (targetCode === "WON" && opportunity.offers[0]) {
         await transaction.offer.update({
@@ -1880,7 +2167,7 @@ export function createOpportunityService(options: OpportunityServiceOptions) {
     });
   }
 
-  return Object.freeze({ getPipelineScreen, getLeadScreen, create, transition, registerProposal, reopen });
+  return Object.freeze({ listCustomerSales, getCustomerSale, confirmCustomerSale, getPipelineScreen, getLeadScreen, create, transition, registerProposal, reopen });
 }
 
 let service: ReturnType<typeof createOpportunityService> | undefined;

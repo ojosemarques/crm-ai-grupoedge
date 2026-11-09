@@ -1099,6 +1099,9 @@ enum PaymentEventType {
   RECONCILIATION_REQUIRED
   RECONCILIATION_RESOLVED
   REPLAY_REQUESTED
+  INVOICE_NOT_RECEIVED
+  INVOICE_RESCHEDULED
+  INVOICE_BALANCE_REALLOCATED
 }
 
 enum PaymentSandboxScenario {
@@ -2796,6 +2799,8 @@ model Workspace {
   googleCalendarImportedEvents GoogleCalendarImportedEvent[]
   dataSubjectRequestEvents     DataSubjectRequestEvent[]
 
+  commercialCompensationPolicies CommercialCompensationPolicy[]
+
   @@map("workspaces")
 }
 
@@ -2830,6 +2835,9 @@ model Actor {
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   user      User?     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  saleConfirmations CommercialSaleConfirmation[]
+  commercialCompensationPolicies CommercialCompensationPolicy[]
+  commercialCompensationAllocations CommercialCompensationAllocation[]
 
   transactionalCheckoutsCreated TransactionalCheckout[]      @relation("TransactionalCheckoutCreatedBy")
   transactionalCheckoutEvents   TransactionalCheckoutEvent[] @relation("TransactionalCheckoutEventActor")
@@ -3178,6 +3186,9 @@ model WorkspaceMember {
   leadReceivingPausedBy Actor?    @relation("WorkspaceMemberPausedBy", fields: [workspaceId, leadReceivingPausedByActorId], references: [workspaceId, id], onDelete: Restrict)
 
   teamMemberships              TeamMember[]
+  saleConfirmations            CommercialSaleConfirmation[]
+  compensationObligations      CommercialCompensationObligation[]
+  sdrAdvertisingSnapshots      SdrAdvertisingSnapshot[]
   authSessions                 AuthSession[]
   leadsOwned                   Lead[]
   opportunitiesOwned           Opportunity[]
@@ -5465,6 +5476,9 @@ model Opportunity {
   gateEvaluations        OpportunityGateEvaluation[]
   deferrals              OpportunityDeferral[]
   accountPlan            OpportunityAccountPlan?
+  saleConfirmations      CommercialSaleConfirmation[]
+  compensationObligations CommercialCompensationObligation[]
+  commercialContract      CommercialContract?
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, pipelineId, id])
@@ -5481,6 +5495,165 @@ model Opportunity {
   @@index([workspaceId, farmerExpansionSignalId])
   @@index([workspaceId, createdAt])
   @@map("opportunities")
+}
+
+enum CommercialSaleModality {
+  ANNUAL_PREPAID
+  ANNUAL_INSTALLMENTS
+  PROJECT
+  EXPANSION
+  NEGOTIATED_RENEWAL
+  AUTOMATIC_RENEWAL
+  AUTOMATIC_LOW_TICKET
+}
+
+model CommercialCompensationPolicy {
+  workspaceId    String   @db.Uuid
+  version        String
+  effectiveDate  DateTime @db.Date
+  recordedAt     DateTime @default(now()) @db.Timestamptz(3)
+  recordedById   String   @db.Uuid
+  calendarVerifiedThrough DateTime? @db.Date
+  calendarHolidays        DateTime[] @default([]) @db.Date
+  calendarEvidence        String?
+
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict, map: "commercial_compensation_policy_workspace_fk")
+  recordedBy Actor     @relation(fields: [workspaceId, recordedById], references: [workspaceId, id], onDelete: Restrict, map: "commercial_compensation_policy_actor_fk")
+  obligations CommercialCompensationObligation[]
+  sdrSnapshots SdrAdvertisingSnapshot[]
+
+  @@id([workspaceId, version])
+  @@unique([workspaceId, effectiveDate])
+  @@index([workspaceId, recordedById])
+  @@map("commercial_compensation_policies")
+}
+
+model SdrAdvertisingSnapshot {
+  workspaceId String @db.Uuid
+  memberId String @db.Uuid
+  policyVersion String
+  periodKind String
+  periodStartOn DateTime @db.Date
+  periodEndOn DateTime @db.Date
+  revision Int
+  fingerprint String
+  facts Json
+  evaluatedAt DateTime @db.Timestamptz(3)
+
+  policy CommercialCompensationPolicy @relation(fields: [workspaceId, policyVersion], references: [workspaceId, version], onDelete: Restrict, map: "sdr_advertising_snapshot_policy_fk")
+  member WorkspaceMember @relation(fields: [workspaceId, memberId], references: [workspaceId, id], onDelete: Restrict, map: "sdr_advertising_snapshot_member_fk")
+
+  @@id([workspaceId, memberId, periodKind, periodStartOn, revision])
+  @@index([workspaceId, policyVersion], map: "sdr_advertising_snapshot_policy_idx")
+  @@map("sdr_advertising_snapshots")
+}
+
+enum CommercialCompensationKind {
+  SALE_COMMISSION
+  CLOSER_BONUS
+  SDR_COMMISSION
+  SDR_BONUS
+  LEGACY_STAGE
+}
+
+enum CommercialCompensationStatus {
+  PENDING
+  ELIGIBLE
+  APPROVED
+  PAID
+  REVIEW
+}
+
+model CommercialCompensationObligation {
+  workspaceId    String                       @db.Uuid
+  obligationKey  String
+  policyVersion  String
+  sellerMemberId String                       @db.Uuid
+  opportunityId  String?                      @db.Uuid
+  kind           CommercialCompensationKind
+  status         CommercialCompensationStatus @default(PENDING)
+  competenceMonth String
+  amountCents    BigInt
+  basisCents     BigInt?
+  milestoneOn    DateTime?                    @db.Date
+  eligibleAt     DateTime?                    @db.Timestamptz(3)
+  dueOn          DateTime?                    @db.Date
+  reason         String?
+  sourceFacts    Json
+  revision       Int                          @default(1)
+  createdAt      DateTime                     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime                     @updatedAt @db.Timestamptz(3)
+
+  policy      CommercialCompensationPolicy @relation(fields: [workspaceId, policyVersion], references: [workspaceId, version], onDelete: Restrict, map: "commercial_compensation_obligation_policy_fk")
+  seller      WorkspaceMember              @relation(fields: [workspaceId, sellerMemberId], references: [workspaceId, id], onDelete: Restrict, map: "commercial_compensation_obligation_seller_fk")
+  opportunity Opportunity?                 @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: Restrict, map: "commercial_compensation_obligation_opportunity_fk")
+  allocations CommercialCompensationAllocation[]
+  reviews     CommercialCompensationReview[]
+
+  @@id([workspaceId, obligationKey])
+  @@index([workspaceId, sellerMemberId, competenceMonth], map: "commercial_compensation_obligation_seller_idx")
+  @@index([workspaceId, status, dueOn], map: "commercial_compensation_obligation_due_idx")
+  @@index([workspaceId, opportunityId], map: "commercial_compensation_obligation_sale_idx")
+  @@map("commercial_compensation_obligations")
+}
+
+model CommercialCompensationAllocation {
+  workspaceId      String   @db.Uuid
+  obligationKey    String
+  financialEntryId String   @db.Uuid
+  amountCents      BigInt
+  evidence         String
+  recordedAt       DateTime @default(now()) @db.Timestamptz(3)
+  recordedById     String   @db.Uuid
+
+  obligation CommercialCompensationObligation @relation(fields: [workspaceId, obligationKey], references: [workspaceId, obligationKey], onDelete: Restrict, map: "commercial_compensation_allocation_obligation_fk")
+  entry      FinancialEntry                   @relation(fields: [workspaceId, financialEntryId], references: [workspaceId, id], onDelete: Restrict, map: "commercial_compensation_allocation_entry_fk")
+  recordedBy Actor                            @relation(fields: [workspaceId, recordedById], references: [workspaceId, id], onDelete: Restrict, map: "commercial_compensation_allocation_actor_fk")
+
+  @@id([workspaceId, obligationKey, financialEntryId])
+  @@index([workspaceId, financialEntryId], map: "commercial_compensation_allocation_entry_idx")
+  @@map("commercial_compensation_allocations")
+}
+
+model CommercialCompensationReview {
+  workspaceId    String   @db.Uuid
+  obligationKey  String
+  sourceEventKey String
+  reason         String
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  obligation CommercialCompensationObligation @relation(fields: [workspaceId, obligationKey], references: [workspaceId, obligationKey], onDelete: Restrict, map: "commercial_compensation_review_obligation_fk")
+
+  @@id([workspaceId, obligationKey, sourceEventKey])
+  @@map("commercial_compensation_reviews")
+}
+
+model CommercialSaleConfirmation {
+  workspaceId        String                 @db.Uuid
+  opportunityId      String                 @db.Uuid
+  revision           Int
+  sellerMemberId     String                 @db.Uuid
+  modality           CommercialSaleModality
+  netContractCents   BigInt
+  upfrontCents       BigInt
+  selfSourced        Boolean
+  sourceEvidence     String
+  acceptedAt         DateTime               @db.Timestamptz(3)
+  activationAt       DateTime?              @db.Timestamptz(3)
+  confirmationReason String
+  confirmedAt        DateTime               @default(now()) @db.Timestamptz(3)
+  confirmedByActorId String                 @db.Uuid
+  idempotencyKey     String
+
+  opportunity Opportunity     @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: Restrict, map: "commercial_sale_confirmation_opportunity_fk")
+  seller      WorkspaceMember @relation(fields: [workspaceId, sellerMemberId], references: [workspaceId, id], onDelete: Restrict, map: "commercial_sale_confirmation_seller_fk")
+  confirmedBy Actor           @relation(fields: [workspaceId, confirmedByActorId], references: [workspaceId, id], onDelete: Restrict, map: "commercial_sale_confirmation_actor_fk")
+
+  @@id([workspaceId, opportunityId, revision])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, sellerMemberId])
+  @@index([workspaceId, confirmedByActorId], map: "commercial_sale_confirmations_actor_idx")
+  @@map("commercial_sale_confirmations")
 }
 
 model OpportunityOutcomeSnapshot {
@@ -5819,6 +5992,9 @@ model CommercialContract {
   createdAt         DateTime                 @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime                 @updatedAt @db.Timestamptz(3)
 
+  opportunity Opportunity @relation(fields: [workspaceId, opportunityId], references: [workspaceId, id], onDelete: Restrict, onUpdate: NoAction, map: "commercial_contracts_opportunity_fkey")
+  invoices    Invoice[]
+
   @@unique([workspaceId, id])
   @@unique([workspaceId, contractNumber])
   @@unique([workspaceId, opportunityId])
@@ -5994,6 +6170,7 @@ model Invoice {
   discountCents          BigInt        @default(0)
   totalCents             BigInt
   paidCents              BigInt        @default(0)
+  revisedUpfrontCents    BigInt?
   status                 InvoiceStatus @default(DRAFT)
   billingPeriodStart     DateTime      @db.Timestamptz(3)
   billingPeriodEnd       DateTime      @db.Timestamptz(3)
@@ -6006,6 +6183,9 @@ model Invoice {
   updatedByActorId       String        @db.Uuid
   createdAt              DateTime      @default(now()) @db.Timestamptz(3)
   updatedAt              DateTime      @updatedAt @db.Timestamptz(3)
+
+  contract CommercialContract @relation(fields: [workspaceId, contractId], references: [workspaceId, id], onDelete: Restrict, onUpdate: NoAction, map: "invoices_contract_fk")
+  payments Payment[]
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, invoiceNumber])
@@ -6084,6 +6264,8 @@ model Payment {
   invoiceId          String        @db.Uuid
   attemptId          String?       @db.Uuid
   amountCents        BigInt
+  netSettledCents    BigInt?
+  netUpfrontCents    BigInt?
   currency           Currency      @default(BRL)
   status             PaymentStatus @default(CONFIRMED)
   providerKey        String        @default("LOCAL_PAYMENT_SANDBOX")
@@ -6097,6 +6279,7 @@ model Payment {
   reversalReason     String?
   confirmedByActorId String        @db.Uuid
 
+  invoice     Invoice      @relation(fields: [workspaceId, invoiceId], references: [workspaceId, id], onDelete: Restrict, onUpdate: NoAction, map: "payments_invoice_fk")
   commissions Commission[]
 
   @@unique([workspaceId, id])
@@ -14368,6 +14551,8 @@ model FinancialEntry {
   createdAt          DateTime                @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime                @updatedAt @db.Timestamptz(3)
 
+  commercialCompensationAllocations CommercialCompensationAllocation[]
+
   @@unique([workspaceId, id])
   @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId, status, dueAt])
@@ -14887,8 +15072,14 @@ model OtePlan {
   fixedCents     BigInt
   quotaCents     BigInt
   bonusCents     BigInt
+  rampMonth      String?
+  rampEvidence   String?
   meetingQuota   Int      @default(20)
   salesQuota     Int      @default(4)
+  advertisingBand60Cents  BigInt?
+  advertisingBand80Cents  BigInt?
+  advertisingBand100Cents BigInt?
+  advertisingBonusCents   BigInt?
   revision       Int      @default(1)
   updatedByActorId String @db.Uuid
   createdAt      DateTime @default(now()) @db.Timestamptz(3)

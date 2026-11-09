@@ -248,8 +248,13 @@ export function createContractService(options: Options) {
     }, { isolationLevel: "Serializable" });
   }
 
-  async function act(context: AuthenticatedContext, contractId: string, rawInput: unknown) {
+  async function act(context: AuthenticatedContext, contractId: string, rawInput: unknown, priceRevision?: {
+    totalCents: bigint; mrrCents: bigint; paymentTerms: string;
+  }) {
     const input = contractActionSchema.parse(rawInput);
+    if (priceRevision && (input.action !== "CREATE_VERSION" || priceRevision.totalCents <= 0n || priceRevision.mrrCents < 0n)) {
+      fail("A revisão de preço exige uma nova versão com valores válidos.");
+    }
     return options.database.$transaction(async (transaction) => {
       await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`contract:${context.workspaceId}:${contractId}`}, 0))`;
       const replay = await transaction.contractEvent.findFirst({ where: { workspaceId: context.workspaceId, idempotencyKey: input.idempotencyKey } });
@@ -302,9 +307,48 @@ export function createContractService(options: Options) {
       else if (input.action === "EXPIRE") { if (!contract.effectiveEndsAt || contract.effectiveEndsAt > now) fail("O contrato ainda não atingiu a data final de vigência."); toStatus = "EXPIRED"; eventType = "EXPIRED"; }
       else if (input.action === "CREATE_VERSION") {
         if (version.state === "DRAFT") fail("A versão atual ainda é editável; não crie uma cópia redundante.");
-        const [lines, clauses] = await Promise.all([transaction.contractLineSnapshot.findMany({ where: { workspaceId: context.workspaceId, contractVersionId: version.id } }), transaction.contractClauseSnapshot.findMany({ where: { workspaceId: context.workspaceId, contractVersionId: version.id } })]);
+        const [originalLines, previousClauses] = await Promise.all([
+          transaction.contractLineSnapshot.findMany({ where: { workspaceId: context.workspaceId, contractVersionId: version.id }, orderBy: { position: "asc" } }),
+          transaction.contractClauseSnapshot.findMany({ where: { workspaceId: context.workspaceId, contractVersionId: version.id } }),
+        ]);
+        let lines = originalLines;
+        let clauses = previousClauses.map(({ position, key, title, body }) => ({ position, key, title, body }));
+        if (priceRevision) {
+          if (contract.status !== "ACCEPTED" || !version.templateVersionId || !originalLines.length || version.subtotalCents <= 0n) {
+            fail("A revisão exige contrato aceito com template e itens de valor conhecido.");
+          }
+          const gross = originalLines.reduce((sum, line) => sum + line.unitPriceCents * BigInt(line.quantity), 0n);
+          if (gross !== version.subtotalCents) fail("Os itens originais divergem do valor bruto do contrato.");
+          const lastPricedLine = originalLines.reduce((last, line, index) => line.unitPriceCents > 0n ? index : last, -1);
+          let allocated = 0n;
+          lines = originalLines.map((line, index) => {
+            const quantity = BigInt(line.quantity);
+            const totalCents = index === lastPricedLine
+              ? priceRevision.totalCents - allocated
+              : priceRevision.totalCents * line.unitPriceCents * quantity / gross;
+            allocated += totalCents;
+            const requiredUnit = (totalCents + quantity - 1n) / quantity;
+            const unitPriceCents = requiredUnit > line.unitPriceCents ? requiredUnit : line.unitPriceCents;
+            return { ...line, totalCents, unitPriceCents, discountCents: unitPriceCents * quantity - totalCents };
+          });
+          const template = await transaction.contractTemplateClause.findMany({
+            where: { workspaceId: context.workspaceId, templateVersionId: version.templateVersionId }, orderBy: { position: "asc" },
+          });
+          if (!template.length) fail("Cláusulas do template indisponíveis para revisão.");
+          const values = {
+            contractNumber: contract.contractNumber, accountName: version.accountNameSnapshot,
+            contactName: version.contactNameSnapshot, opportunityName: version.opportunityNameSnapshot,
+            total: brl(priceRevision.totalCents),
+          };
+          clauses = template.map((clause) => ({
+            position: clause.position, key: clause.key, title: resolveTemplate(clause.titleTemplate, values),
+            body: resolveTemplate(clause.bodyTemplate, values),
+          }));
+        }
+        const subtotalCents = lines.reduce((sum, line) => sum + line.unitPriceCents * BigInt(line.quantity), 0n);
+        const discountCents = lines.reduce((sum, line) => sum + line.discountCents, 0n);
         await transaction.contractVersion.update({ where: { id: version.id }, data: { state: "SUPERSEDED" } });
-        const replacement = await transaction.contractVersion.create({ data: { workspaceId: context.workspaceId, contractId, versionNumber: version.versionNumber + 1, state: "DRAFT", sourceOfferId: version.sourceOfferId, templateVersionId: version.templateVersionId, templateNameSnapshot: version.templateNameSnapshot, templateVersionSnapshot: version.templateVersionSnapshot, opportunityNameSnapshot: version.opportunityNameSnapshot, accountNameSnapshot: version.accountNameSnapshot, accountLegalNameSnapshot: version.accountLegalNameSnapshot, accountDocumentSnapshot: version.accountDocumentSnapshot, contactNameSnapshot: version.contactNameSnapshot, contactRoleSnapshot: version.contactRoleSnapshot, contactEmailSnapshot: version.contactEmailSnapshot, contactPhoneSnapshot: version.contactPhoneSnapshot, currency: version.currency, subtotalCents: version.subtotalCents, discountCents: version.discountCents, totalCents: version.totalCents, mrrCents: version.mrrCents, tcvCents: version.tcvCents, billingFrequency: version.billingFrequency, durationMonths: version.durationMonths, proposedStartsAt: version.proposedStartsAt, proposedEndsAt: version.proposedEndsAt, renewalExpected: version.renewalExpected, paymentTerms: version.paymentTerms, commercialNotes: version.commercialNotes, zeroValueJustification: version.zeroValueJustification, createdByActorId: context.actorId } });
+        const replacement = await transaction.contractVersion.create({ data: { workspaceId: context.workspaceId, contractId, versionNumber: version.versionNumber + 1, state: "DRAFT", sourceOfferId: version.sourceOfferId, templateVersionId: version.templateVersionId, templateNameSnapshot: version.templateNameSnapshot, templateVersionSnapshot: version.templateVersionSnapshot, opportunityNameSnapshot: version.opportunityNameSnapshot, accountNameSnapshot: version.accountNameSnapshot, accountLegalNameSnapshot: version.accountLegalNameSnapshot, accountDocumentSnapshot: version.accountDocumentSnapshot, contactNameSnapshot: version.contactNameSnapshot, contactRoleSnapshot: version.contactRoleSnapshot, contactEmailSnapshot: version.contactEmailSnapshot, contactPhoneSnapshot: version.contactPhoneSnapshot, currency: version.currency, subtotalCents: priceRevision ? subtotalCents : version.subtotalCents, discountCents: priceRevision ? discountCents : version.discountCents, totalCents: priceRevision?.totalCents ?? version.totalCents, mrrCents: priceRevision?.mrrCents ?? version.mrrCents, tcvCents: priceRevision?.totalCents ?? version.tcvCents, billingFrequency: version.billingFrequency, durationMonths: version.durationMonths, proposedStartsAt: version.proposedStartsAt, proposedEndsAt: version.proposedEndsAt, renewalExpected: version.renewalExpected, paymentTerms: priceRevision?.paymentTerms ?? version.paymentTerms, commercialNotes: version.commercialNotes, zeroValueJustification: version.zeroValueJustification, createdByActorId: context.actorId } });
         for (const line of lines) await transaction.contractLineSnapshot.create({ data: { workspaceId: context.workspaceId, contractVersionId: replacement.id, position: line.position, sourceOfferId: line.sourceOfferId, sourceOfferTemplateId: line.sourceOfferTemplateId, productId: line.productId, productSkuSnapshot: line.productSkuSnapshot, productNameSnapshot: line.productNameSnapshot, productVersionSnapshot: line.productVersionSnapshot, productKindSnapshot: line.productKindSnapshot, revenueCategorySnapshot: line.revenueCategorySnapshot, approvedConditionsSnapshot: line.approvedConditionsSnapshot, offerNameSnapshot: line.offerNameSnapshot, quantity: line.quantity, unitPriceCents: line.unitPriceCents, discountCents: line.discountCents, totalCents: line.totalCents, currency: line.currency } });
         for (const clause of clauses) await transaction.contractClauseSnapshot.create({ data: { workspaceId: context.workspaceId, contractVersionId: replacement.id, position: clause.position, key: clause.key, title: clause.title, body: clause.body } });
         await transaction.commercialContract.update({ where: { id: contract.id }, data: { currentVersionId: replacement.id, status: "DRAFT", revision: { increment: 1 }, updatedByActorId: context.actorId } });

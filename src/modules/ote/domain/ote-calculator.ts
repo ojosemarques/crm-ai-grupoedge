@@ -10,12 +10,20 @@ export const saleKindLabels: Record<SaleKind, string> = {
 const cents = z.string().regex(/^\d{1,12}$/);
 export const monthSchema = z.string().regex(/^20\d{2}-(0[1-9]|1[0-2])$/);
 export const oteQuerySchema = z.object({ month: monthSchema.optional() }).strict();
+const advertisingPlanSchema = z.object({
+  band60Cents: cents, band80Cents: cents, band100Cents: cents, bonusCents: cents,
+}).strict().refine((plan) => BigInt(plan.band60Cents) <= BigInt(plan.band80Cents) &&
+  BigInt(plan.band80Cents) <= BigInt(plan.band100Cents), "As faixas devem ter valores crescentes.");
 export const oteCommandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("SAVE_PLAN"), memberId: z.string().uuid(), effectiveMonth: monthSchema,
     label: z.string().trim().min(2).max(100), role: z.enum(["CLOSER", "SDR"]), fixedCents: cents,
     quotaCents: cents, bonusCents: cents, meetingQuota: z.number().int().min(1).max(1000),
     salesQuota: z.number().int().min(1).max(1000), expectedRevision: z.number().int().min(0),
-  }).strict().refine((v) => v.role === "SDR" || BigInt(v.quotaCents) > 0n, "Informe a meta ACV."),
+    ramp: z.object({ month: monthSchema, evidence: z.string().trim().min(5).max(500) }).strict().nullable().optional(),
+    advertising: advertisingPlanSchema.nullable().optional(),
+  }).strict().refine((v) => v.role === "SDR" || BigInt(v.quotaCents) > 0n, "Informe a meta ACV.")
+    .refine((v) => !(v.role === "SDR" && v.ramp) && !(v.role === "CLOSER" && v.advertising),
+      "Informe a configuração compatível com o papel comercial."),
   z.object({ action: z.literal("CLASSIFY_SALE"), opportunityId: z.string().uuid(), kind: z.enum(saleKinds),
     acvCents: cents, selfSourced: z.boolean(), sdrMemberId: z.string().uuid().nullable(),
     evidence: z.string().trim().min(5).max(1000), expectedRevision: z.number().int().min(0),

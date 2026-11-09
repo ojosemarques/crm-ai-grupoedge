@@ -7,9 +7,9 @@ import { advertisingMessageActivities } from "./realtime-advertising-activities"
 import { excludedMetricLeadIds, metricFactExclusionFilters } from "@/modules/metrics/application/metric-lead-exclusions";
 import { uniqueMeetingBookingFactIds } from "./unique-meeting-booking-facts";
 
-export type RealtimeFactScope = Readonly<{ where: Prisma.CommercialMetricFactWhereInput; leadWhere: Prisma.LeadWhereInput; memberIds: readonly string[] | null }>;
+export type RealtimeFactScope = Readonly<{ where: Prisma.CommercialMetricFactWhereInput; leadWhere: Prisma.LeadWhereInput; memberIds: readonly string[] | null; recordedThrough?: Date; preserveMeetingBookings?: boolean }>;
 
-export async function readRealtimeDashboardFacts(database: PrismaClient, workspaceId: string, from: Date, to: Date, front: RealtimeDashboardFront, scope?: RealtimeFactScope, eventTypes?: readonly CommercialMetricEventType[]) {
+export async function readRealtimeDashboardFacts(database: PrismaClient | Prisma.TransactionClient, workspaceId: string, from: Date, to: Date, front: RealtimeDashboardFront, scope?: RealtimeFactScope, eventTypes?: readonly CommercialMetricEventType[]) {
   const selectedEventTypes = eventTypes ?? [...realtimeDashboardEventTypes, ...(front === "ADVERTISING" ? ["LEAD_CREATED", "LEAD_SUBMISSION_ATTACHED"] as const : [])];
   const excludedIds = await excludedMetricLeadIds(database, workspaceId);
   const [candidateRows, pipelines] = await Promise.all([
@@ -18,6 +18,7 @@ export async function readRealtimeDashboardFacts(database: PrismaClient, workspa
           workspaceId,
           eventType: { in: [...selectedEventTypes] },
           occurredAt: { gte: from, lt: to },
+          ...(scope?.recordedThrough ? { recordedAt: { lte: scope.recordedThrough } } : {}),
           AND: [
             ...metricFactExclusionFilters(excludedIds),
             ...(scope ? [scope.where] : []),
@@ -56,7 +57,7 @@ export async function readRealtimeDashboardFacts(database: PrismaClient, workspa
   // Resolve replacements in one batch. A correlated anti-join scans historical
   // corrections for every refresh and stalls the production polling queries.
   const replacements = candidateRows.length ? await database.commercialMetricFact.findMany({
-    where: { workspaceId, correctionOfFactId: { in: candidateRows.map(fact => fact.id) }, OR: [
+    where: { workspaceId, ...(scope?.recordedThrough ? { recordedAt: { lte: scope.recordedThrough } } : {}), correctionOfFactId: { in: candidateRows.map(fact => fact.id) }, OR: [
       { eventKey: { endsWith: ":front-classification:replacement:v1" } },
       { eventKey: { endsWith: ":test-removal:reversal:v1" } },
     ] },
@@ -67,14 +68,14 @@ export async function readRealtimeDashboardFacts(database: PrismaClient, workspa
   const selectedPipelineIds = new Set(commercialFrontPipelineIds(front, pipelines));
   const knownPipelineIds = new Set(commercialFrontPipelineIds("ALL", pipelines));
   const frontRows = allFactRows.filter(fact => selectedPipelineIds.has(realtimeFactPipelineId(fact) ?? ""));
-  const uniqueBookings = await uniqueMeetingBookingFactIds(database, {
-    workspaceId, to, pipelineIds: selectedPipelineIds, excludedLeadIds: excludedIds,
+  const uniqueBookings = scope?.preserveMeetingBookings ? null : await uniqueMeetingBookingFactIds(database, {
+    workspaceId, to, ...(scope?.recordedThrough ? { recordedThrough: scope.recordedThrough } : {}), pipelineIds: selectedPipelineIds, excludedLeadIds: excludedIds,
     candidates: frontRows.filter(fact => fact.eventType === "MEETING_SCHEDULED"),
   });
   const manualMessages = front === "ADVERTISING" && selectedEventTypes.some(type => type === "WHATSAPP_MESSAGE_SENT" || type === "INSTAGRAM_MESSAGE_SENT") ? await advertisingMessageActivities(database, workspaceId, from, to, selectedPipelineIds,
     new Set(allFactRows.filter(fact => ["WHATSAPP_MESSAGE_SENT", "INSTAGRAM_MESSAGE_SENT"].includes(fact.eventType)).flatMap(fact => fact.activityId ? [fact.activityId] : [])), { AND: [scope?.leadWhere ?? {}, { id: { notIn: excludedIds } }] }) : [];
   return {
-    factRows: [...frontRows.flatMap(fact => fact.eventType !== "MEETING_SCHEDULED" ? [fact] : uniqueBookings.has(fact.id) ? [{ ...fact, quantity: 1 }] : []), ...manualMessages.filter(fact => selectedEventTypes.includes(fact.eventType))],
+    factRows: [...frontRows.flatMap(fact => fact.eventType !== "MEETING_SCHEDULED" || !uniqueBookings ? [fact] : uniqueBookings.has(fact.id) ? [{ ...fact, quantity: 1 }] : []), ...manualMessages.filter(fact => selectedEventTypes.includes(fact.eventType))],
     unclassified: allFactRows.filter(fact => !knownPipelineIds.has(realtimeFactPipelineId(fact) ?? "")).length,
   };
 }

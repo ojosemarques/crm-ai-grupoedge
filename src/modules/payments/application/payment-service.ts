@@ -17,12 +17,18 @@ import {
   PAYMENT_PROVIDER_KEY,
   paymentWebhookEventSchema,
   reconciliationResolutionSchema,
+  reallocateInvoiceScheduleSchema,
   verifyPaymentWebhook,
 } from "@/modules/payments/domain/payment-contracts";
 import { createAuthorizationService, type ResourceScope } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
+import { transactionDatabase } from "@/shared/core/database/transaction-client";
+import { createContractService } from "@/modules/contracts/application/contract-service";
+import { createRevenueService } from "@/modules/revenue/application/revenue-service";
+import { invoiceUpfrontAmounts } from "@/modules/payments/application/invoice-upfront";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 
 type Tx = Prisma.TransactionClient;
@@ -65,6 +71,9 @@ export async function appendPaymentEventInTransaction(
       | "INVOICE_CREATED"
       | "INVOICE_ISSUED"
       | "INVOICE_VOIDED"
+      | "INVOICE_NOT_RECEIVED"
+      | "INVOICE_RESCHEDULED"
+      | "INVOICE_BALANCE_REALLOCATED"
       | "ATTEMPT_QUEUED"
       | "ATTEMPT_STARTED"
       | "PROVIDER_ACCEPTED"
@@ -157,19 +166,40 @@ export function createPaymentService(options: Options) {
     return { invoice, account };
   }
 
-  function validateReceipt(input: ReturnType<typeof previewReceiptSchema.parse>, invoice: Awaited<ReturnType<typeof receiptResources>>["invoice"]) {
+  async function validateReceipt(input: ReturnType<typeof previewReceiptSchema.parse>, invoice: Awaited<ReturnType<typeof receiptResources>>["invoice"], database: Tx | PrismaClient) {
     if (!["OPEN", "PARTIALLY_PAID"].includes(invoice.status)) fail("A cobrança não está aberta para recebimento.", "PAYMENT_INVALID_INVOICE_TRANSITION");
     if (input.expectedRevision !== undefined && invoice.revision !== input.expectedRevision) fail("A cobrança mudou. Revise uma nova prévia antes de confirmar.", "PAYMENT_VERSION_CONFLICT");
     if (input.amountCents > outstandingCents(invoice.totalCents, invoice.paidCents)) fail("O recebimento excede o saldo da cobrança.", "PAYMENT_RECEIPT_OVERPAYMENT");
     if (input.receivedAt > options.now()) fail("A data do recebimento não pode estar no futuro.", "PAYMENT_RECEIPT_FUTURE_DATE", 400);
+    const { netSettledCents, netUpfrontCents } = input;
+    if ((netSettledCents !== undefined && netSettledCents > input.amountCents)
+      || (netUpfrontCents !== undefined && (netSettledCents === undefined || netUpfrontCents > netSettledCents))) {
+      fail("O líquido deve caber no valor bruto e a entrada deve caber no líquido.", "PAYMENT_RECEIPT_NET_VALUES", 400);
+    }
+    if (!netUpfrontCents) return;
+    const [entries, previouslyAllocated] = await Promise.all([
+      invoiceUpfrontAmounts(database, invoice.workspaceId, [invoice]),
+      database.payment.aggregate({
+        where: { workspaceId: invoice.workspaceId, invoiceId: invoice.id, status: "CONFIRMED", reversedAt: null },
+        _sum: { netUpfrontCents: true },
+      }),
+    ]);
+    if (netUpfrontCents + (previouslyAllocated._sum.netUpfrontCents ?? 0n) > (entries.get(invoice.id) ?? 0n)) {
+      fail("A entrada líquida excede a entrada contratual discriminada na cobrança.", "PAYMENT_RECEIPT_UPFRONT_ALLOCATION", 400);
+    }
   }
 
   async function previewReceipt(context: AuthenticatedContext, raw: unknown) {
     const input = previewReceiptSchema.parse(raw);
     const { invoice, account } = await receiptResources(context, input, options.database);
-    validateReceipt(input, invoice);
+    await validateReceipt(input, invoice, options.database);
+    const { netSettledCents, netUpfrontCents, ...receipt } = input;
+    const evidence = {
+      ...(netSettledCents !== undefined ? { netSettledCents: netSettledCents.toString() } : {}),
+      ...(netUpfrontCents !== undefined ? { netUpfrontCents: netUpfrontCents.toString() } : {}),
+    };
     return {
-      input: { ...input, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), expectedRevision: invoice.revision },
+      input: { ...receipt, ...evidence, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), expectedRevision: invoice.revision },
       preview: { invoiceNumber: invoice.invoiceNumber, customerName: invoice.accountNameSnapshot, financialAccountName: account.name, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), method: input.method, reference: input.reference, outstandingBeforeCents: (invoice.totalCents - invoice.paidCents).toString(), outstandingAfterCents: (invoice.totalCents - invoice.paidCents - input.amountCents).toString(), statusAfter: invoiceStatusAfterPayment(invoice.totalCents, invoice.paidCents + input.amountCents), effect: "Registra dinheiro já recebido, baixa a cobrança e atualiza caixa e indicadores. Não altera o MRR contratado nem movimenta dinheiro no banco." },
     };
   }
@@ -177,7 +207,11 @@ export function createPaymentService(options: Options) {
   async function recordReceipt(context: AuthenticatedContext, raw: unknown) {
     const input = recordReceiptSchema.parse(raw);
     const eventKey = `manual-receipt:${input.idempotencyKey}`;
-    const requestHash = sha256(canonicalJson({ invoiceId: input.invoiceId, financialAccountId: input.financialAccountId, expectedRevision: input.expectedRevision, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), method: input.method, reference: input.reference }));
+    const evidence = {
+      ...(input.netSettledCents !== undefined ? { netSettledCents: input.netSettledCents.toString() } : {}),
+      ...(input.netUpfrontCents !== undefined ? { netUpfrontCents: input.netUpfrontCents.toString() } : {}),
+    };
+    const requestHash = sha256(canonicalJson({ invoiceId: input.invoiceId, financialAccountId: input.financialAccountId, expectedRevision: input.expectedRevision, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), method: input.method, reference: input.reference, ...evidence }));
     const externalPaymentId = sha256(canonicalJson({ financialAccountId: input.financialAccountId, reference: input.reference.toLocaleLowerCase("pt-BR") }));
     return options.database.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`manual-receipt:${context.workspaceId}:${input.idempotencyKey}`}, 0))`;
@@ -191,17 +225,18 @@ export function createPaymentService(options: Options) {
         const payment = await tx.payment.findFirstOrThrow({ where: { workspaceId: context.workspaceId, id: replay.paymentId, invoiceId: invoice.id } });
         return { invoice, payment, idempotent: true };
       }
-      validateReceipt(input, invoice);
+      await validateReceipt(input, invoice, tx);
       const duplicate = await tx.payment.findUnique({ where: { workspaceId_providerKey_externalPaymentId: { workspaceId: context.workspaceId, providerKey: MANUAL_RECEIPT_PROVIDER_KEY, externalPaymentId } } });
       if (duplicate) fail("Esta referência já foi registrada nesta conta financeira.", "PAYMENT_RECEIPT_DUPLICATE_REFERENCE");
-      const payment = await tx.payment.create({ data: { workspaceId: context.workspaceId, invoiceId: invoice.id, amountCents: input.amountCents, currency: invoice.currency, providerKey: MANUAL_RECEIPT_PROVIDER_KEY, externalPaymentId, idempotencyKey: eventKey, correlationId: `invoice:${invoice.id}`, occurredAt: input.receivedAt, confirmedByActorId: context.actorId } });
+      const recordedAt = options.now();
+      const payment = await tx.payment.create({ data: { workspaceId: context.workspaceId, invoiceId: invoice.id, amountCents: input.amountCents, netSettledCents: input.netSettledCents ?? null, netUpfrontCents: input.netUpfrontCents ?? null, currency: invoice.currency, providerKey: MANUAL_RECEIPT_PROVIDER_KEY, externalPaymentId, idempotencyKey: eventKey, correlationId: `invoice:${invoice.id}`, occurredAt: input.receivedAt, recordedAt, confirmedByActorId: context.actorId } });
       const paidCents = invoice.paidCents + input.amountCents;
       const status = invoiceStatusAfterPayment(invoice.totalCents, paidCents);
       const changed = await tx.invoice.updateMany({ where: { id: invoice.id, workspaceId: context.workspaceId, revision: input.expectedRevision }, data: { paidCents, status, paidAt: status === "PAID" ? input.receivedAt : null, revision: { increment: 1 }, updatedByActorId: context.actorId } });
       if (changed.count !== 1) fail("A cobrança mudou. Revise uma nova prévia.", "PAYMENT_VERSION_CONFLICT");
-      const metadata = { providerKey: MANUAL_RECEIPT_PROVIDER_KEY, financialAccountId: account.id, financialAccountName: account.name, customerAccountId: invoice.accountId, customerName: invoice.accountNameSnapshot, method: input.method, reference: input.reference, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), requestHash, receiptConfirmed: true };
+      const metadata = { providerKey: MANUAL_RECEIPT_PROVIDER_KEY, financialAccountId: account.id, financialAccountName: account.name, customerAccountId: invoice.accountId, customerName: invoice.accountNameSnapshot, method: input.method, reference: input.reference, amountCents: input.amountCents.toString(), receivedAt: input.receivedAt.toISOString(), requestHash, receiptConfirmed: true, ...evidence };
       await appendPaymentEventInTransaction(tx, { workspaceId: context.workspaceId, invoiceId: invoice.id, paymentId: payment.id, type: "PAYMENT_CONFIRMED", actorId: context.actorId, reason: `Recebimento confirmado pelo operador via ${input.method}. Referência: ${input.reference}`, idempotencyKey: eventKey, correlationId: payment.correlationId, occurredAt: input.receivedAt, safeMetadata: metadata });
-      await reconcileCommissionsInTransaction(tx, context, input.receivedAt);
+      await reconcileCommissionsInTransaction(tx, context, input.receivedAt, undefined, recordedAt);
       await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "payment.receipt.recorded", entityType: "Payment", entityId: payment.id, origin: "DOMAIN", changes: { ...metadata, invoiceId: invoice.id, previousPaidCents: invoice.paidCents.toString(), paidCents: paidCents.toString(), previousStatus: invoice.status, status } } });
       const updated = await tx.invoice.findFirstOrThrow({ where: { id: invoice.id, workspaceId: context.workspaceId } });
       return { invoice: updated, payment, idempotent: false };
@@ -314,12 +349,13 @@ export function createPaymentService(options: Options) {
     const invoice = await options.database.invoice.findFirst({ where: { id: invoiceId, workspaceId: context.workspaceId } });
     if (!invoice) fail("Cobrança não encontrada.", "PAYMENT_INVOICE_NOT_FOUND", 404);
     await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_READ, resource(context, invoice.id, invoice.ownerMemberId));
-    const [lines, attempts, payments, events, issues, permissions] = await Promise.all([
+    const [lines, attempts, payments, events, issues, workspace, permissions] = await Promise.all([
       options.database.invoiceLine.findMany({ where: { workspaceId: context.workspaceId, invoiceId }, orderBy: { position: "asc" } }),
       options.database.paymentAttempt.findMany({ where: { workspaceId: context.workspaceId, invoiceId }, orderBy: { sequence: "desc" } }),
       options.database.payment.findMany({ where: { workspaceId: context.workspaceId, invoiceId }, orderBy: [{ occurredAt: "desc" }, { id: "desc" }] }),
       options.database.paymentEvent.findMany({ where: { workspaceId: context.workspaceId, invoiceId }, orderBy: [{ sequence: "desc" }, { id: "desc" }] }),
       options.database.paymentReconciliationIssue.findMany({ where: { workspaceId: context.workspaceId, invoiceId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }] }),
+      options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } }),
       Promise.all([
         authorization.authorize(context, PermissionKeys.PAYMENTS_MANAGE, resource(context, invoice.id, invoice.ownerMemberId)),
         authorization.authorize(context, PermissionKeys.PAYMENTS_REPROCESS, resource(context, invoice.id, invoice.ownerMemberId)),
@@ -328,7 +364,12 @@ export function createPaymentService(options: Options) {
     ]);
     const canRecordReceipt = permissions[0].allowed && (await authorization.authorize(context, PermissionKeys.FINANCE_MANAGE, { workspaceId: context.workspaceId, resourceType: "Finance", resourceId: context.workspaceId })).allowed;
     const financialAccounts = canRecordReceipt ? await options.database.financialAccount.findMany({ where: { workspaceId: context.workspaceId, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [];
-    return { invoice, lines, attempts, payments, events, issues, financialAccounts, permissions: { manage: permissions[0].allowed, recordReceipt: canRecordReceipt, reprocess: permissions[1].allowed, reconcile: permissions[2].allowed }, mode: "MANUAL_RECEIPTS" as const, sandboxEnabled: process.env.NODE_ENV !== "production", externalEgress: false as const };
+    const hasActiveAttempt = attempts.some((attempt) => ["QUEUED", "PROCESSING", "PROVIDER_ACCEPTED", "RETRY_PENDING"].includes(attempt.status));
+    const canReviseCollection = canRecordReceipt && !payments.some((payment) => payment.providerKey !== PAYMENT_PROVIDER_KEY);
+    const canReschedule = canReviseCollection && invoice.paidCents === 0n && ["DRAFT", "OPEN"].includes(invoice.status)
+      && invoice.dueAt > options.now() && !hasActiveAttempt;
+    const overdue = ["OPEN", "PARTIALLY_PAID"].includes(invoice.status) && invoice.dueAt < options.now();
+    return { invoice, lines, attempts, payments, events, issues, financialAccounts, overdue, timeZone: workspace.timeZone, permissions: { manage: permissions[0].allowed, recordReceipt: canRecordReceipt, markNotReceived: canReviseCollection && invoice.status === "OPEN" && invoice.paidCents === 0n && invoice.totalCents > 0n, reschedule: canReschedule, reprocess: permissions[1].allowed, reconcile: permissions[2].allowed }, mode: "MANUAL_RECEIPTS" as const, sandboxEnabled: process.env.NODE_ENV !== "production", externalEgress: false as const };
   }
 
   // O preço variável vem do cronograma validado do fechamento, não do payload da API de cobranças.
@@ -390,6 +431,210 @@ export function createPaymentService(options: Options) {
     }, { isolationLevel: "ReadCommitted" });
   }
 
+  async function reallocateCustomerSchedule(context: AuthenticatedContext, accountId: string, opportunityId: string, raw: unknown) {
+    const input = reallocateInvoiceScheduleSchema.parse(raw);
+    await authorization.assertAuthorized(context, PermissionKeys.FINANCE_MANAGE, {
+      workspaceId: context.workspaceId, resourceType: "Finance", resourceId: context.workspaceId,
+    });
+    const installments = [...input.installments].sort((a, b) => a.invoiceId.localeCompare(b.invoiceId));
+    const commandKey = `invoice-reallocation:${input.idempotencyKey}`;
+    const requestHash = sha256(canonicalJson({
+      accountId, opportunityId, reason: input.reason,
+      installments: installments.map((item) => ({ ...item, amountCents: item.amountCents.toString() })),
+      ...(input.amendment ? { amendment: { ...input.amendment, totalCents: input.amendment.totalCents.toString(),
+        ...(input.amendment.upfrontCents !== undefined ? { upfrontCents: input.amendment.upfrontCents.toString() } : {}),
+      } } : {}),
+    }));
+    return options.database.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${context.workspaceId}:${commandKey}`}, 0))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`opportunity:${context.workspaceId}:${opportunityId}`}, 0))`;
+      const saleContract = await tx.commercialContract.findFirst({
+        where: { workspaceId: context.workspaceId, accountId, opportunityId }, select: { id: true },
+      });
+      if (!saleContract) fail("Contrato vigente da venda não encontrado.", "PAYMENT_SCHEDULE_CONTRACT_NOT_FOUND", 404);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`contract:${context.workspaceId}:${saleContract.id}`}, 0))`;
+      const [contract] = await tx.$queryRaw<Array<{ id: string; currentVersionId: string | null; revision: number; status: string; effectiveStartsAt: Date | null; effectiveEndsAt: Date | null }>>`
+        SELECT c.id, c."currentVersionId", c.revision, c.status::text AS status, c."effectiveStartsAt", c."effectiveEndsAt" FROM commercial_contracts c
+        JOIN opportunities o ON o."workspaceId" = c."workspaceId" AND o.id = c."opportunityId"
+        WHERE c."workspaceId" = ${context.workspaceId}::uuid AND c."accountId" = ${accountId}::uuid
+          AND c."opportunityId" = ${opportunityId}::uuid AND o."accountId" = c."accountId"
+          AND o.status = 'WON' AND o."deletedAt" IS NULL
+          AND c.status NOT IN ('REJECTED', 'VOIDED', 'SUPERSEDED', 'EXPIRED')
+        FOR NO KEY UPDATE OF c
+      `;
+      if (!contract?.currentVersionId) fail("Contrato vigente da venda não encontrado.", "PAYMENT_SCHEDULE_CONTRACT_NOT_FOUND", 404);
+      const invoiceIds = installments.map((item) => item.invoiceId);
+      for (const invoiceId of invoiceIds) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`invoice:${context.workspaceId}:${invoiceId}`}, 0))`;
+      }
+      const invoices = await tx.invoice.findMany({
+        where: { workspaceId: context.workspaceId, accountId, contractId: contract.id, id: { in: invoiceIds } },
+      });
+      if (invoices.length !== installments.length) fail("Cobrança fora da venda selecionada.", "PAYMENT_SCHEDULE_INVOICE_NOT_FOUND", 404);
+      for (const invoice of invoices) {
+        await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_MANAGE, resource(context, invoice.id, invoice.ownerMemberId));
+      }
+      const replay = await tx.paymentEvent.findUnique({
+        where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey: `${commandKey}:0` } },
+      });
+      if (replay) {
+        const metadata = replay.safeMetadata as Record<string, unknown> | null;
+        if (replay.type !== "INVOICE_BALANCE_REALLOCATED" || metadata?.requestHash !== requestHash) {
+          fail("A chave já pertence a outra revisão de parcelas.", "PAYMENT_SCHEDULE_IDEMPOTENCY_CONFLICT");
+        }
+        return { changed: Number(metadata.changed), replayed: true };
+      }
+      const now = options.now();
+      const workspace = await tx.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
+      const today = workspaceDayRange(workspaceDateAt(now, workspace.timeZone), workspace.timeZone).start;
+      const canChangeDueAt = (dueAt: Date) => input.amendment ? dueAt >= today : dueAt > now;
+      const byId = new Map(invoices.map((invoice) => [invoice.id, invoice]));
+      for (const item of installments) {
+        const invoice = byId.get(item.invoiceId)!;
+        if (invoice.revision !== item.expectedRevision) fail("Uma das cobranças mudou. Recarregue a venda.", "PAYMENT_VERSION_CONFLICT");
+        if (!["DRAFT", "OPEN"].includes(invoice.status) || invoice.paidCents !== 0n || !canChangeDueAt(invoice.dueAt)) {
+          fail("A revisão exige cobranças sem baixa e dentro do período permitido.", "PAYMENT_SCHEDULE_INVOICE_NOT_ELIGIBLE");
+        }
+      }
+      const [version, schedule, receipts, activeAttempts] = await Promise.all([
+        tx.contractVersion.findFirst({ where: { workspaceId: context.workspaceId, contractId: contract.id, id: contract.currentVersionId }, select: { totalCents: true, durationMonths: true, billingFrequency: true } }),
+        tx.invoice.findMany({ where: { workspaceId: context.workspaceId, contractId: contract.id, status: { notIn: ["VOIDED", "CANCELLED"] } },
+          orderBy: [{ billingPeriodStart: "asc" }, { id: "asc" }], select: { id: true, totalCents: true, revisedUpfrontCents: true },
+        }),
+        tx.payment.count({ where: { workspaceId: context.workspaceId, invoiceId: { in: invoiceIds }, providerKey: { not: PAYMENT_PROVIDER_KEY } } }),
+        tx.paymentAttempt.count({ where: { workspaceId: context.workspaceId, invoiceId: { in: invoiceIds }, status: { in: ["QUEUED", "PROCESSING", "PROVIDER_ACCEPTED", "RETRY_PENDING"] } } }),
+      ]);
+      if (receipts || activeAttempts) fail("Resolva as baixas ou tentativas de cobrança antes de revisar parcelas.", "PAYMENT_SCHEDULE_COLLECTION_HISTORY");
+      const previous = invoices.reduce((total, invoice) => total + invoice.totalCents, 0n);
+      const proposed = installments.reduce((total, item) => total + item.amountCents, 0n);
+      const contractDelta = input.amendment && version ? input.amendment.totalCents - version.totalCents : 0n;
+      if (!version || schedule.reduce((sum, invoice) => sum + invoice.totalCents, 0n) !== version.totalCents || proposed - previous !== contractDelta) {
+        fail("A diferença nas parcelas deve corresponder à mudança do total contratual.", "PAYMENT_SCHEDULE_TOTAL_MISMATCH", 400);
+      }
+      const entryById = await invoiceUpfrontAmounts(tx, context.workspaceId, schedule);
+      const currentUpfront = [...entryById.values()].reduce((sum, amount) => sum + amount, 0n);
+      const requestedUpfront = input.amendment?.upfrontCents ?? currentUpfront;
+      const entryChanged = requestedUpfront !== currentUpfront;
+      const entryInvoices = schedule.filter((invoice) => (entryById.get(invoice.id) ?? 0n) > 0n);
+      const entryInvoiceId = entryInvoices[0]?.id ?? schedule[0]?.id;
+      if (entryChanged && (entryInvoices.length > 1 || !entryInvoiceId || !byId.has(entryInvoiceId))) {
+        fail("Selecione a cobrança da entrada. Alocação em várias cobranças exige revisão financeira.", "PAYMENT_AMENDMENT_ENTRY_SELECTION");
+      }
+      if (input.amendment && contractDelta === 0n && !entryChanged) {
+        fail("Informe um novo total ou um novo valor de entrada.", "PAYMENT_SCHEDULE_UNCHANGED", 400);
+      }
+      const changes = installments.map((item) => {
+        const invoice = byId.get(item.invoiceId)!;
+        const dueAt = item.dueOn ? workspaceDayRange(item.dueOn, workspace.timeZone).start : invoice.dueAt;
+        const previousUpfrontCents = entryById.get(invoice.id) ?? 0n;
+        const revisedUpfrontCents = entryChanged && invoice.id === entryInvoiceId ? requestedUpfront : previousUpfrontCents;
+        if (!canChangeDueAt(dueAt) || dueAt < invoice.billingPeriodStart || item.amountCents < revisedUpfrontCents) {
+          fail("Revise vencimento, competência e valor da entrada.", "PAYMENT_SCHEDULE_INVALID_INSTALLMENT", 400);
+        }
+        return { invoice, amountCents: item.amountCents, dueAt, previousUpfrontCents, revisedUpfrontCents };
+      }).filter(({ invoice, amountCents, dueAt, previousUpfrontCents, revisedUpfrontCents }) =>
+        invoice.totalCents !== amountCents || invoice.dueAt.getTime() !== dueAt.getTime() || previousUpfrontCents !== revisedUpfrontCents);
+      if (!changes.length) fail("Informe ao menos uma alteração nas parcelas.", "PAYMENT_SCHEDULE_UNCHANGED", 400);
+      let amendedVersionId: string | null = null;
+      if (input.amendment) {
+        const amendment = input.amendment;
+        if (contract.revision !== amendment.expectedContractRevision || contract.status !== "ACCEPTED" || !contract.effectiveStartsAt) {
+          fail("Recarregue o contrato aceito antes de revisar seu valor.", "PAYMENT_AMENDMENT_STALE");
+        }
+        const [confirmed, legacyCommission, obligation, subscriptions] = await Promise.all([
+          tx.commercialSaleConfirmation.count({ where: { workspaceId: context.workspaceId, opportunityId } }),
+          tx.commission.count({ where: { workspaceId: context.workspaceId, opportunityId } }),
+          tx.commercialCompensationObligation.count({ where: { workspaceId: context.workspaceId, opportunityId } }),
+          tx.subscription.findMany({ where: { workspaceId: context.workspaceId, contractId: contract.id }, take: 2 }),
+        ]);
+        if (confirmed || legacyCommission || obligation) {
+          fail("A venda já tem confirmação ou comissão registrada e exige revisão financeira.", "PAYMENT_AMENDMENT_REQUIRES_REVIEW");
+        }
+        const subscription = subscriptions[0];
+        if (subscriptions.length !== 1 || !subscription || subscription.status !== "ACTIVE" || subscription.quantity !== 1
+          || subscription.billingInterval !== "MONTHLY" || subscription.startsAt > now || !version.durationMonths
+          || !["MONTHLY", "ONE_TIME"].includes(version.billingFrequency)) {
+          fail("A assinatura precisa de revisão antes de corrigir o valor.", "PAYMENT_AMENDMENT_SUBSCRIPTION_REVIEW");
+        }
+        const months = BigInt(version.durationMonths);
+        const recurring = amendment.totalCents - requestedUpfront;
+        if (recurring < 0n) fail("O novo total é menor que a entrada contratual.", "PAYMENT_AMENDMENT_ENTRY_MISMATCH");
+        const mrrCents = version.billingFrequency === "ONE_TIME" ? 0n : (recurring + months / 2n) / months;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`subscription:${context.workspaceId}:${subscription.id}`}, 0))`;
+        const currentSubscription = await tx.subscription.findFirstOrThrow({ where: { id: subscription.id, workspaceId: context.workspaceId } });
+        if (currentSubscription.revision !== subscription.revision || await tx.subscriptionScheduledChange.count({
+          where: { workspaceId: context.workspaceId, subscriptionId: subscription.id, status: "PENDING" },
+        })) fail("A assinatura tem alteração em andamento.", "PAYMENT_AMENDMENT_SUBSCRIPTION_REVIEW");
+        const database = transactionDatabase(tx);
+        const contracts = createContractService({ database, authorization, now: options.now });
+        const updated = await contracts.act(context, contract.id, {
+          action: "CREATE_VERSION", expectedRevision: contract.revision, reason: input.reason,
+          confirmed: true, idempotencyKey: `${commandKey}:contract-version`,
+        }, { totalCents: amendment.totalCents, mrrCents, paymentTerms: amendment.paymentTerms });
+        if (!("versionId" in updated) || !updated.versionId) {
+          fail("Nova versão contratual indisponível.", "PAYMENT_AMENDMENT_VERSION_UNAVAILABLE");
+        }
+        amendedVersionId = updated.versionId;
+        let revision = contract.revision + 1;
+        for (const action of ["REQUEST_REVIEW", "MARK_READY", "ISSUE", "ACCEPT_LOCAL"] as const) {
+          await contracts.act(context, contract.id, {
+            action, expectedRevision: revision++, confirmed: true, idempotencyKey: `${commandKey}:${action}`,
+            ...(action === "REQUEST_REVIEW" ? { reason: input.reason } : {}),
+            ...(action === "ACCEPT_LOCAL" ? {
+              acceptedByName: amendment.acceptedByName, acceptedByRole: amendment.acceptedByRole,
+              evidenceText: amendment.evidenceText, effectiveStartsAt: contract.effectiveStartsAt.toISOString(),
+              effectiveEndsAt: contract.effectiveEndsAt?.toISOString() ?? null,
+            } : {}),
+          });
+        }
+        if (mrrCents !== currentSubscription.currentMrrCents) {
+          const revenue = createRevenueService(database, authorization);
+          await revenue.action(context, subscription.id, {
+            action: "SCHEDULE_CHANGE", effectiveAt: now, quantity: 1, recurringPriceCents: mrrCents,
+            billingInterval: "MONTHLY", reason: input.reason,
+          });
+          const pending = await tx.subscriptionScheduledChange.findFirstOrThrow({
+            where: { workspaceId: context.workspaceId, subscriptionId: subscription.id, status: "PENDING" },
+          });
+          await revenue.action(context, subscription.id, {
+            action: "APPLY_CHANGE", changeId: pending.id, idempotencyKey: `${commandKey}:revenue`,
+          });
+        }
+        await tx.subscription.update({ where: { id: subscription.id }, data: {
+          currentContractVersionId: updated.versionId, revision: { increment: 1 }, updatedByActorId: context.actorId,
+        } });
+        await tx.opportunity.update({ where: { id: opportunityId }, data: {
+          amountCents: amendment.totalCents, tcvCents: amendment.totalCents, mrrCents,
+          revision: { increment: 1 }, updatedByActorId: context.actorId,
+        } });
+      }
+      for (const [index, { invoice, amountCents, dueAt, previousUpfrontCents, revisedUpfrontCents }] of changes.entries()) {
+        const updated = await tx.invoice.update({
+          where: { id: invoice.id },
+          data: { totalCents: amountCents, subtotalCents: amountCents + invoice.discountCents, dueAt,
+            ...(previousUpfrontCents !== revisedUpfrontCents ? { revisedUpfrontCents } : {}),
+            revision: { increment: 1 }, updatedByActorId: context.actorId },
+        });
+        const facts = {
+          opportunityId, previousCents: invoice.totalCents.toString(), amountCents: amountCents.toString(),
+          previousDueAt: invoice.dueAt.toISOString(), dueAt: dueAt.toISOString(), revision: updated.revision,
+          previousUpfrontCents: previousUpfrontCents.toString(), upfrontCents: revisedUpfrontCents.toString(),
+          ...(amendedVersionId ? { previousContractVersionId: contract.currentVersionId, contractVersionId: amendedVersionId } : {}),
+        };
+        await appendPaymentEventInTransaction(tx, {
+          workspaceId: context.workspaceId, invoiceId: invoice.id, type: "INVOICE_BALANCE_REALLOCATED",
+          actorId: context.actorId, reason: input.reason, idempotencyKey: `${commandKey}:${index}`,
+          correlationId: commandKey, occurredAt: now, safeMetadata: { ...facts, requestHash, changed: changes.length },
+        });
+        await tx.auditLog.create({ data: {
+          workspaceId: context.workspaceId, actorId: context.actorId, entityType: "Invoice", entityId: invoice.id,
+          origin: "DOMAIN", action: "payment.invoice.balance_reallocated", changes: { ...facts, reason: input.reason },
+        } });
+      }
+      return { changed: changes.length, replayed: false };
+    }, { timeout: 30_000 });
+  }
+
   async function act(context: AuthenticatedContext, invoiceId: string, raw: unknown) {
     const input = invoiceActionSchema.parse(raw);
     if (process.env.NODE_ENV === "production" && (input.action === "CHARGE" || input.action === "REPLAY")) fail("Simulações de pagamento não estão disponíveis em produção.", "PAYMENT_SANDBOX_DISABLED_IN_PRODUCTION", 403);
@@ -399,6 +644,55 @@ export function createPaymentService(options: Options) {
       const invoice = await tx.invoice.findFirst({ where: { id: invoiceId, workspaceId: context.workspaceId } });
       if (!invoice) fail("Cobrança não encontrada.", "PAYMENT_INVOICE_NOT_FOUND", 404);
       await authorization.assertAuthorized(context, PermissionKeys.PAYMENTS_MANAGE, resource(context, invoice.id, invoice.ownerMemberId));
+      if (input.action === "NOT_RECEIVED" || input.action === "RESCHEDULE") {
+        await authorization.assertAuthorized(context, PermissionKeys.FINANCE_MANAGE, {
+          workspaceId: context.workspaceId, resourceType: "Finance", resourceId: context.workspaceId,
+        });
+        if (invoice.revision !== input.expectedRevision) fail("A cobrança mudou. Atualize antes de registrar a ocorrência.", "PAYMENT_VERSION_CONFLICT");
+        const previousReceipt = await tx.payment.findFirst({
+          where: { workspaceId: context.workspaceId, invoiceId, providerKey: { not: PAYMENT_PROVIDER_KEY } },
+          select: { id: true },
+        });
+        if (previousReceipt) fail("Uma cobrança com histórico de baixa exige revisão financeira.", "PAYMENT_COLLECTION_HAS_RECEIPT");
+        const now = options.now();
+        let dueAt = invoice.dueAt;
+        if (input.action === "RESCHEDULE") {
+          if (!["DRAFT", "OPEN"].includes(invoice.status) || invoice.paidCents !== 0n || invoice.dueAt <= now) {
+            fail("Só é possível reagendar uma cobrança futura sem baixa.", "PAYMENT_RESCHEDULE_NOT_ALLOWED");
+          }
+          const activeAttempt = await tx.paymentAttempt.findFirst({
+            where: { workspaceId: context.workspaceId, invoiceId, status: { in: ["QUEUED", "PROCESSING", "PROVIDER_ACCEPTED", "RETRY_PENDING"] } },
+            select: { id: true },
+          });
+          if (activeAttempt) fail("Resolva a tentativa de cobrança em andamento antes de reagendar.", "PAYMENT_RESCHEDULE_ACTIVE_ATTEMPT");
+          const workspace = await tx.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
+          dueAt = workspaceDayRange(input.dueOn, workspace.timeZone).start;
+          if (dueAt <= now || dueAt < invoice.billingPeriodStart || dueAt.getTime() === invoice.dueAt.getTime()) {
+            fail("Informe um novo vencimento futuro dentro ou após a competência.", "PAYMENT_RESCHEDULE_INVALID_DATE", 400);
+          }
+        } else if (invoice.status !== "OPEN" || invoice.paidCents !== 0n || invoice.totalCents <= 0n) {
+          fail("A ocorrência exige uma cobrança aberta e sem baixa.", "PAYMENT_NOT_RECEIVED_NOT_ALLOWED");
+        }
+        const updated = await tx.invoice.update({
+          where: { id: invoice.id }, data: { dueAt, revision: { increment: 1 }, updatedByActorId: context.actorId },
+        });
+        const reason = input.reason || "Operador informou saldo não recebido.";
+        const type = input.action === "RESCHEDULE" ? "INVOICE_RESCHEDULED" : "INVOICE_NOT_RECEIVED";
+        const changes = {
+          previousDueAt: invoice.dueAt.toISOString(), dueAt: dueAt.toISOString(),
+          outstandingCents: (invoice.totalCents - invoice.paidCents).toString(), reason, revision: updated.revision,
+        };
+        await appendPaymentEventInTransaction(tx, {
+          workspaceId: context.workspaceId, invoiceId, type, actorId: context.actorId, reason,
+          idempotencyKey: `invoice-collection:${invoice.id}:r${updated.revision}`, correlationId: `invoice:${invoice.id}`,
+          occurredAt: now, safeMetadata: changes,
+        });
+        await tx.auditLog.create({ data: {
+          workspaceId: context.workspaceId, actorId: context.actorId, entityType: "Invoice", entityId: invoice.id,
+          origin: "DOMAIN", action: input.action === "RESCHEDULE" ? "payment.invoice.rescheduled" : "payment.invoice.not_received", changes,
+        } });
+        return { invoice: updated, status: updated.status };
+      }
       if (input.action === "ISSUE") {
         if (invoice.status !== "DRAFT") fail("Somente cobrança em rascunho pode ser emitida.", "PAYMENT_INVALID_INVOICE_TRANSITION");
         if (invoice.revision !== input.expectedRevision) fail("A cobrança foi alterada; atualize a página.", "PAYMENT_VERSION_CONFLICT");
@@ -509,7 +803,7 @@ export function createPaymentService(options: Options) {
     });
   }
 
-  return Object.freeze({ screen, detail, createInvoice, previewReceipt, recordReceipt, act, ingestSignedLocalWebhook, resolveIssue });
+  return Object.freeze({ screen, detail, createInvoice, previewReceipt, recordReceipt, reallocateCustomerSchedule, act, ingestSignedLocalWebhook, resolveIssue });
 }
 
 let service: ReturnType<typeof createPaymentService> | undefined;

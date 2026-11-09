@@ -1,3 +1,4 @@
+import { transactionDatabase } from "@/shared/core/database/transaction-client";
 import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
@@ -24,20 +25,6 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 
 function fail(message: string, code = "SALE_NOT_READY", statusCode = 409): never {
   throw new ApplicationError(message, { code, statusCode, expose: true });
-}
-
-// Existing domain services retain their authorization and invariants, while all
-// their transaction callbacks participate in this one atomic sale operation.
-function transactionDatabase(tx: Prisma.TransactionClient): PrismaClient {
-  return new Proxy(tx, {
-    get(target, property) {
-      if (property === "$transaction") return async (operation: (client: Prisma.TransactionClient) => Promise<unknown>) => {
-        if (typeof operation !== "function") throw new Error("Sale orchestration requires an interactive transaction.");
-        return operation(tx);
-      };
-      return Reflect.get(target, property);
-    },
-  }) as PrismaClient;
 }
 
 export function createSaleCompletionService(options: { database: PrismaClient; now: () => Date }) {

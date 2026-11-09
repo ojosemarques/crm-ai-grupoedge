@@ -51,7 +51,7 @@ beforeAll(async()=>{
 });
 afterAll(async()=>database.$disconnect());
 
-async function invoice(key:string,start="2049-01-01T03:00:00.000Z",end="2049-02-01T03:00:00.000Z"){return payments().createInvoice(admin,{subscriptionId,billingPeriodStart:start,billingPeriodEnd:end,dueAt:end,idempotencyKey:key});}
+async function invoice(key:string,start="2049-01-01T03:00:00.000Z",end="2049-02-01T03:00:00.000Z",upfrontCents="0"){return payments().createInvoice(admin,{subscriptionId,billingPeriodStart:start,billingPeriodEnd:end,dueAt:end,idempotencyKey:key,upfrontCents});}
 
 describe("CRM-50 pagamentos em sandbox",()=>{
   it("preserva preço de parcela interno sem aceitar override público ou replay com outro valor", async () => {
@@ -75,8 +75,8 @@ describe("CRM-50 pagamentos em sandbox",()=>{
 });
 
 describe("recebimento manual real integrado", () => {
-  async function setup(key: string, month: number) {
-    const created = await invoice(key, `2048-${String(month).padStart(2, "0")}-01T03:00:00.000Z`, `2048-${String(month + 1).padStart(2, "0")}-01T03:00:00.000Z`);
+  async function setup(key: string, month: number, upfrontCents?: string) {
+    const created = await invoice(key, `2048-${String(month).padStart(2, "0")}-01T03:00:00.000Z`, `2048-${String(month + 1).padStart(2, "0")}-01T03:00:00.000Z`, upfrontCents);
     await payments().act(admin, created.id, { action: "ISSUE", expectedRevision: 1, reason: "Cobrança real aguardando recebimento." });
     const financialAccount = await database.financialAccount.create({ data: { workspaceId, name: key, type: "BANK", openingBalanceCents: 0n, createdByActorId: admin.actorId, updatedByActorId: admin.actorId } });
     return { invoiceId: created.id, financialAccountId: financialAccount.id, expectedRevision: 2, amountCents: "4000", receivedAt: clock.toISOString(), method: "PIX" as const, reference: `recibo-${key}` };
@@ -92,15 +92,21 @@ describe("recebimento manual real integrado", () => {
     const preview = await payments().previewReceipt(admin, input);
     expect(preview.preview).toMatchObject({ amountCents: "4000", outstandingAfterCents: "5900", statusAfter: "PARTIALLY_PAID" });
     expect(await database.payment.count({ where: { workspaceId, invoiceId: input.invoiceId } })).toBe(0);
-    const command = { ...preview.input, confirmed: true, idempotencyKey: randomUUID() };
+    const command = { ...preview.input, netSettledCents: "3800", confirmed: true, idempotencyKey: randomUUID() };
+    await expect(payments().recordReceipt(admin, { ...command, netSettledCents: "4001" }))
+      .rejects.toMatchObject({ code: "PAYMENT_RECEIPT_NET_VALUES" });
+    await expect(payments().recordReceipt(admin, { ...command, netUpfrontCents: "100" }))
+      .rejects.toMatchObject({ code: "PAYMENT_RECEIPT_UPFRONT_ALLOCATION" });
     const first = await payments().recordReceipt(admin, command);
-    expect(first).toMatchObject({ idempotent: false, invoice: { paidCents: 4000n, status: "PARTIALLY_PAID", revision: 3 }, payment: { providerKey: "MANUAL_RECEIPT" } });
+    expect(first).toMatchObject({ idempotent: false, invoice: { paidCents: 4000n, status: "PARTIALLY_PAID", revision: 3 }, payment: { providerKey: "MANUAL_RECEIPT", amountCents: 4000n, netSettledCents: 3800n } });
     await expect(payments().recordReceipt(admin, command)).resolves.toMatchObject({ idempotent: true, payment: { id: first.payment.id } });
+    await expect(payments().recordReceipt(admin, { ...command, netSettledCents: "3799" }))
+      .rejects.toMatchObject({ code: "PAYMENT_RECEIPT_IDEMPOTENCY_CONFLICT" });
     const second = await payments().recordReceipt(admin, { ...input, expectedRevision: 3, amountCents: "5900", reference: "recibo-final-success", confirmed: true, idempotencyKey: randomUUID() });
     expect(second.invoice).toMatchObject({ paidCents: 9900n, status: "PAID", paidAt: clock, revision: 4 });
     const after = await finance.screen(admin, { from: "2049-01-01", to: "2049-02-01" });
-    expect(BigInt(after.summary.receivedCents) - BigInt(before.summary.receivedCents)).toBe(9900n);
-    expect(after.accounts.find((row) => row.id === input.financialAccountId)?.balanceCents).toBe("9900");
+    expect(BigInt(after.summary.receivedCents) - BigInt(before.summary.receivedCents)).toBe(9700n);
+    expect(after.accounts.find((row) => row.id === input.financialAccountId)?.balanceCents).toBe("9700");
     expect(after.summary.unallocatedPaymentBalanceCents).toBe("0");
     expect(after.summary.mrrCents).toBe(before.summary.mrrCents);
     expect(await database.financialEntry.count({ where: { workspaceId, financialAccountId: input.financialAccountId } })).toBe(0);
@@ -108,6 +114,62 @@ describe("recebimento manual real integrado", () => {
     const screen = await metrics.getScreen(admin, { preset: "CUSTOM", fromDate: "2049-01-01", toDate: "2049-01-31" });
     expect(screen.metrics.find((row) => row.metricId === "cash.received")?.value).toBe(after.summary.receivedCents);
     expect(await database.auditLog.count({ where: { workspaceId, action: "payment.receipt.recorded", entityId: { in: [first.payment.id, second.payment.id] } } })).toBe(2);
+  });
+
+  it("distingue o bruto canônico do caixa líquido e exige evidência para a entrada", async () => {
+    const input = await setup("manual-receipt-settlement-evidence", 11, "1000");
+    const evidence = { netSettledCents: "3800", netUpfrontCents: "1000" };
+    const preview = await payments().previewReceipt(admin, { ...input, ...evidence });
+    expect(preview.input).toMatchObject(evidence);
+    const { payment } = await payments().recordReceipt(admin, {
+      ...preview.input, confirmed: true, idempotencyKey: randomUUID(),
+    });
+    expect(payment).toMatchObject({ amountCents: 4000n, netSettledCents: 3800n, netUpfrontCents: 1000n });
+    const event = await database.paymentEvent.findFirstOrThrow({ where: { workspaceId, paymentId: payment.id, type: "PAYMENT_CONFIRMED" } });
+    expect(event.safeMetadata).toMatchObject(evidence);
+    const where = { id: payment.id };
+    await expect(database.payment.update({ where, data: { netSettledCents: null } }))
+      .rejects.toThrow(/payments_net_settlement_values/);
+    await expect(database.payment.update({ where, data: { netSettledCents: 4001n } }))
+      .rejects.toThrow(/payments_net_settlement_values/);
+    await expect(database.payment.update({ where, data: { netSettledCents: 3800n, netUpfrontCents: 3801n } }))
+      .rejects.toThrow(/payments_net_settlement_values/);
+    const remainder = { ...input, expectedRevision: 3, amountCents: "500", netSettledCents: "450", reference: "recibo-entrada-duplicada", confirmed: true, idempotencyKey: randomUUID() };
+    await expect(payments().recordReceipt(admin, { ...remainder, netUpfrontCents: "1" }))
+      .rejects.toMatchObject({ code: "PAYMENT_RECEIPT_UPFRONT_ALLOCATION" });
+  });
+
+  it("reagenda a cobrança futura e registra não recebido preservando identidade, competência e saldo", async () => {
+    const initial = await invoice("crm50:collection:future", "2049-07-01T03:00:00.000Z", "2049-08-01T03:00:00.000Z");
+    const issued = await payments().act(admin, initial.id, { action: "ISSUE", expectedRevision: 1, reason: "Cobrança sintética futura" });
+    expect(issued).toMatchObject({ status: "OPEN" });
+    const change = { action: "RESCHEDULE", expectedRevision: 2, dueOn: "2049-08-09", reason: "Novo vencimento acordado" };
+    await expect(payments().act(viewer, initial.id, change)).rejects.toBeInstanceOf(AccessDeniedError);
+    await expect(payments().act(admin, initial.id, change)).resolves.toMatchObject({
+      invoice: { id: initial.id, revision: 3, status: "OPEN", dueAt: new Date("2049-08-09T03:00:00.000Z"),
+        billingPeriodStart: initial.billingPeriodStart, totalCents: initial.totalCents, paidCents: 0n },
+    });
+    await expect(payments().act(admin, initial.id, change)).rejects.toMatchObject({ code: "PAYMENT_VERSION_CONFLICT" });
+    await expect(payments().act(admin, initial.id, { action: "NOT_RECEIVED", expectedRevision: 3 })).resolves.toMatchObject({
+      invoice: { id: initial.id, status: "OPEN", paidCents: 0n, revision: 4 },
+    });
+    const events = await database.paymentEvent.findMany({ where: { workspaceId, invoiceId: initial.id }, orderBy: { sequence: "asc" } });
+    expect(events.map((event) => event.type)).toEqual(["INVOICE_CREATED", "INVOICE_ISSUED", "INVOICE_RESCHEDULED", "INVOICE_NOT_RECEIVED"]);
+    expect(await database.payment.count({ where: { workspaceId, invoiceId: initial.id } })).toBe(0);
+    expect(await database.invoiceLine.count({ where: { workspaceId, invoiceId: initial.id } })).toBe(1);
+    const account = await database.financialAccount.create({
+      data: { workspaceId, name: "Caixa sintético de cobrança", type: "BANK", openingBalanceCents: 0n,
+        createdByActorId: admin.actorId, updatedByActorId: admin.actorId },
+    });
+    await payments().recordReceipt(admin, {
+      invoiceId: initial.id, financialAccountId: account.id, expectedRevision: 4, amountCents: "100",
+      receivedAt: clock.toISOString(), method: "PIX", reference: "Comprovante sintético de cobrança",
+      confirmed: true, idempotencyKey: randomUUID(),
+    });
+    await expect(payments().act(admin, initial.id, { action: "NOT_RECEIVED", expectedRevision: 5 }))
+      .rejects.toMatchObject({ code: "PAYMENT_COLLECTION_HAS_RECEIPT" });
+    await expect(payments().act(admin, initial.id, { ...change, dueOn: "2049-08-10", expectedRevision: 5 }))
+      .rejects.toMatchObject({ code: "PAYMENT_COLLECTION_HAS_RECEIPT" });
   });
 
   it("inclui entrada avulsa no caixa e reconstrói quitação anterior ao período comparado", async () => {

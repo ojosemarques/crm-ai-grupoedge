@@ -6,10 +6,11 @@ const context = { workspaceId: "workspace", memberId: "seller", userId: "user", 
 const now = new Date("2027-01-01T12:00:00Z");
 function fixture(kind = "ANNUAL_MONTHLY") {
   const database = {
+    commercialCompensationPolicy: { findFirst: vi.fn().mockResolvedValue(null) },
     workspaceMember: { findFirst: vi.fn().mockResolvedValue({ role: { key: "closer" } }) },
     actor: { findFirst: vi.fn().mockResolvedValue({ id: "actor" }) },
     workspace: { findUniqueOrThrow: vi.fn().mockResolvedValue({ timeZone: "America/Sao_Paulo" }) },
-    otePlan: { findFirst: vi.fn().mockResolvedValue({ role: "CLOSER", label: "Plano", effectiveMonth: "2026-10", fixedCents: 370000n, quotaCents: 6000000n, bonusCents: 120000n, meetingQuota: 20, salesQuota: 4 }) },
+    otePlan: { findFirst: vi.fn().mockResolvedValue({ role: "CLOSER", label: "Plano", effectiveMonth: "2026-10", fixedCents: 370000n, quotaCents: 6000000n, bonusCents: 120000n, meetingQuota: 20, salesQuota: 4, advertisingBand100Cents: null }) },
     opportunity: { findMany: vi.fn().mockResolvedValue([{ id: "sale", name: "Venda", closedAt: new Date("2026-10-01T15:00:00Z"), ownerMemberId: "seller", amountCents: 6000000n, mrrCents: 500000n, tcvCents: 6000000n }]) },
     oteSale: { findMany: vi.fn().mockResolvedValue([{ opportunityId: "sale", sellerMemberId: "seller", kind, acvCents: 6000000n, selfSourced: false }]) },
     commercialContract: { findMany: vi.fn().mockResolvedValue([{ id: "contract", opportunityId: "sale" }]) },

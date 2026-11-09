@@ -2,6 +2,7 @@ import { enterDemoCompany } from "./helpers/company-hub";
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { DEMO_SEED_PASSWORD, DEMO_USERS, } from "@/modules/settings/application/demo-seed-service";
+import { workspaceLocalDateTimeAt } from "@/shared/core/time/workspace-time";
 
 async function login(page:Page,email:string){await page.goto("/login");await page.getByLabel("E-mail").fill(email);await page.getByLabel("Senha").fill(DEMO_SEED_PASSWORD);await page.getByRole("button",{name:"Entrar"}).click(); await enterDemoCompany(page);await expect(page).toHaveURL(/\/$/);}
 
@@ -29,10 +30,17 @@ test("recebimento exige prévia e atestado, baixa cobrança e aparece na conta f
   expect(issueResponse.ok()).toBe(true);
   await page.goto(`/pagamentos/${invoice.id}`);
   await expect(page.getByRole("button", { name: "Simular pagamento" })).toHaveCount(0);
+  await page.getByLabel("Motivo da ação").fill("Vencimento revisto com o cliente");
+  await page.getByLabel("Novo vencimento").fill("2098-08-12");
+  await page.getByRole("button", { name: "Reagendar cobrança" }).click();
+  await expect(page.getByText(/Vencimento reagendado/)).toBeVisible();
+  await page.getByRole("button", { name: "Registrar não recebido" }).click();
+  await expect(page.getByText(/· Não recebido/)).toBeVisible();
   await page.getByRole("combobox", { name: "Conta financeira", exact: true }).selectOption(account.id);
   await page.getByLabel("Valor recebido (R$)").fill("1,00");
+  await page.getByLabel("Valor líquido creditado (R$)").fill("0,97");
   const localDate = new Date(Date.now() - 60_000);
-  const localDateInput = new Date(localDate.getTime() - localDate.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  const localDateInput = workspaceLocalDateTimeAt(localDate, "America/Sao_Paulo");
   await page.getByLabel("Data e hora do recebimento").fill(localDateInput);
   await page.getByLabel("Referência única do comprovante").fill(reference);
   await page.getByRole("button", { name: "Revisar recebimento" }).click();
@@ -46,6 +54,7 @@ test("recebimento exige prévia e atestado, baixa cobrança e aparece na conta f
   const detail = (await (await page.request.get(`/api/payments/${invoice.id}`)).json()).result;
   expect(detail.invoice.paidCents).toBe("100");
   expect(detail.payments).toHaveLength(1);
+  expect(detail.payments[0]).toMatchObject({ amountCents: "100", netSettledCents: "97" });
   const finance = (await (await page.request.get("/api/finance")).json()).result;
-  expect(finance.accounts.find((item: { id: string }) => item.id === account.id)?.balanceCents).toBe("100");
+  expect(finance.accounts.find((item: { id: string }) => item.id === account.id)?.balanceCents).toBe("97");
 });

@@ -33,6 +33,8 @@ afterAll(async () => database.$disconnect());
 
 describe("financeiro integrado", () => {
   it("cria conta, categoria e despesa, liquida e projeta caixa/DRE", async () => {
+    const period = { from: "2026-09-01T00:00:00.000Z", to: "2026-10-01T00:00:00.000Z" };
+    const baseline = await service.screen(admin, period);
     const account = await service.command(admin, { action: "CREATE_ACCOUNT", name: "Banco principal", type: "BANK", openingBalanceCents: "100000" }) as { id: string };
     const category = await service.command(admin, { action: "CREATE_CATEGORY", key: "operacional", name: "Despesa operacional", kind: "EXPENSE", dreGroup: "OPERATING_EXPENSE" }) as { id: string };
     const entry = await service.command(admin, { action: "CREATE_ENTRY", categoryId: category.id, financialAccountId: account.id, customerAccountId: null, direction: "EXPENSE", status: "PLANNED", description: "Licença mensal do CRM", counterparty: "Fornecedor", amountCents: "15000", competenceAt: "2026-09-20T12:00:00.000Z", dueAt: "2026-09-25T12:00:00.000Z", settledAt: null, idempotencyKey: "finance:test:expense:001" }) as { id: string };
@@ -40,8 +42,11 @@ describe("financeiro integrado", () => {
     expect(replay.id).toBe(entry.id);
 
     await service.command(admin, { action: "SETTLE_ENTRY", entryId: entry.id, status: "SETTLED", settledAt: "2026-09-25T12:00:00.000Z", expectedRevision: 1 });
-    const screen = await service.screen(admin, { from: "2026-09-01T00:00:00.000Z", to: "2026-10-01T00:00:00.000Z" });
-    expect(screen.metrics).toMatchObject({ expenseCents: "15000", cashBalanceCents: "85000", netIncomeCents: "-15000" });
+    const screen = await service.screen(admin, period);
+    expect(BigInt(screen.metrics.expenseCents) - BigInt(baseline.metrics.expenseCents)).toBe(15_000n);
+    expect(BigInt(screen.metrics.cashBalanceCents) - BigInt(baseline.metrics.cashBalanceCents)).toBe(85_000n);
+    expect(BigInt(screen.metrics.netIncomeCents) - BigInt(baseline.metrics.netIncomeCents)).toBe(-15_000n);
+    expect(screen.accounts.find((row) => row.id === account.id)?.balanceCents).toBe("85000");
     expect(screen.entries).toEqual(expect.arrayContaining([expect.objectContaining({ id: entry.id, status: "SETTLED", direction: "EXPENSE" })]));
   });
 

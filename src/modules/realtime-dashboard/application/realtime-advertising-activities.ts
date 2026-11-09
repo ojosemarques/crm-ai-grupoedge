@@ -2,7 +2,7 @@ import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 
 // Manual MESSAGE_SENT logs do not always have a channel metric fact. Read only
 // those missing contributions; existing task/provider facts keep their identity.
-export async function advertisingMessageActivities(database: PrismaClient, workspaceId: string, from: Date, to: Date, pipelineIds: ReadonlySet<string>, factActivityIds: ReadonlySet<string>, leadWhere?: Prisma.LeadWhereInput) {
+export async function advertisingMessageActivities(database: PrismaClient | Prisma.TransactionClient, workspaceId: string, from: Date, to: Date, pipelineIds: ReadonlySet<string>, factActivityIds: ReadonlySet<string>, leadWhere?: Prisma.LeadWhereInput) {
   const activities = await database.activity.findMany({
     where: { workspaceId, ...(leadWhere ? { lead: leadWhere } : {}), type: "MESSAGE_SENT", direction: "OUTBOUND", result: "SENT", deletedAt: null, correctsActivityId: null, messageId: null, occurredAt: { gte: from, lt: to } },
     select: { id: true, leadId: true, occurredAt: true, createdAt: true, createdBy: { select: { userId: true } } },

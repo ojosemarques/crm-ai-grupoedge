@@ -15,6 +15,26 @@ const centsInput = (value: FormDataEntryValue | null) => {
   const [integer, fraction = ""] = raw.split(".");
   return (BigInt(integer!) * 100n + BigInt(fraction.padEnd(2, "0"))).toString();
 };
+const advertisingFields = [
+  ["band60Cents", "Comissão na faixa de 60%"],
+  ["band80Cents", "Comissão na faixa de 80%"],
+  ["band100Cents", "Comissão na faixa de 100%"],
+  ["bonusCents", "Bônus de Anúncios na faixa de 100%"],
+] as const;
+
+function commercialPlanOptions(data: FormData) {
+  const month = data.get("rampMonth");
+  const evidence = data.get("rampEvidence");
+  if (data.get("role") === "CLOSER") {
+    if (Boolean(month) !== Boolean(evidence)) throw new Error("Informe o mês e a evidência da rampa.");
+    return { ramp: month && evidence ? { month, evidence } : null };
+  }
+  const configured = advertisingFields.some(([key]) => Boolean(data.get(key)));
+  return {
+    advertising: configured ? Object.fromEntries(advertisingFields.map(([key]) => [key, centsInput(data.get(key))])) : null,
+  };
+}
+
 export function OteAdmin({ screen }: { screen: OteAdministration }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -42,10 +62,15 @@ export function OteAdmin({ screen }: { screen: OteAdministration }) {
     <p className={styles.notice}>Somente administradores podem acessar esta tela. Cada vendedor consulta apenas o próprio plano. Conferir OTE não gera lançamentos nem pagamentos no Financeiro.</p>
     {message ? <p className={styles.notice} role={failed ? "alert" : "status"}>{message}</p> : null}
     <section className={styles.panel}><h2>Salário e meta por pessoa</h2><div className={styles.toolbar}><label>Pessoa<select className={styles.link} value={memberId} onChange={(e) => setMemberId(e.target.value)}>{choices()}</select></label><label>Vigência a partir de<input type="month" value={effectiveMonth} onChange={(e) => setEffectiveMonth(e.target.value)} required /></label></div>
-    <form className={styles.form} key={`${memberId}:${effectiveMonth}:${latest?.revision ?? 0}`} onSubmit={(e) => void submit(e, (d) => ({ action: "SAVE_PLAN", memberId, effectiveMonth, label: d.get("label"), role: d.get("role"), fixedCents: centsInput(d.get("fixed")), quotaCents: centsInput(d.get("quota")), bonusCents: centsInput(d.get("bonus")), meetingQuota: Number(d.get("meetingQuota")), salesQuota: Number(d.get("salesQuota")), expectedRevision: exact?.revision ?? 0 }))}>
+    <form className={styles.form} key={`${memberId}:${effectiveMonth}:${latest?.revision ?? 0}`} onSubmit={(e) => void submit(e, (d) => ({ action: "SAVE_PLAN", memberId, effectiveMonth, label: d.get("label"), role: d.get("role"), fixedCents: centsInput(d.get("fixed")), quotaCents: centsInput(d.get("quota")), bonusCents: centsInput(d.get("bonus")), meetingQuota: Number(d.get("meetingQuota")), salesQuota: Number(d.get("salesQuota")), expectedRevision: exact?.revision ?? 0, ...commercialPlanOptions(d) }))}>
       <label>Cargo no plano<input name="label" defaultValue={latest?.label ?? "Comercial"} maxLength={100} required /></label><label>Modelo<select name="role" defaultValue={latest?.role ?? "CLOSER"}><option value="CLOSER">Closer</option><option value="SDR">SDR</option></select></label>
-      <label>Fixo mensal (R$)<input name="fixed" defaultValue={Number(latest?.fixedCents ?? 0) / 100} min="0" max="9999999999" step="0.01" type="number" required /></label><label>Meta NEW ACV (R$)<input name="quota" defaultValue={Number(latest?.quotaCents ?? 0) / 100} min="0" max="9999999999" step="0.01" type="number" required /></label><label>Bônus a 100% (R$)<input name="bonus" defaultValue={Number(latest?.bonusCents ?? 0) / 100} min="0" max="9999999999" step="0.01" type="number" required /></label><label>Meta reuniões SDR<input name="meetingQuota" defaultValue={latest?.meetingQuota ?? 20} min="1" max="1000" type="number" required /></label><label>Meta vendas SDR<input name="salesQuota" defaultValue={latest?.salesQuota ?? 4} min="1" max="1000" type="number" required /></label><Button disabled={busy || !memberId} type="submit">Salvar plano</Button>
-    </form><p className={`${styles.muted} mt-3`}>Nova vigência preserva os meses anteriores. Salvar na mesma vigência corrige o plano existente e registra auditoria. Para SDR, NEW ACV e bônus são desconsiderados; a variável usa R$ 40 por reunião e R$ 100 por cliente.</p>
+      <label>Fixo mensal (R$)<input name="fixed" defaultValue={Number(latest?.fixedCents ?? 0) / 100} min="0" max="9999999999" step="0.01" type="number" required /></label><label>Meta NEW ACV (R$)<input name="quota" defaultValue={Number(latest?.quotaCents ?? 0) / 100} min="0" max="9999999999" step="0.01" type="number" required /></label><label>Bônus a 100% (R$)<input name="bonus" defaultValue={Number(latest?.bonusCents ?? 0) / 100} min="0" max="9999999999" step="0.01" type="number" required /></label><label>Meta reuniões SDR<input name="meetingQuota" defaultValue={latest?.meetingQuota ?? 20} min="1" max="1000" type="number" required /></label><label>Meta vendas SDR<input name="salesQuota" defaultValue={latest?.salesQuota ?? 4} min="1" max="1000" type="number" required /></label><label>Mês de rampa do closer<input name="rampMonth" type="month" defaultValue={latest?.rampMonth ?? ""} /></label>
+      <label>Evidência da rampa<input name="rampEvidence" defaultValue={latest?.rampEvidence ?? ""} maxLength={500} /></label>
+      {advertisingFields.map(([key, label]) => <label key={key}>{label} (R$)<input name={key}
+        defaultValue={latest?.advertising ? Number(latest.advertising[key]) / 100 : ""}
+        min="0" max="9999999999" step="0.01" type="number" /></label>)}
+      <Button disabled={busy || !memberId} type="submit">Salvar plano</Button>
+    </form><p className={`${styles.muted} mt-3`}>Nova vigência preserva os meses anteriores. Salvar na mesma vigência corrige o plano existente e registra auditoria. Para Anúncios, preencha as três faixas e o bônus do SDR. Campos em branco preservam a regra histórica do SDR. A rampa é exclusiva de closers.</p>
     {latest ? <p className="mt-3">OTE com o plano exibido: <strong>{money(latest.oteCents)}</strong> / mês</p> : null}</section>
     <section className={styles.panel}><h2>Revisar regras das vendas · {screen.month}</h2><p className={styles.muted}>Vendas com dados comerciais completos já entram no OTE automaticamente. Use esta revisão para regras específicas, prospecção própria e atribuição SDR. Confirme os dados com o contrato. Nos projetos, informe zero no ACV: a base será o recebido confirmado no CRM. Em expansão, informe apenas o ACV incremental. Recebimentos e ativação são consultados automaticamente; não há campo para simular caixa recebido.</p>
       {screen.sales.length === 0 ? <p className="mt-4">Nenhuma venda ganha nesta competência.</p> : screen.sales.map((s) => <details className="mt-4 border-t border-border pt-4" key={`${s.id}:${s.fact?.revision ?? 0}`}><summary className="cursor-pointer font-medium">{s.name} · {screen.members.find((m) => m.id === s.sellerMemberId)?.name ?? "Vendedor"} · {s.fact ? "Regra revisada" : "Cálculo automático padrão"}</summary><form className={styles.form} onSubmit={(e) => void submit(e, (d) => ({ action: "CLASSIFY_SALE", opportunityId: s.id, kind: d.get("kind"), acvCents: centsInput(d.get("acv")), selfSourced: d.get("selfSourced") === "on", sdrMemberId: d.get("sdrMemberId") || null, evidence: d.get("evidence"), expectedRevision: s.fact?.revision ?? 0 }))}>

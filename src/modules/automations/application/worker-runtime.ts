@@ -15,6 +15,7 @@ import { localCalendarSandbox } from "@/modules/integrations/application/calenda
 import { createGoogleCalendarWorkerService } from "@/modules/integrations/application/google-calendar-worker-service";
 import { getConversionFeedbackService } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { getMetaNativeFeedbackWorker } from "@/modules/acquisition-api/application/meta-native-feedback-worker";
+import { createCloserCompensationWorker } from "@/modules/finance/application/closer-compensation-worker";
 import { getPaymentWorkerService } from "@/modules/payments/application/payment-worker-service";
 import { getProspectingReleaseService } from "@/modules/prospecting/application/prospecting-release-service";
 import { getProspectingCadenceService } from "@/modules/prospecting/application/prospecting-cadence-service";
@@ -49,6 +50,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
     now: common.now,
   });
   const paymentWorker = getPaymentWorkerService();
+  const compensationWorker = createCloserCompensationWorker(common);
   const calendarWorker = createCalendarWorkerService({ ...common, adapter: localCalendarSandbox });
   const googleCalendarWorker = createGoogleCalendarWorkerService(common);
   const telephonyWorker = createTelephonyWorkerService({ ...common, adapter: localTelephonySimulator });
@@ -84,6 +86,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
         } },
         { key: "prospecting-cadence", processNext: prospectingCadenceWorker.processDue },
         { key: "payments", processNext: paymentWorker.processNext },
+        { key: "closer-compensation", processNext: compensationWorker.processNext },
         { key: "calendar", processNext: calendarWorker.processNext },
         { key: "google-calendar", processNext: googleCalendarWorker.processNext },
         { key: "meeting-participant-email", processNext: meetingParticipantEmailWorker.processNext },

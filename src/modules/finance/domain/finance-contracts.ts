@@ -5,9 +5,19 @@ const text = (min: number, max: number) => z.string().trim().min(min).max(max);
 const cents = z.coerce.bigint().positive();
 const idempotencyKey = text(8, 180);
 
+const compensationFilters = z.object({
+  sellerId: id.optional(),
+  customerId: id.optional(),
+  saleId: id.optional(),
+  kind: z.enum(["SALE_COMMISSION", "CLOSER_BONUS", "SDR_COMMISSION", "SDR_BONUS", "LEGACY_STAGE"]).optional(),
+  status: z.enum(["PENDING", "ELIGIBLE", "APPROVED", "PAID", "REVIEW"]).optional(),
+}).strict();
+export type CompensationFilters = z.infer<typeof compensationFilters>;
+
 export const financeQuerySchema = z.object({
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
+  compensation: compensationFilters.optional(),
 }).strict().superRefine((value, context) => {
   if (value.from && value.to && value.to <= value.from) {
     context.addIssue({ code: "custom", path: ["to"], message: "O fim deve ser posterior ao início." });
@@ -122,6 +132,18 @@ export const reconcileCommissionsSchema = z.object({
   through: z.coerce.date().optional(),
 }).strict();
 
+const obligationKey = text(8, 200);
+export const approveCompensationSchema = z.object({
+  action: z.literal("APPROVE_COMPENSATION"), obligationKey, expectedRevision: z.number().int().positive(),
+}).strict();
+export const settleCompensationSchema = z.object({
+  action: z.literal("SETTLE_COMPENSATION"), obligationKey, expectedRevision: z.number().int().positive(),
+  financialAccountId: id, financialEntryId: id.optional(),
+  amountCents: z.string().regex(/^\d{1,16}$/).transform(BigInt).pipe(z.bigint().positive()),
+  settledAt: z.coerce.date(), evidence: text(5, 500),
+  reference: text(4, 180), idempotencyKey,
+}).strict();
+
 export const financeCommandSchema = z.discriminatedUnion("action", [
   createFinancialCategorySchema,
   createFinancialAccountSchema,
@@ -130,6 +152,8 @@ export const financeCommandSchema = z.discriminatedUnion("action", [
   createCommissionRuleSchema,
   updateCommissionSchema,
   reconcileCommissionsSchema,
+  approveCompensationSchema,
+  settleCompensationSchema,
   createCostCenterSchema,
   createRecurrenceSchema,
   importBankStatementSchema,

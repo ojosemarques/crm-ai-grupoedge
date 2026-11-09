@@ -20,13 +20,18 @@ import {
   reviewBankLineSchema,
   reviewExpenseSchema,
 } from "@/modules/finance/domain/finance-contracts";
-import { PAYMENT_PROVIDER_KEY } from "@/modules/payments/domain/payment-contracts";
+import { paymentCashCents, PAYMENT_PROVIDER_KEY } from "@/modules/payments/domain/payment-contracts";
 import { buildDre, dailyCashFlow, type CashMovement } from "@/modules/finance/domain/finance-reporting";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
+import { applyCommercialCompensationCommand } from "./commercial-compensation-payment";
+import { readCommercialCompensationScreen } from "./commercial-compensation-screen";
+import { readCommercialGoalsScreen } from "./commercial-goals-screen";
+import { monthSchema } from "@/modules/ote/domain/ote-calculator";
+import { reconcileCloserCompensation } from "./closer-compensation-reconciliation";
 
 type Authorization = ReturnType<typeof getAuthorizationService>;
 type Options = Readonly<{ database: PrismaClient; authorization: Authorization; now: () => Date }>;
@@ -86,7 +91,8 @@ function defaultPeriod(now: Date, timeZone: string) {
   return { from, to };
 }
 
-export async function reconcileCommissionsInTransaction(tx: Transaction, context: AuthenticatedContext, through: Date, opportunityId?: string) {
+export async function reconcileCommissionsInTransaction(tx: Transaction, context: AuthenticatedContext, through: Date, opportunityId?: string, evaluatedAt = through) {
+  const covered = await reconcileCloserCompensation(tx, context.workspaceId, evaluatedAt);
   const rules = await tx.commissionRule.findMany({
     where: { workspaceId: context.workspaceId, effectiveFrom: { lte: through }, OR: [{ active: true }, { effectiveTo: { not: null } }] },
     orderBy: [{ effectiveFrom: "desc" }, { id: "asc" }],
@@ -94,10 +100,11 @@ export async function reconcileCommissionsInTransaction(tx: Transaction, context
   let created = 0;
   for (const rule of rules) {
     const opportunities = await tx.opportunity.findMany({
-      where: { workspaceId: context.workspaceId, ...(opportunityId ? { id: opportunityId } : {}), ownerMemberId: rule.sellerMemberId, status: "WON", closedAt: { not: null, gte: rule.effectiveFrom, lte: through, ...(rule.effectiveTo ? { lt: rule.effectiveTo } : {}) }, deletedAt: null },
+      where: { workspaceId: context.workspaceId, ...(opportunityId ? { id: opportunityId } : {}), ownerMemberId: rule.sellerMemberId, status: "WON", closedAt: { not: null, gte: rule.effectiveFrom, lte: through, ...(rule.effectiveTo ? { lt: rule.effectiveTo } : {}) }, deletedAt: null, compensationObligations: { none: { kind: "LEGACY_STAGE" } } },
       select: { id: true, ownerMemberId: true, amountCents: true, mrrCents: true, tcvCents: true, currency: true, closedAt: true },
     });
     for (const opportunity of opportunities) {
+      if (covered.has(opportunity.id)) continue;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`commission:${context.workspaceId}:${rule.id}:${opportunity.id}`}, 0))`;
       const contract = await tx.commercialContract.findFirst({
         where: { workspaceId: context.workspaceId, opportunityId: opportunity.id, status: "ACCEPTED" },
@@ -157,7 +164,7 @@ export function createFinanceService(options: Options) {
     const projectionTo = new Date(to.getTime() + 30 * 86_400_000);
     const canManage = (await options.authorization.authorize(context, PermissionKeys.FINANCE_MANAGE, resource(context.workspaceId))).allowed;
     const canManageCommissions = (await options.authorization.authorize(context, PermissionKeys.FINANCE_COMMISSIONS, resource(context.workspaceId))).allowed;
-    const [categories, financialAccounts, entries, invoices, payments, subscriptions, movements, opportunities, rules, commissions, members, priorManualBalances, costCenters, recurrences, statementImports, statementLines, attachments] = await Promise.all([
+    const [categories, financialAccounts, entries, invoices, payments, subscriptions, movements, opportunities, rules, commissions, members, priorManualBalances, costCenters, recurrences, statementImports, statementLines, attachments, compensation] = await Promise.all([
       options.database.financialCategory.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
       options.database.financialAccount.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
       options.database.financialEntry.findMany({ where: { workspaceId: context.workspaceId, OR: [{ competenceAt: { gte: from, lt: to } }, { dueAt: { gte: from, lt: to } }, { settledAt: { gte: from, lt: to } }, { status: "PLANNED" }] }, orderBy: [{ dueAt: "desc" }, { createdAt: "desc" }] }),
@@ -175,6 +182,7 @@ export function createFinanceService(options: Options) {
       options.database.bankStatementImport.findMany({ where: { workspaceId: context.workspaceId }, orderBy: { createdAt: "desc" }, take: 30 }),
       options.database.bankStatementLine.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ occurredAt: "desc" }, { id: "asc" }], take: 500 }),
       options.database.financialAttachment.findMany({ where: { workspaceId: context.workspaceId }, select: { id: true, financialEntryId: true, fileName: true, mimeType: true, sizeBytes: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: 500 }),
+      canManageCommissions ? readCommercialCompensationScreen(options.database, context.workspaceId, from, to, workspace.timeZone, query.compensation) : [],
     ]);
 
     const receiptEvents = payments.length ? await options.database.paymentEvent.findMany({ where: { workspaceId: context.workspaceId, paymentId: { in: payments.map((item) => item.id) }, type: "PAYMENT_CONFIRMED" }, select: { paymentId: true, safeMetadata: true } }) : [];
@@ -183,16 +191,16 @@ export function createFinanceService(options: Options) {
       if (!event.paymentId || !data || typeof data !== "object" || Array.isArray(data) || typeof data.financialAccountId !== "string") return [];
       return [[event.paymentId, { financialAccountId: data.financialAccountId, customerAccountId: typeof data.customerAccountId === "string" ? data.customerAccountId : null, customerName: typeof data.customerName === "string" ? data.customerName : null }]] as const;
     }));
-    const accountPaymentBalance = (accountId: string) => payments.filter((item) => receiptByPayment.get(item.id)?.financialAccountId === accountId).reduce((sum, item) => sum + (item.occurredAt < to ? item.amountCents : 0n) - (item.reversedAt && item.reversedAt < to ? item.amountCents : 0n), 0n);
+    const accountPaymentBalance = (accountId: string) => payments.filter((item) => receiptByPayment.get(item.id)?.financialAccountId === accountId).reduce((sum, item) => sum + (item.occurredAt < to ? paymentCashCents(item) : 0n) - (item.reversedAt && item.reversedAt < to ? paymentCashCents(item) : 0n), 0n);
     const manualReceived = entries.filter((item) => item.status === "SETTLED" && item.direction === "INCOME" && item.settledAt && item.settledAt >= from && item.settledAt < to).reduce((sum, item) => sum + item.amountCents, 0n);
     const manualExpenses = entries.filter((item) => item.status === "SETTLED" && item.direction === "EXPENSE" && item.settledAt && item.settledAt >= from && item.settledAt < to).reduce((sum, item) => sum + item.amountCents, 0n);
     const paymentReceived = payments.reduce((sum, item) => {
-      const confirmed = item.occurredAt >= from && item.occurredAt < to ? item.amountCents : 0n;
-      const reversed = item.reversedAt && item.reversedAt >= from && item.reversedAt < to ? item.amountCents : 0n;
+      const confirmed = item.occurredAt >= from && item.occurredAt < to ? paymentCashCents(item) : 0n;
+      const reversed = item.reversedAt && item.reversedAt >= from && item.reversedAt < to ? paymentCashCents(item) : 0n;
       return sum + confirmed - reversed;
     }, 0n);
     const received = manualReceived + paymentReceived;
-    const reversals = payments.filter((item) => item.reversedAt && item.reversedAt >= from && item.reversedAt < to).reduce((sum, item) => sum + item.amountCents, 0n);
+    const reversals = payments.filter((item) => item.reversedAt && item.reversedAt >= from && item.reversedAt < to).reduce((sum, item) => sum + paymentCashCents(item), 0n);
     const mrr = subscriptions.reduce((sum, item) => sum + item.currentMrrCents, 0n);
     const tcv = opportunities.reduce((sum, item) => sum + (item.tcvCents > 0n ? item.tcvCents : item.amountCents), 0n);
     const memberName = new Map(members.map((item) => [item.id, item.user.displayName]));
@@ -204,8 +212,8 @@ export function createFinanceService(options: Options) {
       .filter((item) => item.status === "SETTLED" && item.settledAt && item.settledAt >= from && item.settledAt < to && (!accountId || item.financialAccountId === accountId))
       .reduce((sum, item) => sum + (item.direction === "INCOME" ? item.amountCents : -item.amountCents), 0n);
     const paymentBalance = payments.reduce((sum, item) => {
-      const confirmed = item.occurredAt < to ? item.amountCents : 0n;
-      const reversed = item.reversedAt && item.reversedAt < to ? item.amountCents : 0n;
+      const confirmed = item.occurredAt < to ? paymentCashCents(item) : 0n;
+      const reversed = item.reversedAt && item.reversedAt < to ? paymentCashCents(item) : 0n;
       return sum + confirmed - reversed;
     }, 0n);
     const openingBalance = financialAccounts.reduce((sum, item) => sum + item.openingBalanceCents, 0n);
@@ -217,15 +225,15 @@ export function createFinanceService(options: Options) {
       ...payments.flatMap((item) => {
         const rows: Array<Record<string, unknown>> = [];
         const receipt = receiptByPayment.get(item.id);
-        if (item.occurredAt >= from && item.occurredAt < to) rows.push({ id: `payment:${item.id}:confirmed`, type: "PAYMENT", sourceLabel: "Pagamento confirmado", categoryId: null, categoryName: "Receita recebida", financialAccountId: receipt?.financialAccountId ?? null, customerAccountId: receipt?.customerAccountId ?? null, customerName: receipt?.customerName ?? null, direction: "INCOME", status: "SETTLED", description: "Pagamento confirmado de cliente", counterparty: null, amountCents: money(item.amountCents), competenceAt: item.occurredAt.toISOString(), dueAt: item.occurredAt.toISOString(), settledAt: item.occurredAt.toISOString(), revision: 1 });
-        if (item.reversedAt && item.reversedAt >= from && item.reversedAt < to) rows.push({ id: `payment:${item.id}:reversed`, type: "PAYMENT_REVERSAL", sourceLabel: item.status === "CHARGEBACK" ? "Chargeback" : "Pagamento estornado", categoryId: null, categoryName: "Estornos", financialAccountId: receipt?.financialAccountId ?? null, customerAccountId: receipt?.customerAccountId ?? null, customerName: receipt?.customerName ?? null, direction: "EXPENSE", status: "SETTLED", description: item.reversalReason ?? "Reversão de pagamento", counterparty: null, amountCents: money(item.amountCents), competenceAt: item.reversedAt.toISOString(), dueAt: item.reversedAt.toISOString(), settledAt: item.reversedAt.toISOString(), revision: 1 });
+        if (item.occurredAt >= from && item.occurredAt < to) rows.push({ id: `payment:${item.id}:confirmed`, type: "PAYMENT", sourceLabel: "Pagamento confirmado", categoryId: null, categoryName: "Receita recebida", financialAccountId: receipt?.financialAccountId ?? null, customerAccountId: receipt?.customerAccountId ?? null, customerName: receipt?.customerName ?? null, direction: "INCOME", status: "SETTLED", description: "Pagamento confirmado de cliente", counterparty: null, amountCents: money(paymentCashCents(item)), competenceAt: item.occurredAt.toISOString(), dueAt: item.occurredAt.toISOString(), settledAt: item.occurredAt.toISOString(), revision: 1 });
+        if (item.reversedAt && item.reversedAt >= from && item.reversedAt < to) rows.push({ id: `payment:${item.id}:reversed`, type: "PAYMENT_REVERSAL", sourceLabel: item.status === "CHARGEBACK" ? "Chargeback" : "Pagamento estornado", categoryId: null, categoryName: "Estornos", financialAccountId: receipt?.financialAccountId ?? null, customerAccountId: receipt?.customerAccountId ?? null, customerName: receipt?.customerName ?? null, direction: "EXPENSE", status: "SETTLED", description: item.reversalReason ?? "Reversão de pagamento", counterparty: null, amountCents: money(paymentCashCents(item)), competenceAt: item.reversedAt.toISOString(), dueAt: item.reversedAt.toISOString(), settledAt: item.reversedAt.toISOString(), revision: 1 });
         return rows;
       }),
     ].sort((left, right) => String(right.dueAt).localeCompare(String(left.dueAt)));
     const cashOpeningBalance = cashBalance - received + manualExpenses;
     const cashMovements: CashMovement[] = [
       ...entries.flatMap((item) => item.status === "SETTLED" && item.settledAt ? [{ at: item.settledAt, direction: item.direction, amountCents: item.amountCents }] : []),
-      ...payments.flatMap((item): CashMovement[] => [{ at: item.occurredAt, direction: "INCOME", amountCents: item.amountCents }, ...(item.reversedAt ? [{ at: item.reversedAt, direction: "EXPENSE" as const, amountCents: item.amountCents }] : [])]),
+      ...payments.flatMap((item): CashMovement[] => [{ at: item.occurredAt, direction: "INCOME", amountCents: paymentCashCents(item) }, ...(item.reversedAt ? [{ at: item.reversedAt, direction: "EXPENSE" as const, amountCents: paymentCashCents(item) }] : [])]),
     ];
     const cashFlow = dailyCashFlow(from, to, cashOpeningBalance, cashMovements, workspace.timeZone);
     const projectionMovements: CashMovement[] = [
@@ -262,6 +270,7 @@ export function createFinanceService(options: Options) {
       entries: normalizedEntries,
       receivables: invoices.map((item) => ({ id: item.id, invoiceNumber: item.invoiceNumber, customerAccountId: item.accountId, customerName: item.accountNameSnapshot, totalCents: money(item.totalCents), paidCents: money(item.paidCents), openCents: money(item.totalCents - item.paidCents), dueAt: item.dueAt.toISOString(), status: item.status })),
       members: members.map((item) => ({ id: item.id, name: item.user.displayName })),
+      compensation,
       commissionRules: rules.map((item) => ({ id: item.id, sellerMemberId: item.sellerMemberId, sellerName: memberName.get(item.sellerMemberId) ?? "Membro indisponível", percentageBps: item.percentageBps, basis: item.basis, trigger: item.trigger, active: item.active, effectiveFrom: item.effectiveFrom.toISOString(), effectiveTo: iso(item.effectiveTo) })),
       commissions: commissions.map((item) => ({ id: item.id, ruleId: item.ruleId, sellerMemberId: item.sellerMemberId, sellerName: memberName.get(item.sellerMemberId) ?? "Membro indisponível", opportunityId: item.opportunityId, contractId: item.contractId, paymentId: item.paymentId, status: item.status, basisCents: money(item.basisCents), percentageBps: item.percentageBps, amountCents: money(item.amountCents), earnedAt: item.earnedAt.toISOString(), approvedAt: iso(item.approvedAt), paidAt: iso(item.paidAt), revision: item.revision })),
       costCenters: costCenters.map((item) => ({ id: item.id, key: item.key, name: item.name, active: item.active })),
@@ -403,7 +412,15 @@ export function createFinanceService(options: Options) {
     if (command.action === "RECONCILE_COMMISSIONS") {
       const input = reconcileCommissionsSchema.parse(command);
       await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_COMMISSIONS, resource(context.workspaceId));
-      return options.database.$transaction((tx) => reconcileCommissionsInTransaction(tx, context, input.through ?? options.now()), { isolationLevel: "Serializable" });
+      const now = options.now();
+      return options.database.$transaction((tx) => reconcileCommissionsInTransaction(tx, context, input.through ?? now, undefined, now), { isolationLevel: "Serializable" });
+    }
+    if (command.action === "APPROVE_COMPENSATION" || command.action === "SETTLE_COMPENSATION") {
+      await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_COMMISSIONS, resource(context.workspaceId));
+      if (command.action === "SETTLE_COMPENSATION") {
+        await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_MANAGE, resource(context.workspaceId));
+      }
+      return applyCommercialCompensationCommand(options.database, context, command, options.now());
     }
     const input = updateCommissionSchema.parse(command);
     await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_COMMISSIONS, resource(context.workspaceId, input.commissionId));
@@ -437,7 +454,13 @@ export function createFinanceService(options: Options) {
     }, { isolationLevel: "Serializable" });
   }
 
-  return Object.freeze({ screen, command, addAttachment, getAttachment });
+  async function goals(context: AuthenticatedContext, month: string) {
+    await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_READ, resource(context.workspaceId));
+    await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_COMMISSIONS, resource(context.workspaceId));
+    return readCommercialGoalsScreen(options.database, { workspaceId: context.workspaceId, month: monthSchema.parse(month), now: options.now() });
+  }
+
+  return Object.freeze({ screen, goals, command, addAttachment, getAttachment });
 }
 
 let service: ReturnType<typeof createFinanceService> | undefined;

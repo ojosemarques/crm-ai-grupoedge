@@ -1,0 +1,35 @@
+# 08 · Conferir o legado e ativar apenas fatos verificados
+
+## Dependências
+
+Aceite da etapa 07 ou pendência factual isolada e bloqueada.
+
+## Escopo e integração
+
+Consultar recorte real em leitura, reconciliar vínculo das duas oportunidades, parcelas, entrada, datas e eventual despesa. Manifesto restrito, importador idempotente, prévia antes de escrita.
+
+## Contratos e permissões
+
+Legado a 6% em três etapas 35/30/35 com datas individuais úteis. Informação de pagamento sem alocação fica em conciliação e bloqueia etapa potencialmente quitada. Não inferir liquidação do bruto, líquido, comissão gerada ou calendário.
+
+## Cenários e aceite
+
+- [ ] Reexecutar prévia e aplicação sem duplicatas. Confirmar lista real e condições desconhecidas bloqueadas. Comprovante, valor e alocação ausentes ficam explicitados.
+
+## Migração, reversão e verificação em produção
+
+Confirmar backup, SHA, migração e saúde antes de ativar. Reverter por ajuste auditado e desativação do writer.
+
+## Evidência localizada
+
+O demonstrativo individual confirma as etapas previstas e a regra de D0 individual. O recorte autorizado em produção foi consultado em leitura e encontrou as duas vendas e os contratos vinculados, com 21 cobranças. No recorte consultado, não apareceram recebimentos canônicos confirmados, baixas de comissão nem despesa liquidada candidata pelos filtros aplicados. Para concluir a baixa informada, ainda são necessários o registro financeiro da transferência, o valor efetivo e a discriminação das etapas quitadas. Para confirmar D0 e parcelas remanescentes, faltam as datas efetivas de liquidação do cartão, a confirmação de ativação e os vencimentos que o demonstrativo omite. Manter esses dados no manifesto restrito.
+
+## Progresso local
+
+O comando `pnpm exec tsx scripts/preview-legacy-compensation.ts --manifest=<arquivo-restrito>` confere workspace, venda, vendedor, contrato aceito, versão, cobranças e fatos efetivos. A saída contém somente contagens e a impressão digital da prévia. No banco remoto exige `--allow-production` e manifesto privado. A prévia não cria títulos, registros de caixa ou baixas. A projeção calcula 35/30/35, ajusta dias não úteis com calendário comprovado e isola etapas possivelmente pagas.
+
+O mesmo comando aplica a prévia com `--apply --actor=<ator-administrador> --fingerprint=<impressão-digital>` após a política estar configurada. A transação impede coexistência com títulos antigos da venda, grava uma chave por etapa, confere o saldo da despesa existente e rejeita uma prévia alterada. Reenvio da aplicação não cria duplicatas. Etapas com saldo permanecem em revisão até validação da liberação histórica.
+
+Dois testes unitários e 24 testes de fechamento passaram. A integração confirmou a impressão digital, o vínculo único de uma despesa sintética já liquidada e a ausência de baixa para as etapas com pagamento apenas informado. A prévia pelo manifesto real e a ativação em produção seguem pendentes.
+
+Em leitura da produção, as duas vendas têm contrato aceito e versão vigente. Os valores batem entre pipeline, versão contratual, cobranças e demonstrativo. A discriminação das entradas e a composição das 21 cobranças também conferem. Em uma das vendas, o apelido do demonstrativo não aparece no cadastro, no lead, no contato ou na atividade consultada. A associação continua em revisão, assim como a liquidação informada. Nenhum dos dois casos tinha comissão no writer anterior.

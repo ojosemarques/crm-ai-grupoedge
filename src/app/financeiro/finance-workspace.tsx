@@ -10,9 +10,11 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/ui/icon";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { dreGroups } from "@/modules/finance/domain/finance-reporting";
+import { CommercialCompensationPanel } from "./commercial-compensation-panel";
+import type { CommercialCompensationRow } from "@/modules/finance/application/commercial-compensation-screen";
 import styles from "./finance-workspace.module.css";
 
-export type FinanceSection = "dashboard" | "lancamentos" | "entradas" | "despesas" | "fluxo-caixa" | "dre" | "contas" | "pagar-receber" | "conciliacao" | "recorrencias" | "centros-custo" | "comprovantes" | "comissoes" | "categorias";
+export type FinanceSection = "dashboard" | "lancamentos" | "entradas" | "despesas" | "fluxo-caixa" | "dre" | "contas" | "pagar-receber" | "conciliacao" | "recorrencias" | "centros-custo" | "comprovantes" | "comissoes" | "metricas-metas" | "categorias";
 export type FinanceScreenView = Readonly<Record<string, unknown>>;
 
 type Row = Record<string, unknown>;
@@ -21,7 +23,7 @@ type DialogKind = "entry" | "account" | "category" | "commission" | "statement" 
 const tabs: readonly Readonly<{ id: FinanceSection; label: string }>[] = [
   { id: "dashboard", label: "Dashboard" }, { id: "lancamentos", label: "Lançamentos" }, { id: "entradas", label: "Entradas" },
   { id: "despesas", label: "Despesas" }, { id: "fluxo-caixa", label: "Fluxo de Caixa" }, { id: "dre", label: "DRE" },
-  { id: "contas", label: "Contas" }, { id: "pagar-receber", label: "A Pagar / Receber" }, { id: "comissoes", label: "Comissões" }, { id: "categorias", label: "Categorias" },
+  { id: "contas", label: "Contas" }, { id: "pagar-receber", label: "A Pagar / Receber" }, { id: "comissoes", label: "Comissões" }, { id: "metricas-metas", label: "Métricas Metas" }, { id: "categorias", label: "Categorias" },
   { id: "conciliacao", label: "Conciliação" }, { id: "recorrencias", label: "Recorrências" }, { id: "centros-custo", label: "Centros de custo" }, { id: "comprovantes", label: "Comprovantes" },
 ];
 const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
@@ -51,7 +53,7 @@ function EntryTable({ rows, empty, onSettle, timeZone }: Readonly<{ rows: Row[];
   return <div className={styles.tableWrap}><table><thead><tr><th>Descrição</th><th>Cliente / fornecedor</th><th>Categoria</th><th>Competência</th><th>Vencimento</th><th>Status</th><th className={styles.number}>Valor / em aberto</th>{onSettle ? <th>Ações</th> : null}</tr></thead><tbody>{rows.map((row, index) => { const status = text(row.status, "OPEN"); const canSettle = row.type === "MANUAL" && ["PLANNED", "OPEN", "PENDING", "PARTIALLY_PAID", "OVERDUE", "DUE"].includes(status); const invoiceHref = row.type === "INVOICE" ? `/pagamentos/${text(row.id).replace(/^invoice:/, "")}` : null; return <tr key={text(row.id, String(index))}><td><strong>{invoiceHref ? <Link href={invoiceHref}>{text(row.description ?? row.name)}</Link> : text(row.description ?? row.name)}</strong><small>{text(row.sourceLabel ?? row.source, "Manual")}</small></td><td>{text(row.counterparty ?? row.counterpartyName ?? row.accountName ?? row.customerName)}</td><td>{text(row.categoryName ?? row.category)}</td><td>{date(row.competenceAt ?? row.competenceDate ?? row.occurredAt, timeZone)}</td><td>{date(row.dueAt ?? row.dueDate, timeZone)}</td><td><StatusBadge tone={statusTone(status)}>{statusLabel(status)}</StatusBadge></td><td className={styles.number}>{money(["OPEN", "PARTIALLY_PAID"].includes(status) ? row.outstandingCents ?? row.amountCents ?? row.totalCents : row.amountCents ?? row.totalCents)}</td>{onSettle ? <td>{canSettle ? <Button onClick={() => onSettle(row)} size="sm" variant="secondary">Liquidar</Button> : invoiceHref && ["OPEN", "PARTIALLY_PAID"].includes(status) ? <Link className="button button-secondary" href={invoiceHref}>Registrar recebimento</Link> : "—"}</td> : null}</tr>; })}</tbody></table></div>;
 }
 
-export function FinanceWorkspace({ initialScreen, section, month, year }: Readonly<{ initialScreen: FinanceScreenView; section: FinanceSection; month: number; year: number }>) {
+export function FinanceWorkspace({ initialScreen, section, month, year, goals }: Readonly<{ initialScreen: FinanceScreenView; section: FinanceSection; month: number; year: number; goals?: ReactNode }>) {
   const router = useRouter();
   const screen = object(initialScreen);
   const metrics = object(screen.metrics ?? screen.summary);
@@ -82,14 +84,18 @@ export function FinanceWorkspace({ initialScreen, section, month, year }: Readon
   const href = (id: FinanceSection) => `/financeiro?section=${id}&month=${month}&year=${year}`;
   const currentYear = new Date().getFullYear();
 
-  async function command(payload: Record<string, unknown>, success: string) {
+  async function command(payload: Record<string, unknown>, success: string, onSuccess?: () => void, onError?: (message: string) => void) {
     setBusy(true); setNotice(null);
     try {
       const response = await fetch("/api/finance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(apiMessage(body, "Não foi possível concluir a operação."));
-      setNotice({ kind: "success", message: success }); setDialog(null); setSettling(null); setPayingCommission(null); router.refresh();
-    } catch (error) { setNotice({ kind: "error", message: error instanceof Error ? error.message : "Falha inesperada." }); }
+      setNotice({ kind: "success", message: success }); setDialog(null); setSettling(null); setPayingCommission(null); onSuccess?.(); router.refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha inesperada.";
+      setNotice({ kind: "error", message });
+      onError?.(message);
+    }
     finally { setBusy(false); }
   }
 
@@ -125,7 +131,7 @@ export function FinanceWorkspace({ initialScreen, section, month, year }: Readon
 
   return <div className={styles.workspace}>
     <header className={styles.hero}><div><p>Gestão financeira</p><h1>Financeiro</h1><span>Caixa, resultados, recebimentos e comissões conectados ao CRM.</span></div><div><small>Atualizado em</small><strong>{date(screen.generatedAt ?? new Date().toISOString(), timeZone)}</strong></div></header>
-    <nav aria-label="Seções do financeiro" className={styles.tabs}>{tabs.map((tab) => <Link aria-current={section === tab.id ? "page" : undefined} href={href(tab.id)} key={tab.id}>{tab.label}</Link>)}</nav>
+    <nav aria-label="Seções do financeiro" className={styles.tabs}>{tabs.filter((tab) => tab.id !== "metricas-metas" || permissions.commissionsManage === true).map((tab) => <Link aria-current={section === tab.id ? "page" : undefined} href={href(tab.id)} key={tab.id}>{tab.label}</Link>)}</nav>
     <form className={styles.period} method="get"><input name="section" type="hidden" value={section}/><select aria-label="Mês" defaultValue={month} name="month">{monthNames.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}</select><select aria-label="Ano" defaultValue={year} name="year">{Array.from({ length: 7 }, (_, index) => currentYear - 3 + index).map((value) => <option key={value}>{value}</option>)}</select><Button size="sm" type="submit" variant="secondary">Atualizar</Button>{canManage ? <Button onClick={() => setDialog("entry")} size="sm" type="button"><Icon name="mais" size={14}/> Novo lançamento</Button> : null}</form>
     {notice ? <p className={notice.kind === "error" ? styles.error : styles.success} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
 
@@ -141,6 +147,10 @@ export function FinanceWorkspace({ initialScreen, section, month, year }: Readon
     {section === "recorrencias" ? <SimpleRegistry title="Parcelas recorrentes" description="Lançamentos futuros gerados mensalmente e já incluídos na previsão de caixa." rows={recurrences} canManage={canManage} onCreate={() => setDialog("recurrence")}/> : null}
     {section === "centros-custo" ? <SimpleRegistry title="Centros de custo" description="Responsabilidade gerencial das despesas e receitas." rows={costCenters} canManage={canManage} onCreate={() => setDialog("costCenter")}/> : null}
     {section === "comprovantes" ? <Attachments rows={attachments} entries={entries} canManage={canManage} onCreate={() => setDialog("attachment")} timeZone={timeZone}/> : null}
+    {section === "metricas-metas" && goals}
+    {section === "comissoes" && permissions.commissionsManage === true && <CommercialCompensationPanel
+      rows={(screen.compensation ?? []) as CommercialCompensationRow[]} accounts={accounts} entries={entries}
+      timeZone={timeZone} canPay={canManage} busy={busy} send={command} />}
     {section === "comissoes" ? <Commissions rows={commissions} metrics={metrics} canManage={permissions.commissionsManage === true} onCreate={() => setDialog("commission")} onPay={setPayingCommission} canPay={canManage} command={command}/> : null}
     {section === "categorias" ? <Categories rows={categories} canManage={canManage} onCreate={() => setDialog("category")}/> : null}
 

@@ -66,6 +66,7 @@ describe("separação das frentes no tempo real", () => {
       await fact("MEETING_COMPLETED", completed, ads.id, undefined, { creditedMemberId: memberId });
     }
     const dynamic = await service.publicSnapshot(token, "ADVERTISING");
+    expect(JSON.stringify(dynamic)).not.toMatch(/advertisingBand|commissionCents|bonusCents|snapshotRevision|missingKeys/i);
     expect(dynamic.today.leadsReceived).toBe(1);
     expect(dynamic.today.goals.meetingsScheduled.targetValue).toBe("1");
     expect(dynamic.week.ranking.find(row => row.name === jhon.name)!.goals.today.meetingsCompleted).toMatchObject({ actualValue: "3", targetValue: "3" });

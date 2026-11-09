@@ -1,0 +1,16 @@
+# Clientes, Comissões e Métricas Metas
+
+Execute as etapas em sequência. Registre comandos, resultados e SHA após cada aceite. Mantenha evidências reais em ambiente restrito.
+
+| Spec | Estado | SHA | Comandos e resultados | Evidência |
+| --- | --- | --- | --- | --- |
+| [00-REGRAS-E-BASELINE.md](00-REGRAS-E-BASELINE.md) | Parcial | `1283c6d` | `git ls-remote origin refs/heads/main`, consultas Supabase em leitura e Vitest direcionado | Remoto conferido, 69 testes passaram, duas vendas vinculadas e conciliação pendente. Vercel retornou 403. |
+| [01-DADOS-PERMISSOES-E-MIGRACOES.md](01-DADOS-PERMISSOES-E-MIGRACOES.md) | Base de dados validada localmente | Base `1283c6d` | `pnpm db:migrate:deploy`, `pnpm typecheck`, ESLint direcionado e integração por schema | Cadeia de 124 migrations e grants privados verificados. Cinco testes do Financeiro, 13 de pagamentos, sete de OTE e três novos de contrato passaram. Upgrade preservou dois recebimentos sintéticos sem ativar políticas. Autorização dos comandos depende das etapas consumidoras. |
+| [02-PIPELINE-E-CLIENTES.md](02-PIPELINE-E-CLIENTES.md) | Fila, confirmação e correção de preço locais | Base `1283c6d` | TypeScript, ESLint direcionado, integração de fechamento e Chromium direcionado | A fila e a confirmação passaram em navegador. O novo teste de revisão cobre a confirmação pelo total revisado. Outros perfis e homologação em produção pendentes. |
+| [03-PARCELAS-E-CONCILIACAO.md](03-PARCELAS-E-CONCILIACAO.md) | Parcial, alterações locais | Base `1283c6d` | Integrações isoladas, unitários, build e Chromium em PostgreSQL descartável | Revisão da entrada validada em integração com 22 testes de vendas e 14 de pagamentos. Conciliação histórica pendente. |
+| [04-APURACAO-DOS-CLOSERS.md](04-APURACAO-DOS-CLOSERS.md) | Apuração e liberação implementadas localmente | Base `1283c6d` | 14 testes unitários e 23 de fechamento em PostgreSQL descartável | Títulos, bônus, estornos, calendário versionado e reavaliação diária. Calendário operacional e baixa em produção pendentes. |
+| [05-CARLOS-E-AUDITORIA-DE-ANUNCIOS.md](05-CARLOS-E-AUDITORIA-DE-ANUNCIOS.md) | Coortes e fechamento locais | Base `1283c6d` | Unitários e integração em PostgreSQL descartável | Atribuição histórica, snapshots privados, fechamento e revisão tardia conectados. Consulta, cobertura e ativação em produção pendentes. |
+| [06-FINANCEIRO-COMISSOES.md](06-FINANCEIRO-COMISSOES.md) | Leitura, aprovação e baixa locais | Base `1283c6d` | Integração, build e Chromium em PostgreSQL descartável | Filtros, saldos, revalidação e vínculo auditado. Homologação em produção pendente. |
+| [07-METRICAS-METAS-E-MEU-OTE.md](07-METRICAS-METAS-E-MEU-OTE.md) | Telas e configuração locais | Base `1283c6d` | Oito integrações, build e Chromium | Mesmos títulos, escopos distintos e verificação móvel. Homologação em produção pendente. |
+| [08-CONCILIACAO-HISTORICA-E-ATIVACAO.md](08-CONCILIACAO-HISTORICA-E-ATIVACAO.md) | Prévia e aplicação locais | Base `1283c6d` | Dois unitários e 24 testes de fechamento | Aplicação idempotente e vínculo de despesa comprovada. Manifesto real e ativação pendentes. |
+| [09-HOMOLOGACAO-E-ENTREGA.md](09-HOMOLOGACAO-E-ENTREGA.md) | Preparação verificada | Base `1283c6d` | Lint, TypeScript, 1.258 unitários e upgrade isolado | Cadeia de produção tem lacunas de histórico. Publicação e smoke pendentes. |

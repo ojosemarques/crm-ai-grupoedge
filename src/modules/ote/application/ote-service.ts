@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { readCommercialGoalsScreen, type CommercialGoalsPerson } from "@/modules/finance/application/commercial-goals-screen";
 import { calculateSale, expectedOte, isNewAcv, oteCommandSchema, oteQuerySchema, releaseSchedule } from "@/modules/ote/domain/ote-calculator";
 import { automaticOteSale, oteSaleTerms } from "@/modules/ote/domain/automatic-ote-sale";
 import { readOteSdrOrigins } from "./ote-sdr-origins";
@@ -39,9 +40,15 @@ export function createOteService({ database, authorization, now }: Options) {
     const canManage = await assertContext(context);
     const range = await period(context, raw);
     const plan = await database.otePlan.findFirst({ where: { workspaceId: context.workspaceId, memberId: context.memberId, effectiveMonth: { lte: range.month } }, orderBy: { effectiveMonth: "desc" } });
-    const base = { month: range.month, timeZone: range.timeZone, name: context.displayName, canManage };
+    const base = { month: range.month, timeZone: range.timeZone, name: context.displayName, canManage, commercial: null as CommercialGoalsPerson | null };
     if (!plan) return { ...base, plan: null, sales: [], meetings: [], pendingSales: 0, summary: null };
     const at = now();
+    const commercial = await readCommercialGoalsScreen(database, {
+      workspaceId: context.workspaceId, memberId: context.memberId, month: range.month, now: at,
+    });
+    if (commercial.people[0]) return {
+      ...base, commercial: commercial.people[0], plan: planView(plan), sales: [], meetings: [], pendingSales: 0, summary: null,
+    };
     const dateFilter = { gte: range.from, lt: range.to, lte: at };
     const origins = plan.role === "SDR" ? await readOteSdrOrigins(database, context.workspaceId, context.memberId, at) : null;
     const reviewedSdrSales = plan.role === "SDR" ? await database.oteSale.findMany({ where: { workspaceId: context.workspaceId, sdrMemberId: context.memberId }, select: { opportunityId: true } }) : [];
@@ -96,7 +103,9 @@ export function createOteService({ database, authorization, now }: Options) {
     return { ...base, plan: planView(plan), sales, meetings: [], pendingSales: won.length - sales.length, summary: { newAcvCents: newAcv.toString(), commissionCents: commission.toString(), bonusCents: bonus.toString(), totalCents: (plan.fixedCents + commission + bonus).toString(), eligibleCents: sales.reduce((sum, s) => sum + BigInt(s.eligibleCents), 0n).toString(), meetingCount: 0, saleCount: sales.length } };
   }
   function planView(plan: Awaited<ReturnType<typeof database.otePlan.findFirstOrThrow>>) {
-    return { label: plan.label, role: plan.role, effectiveMonth: plan.effectiveMonth, fixedCents: plan.fixedCents.toString(), quotaCents: plan.quotaCents.toString(), bonusCents: plan.bonusCents.toString(), meetingQuota: plan.meetingQuota, salesQuota: plan.salesQuota, oteCents: expectedOte(plan).toString() };
+    const ote = plan.advertisingBand100Cents === null ? expectedOte(plan)
+      : plan.fixedCents + plan.advertisingBand100Cents + (plan.advertisingBonusCents ?? 0n);
+    return { label: plan.label, role: plan.role, effectiveMonth: plan.effectiveMonth, fixedCents: plan.fixedCents.toString(), quotaCents: plan.quotaCents.toString(), bonusCents: plan.bonusCents.toString(), meetingQuota: plan.meetingQuota, salesQuota: plan.salesQuota, oteCents: ote.toString() };
   }
   async function administration(context: AuthenticatedContext, raw: unknown = {}) {
     await assertAdmin(context);
@@ -110,7 +119,15 @@ export function createOteService({ database, authorization, now }: Options) {
       database.meeting.findMany({ where: { workspaceId: context.workspaceId, status: "COMPLETED", deletedAt: null, completedAt: dateFilter }, select: { id: true, title: true, completedAt: true }, orderBy: { completedAt: "asc" } }),
       database.oteMeeting.findMany({ where: { workspaceId: context.workspaceId } }),
     ]);
-    return { month: range.month, members: members.map((m) => ({ id: m.id, name: m.user.displayName })), plans: plans.map((p) => ({ ...planView(p), id: p.id, memberId: p.memberId, revision: p.revision })), sales: sales.map((s) => ({ id: s.id, name: s.name, sellerMemberId: s.ownerMemberId, suggestedAcvCents: (s.mrrCents > 0n ? s.mrrCents * 12n : s.tcvCents).toString(), fact: facts.find((f) => f.opportunityId === s.id) ? serializeFact(facts.find((f) => f.opportunityId === s.id)!) : null })), meetings: meetings.map((m) => ({ id: m.id, title: m.title, date: m.completedAt!.toISOString(), fact: qualifications.find((q) => q.meetingId === m.id) ?? null })) };
+    const planDetails = plans.map((plan) => ({
+      ...planView(plan), id: plan.id, memberId: plan.memberId, revision: plan.revision,
+      rampMonth: plan.rampMonth, rampEvidence: plan.rampEvidence,
+      advertising: plan.advertisingBand100Cents === null ? null : {
+        band60Cents: plan.advertisingBand60Cents?.toString() ?? "0", band80Cents: plan.advertisingBand80Cents?.toString() ?? "0",
+        band100Cents: plan.advertisingBand100Cents.toString(), bonusCents: plan.advertisingBonusCents?.toString() ?? "0",
+      },
+    }));
+    return { month: range.month, members: members.map((m) => ({ id: m.id, name: m.user.displayName })), plans: planDetails, sales: sales.map((s) => ({ id: s.id, name: s.name, sellerMemberId: s.ownerMemberId, suggestedAcvCents: (s.mrrCents > 0n ? s.mrrCents * 12n : s.tcvCents).toString(), fact: facts.find((f) => f.opportunityId === s.id) ? serializeFact(facts.find((f) => f.opportunityId === s.id)!) : null })), meetings: meetings.map((m) => ({ id: m.id, title: m.title, date: m.completedAt!.toISOString(), fact: qualifications.find((q) => q.meetingId === m.id) ?? null })) };
   }
   function serializeFact(fact: Awaited<ReturnType<typeof database.oteSale.findFirstOrThrow>>) { return { ...fact, acvCents: fact.acvCents.toString() }; }
   async function command(context: AuthenticatedContext, raw: unknown) {
@@ -124,10 +141,24 @@ export function createOteService({ database, authorization, now }: Options) {
       const common = { workspaceId: context.workspaceId, updatedByActorId: context.actorId, updatedAt: now() };
       let entityId: string;
       if (input.action === "SAVE_PLAN") {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`commercial-compensation:${context.workspaceId}`}, 0))`;
         const key = { workspaceId_memberId_effectiveMonth: { workspaceId: context.workspaceId, memberId: input.memberId, effectiveMonth: input.effectiveMonth } };
         const current = await tx.otePlan.findUnique({ where: key });
         if ((current?.revision ?? 0) !== input.expectedRevision) conflict();
-        const data = { ...common, memberId: input.memberId, effectiveMonth: input.effectiveMonth, label: input.label, role: input.role, meetingQuota: input.meetingQuota, salesQuota: input.salesQuota, fixedCents: BigInt(input.fixedCents), quotaCents: BigInt(input.quotaCents), bonusCents: BigInt(input.bonusCents) };
+        const ramp = input.role === "SDR" ? null : input.ramp;
+        const advertising = input.role === "CLOSER" ? null : input.advertising;
+        const data = {
+          ...common, memberId: input.memberId, effectiveMonth: input.effectiveMonth, label: input.label,
+          role: input.role, meetingQuota: input.meetingQuota, salesQuota: input.salesQuota,
+          fixedCents: BigInt(input.fixedCents), quotaCents: BigInt(input.quotaCents), bonusCents: BigInt(input.bonusCents),
+          ...(ramp !== undefined ? { rampMonth: ramp?.month ?? null, rampEvidence: ramp?.evidence ?? null } : {}),
+          ...(advertising !== undefined ? {
+            advertisingBand60Cents: advertising ? BigInt(advertising.band60Cents) : null,
+            advertisingBand80Cents: advertising ? BigInt(advertising.band80Cents) : null,
+            advertisingBand100Cents: advertising ? BigInt(advertising.band100Cents) : null,
+            advertisingBonusCents: advertising ? BigInt(advertising.bonusCents) : null,
+          } : {}),
+        };
         entityId = (current ? await tx.otePlan.update({ where: { id: current.id }, data: { ...data, revision: { increment: 1 } } }) : await tx.otePlan.create({ data })).id;
       } else if (input.action === "CLASSIFY_SALE") {
         const sale = await tx.opportunity.findFirst({ where: { id: input.opportunityId, workspaceId: context.workspaceId, status: "WON", deletedAt: null, currency: "BRL", closedAt: { not: null, lte: now() } }, select: { ownerMemberId: true } });
