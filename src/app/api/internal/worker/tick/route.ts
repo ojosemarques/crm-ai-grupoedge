@@ -18,6 +18,21 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+async function logMetaDiagnostics(correlationId: string) {
+  if (process.env.VERCEL_ENV !== "production" || process.env.META_ADS_CONVERSIONS_DIAGNOSTICS_ENABLED !== "true") return;
+  const workspace = z.uuid().safeParse(process.env.META_ADS_REPORTING_WORKSPACE_ID);
+  if (!workspace.success) {
+    logger.warn({ correlationId }, "META_CONVERSION_DIAGNOSTICS_WORKSPACE_MISSING");
+    return;
+  }
+  try {
+    const diagnostics = await getConversionFeedbackService().getDeliveryDiagnostics(workspace.data);
+    logger.info({ correlationId, diagnostics }, "META_CONVERSION_DIAGNOSTICS");
+  } catch {
+    logger.warn({ correlationId }, "META_CONVERSION_DIAGNOSTICS_UNAVAILABLE");
+  }
+}
+
 async function runTick(request: Request): Promise<NextResponse> {
   const correlationId = resolveCorrelationId(request.headers);
   let runtimeWorker: ReturnType<typeof createDefaultWorkerBatchRunner> | undefined;
@@ -34,14 +49,7 @@ async function runTick(request: Request): Promise<NextResponse> {
       const service = getConversionFeedbackService();
       const { status } = await service.processNext(`meta-cron:${correlationId}`, workspace.data);
       logger.info({ correlationId, code: status }, "Tick de conversões Meta concluído");
-      if (process.env.META_ADS_CONVERSIONS_DIAGNOSTICS_ENABLED === "true") {
-        try {
-          const diagnostics = await service.getDeliveryDiagnostics(workspace.data);
-          logger.info({ correlationId, diagnostics }, "META_CONVERSION_DIAGNOSTICS");
-        } catch {
-          logger.warn({ correlationId }, "META_CONVERSION_DIAGNOSTICS_UNAVAILABLE");
-        }
-      }
+      await logMetaDiagnostics(correlationId);
       return NextResponse.json({ status }, {
         headers: { ...correlationResponseHeaders(correlationId), "Cache-Control": "no-store" },
       });
@@ -57,6 +65,7 @@ async function runTick(request: Request): Promise<NextResponse> {
       maxDurationMs: policy.maxDurationMs,
     });
     logger.info({ correlationId, code: result.code, processed: result.processed }, "Tick serverless do worker concluído");
+    await logMetaDiagnostics(correlationId);
     return NextResponse.json(
       {
         code: result.code,

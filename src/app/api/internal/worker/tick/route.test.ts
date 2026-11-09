@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const run = vi.fn();
 const disconnect = vi.fn();
 const processMeta = vi.fn();
+const getDeliveryDiagnostics = vi.fn();
 
 vi.mock("@/modules/conversion-feedback/application/conversion-feedback-service", () => ({
-  getConversionFeedbackService: () => ({ processNext: processMeta }),
+  getConversionFeedbackService: () => ({ processNext: processMeta, getDeliveryDiagnostics }),
 }));
 
 vi.mock("@/modules/automations/application/worker-runtime", () => ({
@@ -109,6 +110,20 @@ describe("POST /api/internal/worker/tick", () => {
       maxDurationMs: 35_000,
     });
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("coleta diagnóstico Meta no modo geral somente após autenticação", async () => {
+    const workspaceId = "8d47f37b-99cd-42e7-9084-ebd330e7af62";
+    vi.stubEnv("VERCEL_ENV", "production");
+    vi.stubEnv("META_ADS_CONVERSIONS_DIAGNOSTICS_ENABLED", "true");
+    vi.stubEnv("META_ADS_REPORTING_WORKSPACE_ID", workspaceId);
+    getDeliveryDiagnostics.mockResolvedValue({ meetingCompletedTransitions: 0 });
+
+    const { GET } = await import("@/app/api/internal/worker/tick/route");
+    expect((await GET(cronRequest())).status).toBe(401);
+    expect(getDeliveryDiagnostics).not.toHaveBeenCalled();
+    expect((await GET(cronRequest(`Bearer ${validEnvironment.SERVERLESS_WORKER_SECRET}`))).status).toBe(200);
+    expect(getDeliveryDiagnostics).toHaveBeenCalledExactlyOnceWith(workspaceId);
   });
 
   it("processa a chamada GET autenticada enviada pelo cron da Vercel", async () => {
