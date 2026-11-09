@@ -149,7 +149,7 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await expect(card).toBeVisible();
   const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
   await expect(pipelineNavigation.getByText("Prospecção Ativa", { exact: true })).toHaveCount(0);
-  await expect(pipelineNavigation.getByRole("link", { name: "LeadsLeads" })).toHaveAttribute("aria-current", "page");
+  await expect(pipelineNavigation.getByRole("link", { name: /^Leads\s*Entrada$/ })).toHaveAttribute("aria-current", "page");
   await expect(pipelineNavigation.getByRole("link", { name: "VendasVendas" })).toBeVisible();
   await expect(page.getByLabel("Etapa").getByRole("option", { name: "Novo (1)" })).toHaveCount(1);
 

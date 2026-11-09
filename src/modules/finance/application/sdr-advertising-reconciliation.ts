@@ -81,6 +81,7 @@ export async function reconcileSdrAdvertisingInTransaction(
     auditScopes.push({ memberId, periods: [...missing, ...regularPeriods] });
   }
   let evaluated = false;
+  const snapshotsByWindow = new Map<string, Awaited<ReturnType<typeof readSdrAdvertisingFacts>>>();
   for (const { memberId, periods } of auditScopes) for (const period of periods) {
     const lastOn = addLocalDays(period.to, -1);
     const plan = selectPlan(memberId, lastOn);
@@ -94,7 +95,10 @@ export async function reconcileSdrAdvertisingInTransaction(
     const to = workspaceDayRange(period.to, timeZone).start;
     const closed = to <= now;
     const through = closed ? new Date(to.getTime() - 1) : now;
-    const snapshot = await readSdrAdvertisingFacts(tx, { workspaceId, memberId, from, to, through, recordedThrough: now });
+    const windowKey = `${memberId}:${from.getTime()}:${through.getTime()}`;
+    const snapshot = snapshotsByWindow.get(windowKey) ??
+      await readSdrAdvertisingFacts(tx, { workspaceId, memberId, from, to, through, recordedThrough: now });
+    snapshotsByWindow.set(windowKey, snapshot);
     const facts = { ...snapshot, closed, cohortFrom, policyVersion: policy.version, planId: plan.id, planRevision: plan.revision };
     const fingerprint = createHash("sha256").update(JSON.stringify(facts)).digest("hex");
     const scope = { workspaceId, memberId, periodKind: period.kind, periodStartOn: new Date(period.from) };

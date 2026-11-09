@@ -36,7 +36,7 @@ export function createCloserCompensationWorker({ database, now }: { database: Pr
             origin: "SYSTEM", occurredAt: evaluatedAt, changes: { localDate, coveredSales: covered.size },
           } });
           return true;
-        }, { timeout: 15_000 });
+        }, { timeout: 35_000 });
         if (processed) return { status: "SUCCEEDED" };
       }
       return { status: "IDLE" };

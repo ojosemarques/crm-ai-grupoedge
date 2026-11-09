@@ -90,6 +90,7 @@ export async function readCommercialGoalsScreen(database: PrismaClient, input: {
           { kind: "WEEK", fromOn: monday, toOn: addLocalDays(monday, 7) },
         ] : []),
       ];
+      const factsByStart = new Map<string, ReturnType<typeof readSdrAdvertisingFacts>>();
       const metrics = await Promise.all(periods.map(async (period) => {
         const periodStartOn = new Date(period.fromOn);
         const snapshot = await database.sdrAdvertisingSnapshot.findFirst({
@@ -100,10 +101,12 @@ export async function readCommercialGoalsScreen(database: PrismaClient, input: {
           ...period, facts: snapshotView.safeParse(snapshot?.facts).data ?? null, evaluatedAt: snapshot?.evaluatedAt.toISOString() ?? null, revision: snapshot?.revision ?? null,
         };
         const cohortFrom = effectiveOn && period.fromOn < effectiveOn ? effectiveOn : period.fromOn;
-        const facts = await readSdrAdvertisingFacts(database, {
+        const pendingFacts = factsByStart.get(cohortFrom) ?? readSdrAdvertisingFacts(database, {
           workspaceId, memberId: plan.memberId, from: workspaceDayRange(cohortFrom, timeZone).start,
           to: workspaceDayRange(period.toOn, timeZone).start, through: now,
         });
+        factsByStart.set(cohortFrom, pendingFacts);
+        const facts = await pendingFacts;
         return { ...period, facts: { counts: facts.counts, attainment: facts.attainment }, evaluatedAt: now.toISOString(), revision: snapshot?.revision ?? null };
       }));
       return {
