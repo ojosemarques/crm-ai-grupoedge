@@ -21,6 +21,8 @@ test.afterAll(async () => getDatabaseClient().$disconnect());
 
 test("Carlos vê todos os leads de Anúncios e entrega o card ao vendedor que recebe a reunião", async ({ page }, testInfo) => {
   test.setTimeout(90_000);
+  // O agendamento na ficha deve reagir ao cancelamento sem esperar o refresh periódico do pipeline.
+  await page.addInitScript(() => Object.defineProperty(navigator, "onLine", { get: () => false }));
   if (!new URL(process.env.DATABASE_URL!).searchParams.get("schema")?.startsWith("politizai_test_")) throw new Error("Ephemeral schema required");
   const db = getDatabaseClient();
   const workspace = await db.workspace.findUniqueOrThrow({ where: { slug: "politizai" } });
@@ -66,6 +68,35 @@ test("Carlos vê todos os leads de Anúncios e entrega o card ao vendedor que re
   await panel.getByRole("button", { name: "Agendar reunião", exact: true }).click();
   await expect(panel.getByText("Diagnóstico agendado pelo Carlos", { exact: true }).first()).toBeVisible();
   expect((await db.lead.findUniqueOrThrow({ where: { id: leads[0]! } })).ownerMemberId).toBe(seller.id);
+
+  await page.goto(`/anuncios?view=pipeline&q=${encodeURIComponent(prefix)}`);
+  await page.locator("article").filter({ hasText: `${prefix} FORM` }).click();
+  const activities = profile.getByRole("tab", { name: "Atividades", exact: true });
+  await activities.click();
+  const taskForm = profile.locator("#criar-tarefa");
+  await taskForm.locator("summary").click();
+  await taskForm.locator("select[name=kind]").selectOption("MEETING");
+  const bookFromTask = taskForm.getByRole("button", { name: "Criar tarefa e agendar reunião" });
+  await expect(bookFromTask).toBeDisabled();
+
+  await profile.getByRole("tab", { name: "Reuniões", exact: true }).click();
+  await panel.getByRole("button", { name: "Cancelar", exact: true }).click();
+  await panel.getByLabel("Motivo", { exact: true }).fill("Cliente pediu outra data.");
+  await panel.getByLabel("Próxima ação", { exact: true }).fill("Agendar novamente");
+  await panel.getByLabel("Prazo da próxima ação", { exact: true }).fill("2035-06-12T09:00");
+  await panel.getByRole("button", { name: "Confirmar ação", exact: true }).click();
+  await expect(panel.getByText("Cancelada", { exact: true }).first()).toBeVisible();
+
+  await activities.click();
+  await taskForm.locator("summary").click();
+  await expect(bookFromTask).toBeEnabled();
+  await taskForm.getByLabel("Título", { exact: true }).fill("Novo diagnóstico");
+  await taskForm.getByLabel("Closer").selectOption(seller.id);
+  await taskForm.getByLabel("Data e horário da reunião", { exact: true }).fill("2035-06-12T09:30");
+  await bookFromTask.click();
+  await expect(profile.getByText("Reunião: Novo diagnóstico", { exact: true }).first()).toBeVisible();
+  expect(await db.task.count({ where: { leadId: leads[0]!, kind: "MEETING", meeting: { title: "Novo diagnóstico", status: "SCHEDULED" } } })).toBe(1);
+
   await profile.getByRole("tab", { name: "Resumo", exact: true }).click();
   await profile.screenshot({ path: testInfo.outputPath("carlos-assigned-lead.png") });
   await login(page, seller.user.email);

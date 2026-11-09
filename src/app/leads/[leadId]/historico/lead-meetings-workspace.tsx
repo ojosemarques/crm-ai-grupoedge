@@ -43,20 +43,11 @@ async function readResponse(response: Response) {
 }
 
 export function LeadMeetingsWorkspace({
-  initialMeetings,
+  screen,
   onCommitted,
-}: Readonly<{ initialMeetings: LeadMeetingsScreen; onCommitted: () => Promise<void> }>) {
-  const [screen, setScreen] = useState(initialMeetings);
+}: Readonly<{ screen: LeadMeetingsScreen; onCommitted: () => Promise<void> }>) {
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-
-  async function refresh() {
-    const response = await fetch(`/api/leads/${screen.leadId}/meetings`, { cache: "no-store" });
-    const body = await readResponse(response);
-    if (!body || typeof body !== "object" || !("result" in body)) throw new Error("Resposta inválida ao atualizar reuniões.");
-    setScreen(body.result as LeadMeetingsScreen);
-    await onCommitted();
-  }
 
   async function schedule(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -84,7 +75,7 @@ export function LeadMeetingsWorkspace({
       setNotice(participantEmailsFromForm(data).length
         ? "Reunião agendada. Convite e lembretes do participante foram enfileirados."
         : "Reunião agendada e contexto encaminhado ao closer.");
-      await refresh();
+      await onCommitted();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Falha inesperada.");
     } finally {
@@ -124,7 +115,7 @@ export function LeadMeetingsWorkspace({
                 {meeting.participants.map((guest) => <p className="mt-3 text-sm" key={guest.email}>Participante: {guest.email}</p>)}
                 {meeting.outcome ? <p className="mt-3 text-sm"><strong>Resultado:</strong> {meeting.outcome}</p> : null}
                 <div className="mt-3 flex flex-wrap gap-3 text-sm font-medium"><Link className="underline" href={`/agenda/reunioes/${meeting.id}`}>Ver detalhes e briefing</Link><Link className="underline" href={`/agenda?meetingId=${meeting.id}`}>Abrir na agenda</Link>{meeting.opportunityId ? <Link className="underline" href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
-                <MeetingActions meeting={meeting} onCommitted={refresh} />
+                <MeetingActions meeting={meeting} onCommitted={onCommitted} />
                 <details className="mt-4"><summary className="cursor-pointer text-sm font-medium">Ver histórico ({meeting.history.length})</summary><ol className="mt-3 space-y-2">{meeting.history.map((item) => <li className="border-l-2 pl-3 text-sm" key={item.id}><p>{historyLabels[item.action]} · {formatDate(item.occurredAt, screen.timeZone)}</p><p className="text-xs text-muted-foreground">{item.actorName}{item.reason ? ` · ${item.reason}` : ""}</p>{item.previousStartsAt && item.previousStartsAt !== item.newStartsAt ? <p className="text-xs text-muted-foreground">De {formatDate(item.previousStartsAt, screen.timeZone)} para {formatDate(item.newStartsAt, screen.timeZone)}</p> : null}</li>)}</ol></details>
               </li>
             ))}

@@ -342,6 +342,8 @@ export function OperationalHistoryWorkspace({
 }>) {
   const router = useRouter();
   const [operations, setOperations] = useState(initialOperations);
+  const [meetings, setMeetings] = useState(initialMeetings);
+  const [previousInitialMeetings, setPreviousInitialMeetings] = useState(initialMeetings);
   const [pipeline, setPipeline] = useState(initialPipeline);
   const [score, setScore] = useState(initialScore);
   const [activeTab, setActiveTab] = useState<TabKey>("timeline");
@@ -363,6 +365,11 @@ export function OperationalHistoryWorkspace({
   const [sellerTargetsLoading, setSellerTargetsLoading] = useState(false);
   const [opportunities, setOpportunities] = useState(initialOpportunities);
   const [saleOpportunityId, setSaleOpportunityId] = useState<string | null>(null);
+  if (previousInitialMeetings !== initialMeetings) {
+    setPreviousInitialMeetings(initialMeetings);
+    setMeetings(initialMeetings);
+  }
+  const hasActiveMeeting = meetings.meetings.some((meeting) => meeting.status === "SCHEDULED" || meeting.status === "CONFIRMED");
   const hasWhatsapp = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "WHATSAPP"));
   const hasInstagram = Boolean(contactIdentity?.contact?.points.some((point) => point.type === "INSTAGRAM"));
   const instagramPoint = contactIdentity?.contact?.points.find((point) => point.type === "INSTAGRAM" && point.isPrimary)
@@ -457,6 +464,17 @@ export function OperationalHistoryWorkspace({
     setClock(new Date(result.generatedAt).getTime());
   }
 
+  async function refreshMeetings() {
+    const response = await fetch(`/api/leads/${meetings.leadId}/meetings`, { cache: "no-store" });
+    const result = await readResponse(response) as LeadMeetingsScreen | undefined;
+    if (!result) throw new Error("Resposta inválida ao atualizar reuniões.");
+    setMeetings(result);
+  }
+
+  async function refreshMeetingOperations() {
+    await Promise.all([refreshMeetings(), refresh()]);
+  }
+
   async function refreshSellerTargets() {
     setSellerTargetsLoading(true);
     try {
@@ -510,7 +528,7 @@ export function OperationalHistoryWorkspace({
   async function mutate(
     action: string,
     data: Record<string, unknown>,
-    onSaved?: () => void,
+    onSaved?: () => void | Promise<void>,
     successMessage = "Operação registrada com sucesso.",
   ) {
     setPending(true);
@@ -522,8 +540,7 @@ export function OperationalHistoryWorkspace({
         body: JSON.stringify({ action, data }),
       });
       await readResponse(response);
-      onSaved?.();
-      await refresh();
+      await Promise.all([onSaved?.(), refresh()]);
       setNotice({ kind: "success", message: successMessage });
       return true;
     } catch (error) {
@@ -825,7 +842,7 @@ export function OperationalHistoryWorkspace({
           }
         : { dueAt: isoDate(formText(form, "dueAt")) }),
     };
-    const saved = await mutate("CREATE_TASK", task, undefined, kind === "MEETING"
+    const saved = await mutate("CREATE_TASK", task, kind === "MEETING" ? refreshMeetings : undefined, kind === "MEETING"
       ? participantEmailsFromForm(form).length
         ? "Reunião criada na Agenda. Convite e lembretes do participante foram enfileirados."
         : "Reunião criada na Agenda. O Google Agenda será sincronizado se o closer tiver uma conta conectada."
@@ -833,7 +850,6 @@ export function OperationalHistoryWorkspace({
     if (saved) {
       element.reset();
       setTaskKind("FOLLOW_UP");
-      if (kind === "MEETING") router.refresh();
     }
   }
 
@@ -1039,7 +1055,7 @@ export function OperationalHistoryWorkspace({
           <Button disabled={!pipeline.canWrite} onClick={openStagePanel} size="sm" type="button" variant="secondary">Desqualificar</Button>
           <Button disabled={!pipeline.canWrite} onClick={openStagePanel} size="sm" type="button" variant="secondary">Colocar em nutrição</Button>
           <Button disabled={!initialQualifications.canWrite} key="Qualificar" onClick={() => setActiveTab("qualification")} size="sm" type="button" variant="secondary">Qualificar</Button>
-          <Button disabled={!initialMeetings.canSchedule} onClick={() => setActiveTab("meetings")} size="sm" type="button" variant="secondary">Agendar reunião</Button>
+          <Button disabled={!meetings.canSchedule} onClick={() => setActiveTab("meetings")} size="sm" type="button" variant="secondary">Agendar reunião</Button>
           {showOpportunities ? <Button disabled={!opportunities.canCreate} onClick={() => setActiveTab("opportunity")} size="sm" type="button" variant="secondary">Criar oportunidade</Button> : null}
         </div>
         {!operations.permissions.canWrite ? (
@@ -1417,13 +1433,18 @@ export function OperationalHistoryWorkspace({
                   <label className="text-sm">Prioridade<select className={inputClass} defaultValue="MEDIUM" name="priority"><option value="LOW">Baixa</option><option value="MEDIUM">Média</option><option value="HIGH">Alta</option><option value="URGENT">Urgente</option></select></label>
                   <label className="text-sm sm:col-span-2">{taskKind === "MEETING" ? "Data e horário da reunião" : "Prazo"}<input className={inputClass} name="dueAt" required type="datetime-local" /></label>
                   {taskKind === "MEETING" ? <>
-                    <label className="text-sm">Closer<select className={inputClass} defaultValue={initialMeetings.closerOptions.find((closer) => closer.id === operations.lead.ownerMemberId)?.id ?? (initialMeetings.closerOptions.length === 1 ? initialMeetings.closerOptions[0]!.id : "")} name="closerId" required><option value="">Selecione o responsável</option>{initialMeetings.closerOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
-                    <label className="text-sm">Duração<select className={inputClass} defaultValue={initialMeetings.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
+                    <label className="text-sm">Closer<select className={inputClass} defaultValue={meetings.closerOptions.find((closer) => closer.id === operations.lead.ownerMemberId)?.id ?? (meetings.closerOptions.length === 1 ? meetings.closerOptions[0]!.id : "")} name="closerId" required><option value="">Selecione o responsável</option>{meetings.closerOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
+                    <label className="text-sm">Duração<select className={inputClass} defaultValue={meetings.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
                     <MeetingParticipantField className="text-sm sm:col-span-2" inputClassName={inputClass} />
                     <p className="text-sm text-muted-foreground sm:col-span-2">A reunião será criada na Agenda com tarefa vinculada. Cada closer precisa <Link className="underline" href="/integracoes/calendario">conectar a própria conta Google</Link> para sincronizá-la.</p>
-                    {!initialMeetings.canSchedule ? <p className="text-sm text-destructive sm:col-span-2">Este lead já tem reunião ativa, não há closer disponível ou seu perfil não pode agendar reuniões.</p> : null}
+                    {!meetings.canSchedule ? (
+                      <div className="space-y-2 sm:col-span-2">
+                        <p className="text-sm text-destructive">{hasActiveMeeting ? "Este lead já tem uma reunião ativa." : "Não há closer disponível para o seu perfil ou você não tem permissão para agendar reuniões."}</p>
+                        {hasActiveMeeting ? <Button onClick={() => setActiveTab("meetings")} size="sm" type="button" variant="secondary">Ver reunião ativa</Button> : null}
+                      </div>
+                    ) : null}
                   </> : null}
-                  <Button className="sm:col-span-2" disabled={pending || (taskKind === "MEETING" && !initialMeetings.canSchedule)} type="submit">{pending ? "Salvando…" : taskKind === "MEETING" ? "Criar tarefa e agendar reunião" : "Criar tarefa"}</Button>
+                  <Button className="sm:col-span-2" disabled={pending || (taskKind === "MEETING" && !meetings.canSchedule)} type="submit">{pending ? "Salvando…" : taskKind === "MEETING" ? "Criar tarefa e agendar reunião" : "Criar tarefa"}</Button>
                 </form>
               </details>
             ) : null}
@@ -1542,7 +1563,7 @@ export function OperationalHistoryWorkspace({
       {activeTab === "qualification" ? (
         <FreeQualificationWorkspace initialScreen={initialQualifications} onCommitted={refresh} />
       ) : null}
-      {activeTab === "meetings" ? <LeadMeetingsWorkspace initialMeetings={initialMeetings} onCommitted={refresh} /> : null}
+      {activeTab === "meetings" ? <LeadMeetingsWorkspace screen={meetings} onCommitted={refreshMeetingOperations} /> : null}
       {showOpportunities && activeTab === "opportunity" ? (
         <div aria-labelledby="tab-opportunity" id="panel-opportunity" role="tabpanel">
           <LeadOpportunitiesWorkspace initialScreen={opportunities} onCommitted={refresh} />
