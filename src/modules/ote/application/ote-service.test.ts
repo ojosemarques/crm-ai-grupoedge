@@ -7,6 +7,7 @@ const now = new Date("2027-01-01T12:00:00Z");
 function fixture(kind = "ANNUAL_MONTHLY") {
   const database = {
     commercialCompensationPolicy: { findFirst: vi.fn().mockResolvedValue(null) },
+    commercialCompensationObligation: { findMany: vi.fn().mockResolvedValue([]) },
     workspaceMember: { findFirst: vi.fn().mockResolvedValue({ role: { key: "closer" } }) },
     actor: { findFirst: vi.fn().mockResolvedValue({ id: "actor" }) },
     workspace: { findUniqueOrThrow: vi.fn().mockResolvedValue({ timeZone: "America/Sao_Paulo" }) },
@@ -37,6 +38,9 @@ describe("elegibilidade OTE a partir de fatos financeiros", () => {
     const { database, service } = fixture();
     const screen = await service.screen(context, { month: "2026-10" });
     expect(screen.summary?.eligibleCents).toBe("360000");
+    expect(database.commercialCompensationObligation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ workspaceId: "workspace", sellerMemberId: "seller" }),
+    }));
     expect(database.otePlan.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: "workspace", memberId: "seller", effectiveMonth: { lte: "2026-10" } } }));
     expect(database.opportunity.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId: "workspace", ownerMemberId: "seller", closedAt: { gte: new Date("2026-10-01T03:00:00Z"), lt: new Date("2026-11-01T03:00:00Z"), lte: now } }) }));
     expect(database.payment.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId: "workspace", status: "CONFIRMED", reversedAt: null, occurredAt: { lte: now } }) }));

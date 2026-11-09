@@ -65,3 +65,5 @@ Com fins de semana e feriados nacionais, o quinto dia útil cai em 09/11/2026 e 
 ## Pendências de baseline
 
 Confirmar identidade e permissões do ambiente, origem do calendário e feriados, cobertura de atribuições e remarcações, início comprovado de rampa, D0, vencimentos e comprovantes individuais do legado. Registrar evidências reais somente em ambiente restrito. Valores e identidades individuais de remuneração devem ficar em configuração autorizada.
+
+O responsável confirmou o calendário comum. A política usa segunda a sexta, exclui os feriados nacionais e adota a Sexta-feira da Paixão conforme a referência federal. A prévia cobre até 31/12/2027 e confere 07/12/2026 e 08/01/2027 como quintos dias úteis. [Portaria federal de 2026](https://legis.sigepe.gov.br/sigepe-bgp-ws-legis/legis-service/download/?id=0026440285-ALPDF%2F2025) · [Datas oficiais de 2027](https://www.joinville.sc.gov.br/publicacoes/calendario-de-feriados-e-pontos-facultativos-do-municipio-de-joinville-2027/)
