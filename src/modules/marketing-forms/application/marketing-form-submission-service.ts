@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
-import { META_CONVERSION_EVENT_TYPE, META_CONVERSION_PURPOSE_CODE } from "@/modules/conversion-feedback/domain/conversion-feedback-contracts";
+import { evaluateMetaConversionPrivacy } from "@/modules/conversion-feedback/application/conversion-feedback-service";
+import { META_CONVERSION_EVENT_TYPE } from "@/modules/conversion-feedback/domain/conversion-feedback-contracts";
 import { buildMinimizedMetaConversion, metaBrowserMatchKeys, metaConversionDeduplicationKey, metaConversionEventId } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
 import { createOutboxEventInTransaction } from "@/modules/integrations/application/integration-platform-service";
 import { canonicalJson } from "@/modules/integrations/domain/integration-policy";
@@ -184,7 +185,7 @@ async function queueMetaConversionForReceipt(
   const existing = await tx.outboxEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: input.form.workspaceId, idempotencyKey: semanticKey } }, select: { payload: true } });
   if (existing?.payload && typeof existing.payload === "object" && !Array.isArray(existing.payload) && typeof existing.payload.eventId === "string") return existing.payload.eventId;
 
-  const [connection, conversion, purpose, points] = await Promise.all([
+  const [connection, conversion, points] = await Promise.all([
     tx.integrationConnection.findFirst({ where: {
       id: tracking.connectionId,
       workspaceId: input.form.workspaceId,
@@ -197,38 +198,21 @@ async function queueMetaConversionForReceipt(
       secrets: { some: { referenceKey: tracking.secretReferenceKey, present: true, disabledAt: null } },
     }, select: { id: true } }),
     tx.attributionConversion.findFirst({ where: { id: submission.attributionConversionId, workspaceId: input.form.workspaceId, status: "ACTIVE", contactId: submission.contactId, leadId: { not: null } } }),
-    tx.processingPurpose.findFirst({
-      where: { workspaceId: input.form.workspaceId, code: META_CONVERSION_PURPOSE_CODE, active: true },
-      select: {
-        id: true,
-        versions: {
-          orderBy: { version: "desc" },
-          take: 1,
-          select: {
-            id: true,
-            status: true,
-            validFrom: true,
-            validTo: true,
-            allowedChannels: true,
-            legalBasis: { select: { status: true, validFrom: true, validTo: true } },
-          },
-        },
-      },
-    }),
     tx.contactPoint.findMany({
       where: { workspaceId: input.form.workspaceId, contactId: submission.contactId, deletedAt: null, doNotContact: false, type: { in: ["EMAIL", "PHONE"] } },
       orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
     }),
   ]);
-  const purposeVersion = purpose?.versions[0] ?? null;
-  if (!connection || !conversion || !purpose || !purposeVersion || purposeVersion.status !== "ACTIVE" || purposeVersion.legalBasis?.status !== "ACTIVE" || !purposeVersion.allowedChannels.includes("OTHER")) return browserEventId;
-  if ((purposeVersion.validFrom && purposeVersion.validFrom > input.now) || (purposeVersion.validTo && purposeVersion.validTo <= input.now) || (purposeVersion.legalBasis.validFrom && purposeVersion.legalBasis.validFrom > input.now) || (purposeVersion.legalBasis.validTo && purposeVersion.legalBasis.validTo <= input.now)) return browserEventId;
-  const consent = await tx.consentState.findFirst({ where: { workspaceId: input.form.workspaceId, contactId: submission.contactId, purposeId: purpose.id, channel: "OTHER", effectiveFrom: { lte: input.now } }, orderBy: [{ effectiveFrom: "desc" }, { updatedAt: "desc" }] });
-  if (consent?.state !== "GRANTED") return browserEventId;
+  if (!connection || !conversion) return browserEventId;
+  const privacy = await evaluateMetaConversionPrivacy(tx, {
+    workspaceId: input.form.workspaceId, actorId: input.actorId, contactId: submission.contactId,
+    now: input.now, correlationId: input.receiptPublicId,
+  });
+  if (!privacy.allowed) return browserEventId;
   const emails = points.filter((point) => point.type === "EMAIL").map((point) => point.normalizedValue);
   const phones = points.filter((point) => point.type === "PHONE").map((point) => point.normalizedValue);
   if (emails.length + phones.length === 0) return browserEventId;
-  const payload = buildMinimizedMetaConversion({ workspaceId: input.form.workspaceId, conversionId: conversion.id, contactId: submission.contactId, eventName: "Lead", occurredAt: conversion.occurredAt, valueCents: conversion.valueCents, emails, phones, purposeVersionId: purposeVersion.id, consentState: "GRANTED", evaluatedAt: input.now, browserMatchKeys: input.browserMatchKeys });
+  const payload = buildMinimizedMetaConversion({ workspaceId: input.form.workspaceId, conversionId: conversion.id, contactId: submission.contactId, eventName: "Lead", occurredAt: conversion.occurredAt, valueCents: conversion.valueCents, emails, phones, purposeVersionId: privacy.purposeVersionId, consentState: privacy.consentState, evaluatedAt: input.now, browserMatchKeys: input.browserMatchKeys });
   const outbox = await createOutboxEventInTransaction(tx, {
     workspaceId: input.form.workspaceId,
     connectionId: connection.id,
@@ -241,7 +225,6 @@ async function queueMetaConversionForReceipt(
     idempotencyKey: semanticKey,
     payload,
   });
-  await tx.privacyDecision.create({ data: { workspaceId: input.form.workspaceId, contactId: submission.contactId, purposeVersionId: purposeVersion.id, channel: "OTHER", intendedAction: "META_CONVERSION_SIGNAL", outcome: "ALLOW", mode: "ENFORCED", legalBasisStatus: "ACTIVE", consentState: "GRANTED", reasonCodes: ["ACTIVE_PURPOSE", "ACTIVE_LEGAL_BASIS", "EXPLICIT_CONSENT_GRANTED"], missingEvidence: [], ruleVersion: "marketing-form-meta-v1", actorId: input.actorId, correlationId: input.receiptPublicId } });
   await tx.auditLog.create({ data: { workspaceId: input.form.workspaceId, actorId: input.actorId, action: "marketing.form.meta_conversion.queued", entityType: "OutboxEvent", entityId: outbox.id, changes: { receiptId: input.receiptId, conversionId: conversion.id, eventId: payload.eventId, rawIdentityPersisted: false } } });
   return payload.eventId;
 }

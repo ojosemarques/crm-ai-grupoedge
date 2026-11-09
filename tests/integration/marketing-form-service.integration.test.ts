@@ -1,4 +1,4 @@
-import { createConversionFeedbackService, queueAdvertisingStageMetaConversion } from "@/modules/conversion-feedback/application/conversion-feedback-service";
+import { createConversionFeedbackService, evaluateMetaConversionPrivacy, queueAdvertisingStageMetaConversion } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -283,6 +283,21 @@ describe("serviço administrativo de formulários", () => {
     } });
     await queueStage("MEETING_SCHEDULED");
     expect(await stageEvents()).toHaveLength(0);
+    vi.stubEnv("META_ADS_CONVERSIONS_UPSTREAM_PRIVACY", "true");
+    vi.stubEnv("META_ADS_REPORTING_WORKSPACE_ID", tenantA.context.workspaceId);
+    try {
+      const evaluate = () => database.$transaction((tx) => evaluateMetaConversionPrivacy(tx, {
+        workspaceId: tenantA.context.workspaceId, actorId: tenantA.systemActorId, contactId: submission.contactId!, now,
+      }));
+      await expect(evaluate()).resolves.toMatchObject({ allowed: true, consentState: "UNKNOWN", purposeVersionId: null });
+      await database.lead.update({ where: { id: submission.leadId! }, data: { contactPreference: "DO_NOT_CONTACT", contactPreferenceUpdatedAt: now } });
+      await expect(evaluate()).resolves.toMatchObject({ allowed: false, reasons: ["CONTACT_PRIVACY_RESTRICTION"] });
+      await database.lead.update({ where: { id: submission.leadId! }, data: { contactPreference: "UNKNOWN", contactPreferenceUpdatedAt: null } });
+      vi.stubEnv("META_ADS_REPORTING_WORKSPACE_ID", tenantB.context.workspaceId);
+      await expect(evaluate()).resolves.toMatchObject({ allowed: false });
+    } finally {
+      vi.unstubAllEnvs();
+    }
     const legalBasis = await database.legalBasis.create({ data: { workspaceId: tenantA.context.workspaceId, code: `meta-form-${randomUUID().slice(0, 8)}`, version: 1, basisType: "CONSENT", name: "Consentimento Meta", description: "Teste isolado", status: "ACTIVE", validFrom: new Date(now.getTime() - 60_000), approvalReference: "TEST-META-FORM", approvedByActorId: tenantA.systemActorId, approvedAt: new Date(now.getTime() - 60_000), createdByActorId: tenantA.systemActorId } });
     const purpose = await database.processingPurpose.create({ data: { workspaceId: tenantA.context.workspaceId, code: "marketing-conversion-feedback", name: "Conversão Meta", description: "Mensuração consentida", createdByActorId: tenantA.systemActorId, updatedByActorId: tenantA.systemActorId } });
     await database.purposeVersion.create({ data: { workspaceId: tenantA.context.workspaceId, purposeId: purpose.id, legalBasisId: legalBasis.id, version: 1, description: purpose.description, audience: "Leads", allowedChannels: ["OTHER"], noticeText: "Autoriza mensuração de conversão.", noticeVersion: "meta-form-v1", status: "ACTIVE", validFrom: new Date(now.getTime() - 60_000), approvedByActorId: tenantA.systemActorId, approvedAt: new Date(now.getTime() - 60_000), createdByActorId: tenantA.systemActorId } });

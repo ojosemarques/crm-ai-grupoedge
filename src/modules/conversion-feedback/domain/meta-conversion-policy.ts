@@ -1,3 +1,4 @@
+import type { ConsentStateValue } from "@/generated/prisma/client";
 import { createHash } from "node:crypto";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -31,7 +32,7 @@ export function buildMinimizedMetaConversion(input: Readonly<{
   eventName: "Lead" | "CompleteRegistration" | "Schedule" | "MeetingAttended" | "Purchase";
   occurredAt: Date; valueCents: bigint | null; emails: readonly string[]; phones: readonly string[];
   browserMatchKeys?: ReturnType<typeof metaBrowserMatchKeys>;
-  purposeVersionId: string; consentState: "GRANTED"; evaluatedAt: Date;
+  purposeVersionId: string | null; consentState: ConsentStateValue; evaluatedAt: Date;
 }>) {
   const emailHashes = input.emails.slice(0, 2).map((value) => hash(value.trim().toLowerCase()));
   const phoneHashes = input.phones.slice(0, 2).map((value) => hash(value.replace(/\D/g, "")));

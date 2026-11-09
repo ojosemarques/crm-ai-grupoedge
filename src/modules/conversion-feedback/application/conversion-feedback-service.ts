@@ -27,7 +27,45 @@ function resource(context: AuthenticatedContext) {
   return { workspaceId: context.workspaceId, resourceType: "MarketingConversionFeedback", resourceId: context.workspaceId };
 }
 
-async function privacyEvidence(tx: Tx, input: { workspaceId: string; actorId: string; contactId: string; now: Date }) {
+function usesUpstreamMetaPrivacy(workspaceId: string) {
+  return process.env.META_ADS_CONVERSIONS_UPSTREAM_PRIVACY === "true"
+    && process.env.META_ADS_REPORTING_WORKSPACE_ID === workspaceId;
+}
+
+export async function evaluateMetaConversionPrivacy(tx: Tx, input: {
+  workspaceId: string; actorId: string; contactId: string; now: Date; correlationId?: string;
+}) {
+  if (usesUpstreamMetaPrivacy(input.workspaceId)) {
+    const [contact, restriction] = await Promise.all([
+      tx.contact.findFirst({
+        where: { workspaceId: input.workspaceId, id: input.contactId, status: "ACTIVE", deletedAt: null },
+        select: {
+          points: { where: { deletedAt: null, doNotContact: true }, select: { id: true }, take: 1 },
+          leads: { where: { deletedAt: null, contactPreference: { in: ["DO_NOT_CONTACT", "NOT_CONSENTED"] } }, select: { id: true }, take: 1 },
+        },
+      }),
+      tx.consentState.findFirst({
+        where: {
+          workspaceId: input.workspaceId, contactId: input.contactId, channel: "OTHER",
+          effectiveFrom: { lte: input.now }, purpose: { code: META_CONVERSION_PURPOSE_CODE },
+          state: { in: ["DENIED", "REVOKED", "OPTED_OUT"] },
+        },
+        select: { state: true },
+      }),
+    ]);
+    const allowed = Boolean(contact && !contact.points.length && !contact.leads.length && !restriction);
+    const consentState = restriction?.state ?? "UNKNOWN";
+    const reasons = [allowed ? "WORKSPACE_UPSTREAM_PRIVACY_CONFIGURATION" : contact ? "CONTACT_PRIVACY_RESTRICTION" : "CONTACT_UNAVAILABLE"];
+    await tx.privacyDecision.create({ data: {
+      workspaceId: input.workspaceId, contactId: input.contactId, purposeVersionId: null,
+      channel: "OTHER", intendedAction: "META_CONVERSION_SIGNAL", outcome: allowed ? "ALLOW" : "DENY",
+      mode: "ENFORCED", consentState, reasonCodes: reasons, missingEvidence: [],
+      ruleVersion: "meta-conversion-upstream-privacy-v1", actorId: input.actorId, evaluatedAt: input.now,
+      correlationId: input.correlationId ?? null,
+    } });
+    return { allowed, purposeVersionId: null, consentState, reasons };
+  }
+
   const purpose = await tx.processingPurpose.findFirst({
     where: { workspaceId: input.workspaceId, code: META_CONVERSION_PURPOSE_CODE, active: true },
     select: { id: true, versions: { orderBy: { version: "desc" }, take: 1, select: { id: true, status: true, validFrom: true, validTo: true, allowedChannels: true, legalBasis: { select: { status: true, validFrom: true, validTo: true } } } } },
@@ -54,7 +92,7 @@ async function privacyEvidence(tx: Tx, input: { workspaceId: string; actorId: st
     workspaceId: input.workspaceId, contactId: input.contactId, purposeVersionId: version?.id ?? null,
     channel: "OTHER", intendedAction: "META_CONVERSION_SIGNAL", outcome: allowed ? "ALLOW" : "DENY",
     mode: "ENFORCED", legalBasisStatus: version?.legalBasis?.status ?? null, consentState: consent?.state ?? "UNKNOWN",
-    reasonCodes: reasons, missingEvidence: allowed ? [] : reasons, ruleVersion: "stage14-meta-conversion-v1", actorId: input.actorId, evaluatedAt: input.now,
+    reasonCodes: reasons, missingEvidence: allowed ? [] : reasons, ruleVersion: "stage14-meta-conversion-v1", actorId: input.actorId, evaluatedAt: input.now, correlationId: input.correlationId ?? null,
   } });
   return { allowed, purposeVersionId: version?.id ?? null, consentState: consent?.state ?? "UNKNOWN", reasons };
 }
@@ -95,8 +133,8 @@ export async function queueAdvertisingStageMetaConversion(tx: Tx, input: {
   // The caller holds the lead advisory lock during the transition.
   if (await tx.outboxEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: input.workspaceId, idempotencyKey } }, select: { id: true } })) return;
   const evaluatedAt = input.evaluatedAt ?? input.occurredAt;
-  const privacy = await privacyEvidence(tx, { ...input, contactId: input.contactId, now: evaluatedAt });
-  if (!privacy.allowed || !privacy.purposeVersionId) return { status: "PRIVACY_BLOCKED" as const, reasons: privacy.reasons };
+  const privacy = await evaluateMetaConversionPrivacy(tx, { ...input, contactId: input.contactId, now: evaluatedAt });
+  if (!privacy.allowed) return { status: "PRIVACY_BLOCKED" as const, reasons: privacy.reasons };
   const points = await tx.contactPoint.findMany({
     where: { workspaceId: input.workspaceId, contactId: input.contactId, deletedAt: null, doNotContact: false, type: { in: ["EMAIL", "PHONE"] } },
     orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
@@ -123,7 +161,7 @@ export async function queueAdvertisingStageMetaConversion(tx: Tx, input: {
     ...identity, browserMatchKeys: metaBrowserMatchKeys(intakePayload?.userData ?? {}), contactId: input.contactId, occurredAt: input.occurredAt, valueCents: null,
     emails: points.filter((point) => point.type === "EMAIL").map((point) => point.normalizedValue),
     phones: points.filter((point) => point.type === "PHONE").map((point) => point.normalizedValue),
-    purposeVersionId: privacy.purposeVersionId, consentState: "GRANTED", evaluatedAt,
+    purposeVersionId: privacy.purposeVersionId, consentState: privacy.consentState, evaluatedAt,
   });
   await createOutboxEventInTransaction(tx, {
     workspaceId: input.workspaceId, connectionId: connection.id, actorId: input.actorId,
@@ -156,7 +194,9 @@ export function createConversionFeedbackService(options: Options) {
       const idempotencyKey = metaConversionDeduplicationKey({ workspaceId, conversionId: leadId, eventName: "MeetingAttended" });
       const existing = await tx.outboxEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey } }, select: { status: true, errorClass: true } });
       if (existing) return existing;
-      const action = "marketing.meta_conversion.meeting_recovery";
+      const action = usesUpstreamMetaPrivacy(workspaceId)
+        ? "marketing.meta_conversion.meeting_recovery_upstream"
+        : "marketing.meta_conversion.meeting_recovery";
       if (await tx.auditLog.findFirst({ where: { workspaceId, action, entityId: leadId }, select: { id: true } })) return { status: "ALREADY_EVALUATED" };
       const now = options.now();
       const [lead, actor, transition] = await Promise.all([
@@ -367,13 +407,13 @@ export function createConversionFeedbackService(options: Options) {
       const canonicalEvents: Record<string, readonly string[]> = { LEAD_RECEIVED: ["Lead"], QUALIFIED: ["CompleteRegistration"], OPPORTUNITY_CREATED: ["Lead"], WON: ["Purchase"] };
       if (!canonicalEvents[conversion.kind]?.includes(raw.eventName)) fail("O evento Meta não corresponde ao tipo da conversão canônica.", "META_CONVERSION_EVENT_MISMATCH", 422);
       const connection = await metaConnection(tx, context.workspaceId);
-      const privacy = await privacyEvidence(tx, { workspaceId: context.workspaceId, actorId: context.actorId, contactId: conversion.contactId, now: options.now() });
+      const privacy = await evaluateMetaConversionPrivacy(tx, { workspaceId: context.workspaceId, actorId: context.actorId, contactId: conversion.contactId, now: options.now() });
       if (!privacy.allowed) return { blockedReason: "META_CONVERSION_CONSENT_REQUIRED" as const };
       const points = await tx.contactPoint.findMany({ where: { workspaceId: context.workspaceId, contactId: conversion.contactId, deletedAt: null, doNotContact: false, type: { in: ["EMAIL", "PHONE"] } }, orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] });
       const emails = points.filter((point) => point.type === "EMAIL").map((point) => point.normalizedValue);
       const phones = points.filter((point) => point.type === "PHONE").map((point) => point.normalizedValue);
       if (emails.length + phones.length === 0) fail("Nenhuma identidade mínima elegível para hash foi encontrada.", "META_CONVERSION_MATCH_KEY_MISSING", 422);
-      const payload = buildMinimizedMetaConversion({ workspaceId: context.workspaceId, conversionId: conversion.id, contactId: conversion.contactId, eventName: raw.eventName, occurredAt: conversion.occurredAt, valueCents: conversion.valueCents, emails, phones, purposeVersionId: privacy.purposeVersionId!, consentState: "GRANTED", evaluatedAt: options.now() });
+      const payload = buildMinimizedMetaConversion({ workspaceId: context.workspaceId, conversionId: conversion.id, contactId: conversion.contactId, eventName: raw.eventName, occurredAt: conversion.occurredAt, valueCents: conversion.valueCents, emails, phones, purposeVersionId: privacy.purposeVersionId, consentState: privacy.consentState, evaluatedAt: options.now() });
       const outbox = await createOutboxEventInTransaction(tx, {
         workspaceId: context.workspaceId, connectionId: connection.id, actorId: context.actorId,
         eventType: META_CONVERSION_EVENT_TYPE, aggregateType: "AttributionConversion", aggregateId: conversion.id,
@@ -431,7 +471,7 @@ export function createConversionFeedbackService(options: Options) {
     }
     const actor = await options.database.actor.findFirst({ where: { workspaceId: item.workspaceId, type: "SYSTEM" }, select: { id: true } });
     if (!actor) return failItem({ terminal: true, classification: "CONFIGURATION", code: "SYSTEM_ACTOR_MISSING", message: "Ator de sistema ausente." });
-    const allowed = await options.database.$transaction((tx) => privacyEvidence(tx, { workspaceId: item.workspaceId, actorId: actor.id, contactId, now: options.now() }));
+    const allowed = await options.database.$transaction((tx) => evaluateMetaConversionPrivacy(tx, { workspaceId: item.workspaceId, actorId: actor.id, contactId, now: options.now() }));
     if (!allowed.allowed) return failItem({ terminal: true, classification: "PRIVACY_BLOCKED", code: "META_CONVERSION_CONSENT_REVOKED", message: "Entrega bloqueada pela decisão atual de privacidade." });
     const connection = await options.database.integrationConnection.findFirst({ where: { id: item.connectionId ?? "", workspaceId: item.workspaceId, enabled: true, status: "CONNECTED", capabilityLevel: "CONNECTED", capabilities: { some: { capability: "SYNC_PUSH", enabled: true } } }, include: { configVersions: true } });
     const activeConfig = connection?.configVersions.find((version) => version.version === connection.currentConfigVersion);
