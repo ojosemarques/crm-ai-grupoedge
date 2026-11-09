@@ -14,6 +14,7 @@ overrides:
   mysql2: 3.23.1
   source-map-js: 1.2.2
   vite: 8.2.4
+  zod@4.6.1: 4.6.6
 minimumReleaseAgeExclude:
   - '@types/node@22.20.2'
   - '@types/react-dom@19.3.0'
@@ -21,7 +22,6 @@ minimumReleaseAgeExclude:
   - react-dom@19.3.0
   - react@19.3.0
   - scheduler@0.28.0
-  - zod@4.6.1
 auditConfig:
   # Dev-only via eslint-config-next; o advisory ainda não possui a versão
   # 3.0.4 anunciada publicada no npm. Remover quando o patch existir.

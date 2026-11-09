@@ -3,7 +3,8 @@ import "dotenv/config";
 import { readFile, stat } from "node:fs/promises";
 import { legacyManifestSchema, previewLegacyCompensation } from "@/modules/finance/application/legacy-compensation-preview";
 import { applyLegacyCompensation } from "@/modules/finance/application/legacy-compensation-import";
-import { getDatabaseClient } from "@/shared/core/database/client";
+import { PrismaClient } from "@/generated/prisma/client";
+import { createPostgresAdapter } from "@/shared/core/database/postgres-adapter";
 
 async function main() {
   const connection = process.env.DATABASE_URL;
@@ -17,7 +18,7 @@ async function main() {
     throw new Error("O manifesto remoto deve ser um arquivo privado (0600).");
   }
   const manifest = legacyManifestSchema.parse(JSON.parse(await readFile(manifestPath, "utf8")));
-  const database = getDatabaseClient();
+  const database = new PrismaClient({ adapter: createPostgresAdapter(connection, { connectionTimeoutMillis: 8_000, max: 1 }) });
   try {
     if (process.argv.includes("--apply")) {
       const actor = process.argv.find((value) => value.startsWith("--actor="))?.slice(8);
