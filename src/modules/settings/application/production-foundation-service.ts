@@ -92,6 +92,8 @@ async function ensureLeadPipeline(
   if (!pipeline) {
     pipeline = await tx.pipeline.create({ data: { workspaceId, name: definition.name, entityType: "LEAD", isDefault: definition.isDefault, createdByActorId: actorId, updatedByActorId: actorId } });
     result.pipelines += 1;
+  } else if (definition.isDefault && pipeline.name === "Pré-vendas") {
+    pipeline = await tx.pipeline.update({ where: { id: pipeline.id }, data: { name: definition.name, updatedByActorId: actorId } });
   }
   const ids = new Map<string, string>();
   for (const [position, code] of defaultLeadStageCodes.entries()) {
@@ -276,7 +278,7 @@ export async function ensureProductionFoundationInTransaction(tx: Prisma.Transac
       result.priorityBands += 1;
     }
 
-    await ensureLeadPipeline(tx, workspaceId, actorId, result, { name: "Pré-vendas", isDefault: true });
+    await ensureLeadPipeline(tx, workspaceId, actorId, result, { name: "Leads", isDefault: true });
     await ensureProspectingOperationPipelineInTransaction(tx, workspaceId, actorId, result, ACTIVE_PROSPECTING_PIPELINE_NAME);
     await ensureProspectingOperationPipelineInTransaction(tx, workspaceId, actorId, result, ADVERTISING_PIPELINE_NAME);
     await ensureSalesPipeline(tx, workspaceId, actorId, result);

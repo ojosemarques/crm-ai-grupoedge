@@ -144,12 +144,12 @@ test("opera o pipeline por quadro, lista e cartão sem exigir configurações au
   await createManualLead(page, leadName);
 
   await page.goto(`/pipeline?q=${encodeURIComponent(leadName)}`);
-  await expect(page.getByRole("heading", { name: "Pré-vendas", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Leads", exact: true })).toBeVisible();
   const card = page.locator("article").filter({ hasText: leadName });
   await expect(card).toBeVisible();
   const pipelineNavigation = page.getByRole("navigation", { name: "Selecionar pipeline" });
   await expect(pipelineNavigation.getByText("Prospecção Ativa", { exact: true })).toHaveCount(0);
-  await expect(pipelineNavigation.getByRole("link", { name: "Pré-vendasPré-vendas" })).toHaveAttribute("aria-current", "page");
+  await expect(pipelineNavigation.getByRole("link", { name: "LeadsLeads" })).toHaveAttribute("aria-current", "page");
   await expect(pipelineNavigation.getByRole("link", { name: "VendasVendas" })).toBeVisible();
   await expect(page.getByLabel("Etapa").getByRole("option", { name: "Novo (1)" })).toHaveCount(1);
 
@@ -507,7 +507,7 @@ test("carrega todos os cards ao rolar e preserva os carregados ao mover um lead"
 test("mantém o pipeline somente leitura para o visualizador", async ({ page }) => {
   await login(page, DEMO_USERS.at(-1)!.email);
   await page.goto("/pipeline");
-  await expect(page.getByRole("heading", { name: "Pré-vendas", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Leads", exact: true })).toBeVisible();
   const firstTransitionButton = page.getByRole("button", { name: "Alterar etapa" }).first();
   if (await firstTransitionButton.count()) await expect(firstTransitionButton).toBeDisabled();
 });

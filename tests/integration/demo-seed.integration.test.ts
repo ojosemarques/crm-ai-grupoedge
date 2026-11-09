@@ -173,7 +173,7 @@ async function getStructuralSnapshot(workspaceId: string) {
     database.pipelineStage.findMany({
       where: {
         workspaceId,
-        NOT: { pipeline: { name: "Pré-vendas" }, stableKey: "active-prospecting.conversation-started" },
+        NOT: { pipeline: { name: "Leads" }, stableKey: "active-prospecting.conversation-started" },
       },
       orderBy: { id: "asc" },
       select: {

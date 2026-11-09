@@ -141,7 +141,7 @@ const leadPipelineTransitions = [
 const pipelineDefinitions = [
   {
     key: "pre-sales",
-    name: "Pré-vendas",
+    name: "Leads",
     entityType: "LEAD",
     isDefault: true,
     stages: leadPipelineStages,

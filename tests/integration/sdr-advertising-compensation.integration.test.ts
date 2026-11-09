@@ -148,4 +148,30 @@ it("usa a atribuição histórica de Anúncios e a ocorrência efetiva no corte 
     { revision: 1, facts: { attainment: { band: 100 } } },
     { revision: 2, facts: { attainment: { band: 0 } } },
   ]);
+
+  const transferred = await lead(early);
+  await fact("LEAD_CREATED", transferred.id, early, { leadOwnerMemberIdAtEvent: other.id });
+  await database.leadAssignment.create({ data: {
+    workspaceId: workspace.id, leadId: transferred.id, toMemberId: sdr.id, type: "MANUAL",
+    assignedAt: arrivalAt, createdAt: arrivalAt, createdByActorId: actor.id,
+  } });
+  await fact("MEETING_SCHEDULED", transferred.id, early, { bookedByMemberId: other.id });
+  await meeting(transferred.id, bookedAt, "ATTENDED");
+  const directlyBooked = await lead(early);
+  await fact("LEAD_CREATED", directlyBooked.id, early, { leadOwnerMemberIdAtEvent: other.id });
+  await meeting(directlyBooked.id, bookedAt, "ATTENDED");
+  const movedAway = await lead(early);
+  await fact("LEAD_CREATED", movedAway.id, early, { leadOwnerMemberIdAtEvent: other.id });
+  const prospectingStage = await database.pipelineStage.create({ data: { ...audit, pipelineId: pros.id, name: "Entrada", position: 1 } });
+  await database.stageHistory.create({ data: {
+    workspaceId: workspace.id, pipelineId: pros.id, stageId: prospectingStage.id,
+    leadId: movedAway.id, enteredAt: arrivalAt, createdAt: arrivalAt, enteredByActorId: actor.id,
+  } });
+  await database.leadAssignment.create({ data: {
+    workspaceId: workspace.id, leadId: movedAway.id, toMemberId: sdr.id, type: "MANUAL",
+    assignedAt: bookedAt, createdAt: bookedAt, createdByActorId: actor.id,
+  } });
+  const transferredFacts = await read();
+  expect(transferredFacts.counts).toMatchObject({ leads: 3, bookedLeads: 3, eligibleMeetings: 3, heldMeetings: 3 });
+  expect(transferredFacts.bookedLeadIds).toEqual(expect.arrayContaining([transferred.id, directlyBooked.id]));
 });
