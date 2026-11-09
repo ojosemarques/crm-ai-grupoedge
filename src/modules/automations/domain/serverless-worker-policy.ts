@@ -45,7 +45,7 @@ export function assertServerlessWorkerEnabled(policy: ServerlessWorkerPolicy): v
 
 export function assertServerlessWorkerRequest(
   request: Request,
-  policy: ServerlessWorkerPolicy,
+  policy: Pick<ServerlessWorkerPolicy, "secret">,
 ): void {
   const url = new URL(request.url);
   if (url.search.length > 0) {

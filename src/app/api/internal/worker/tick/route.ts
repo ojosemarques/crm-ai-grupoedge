@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 
 import { createDefaultWorkerBatchRunner } from "@/modules/automations/application/worker-runtime";
+import { getConversionFeedbackService } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import {
   assertServerlessWorkerEnabled,
   assertServerlessWorkerRequest,
@@ -8,6 +10,7 @@ import {
 } from "@/modules/automations/domain/serverless-worker-policy";
 import { getApplicationConfig } from "@/shared/core/config/application-config";
 import { handleRouteError } from "@/shared/core/errors/route-error-handler";
+import { ConfigurationError } from "@/shared/core/errors/application-error";
 import { correlationResponseHeaders, resolveCorrelationId } from "@/shared/core/http/correlation";
 import { logger } from "@/shared/core/logging/logger";
 
@@ -19,6 +22,21 @@ async function runTick(request: Request): Promise<NextResponse> {
   const correlationId = resolveCorrelationId(request.headers);
   let runtimeWorker: ReturnType<typeof createDefaultWorkerBatchRunner> | undefined;
   try {
+    if (request.method === "GET" && process.env.VERCEL_ENV === "production"
+      && process.env.SERVERLESS_WORKER_ENABLED === "false"
+      && process.env.META_ADS_CONVERSIONS_WORKER_ENABLED === "true") {
+      const secret = process.env.CRON_SECRET?.trim() ?? "";
+      if (secret.length < 32) throw new ConfigurationError(["CRON_SECRET"]);
+      assertServerlessWorkerRequest(request, { secret });
+
+      const workspace = z.uuid().safeParse(process.env.META_ADS_REPORTING_WORKSPACE_ID);
+      if (!workspace.success) throw new ConfigurationError(["META_ADS_REPORTING_WORKSPACE_ID"]);
+      const { status } = await getConversionFeedbackService().processNext(`meta-cron:${correlationId}`, workspace.data);
+      logger.info({ correlationId, code: status }, "Tick de conversões Meta concluído");
+      return NextResponse.json({ status }, {
+        headers: { ...correlationResponseHeaders(correlationId), "Cache-Control": "no-store" },
+      });
+    }
     const policy = loadServerlessWorkerPolicy(process.env);
     assertServerlessWorkerRequest(request, policy);
     assertServerlessWorkerEnabled(policy);

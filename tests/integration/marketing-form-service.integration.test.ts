@@ -328,8 +328,9 @@ describe("serviço administrativo de formulários", () => {
       },
     });
     const deliveries = [];
+    expect(await worker.processNext("marketing-form-meta-fixture", randomUUID())).toEqual({ status: "IDLE" });
     for (let index = 0; index < events.length + milestones.length; index++) {
-      deliveries.push(await worker.processNext("marketing-form-meta-fixture"));
+      deliveries.push(await worker.processNext("marketing-form-meta-fixture", tenantA.context.workspaceId));
     }
     expect(deliveries).toEqual(expect.arrayContaining([...events, ...milestones].map(({ id }) => ({ id, status: "DELIVERED_EXTERNAL" }))));
     expect(await worker.processNext("marketing-form-meta-fixture")).toEqual({ status: "IDLE" });

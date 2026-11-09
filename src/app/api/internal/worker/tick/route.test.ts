@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const run = vi.fn();
 const disconnect = vi.fn();
+const processMeta = vi.fn();
+
+vi.mock("@/modules/conversion-feedback/application/conversion-feedback-service", () => ({
+  getConversionFeedbackService: () => ({ processNext: processMeta }),
+}));
 
 vi.mock("@/modules/automations/application/worker-runtime", () => ({
   createDefaultWorkerBatchRunner: () => ({
@@ -61,6 +66,26 @@ describe("POST /api/internal/worker/tick", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
+  });
+
+  it("processa só conversões do workspace configurado com a credencial do cron", async () => {
+    const workspaceId = "8d47f37b-99cd-42e7-9084-ebd330e7af62";
+    const cronSecret = "c".repeat(48);
+    vi.stubEnv("VERCEL_ENV", "production");
+    vi.stubEnv("SERVERLESS_WORKER_ENABLED", "false");
+    vi.stubEnv("META_ADS_CONVERSIONS_WORKER_ENABLED", "true");
+    vi.stubEnv("META_ADS_REPORTING_WORKSPACE_ID", workspaceId);
+    vi.stubEnv("CRON_SECRET", cronSecret);
+    processMeta.mockResolvedValue({ status: "DELIVERED_EXTERNAL", id: "private-event-id" });
+
+    const { GET } = await import("@/app/api/internal/worker/tick/route");
+    expect((await GET(cronRequest(`Bearer ${validEnvironment.SERVERLESS_WORKER_SECRET}`))).status).toBe(401);
+    expect(processMeta).not.toHaveBeenCalled();
+    const response = await GET(cronRequest(`Bearer ${cronSecret}`));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: "DELIVERED_EXTERNAL" });
+    expect(processMeta).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/^meta-cron:/), workspaceId);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("processa um lote autenticado com limites configurados e resposta agregada", async () => {

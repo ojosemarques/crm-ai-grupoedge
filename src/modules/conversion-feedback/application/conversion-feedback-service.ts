@@ -296,10 +296,11 @@ export function createConversionFeedbackService(options: Options) {
     });
   }
 
-  async function processNext(workerId: string) {
+  async function processNext(workerId: string, workspaceId?: string) {
     const item = await options.database.$transaction(async (tx) => {
       const now = options.now();
-      const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`SELECT "id" FROM "outbox_events" WHERE "eventType" = ${META_CONVERSION_EVENT_TYPE} AND ((("status" IN ('PENDING','RETRY_PENDING')) AND "availableAt" <= ${now} AND ("nextRetryAt" IS NULL OR "nextRetryAt" <= ${now})) OR ("status" = 'PROCESSING' AND "lockExpiresAt" < ${now})) ORDER BY "availableAt", "createdAt" FOR UPDATE SKIP LOCKED LIMIT 1`);
+      const workspaceFilter = workspaceId ? Prisma.sql`AND "workspaceId" = ${workspaceId}::uuid` : Prisma.empty;
+      const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`SELECT "id" FROM "outbox_events" WHERE "eventType" = ${META_CONVERSION_EVENT_TYPE} ${workspaceFilter} AND ((("status" IN ('PENDING','RETRY_PENDING')) AND "availableAt" <= ${now} AND ("nextRetryAt" IS NULL OR "nextRetryAt" <= ${now})) OR ("status" = 'PROCESSING' AND "lockExpiresAt" < ${now})) ORDER BY "availableAt", "createdAt" FOR UPDATE SKIP LOCKED LIMIT 1`);
       if (!rows[0]) return null;
       return tx.outboxEvent.update({ where: { id: rows[0].id }, data: { status: "PROCESSING", attempts: { increment: 1 }, lockedAt: now, lockedBy: workerId, lockExpiresAt: new Date(now.getTime() + 90_000) } });
     });
