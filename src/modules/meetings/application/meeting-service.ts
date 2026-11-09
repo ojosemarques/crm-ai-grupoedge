@@ -106,7 +106,7 @@ const agendaQuerySchema = z.object({
 
 const leadMeetingsQuerySchema = z.object({ leadId: z.string().uuid() }).strict();
 const meetingQuerySchema = z.object({ meetingId: z.string().uuid() }).strict();
-const reassignCompletedSchema = meetingQuerySchema.extend({
+const reassignMeetingSchema = meetingQuerySchema.extend({
   closerId: z.string().uuid(),
   expectedRevision: z.number().int().positive(),
   reason: z.string().trim().min(3).max(2_000),
@@ -1132,8 +1132,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
 
   type PipelineMove = Readonly<{ leadId: string; targetStageId: string; expectedLeadUpdatedAt: Date; managerCorrection: boolean }>;
 
-  async function reassignCompleted(context: AuthenticatedContext, payload: unknown) {
-    const parsed = reassignCompletedSchema.safeParse(payload);
+  async function reassign(context: AuthenticatedContext, payload: unknown) {
+    const parsed = reassignMeetingSchema.safeParse(payload);
     if (!parsed.success) invalidInput(parsed.error);
     const { meetingId, closerId, expectedRevision, reason } = parsed.data;
     const { workspaceId, actorId } = context;
@@ -1145,22 +1145,33 @@ export function createMeetingService(options: MeetingServiceOptions) {
     const teams = decision.scope === "TEAM" ? await teamIds(context) : null;
     const now = options.now();
     return options.database.$transaction(async (transaction) => {
-      await lockCloser(transaction, workspaceId, authorized.ownerMemberId);
+      for (const ownerId of [...new Set([authorized.ownerMemberId, closerId])].sort()) {
+        await lockCloser(transaction, workspaceId, ownerId);
+      }
       const meeting = await transaction.meeting.findFirst({
         where: { id: meetingId, workspaceId, deletedAt: null },
-        select: { ownerMemberId: true, revision: true, status: true },
+        select: { ownerMemberId: true, revision: true, status: true, startsAt: true, endsAt: true },
       });
       if (!meeting) notFound("Reunião não encontrada.");
       if (meeting.revision !== expectedRevision || meeting.ownerMemberId !== authorized.ownerMemberId) {
         conflict("MEETING_VERSION_CONFLICT", "A reunião mudou. Recarregue antes de continuar.");
       }
-      if (meeting.status !== "COMPLETED") conflict("MEETING_NOT_COMPLETED", "Esta alteração é exclusiva de reuniões realizadas.");
       if (meeting.ownerMemberId === closerId) return { meetingId, revision: meeting.revision };
       const closer = await transaction.workspaceMember.findFirst({
         where: { id: closerId, ...commercialMemberWhere({ workspaceId, functions: ["CLOSER"], ...(teams ? { teamIds: teams } : {}) }) },
         select: { id: true },
       });
       if (!closer) throw new ApplicationError("Vendedor indisponível no seu escopo.", { code: "MEETING_OWNER_SCOPE_DENIED", statusCode: 403, expose: true });
+      if ((meeting.status === "SCHEDULED" || meeting.status === "CONFIRMED") && meeting.startsAt > now) {
+        const overlapping = await transaction.meeting.findFirst({
+          where: {
+            workspaceId, ownerMemberId: closer.id, deletedAt: null, status: { in: ["SCHEDULED", "CONFIRMED"] },
+            startsAt: { lt: meeting.endsAt }, endsAt: { gt: meeting.startsAt },
+          },
+          select: { id: true },
+        });
+        if (overlapping) conflict("MEETING_TIME_CONFLICT", "O vendedor escolhido já tem uma reunião nesse horário.");
+      }
       const updated = await transaction.meeting.update({
         where: { id: meetingId },
         data: { ownerMemberId: closer.id, revision: { increment: 1 }, updatedByActorId: actorId, updatedAt: now },
@@ -1191,7 +1202,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       if (pipelineMove) await transaction.$queryRaw`SELECT id FROM leads WHERE id = ${pipelineMove.leadId}::uuid AND "workspaceId" = ${context.workspaceId}::uuid FOR UPDATE`;
       const meeting = await transaction.meeting.findFirst({
         where: { id: parsed.data.meetingId, workspaceId: context.workspaceId, deletedAt: null },
-        include: { owner: { select: { user: { select: { displayName: true } } } }, participants: { orderBy: { position: "asc" } }, lead: { select: { fullName: true, ownerMemberId: true, queueId: true, pipelineId: true, currentStageId: true, updatedAt: true, pipeline: { select: { name: true } } } } },
+        include: { owner: { select: { user: { select: { displayName: true } } } }, googleCalendarLink: { select: { memberId: true } }, participants: { orderBy: { position: "asc" } }, lead: { select: { fullName: true, ownerMemberId: true, queueId: true, pipelineId: true, currentStageId: true, updatedAt: true, pipeline: { select: { name: true } } } } },
       });
       if (!meeting) notFound("Reunião não encontrada.");
       if (pipelineMove) {
@@ -1757,7 +1768,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
       await enqueueGoogleCalendarSyncInTransaction(transaction, {
         workspaceId: context.workspaceId,
         meetingId: meeting.id,
-        ownerMemberId: meeting.ownerMemberId,
+        // A CRM reassignment does not move an existing event to another Google calendar.
+        ownerMemberId: meeting.googleCalendarLink?.memberId ?? meeting.ownerMemberId,
         meetingRevision: updated.revision,
         actorId: context.actorId,
         now,
@@ -1940,7 +1952,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
     });
   }
 
-  return Object.freeze({ getAgenda, getLeadMeetings, searchLeadOptions, schedule, scheduleFromPublicForm, act, reassignCompleted, recordPipelineOutcome, getBriefing, recordTranscript });
+  return Object.freeze({ getAgenda, getLeadMeetings, searchLeadOptions, schedule, scheduleFromPublicForm, act, reassign, recordPipelineOutcome, getBriefing, recordTranscript });
 }
 
 let service: ReturnType<typeof createMeetingService> | undefined;

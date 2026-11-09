@@ -40,14 +40,15 @@ export function MeetingActions({
   meeting,
   onCommitted,
   onOpenLead,
-  reassignmentCloserOptions = [],
+  reassignmentCloserOptions,
 }: Readonly<{ meeting: MeetingListItem; onCommitted: () => Promise<void>; onOpenLead?: () => void; reassignmentCloserOptions?: readonly CloserOption[] }>) {
   const [action, setAction] = useState<Action | null>(null);
   const [editStatus, setEditStatus] = useState(meeting.status);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const active = meeting.status === "SCHEDULED" || meeting.status === "CONFIRMED";
-  const reassignmentTargets = reassignmentCloserOptions.filter((closer) => closer.id !== meeting.ownerMemberId);
+  const reassignmentTargets = reassignmentCloserOptions?.filter((closer) => closer.id !== meeting.ownerMemberId);
+  const canReassign = meeting.canWrite && Boolean(reassignmentTargets?.length);
 
   async function post(payload: Record<string, unknown>) {
     setPending(true);
@@ -133,12 +134,15 @@ export function MeetingActions({
           <Button disabled={pending} onClick={() => setAction("NO_SHOW")} size="sm" type="button" variant="secondary">No-show</Button>
         </> : null}
         <Button disabled={pending} onClick={() => { setEditStatus(meeting.status); setAction("EDIT"); }} size="sm" type="button" variant="secondary">Editar reunião</Button>
-        {meeting.status === "COMPLETED" && reassignmentTargets.length > 0 ? (
-          <Button disabled={pending} onClick={() => setAction("REASSIGN")} size="sm" type="button" variant="secondary">Alterar vendedor</Button>
-        ) : null}
         </> : null}
+        {reassignmentTargets ? (
+          <Button aria-describedby={!canReassign ? `reassign-help-${meeting.id}` : undefined} disabled={pending || !canReassign} onClick={() => setAction("REASSIGN")} size="sm" type="button" variant="secondary">Alterar vendedor</Button>
+        ) : null}
         {onOpenLead ? <Button disabled={pending} onClick={onOpenLead} size="sm" type="button" variant="secondary">Ir ao lead</Button> : null}
       </div>
+      {reassignmentTargets && !canReassign ? (
+        <p className="mt-2 text-xs text-muted-foreground" id={`reassign-help-${meeting.id}`}>Para alterar o vendedor, é preciso ter acesso de gestão à reunião e outro vendedor ativo no seu escopo.</p>
+      ) : null}
       {action ? (
         <form className="mt-3 grid gap-3 rounded-md border bg-muted/40 p-3 sm:grid-cols-2" onSubmit={submit}>
           {action === "EDIT" ? (
@@ -156,7 +160,7 @@ export function MeetingActions({
             </>
           ) : action === "REASSIGN" ? (
             <>
-              <label className="text-sm sm:col-span-2">Novo vendedor<select className={inputClass} defaultValue="" name="closerId" required><option value="" disabled>Selecione o vendedor</option>{reassignmentTargets.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
+              <label className="text-sm sm:col-span-2">Novo vendedor<select className={inputClass} defaultValue="" name="closerId" required><option value="" disabled>Selecione o vendedor</option>{reassignmentTargets?.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
               <label className="text-sm sm:col-span-2">Motivo da alteração<textarea className={inputClass} minLength={3} maxLength={2000} name="reason" required /></label>
             </>
           ) : action === "RESCHEDULE" ? (

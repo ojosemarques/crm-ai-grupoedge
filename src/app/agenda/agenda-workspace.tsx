@@ -243,6 +243,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       <p><Icon name="equipe" size={16} />Agendado por: {event.scheduledByName}</p>
       {event.location ? <p><Icon name="agenda" size={16} />{event.location}</p> : null}
       {event.private ? <p className={styles.observation}>Os detalhes deste compromisso são privados.</p> : null}
+      <p className="text-xs text-muted-foreground">Este compromisso pertence ao Google Calendar. A troca de vendedor está disponível nos cards de reunião do CRM.</p>
       <div className={styles.detailLinks}>{event.externalHtmlLink ? <a href={event.externalHtmlLink} rel="noreferrer" target="_blank">Abrir no Google Calendar</a> : null}{event.conferenceUrl ? <a href={event.conferenceUrl} rel="noreferrer" target="_blank">Entrar na reunião</a> : null}</div>
     </div>;
   }

@@ -32,7 +32,7 @@ export async function POST(request: NextRequest, routeContext: MeetingRouteConte
     const service = getMeetingService();
     const actionPayload = action.success ? Object.fromEntries(Object.entries(action.data).filter(([key]) => key !== "action")) : {};
     const result = action.success && action.data.action === "REASSIGN"
-      ? await service.reassignCompleted(context, { ...actionPayload, meetingId })
+      ? await service.reassign(context, { ...actionPayload, meetingId })
       : action.success && action.data.action === "RECORD_TRANSCRIPT"
         ? await service.recordTranscript(context, { ...actionPayload, meetingId })
         : await service.act(context, { ...(body && typeof body === "object" ? body : {}), meetingId });

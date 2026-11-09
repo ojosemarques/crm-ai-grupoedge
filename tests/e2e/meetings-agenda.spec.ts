@@ -73,6 +73,63 @@ function uniquePhone(label: string) {
   return `+55119${suffix}`;
 }
 
+test("Agenda altera o vendedor em reuniões futuras e com resultado pendente", async ({ page }) => {
+  await login(page, DEMO_USERS[0].email);
+  const request = browserRequest(page);
+  const date = "2035-02-25";
+  const day = `/agenda?view=day&date=${date}`;
+  const response = await request.get(`/api/meetings?view=day&date=${date}`);
+  const { result: { closerOptions: [original, target] } } = await response.json() as { result: { closerOptions: { id: string; name: string }[] } };
+  expect(original && target).toBeTruthy();
+  const title = `Transferência agenda ${randomUUID().slice(0, 8)}`;
+  async function book(suffix: string, closerId: string, startsAtLocal: string) {
+    const created = await request.post("/api/leads/manual", { data: {
+      idempotencyKey: randomUUID(), lead: { fullName: `${title} ${suffix}`, phone: uniquePhone(suffix), priorityBandCode: "P2" },
+    } });
+    expect(created.status(), JSON.stringify(await created.json())).toBe(201);
+    const lead = await getDatabaseClient().lead.findFirstOrThrow({ where: { fullName: `${title} ${suffix}` } });
+    const scheduled = await request.post("/api/meetings", { data: {
+      leadId: lead.id, closerId, title: `${title} ${suffix}`, startsAtLocal, durationMinutes: 30,
+    } });
+    expect(scheduled.status(), JSON.stringify(await scheduled.json())).toBe(201);
+    return (await scheduled.json() as { result: { meetingId: string; revision: number; taskId: string } }).result;
+  }
+  const scheduled = await book("agendada", original!.id, `${date}T09:00`);
+  const blocker = await book("ocupada", target!.id, `${date}T09:00`);
+  const pending = await book("pendente", original!.id, "2020-02-25T09:00");
+  const db = getDatabaseClient();
+  await page.goto(day);
+  await page.getByRole("button", { name: new RegExp(`${title} agendada`) }).click();
+  const card = page.getByRole("dialog", { name: `${title} agendada` });
+  async function transfer(dialog: typeof card) {
+    await dialog.getByRole("button", { name: "Alterar vendedor", exact: true }).click();
+    await dialog.getByLabel("Novo vendedor").selectOption(target!.id);
+    await dialog.getByLabel("Motivo da alteração").fill("Troca de responsável da agenda.");
+    await dialog.getByRole("button", { name: "Salvar alterações" }).click();
+  }
+  await transfer(card);
+  await expect(card.getByRole("alert")).toContainText("já tem uma reunião nesse horário");
+  await card.getByRole("button", { name: "Voltar", exact: true }).click();
+  const cancelled = await request.post(`/api/meetings/${blocker.meetingId}`, { data: {
+    action: "CANCEL", expectedRevision: blocker.revision, reason: "Liberar o horário no teste.",
+    nextAction: { title: "Retomar contato", dueAtLocal: `${date}T10:00` },
+  } });
+  expect(cancelled.ok(), JSON.stringify(await cancelled.json())).toBe(true);
+  await card.getByRole("button", { name: "Confirmar", exact: true }).click();
+  await expect(card.getByText("Confirmada", { exact: true })).toBeVisible();
+  await transfer(card);
+  await expect(card.getByText(`${title} agendada · ${target!.name}`, { exact: true })).toBeVisible();
+  await expect(db.meeting.findUniqueOrThrow({ where: { id: scheduled.meetingId } })).resolves.toMatchObject({ ownerMemberId: target!.id, status: "CONFIRMED" });
+  await expect(db.task.findUniqueOrThrow({ where: { id: scheduled.taskId } })).resolves.toMatchObject({ assigneeMemberId: target!.id, status: "OPEN" });
+
+  await page.goto("/agenda?view=day&date=2020-02-25");
+  await page.locator('button[data-status="PENDING_STATUS"]').filter({ hasText: `${title} pendente` }).click();
+  const pendingCard = page.getByRole("dialog", { name: `${title} pendente` });
+  await transfer(pendingCard);
+  await expect(pendingCard.getByText(`${title} pendente · ${target!.name}`, { exact: true })).toBeVisible();
+  await expect(db.meeting.findUniqueOrThrow({ where: { id: pending.meetingId } })).resolves.toMatchObject({ ownerMemberId: target!.id, status: "SCHEDULED" });
+});
+
 test("Carlos gerencia reunião de outro vendedor e abre o lead na agenda", async ({ page, browser }) => {
   expect(new URL(process.env.DATABASE_URL!).searchParams.get("schema")).toMatch(/^politizai_test_e2e_/);
   const database = getDatabaseClient();
