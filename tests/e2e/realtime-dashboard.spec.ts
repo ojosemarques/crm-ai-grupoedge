@@ -356,7 +356,7 @@ test("filtra o Tempo Real por hoje, ontem, semanas e intervalo personalizado", a
     { leadId: randomUUID(), occurredAt: now },
     { leadId: repeatedPerson, occurredAt: new Date(workspaceDayRange(yesterday, "America/Sao_Paulo").end.getTime() - 1) },
     { leadId: repeatedPerson, occurredAt: now },
-    { leadId: randomUUID(), occurredAt: new Date(oldWeek.end.getTime() - 1) },
+    { leadId: randomUUID(), occurredAt: oldWeek.start },
   ]) await database.commercialMetricFact.create({ data: {
     workspaceId: member.workspaceId, eventKey: randomUUID(), sourceEntityType: "PeriodFilterE2E", sourceEntityId: randomUUID(),
     eventType: "MEETING_SCHEDULED", pipelineId: pipeline.id, creditedMemberId: member.id, bookedByMemberId: member.id,

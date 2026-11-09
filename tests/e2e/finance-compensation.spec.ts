@@ -4,6 +4,12 @@ import { DEMO_SEED_PASSWORD, DEMO_USERS } from "@/modules/settings/application/d
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { enterDemoCompany } from "./helpers/company-hub";
 
+let cleanupFixture: (() => Promise<void>) | undefined;
+test.afterEach(async () => {
+  await cleanupFixture?.();
+  cleanupFixture = undefined;
+});
+
 test("financeiro mostra títulos privados, filtros e formulário de baixa", async ({ page }) => {
   if (!/^politizai_test_/.test(new URL(process.env.DATABASE_URL!).searchParams.get("schema") ?? "")) {
     throw new Error("Este cenário exige banco temporário de testes.");
@@ -16,6 +22,14 @@ test("financeiro mostra títulos privados, filtros e formulário de baixa", asyn
   });
   const actor = await database.actor.findFirstOrThrow({ where: { workspaceId: workspace.id, userId: member.userId } });
   const version = `browser-fixture-${randomUUID()}`;
+  const fixture: { planId?: string } = {};
+  cleanupFixture = async () => {
+    await database.$transaction(async (tx) => {
+      await tx.commercialCompensationObligation.deleteMany({ where: { workspaceId: workspace.id, policyVersion: version } });
+      await tx.commercialCompensationPolicy.deleteMany({ where: { workspaceId: workspace.id, version } });
+      if (fixture.planId) await tx.otePlan.deleteMany({ where: { workspaceId: workspace.id, id: fixture.planId } });
+    });
+  };
   await database.commercialCompensationPolicy.create({ data: {
     workspaceId: workspace.id, version, effectiveDate: new Date("2026-11-01"), recordedById: actor.id,
   } });
@@ -25,10 +39,11 @@ test("financeiro mostra títulos privados, filtros e formulário de baixa", asyn
     amountCents: 12345n, basisCents: 75000n, milestoneOn: new Date("2026-12-01"), eligibleAt: new Date("2026-12-01T03:00:00Z"),
     dueOn: new Date("2026-12-07"), sourceFacts: { fixture: true },
   } });
-  await database.otePlan.create({ data: {
+  const plan = await database.otePlan.create({ data: {
     workspaceId: workspace.id, memberId: member.id, effectiveMonth: "2026-11", label: "Plano sintético de metas",
     role: "CLOSER", fixedCents: 370000n, quotaCents: 6000000n, bonusCents: 120000n, updatedByActorId: actor.id,
   } });
+  fixture.planId = plan.id;
 
   await page.goto("/login");
   await page.getByLabel("E-mail").fill(DEMO_USERS[0]!.email);

@@ -11,6 +11,7 @@ import { createCloserCompensationWorker } from "@/modules/finance/application/cl
 import { applyLegacyCompensation } from "@/modules/finance/application/legacy-compensation-import";
 import { legacyManifestSchema, previewLegacyCompensation } from "@/modules/finance/application/legacy-compensation-preview";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
+import { createOteService } from "@/modules/ote/application/ote-service";
 import { createPaymentService } from "@/modules/payments/application/payment-service";
 import { createRevenueService } from "@/modules/revenue/application/revenue-service";
 import { syncActiveProspectingCommercialStageInTransaction, transitionLeadStageInTransaction } from "@/modules/pipelines/application/pre-sales-pipeline-service";
@@ -913,18 +914,39 @@ it("confere a prévia histórica sem criar título nem deduzir o pagamento infor
   const evidenced = { ...manifest, sales: manifest.sales.map((sale) => ({
     ...sale, allocations: [{ days: 90 as const, financialEntryId: expense.id, amountCents: 52500n, settledOn: "2026-11-06", evidence: "Comprovante sintético independente" }],
   })) };
-  const withExpense = await database.$transaction((tx) => previewLegacyCompensation(tx, evidenced));
   await expect(applyLegacyCompensation(database, evidenced, admin.actorId, first.fingerprint)).rejects.toThrow("A prévia mudou");
+  await expect(applyLegacyCompensation(database, manifest, admin.actorId, first.fingerprint)).resolves.toEqual({
+    created: 3, allocated: 0, replayed: false,
+  });
+  const withExpense = await database.$transaction((tx) => previewLegacyCompensation(tx, evidenced));
   const results = await Promise.all([
     applyLegacyCompensation(database, evidenced, admin.actorId, withExpense.fingerprint),
     applyLegacyCompensation(database, evidenced, admin.actorId, withExpense.fingerprint),
   ]);
   expect(results).toEqual(expect.arrayContaining([
-    { created: 3, allocated: 1, replayed: false }, { created: 0, allocated: 0, replayed: true },
+    { created: 0, allocated: 1, replayed: false }, { created: 0, allocated: 0, replayed: true },
   ]));
+  const withoutRecordedPayment = await preview();
+  await expect(applyLegacyCompensation(database, manifest, admin.actorId, withoutRecordedPayment.fingerprint))
+    .rejects.toThrow("diverge do título histórico ou de uma baixa já registrada");
   expect(await database.commercialCompensationObligation.count({
     where: { workspaceId, opportunityId: input.opportunityId, kind: "LEGACY_STAGE", status: "REVIEW" },
   })).toBe(2);
   expect(await database.commercialCompensationAllocation.count({ where: { workspaceId, financialEntryId: expense.id } })).toBe(1);
 
+  const ote = createOteService({ database, authorization: createAuthorizationService({ database }), now: () => new Date("2026-11-12T15:00:00Z") });
+  await ote.command(admin, {
+    action: "SAVE_PLAN", memberId: admin.memberId, effectiveMonth: "2026-09", label: "Rampa sintética",
+    role: "CLOSER", fixedCents: "5000", quotaCents: "2500000", bonusCents: "2000", meetingQuota: 20, salesQuota: 4,
+    ramp: { month: "2026-09", evidence: "Início de rampa sintético confirmado" }, expectedRevision: 0,
+  });
+  const historicalOte = await ote.screen(admin, { month: "2026-09" });
+  expect(historicalOte.commercial).toMatchObject({
+    ramp: true, rampVerified: true, goalCents: null, targetOteCents: null,
+    commissionCents: first.sales[0]!.stages.reduce((total, stage) => total + stage.amountCents, 0n).toString(),
+    bonusCents: "0", periodPaidCents: "0",
+  });
+  expect(historicalOte.commercial?.titles.filter((title) => title.kind === "LEGACY_STAGE")).toHaveLength(3);
+  expect((await ote.screen(viewer, { month: "2026-09" })).commercial).toBeNull();
+  expect((await ote.screen(admin, { month: "2026-11" })).commercial?.periodPaidCents).toBe("52500");
 });

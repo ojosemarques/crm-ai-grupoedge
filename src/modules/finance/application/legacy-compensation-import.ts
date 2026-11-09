@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { previewLegacyCompensation } from "./legacy-compensation-preview";
 
@@ -42,14 +43,27 @@ export async function applyLegacyCompensation(
     let created = 0;
     let allocated = 0;
     for (const { planned, contract, activation, firstReceipt, d0, stages, existing, olderTitles, competenceMonth } of preview.sales) {
-      if (existing.length || olderTitles) throw new Error("Já existem títulos desta venda. Encaminhe para conciliação antes de importar.");
+      const prefix = `legacy:stage:${planned.opportunityId}:`;
+      if (olderTitles || (existing.length && (existing.length !== stages.length || existing.some((title) =>
+        title.kind !== "LEGACY_STAGE" || !stages.some((stage) => title.obligationKey === `${prefix}${stage.days}`))))) {
+        throw new Error("Já existem títulos incompatíveis para esta venda.");
+      }
+      const existingByKey = new Map(existing.map((title) => [title.obligationKey, title]));
       for (const stage of stages) {
-        const obligationKey = `legacy:stage:${planned.opportunityId}:${stage.days}`;
-        await tx.commercialCompensationObligation.create({ data: {
-          workspaceId, obligationKey, policyVersion: policy.version, kind: "LEGACY_STAGE",
-          sellerMemberId: planned.sellerMemberId, opportunityId: planned.opportunityId, competenceMonth,
-          amountCents: stage.amountCents, basisCents: planned.acvCents,
-          status: !stage.balanceCents ? "PAID" : "REVIEW",
+        const obligationKey = `${prefix}${stage.days}`;
+        const current = existingByKey.get(obligationKey);
+        const stageAllocations = planned.allocations.filter((item) => item.days === stage.days);
+        const recorded = new Map(current?.allocations.map((item) => [item.financialEntryId, item.amountCents]));
+        if (current && (current.policyVersion !== policy.version || current.sellerMemberId !== planned.sellerMemberId ||
+          current.amountCents !== stage.amountCents || current.basisCents !== planned.acvCents ||
+          (current.status !== "REVIEW" && current.status !== "PAID") ||
+          current.allocations.some((item) => !stageAllocations.some((allocation) =>
+            allocation.financialEntryId === item.financialEntryId && allocation.amountCents === item.amountCents)))) {
+          throw new Error("O manifesto diverge do título histórico ou de uma baixa já registrada.");
+        }
+        const status = !stage.balanceCents ? "PAID" : "REVIEW";
+        const facts = {
+          competenceMonth, status,
           reason: stage.balanceCents ? stage.reason ?? "Aguardando liberação da etapa histórica no Financeiro." : null,
           milestoneOn: stage.milestoneOn ? new Date(stage.milestoneOn) : null,
           dueOn: stage.dueOn ? new Date(stage.dueOn) : null,
@@ -58,9 +72,29 @@ export async function applyLegacyCompensation(
             d0: d0?.toISOString() ?? null, activationId: activation?.id ?? null, firstReceiptId: firstReceipt?.id ?? null,
             evidence: planned.evidence, reported: planned.reported?.stages.includes(stage.days) ? planned.reported : null,
           },
-        } });
-        created++;
-        for (const allocation of planned.allocations.filter((item) => item.days === stage.days)) {
+        } as const;
+        if (!current) {
+          await tx.commercialCompensationObligation.create({ data: {
+            workspaceId, obligationKey, policyVersion: policy.version, kind: "LEGACY_STAGE",
+            sellerMemberId: planned.sellerMemberId, opportunityId: planned.opportunityId,
+            amountCents: stage.amountCents, basisCents: planned.acvCents, ...facts,
+          } });
+          created++;
+        } else if (current.status === "PAID") {
+          if (status !== "PAID" || stageAllocations.length !== recorded.size) {
+            throw new Error("Uma etapa liquidada não aceita novas alocações.");
+          }
+          continue;
+        } else if (stageAllocations.length !== recorded.size || current.status !== status ||
+          current.competenceMonth !== facts.competenceMonth || current.reason !== facts.reason ||
+          current.milestoneOn?.getTime() !== facts.milestoneOn?.getTime() ||
+          current.dueOn?.getTime() !== facts.dueOn?.getTime() || !isDeepStrictEqual(current.sourceFacts, facts.sourceFacts)) {
+          await tx.commercialCompensationObligation.update({
+            where: { workspaceId_obligationKey: { workspaceId, obligationKey } },
+            data: { ...facts, revision: { increment: 1 } },
+          });
+        }
+        for (const allocation of stageAllocations.filter((item) => !recorded.has(item.financialEntryId))) {
           const entry = await tx.financialEntry.findUniqueOrThrow({
             where: { workspaceId_id: { workspaceId, id: allocation.financialEntryId } },
             select: { amountCents: true },

@@ -4,14 +4,49 @@ import { firstDateOfNextMonth, resolveCloserReleaseDates } from "@/modules/finan
 import { addLocalDays, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 import { readSdrAdvertisingFacts } from "./sdr-advertising-facts";
 
+type Period = { kind: "DAY" | "WEEK" | "MONTH"; from: string; to: string };
+const periodKey = (kind: string, from: string) => `${kind}:${from}`;
+const dateColumn = (date: Date) => date.toISOString().slice(0, 10);
+const mondayOf = (day: string) => addLocalDays(day, -((new Date(day).getUTCDay() + 6) % 7));
+
+async function readMissingPeriods(
+  tx: Prisma.TransactionClient, workspaceId: string, memberId: string, firstOn: string, today: string,
+  regular: readonly Period[], hasPlan: (day: string) => boolean,
+) {
+  const closed = await tx.sdrAdvertisingSnapshot.findMany({
+    where: { workspaceId, memberId, facts: { path: ["closed"], equals: true } },
+    distinct: ["periodKind", "periodStartOn"],
+    select: { periodKind: true, periodStartOn: true },
+  });
+  const covered = new Set([
+    ...closed.map((period) => periodKey(period.periodKind, dateColumn(period.periodStartOn))),
+    ...regular.map((period) => periodKey(period.kind, period.from)),
+  ]);
+  const missing: Period[] = [];
+  const monthStart = `${firstOn.slice(0, 7)}-01`;
+  const weekStart = mondayOf(firstOn);
+  for (let day = weekStart < monthStart ? weekStart : monthStart; day < today && missing.length < 4; day = addLocalDays(day, 1)) {
+    const periods: Period[] = [];
+    if (day.endsWith("-01")) periods.push({ kind: "MONTH", from: day, to: firstDateOfNextMonth(day.slice(0, 7)) });
+    if (mondayOf(day) === day) periods.push({ kind: "WEEK", from: day, to: addLocalDays(day, 7) });
+    periods.push({ kind: "DAY", from: day, to: addLocalDays(day, 1) });
+    for (const period of periods) {
+      const lastOn = addLocalDays(period.to, -1);
+      if (lastOn >= firstOn && period.to <= today && hasPlan(lastOn) && !covered.has(periodKey(period.kind, period.from))) {
+        missing.push(period);
+      }
+    }
+  }
+  return missing.slice(0, 4);
+}
+
 export async function reconcileSdrAdvertisingInTransaction(
   tx: Prisma.TransactionClient, workspaceId: string, timeZone: string, now: Date,
   requested?: { month: string; memberId: string },
 ) {
   const today = workspaceDateAt(now, timeZone);
   const yesterday = addLocalDays(today, -1);
-  const weekday = new Date(today).getUTCDay();
-  const monday = addLocalDays(today, -(weekday + 6) % 7);
+  const monday = mondayOf(today);
   const month = `${today.slice(0, 7)}-01`;
   const previousMonth = `${addLocalDays(month, -1).slice(0, 7)}-01`;
   const [policies, plans] = await Promise.all([
@@ -23,22 +58,36 @@ export async function reconcileSdrAdvertisingInTransaction(
   ]);
   const members = new Set(plans.filter((plan) => plan.role === "SDR" && plan.advertisingBand100Cents !== null).map((plan) => plan.memberId));
   if (!members.size || !policies.length) return false;
-  const periods = requested ? [{ kind: "MONTH" as const, from: `${requested.month}-01`, to: firstDateOfNextMonth(requested.month) }] : [
+  const regularPeriods: Period[] = requested ? [{ kind: "MONTH", from: `${requested.month}-01`, to: firstDateOfNextMonth(requested.month) }] : [
     { kind: "DAY", from: yesterday, to: today },
     { kind: "DAY", from: today, to: addLocalDays(today, 1) },
     { kind: "WEEK", from: addLocalDays(monday, -7), to: monday },
     { kind: "WEEK", from: monday, to: addLocalDays(monday, 7) },
     { kind: "MONTH", from: previousMonth, to: month },
     { kind: "MONTH", from: month, to: firstDateOfNextMonth(month.slice(0, 7)) },
-  ] as const;
+  ];
+  const selectPlan = (memberId: string, day: string) => plans.find((plan) => plan.memberId === memberId && plan.effectiveMonth <= day.slice(0, 7));
+  const hasAdvertising = (plan: ReturnType<typeof selectPlan>) => plan?.role === "SDR" && plan.advertisingBand60Cents !== null &&
+    plan.advertisingBand80Cents !== null && plan.advertisingBand100Cents !== null && plan.advertisingBonusCents !== null;
+  const firstPolicyOn = dateColumn(policies.at(-1)!.effectiveDate);
+  const auditScopes: { memberId: string; periods: Period[] }[] = [];
+  for (const memberId of members) {
+    const firstPlan = plans.filter((plan) => plan.memberId === memberId && hasAdvertising(plan)).at(-1);
+    if (!firstPlan) continue;
+    const firstPlanOn = `${firstPlan.effectiveMonth}-01`;
+    const firstOn = firstPlanOn > firstPolicyOn ? firstPlanOn : firstPolicyOn;
+    const missing = requested ? [] : await readMissingPeriods(tx, workspaceId, memberId, firstOn, today,
+      regularPeriods, (day) => hasAdvertising(selectPlan(memberId, day)));
+    auditScopes.push({ memberId, periods: [...missing, ...regularPeriods] });
+  }
   let evaluated = false;
-  for (const memberId of members) for (const period of periods) {
+  for (const { memberId, periods } of auditScopes) for (const period of periods) {
     const lastOn = addLocalDays(period.to, -1);
-    const plan = plans.find((row) => row.memberId === memberId && row.effectiveMonth <= lastOn.slice(0, 7));
+    const plan = selectPlan(memberId, lastOn);
     const policy = policies.find((row) => row.effectiveDate <= new Date(lastOn));
     if (!policy || plan?.role !== "SDR" || plan.advertisingBand60Cents === null || plan.advertisingBand80Cents === null ||
       plan.advertisingBand100Cents === null || plan.advertisingBonusCents === null) continue;
-    const effectiveOn = policy.effectiveDate.toISOString().slice(0, 10);
+    const effectiveOn = dateColumn(policy.effectiveDate);
     const cohortFrom = period.from > effectiveOn ? period.from : effectiveOn;
     if (cohortFrom > today) continue;
     const from = workspaceDayRange(cohortFrom, timeZone).start;

@@ -69,7 +69,16 @@ export async function previewLegacyCompensation(tx: Prisma.TransactionClient, ma
       tx.subscription.findMany({ where: { workspaceId, contractId: contract.id }, select: { id: true, status: true } }),
       tx.commercialCompensationObligation.findMany({
         where: { workspaceId, opportunityId: planned.opportunityId },
-        select: { obligationKey: true, status: true, revision: true, amountCents: true }, orderBy: { obligationKey: "asc" },
+        select: {
+          obligationKey: true, kind: true, status: true, revision: true, amountCents: true, basisCents: true,
+          policyVersion: true, sellerMemberId: true, competenceMonth: true, reason: true,
+          milestoneOn: true, dueOn: true, sourceFacts: true,
+          allocations: {
+            select: { financialEntryId: true, amountCents: true },
+            orderBy: { financialEntryId: "asc" },
+          },
+        },
+        orderBy: { obligationKey: "asc" },
       }),
       tx.commission.count({ where: { workspaceId, opportunityId: planned.opportunityId } }),
     ]);

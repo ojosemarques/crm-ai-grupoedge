@@ -4,6 +4,7 @@ import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createOteService } from "@/modules/ote/application/ote-service";
 import { createFinanceService } from "@/modules/finance/application/finance-service";
+import { reconcileSdrAdvertisingInTransaction } from "@/modules/finance/application/sdr-advertising-reconciliation";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { recordCommercialMetricFactInTransaction } from "@/modules/metrics/application/commercial-metric-fact-writer";
 import { seedDemoDatabase } from "@/modules/settings/application/demo-seed-service";
@@ -186,4 +187,20 @@ it("expõe os mesmos títulos no Meu OTE e no Financeiro com escopo pessoal e ra
   });
   expect(JSON.stringify(sdrView)).not.toContain("id-operacional-restrito");
   expect((await individual.screen(jhon, { month: "2026-10" })).commercial).toBeNull();
+
+  const reconcile = () => database.$transaction((tx) =>
+    reconcileSdrAdvertisingInTransaction(tx, workspaceId, "America/Sao_Paulo", at));
+  const recovered = () => database.sdrAdvertisingSnapshot.findMany({
+    where: { workspaceId, memberId: sdr.memberId, periodStartOn: new Date("2026-11-09"), periodKind: { in: ["DAY", "WEEK"] } },
+    orderBy: { periodKind: "asc" },
+    select: { periodKind: true, revision: true, facts: true },
+  });
+  await reconcile();
+  const firstRecovery = await recovered();
+  expect(firstRecovery).toMatchObject([
+    { periodKind: "DAY", revision: 1, facts: { closed: true } },
+    { periodKind: "WEEK", revision: 1, facts: { closed: true } },
+  ]);
+  await reconcile();
+  expect(await recovered()).toEqual(firstRecovery);
 });

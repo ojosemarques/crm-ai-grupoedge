@@ -20,7 +20,7 @@ test("venda confirmada atualiza OTE aberto: 18 mil, entrada de 3 mil e 10 parcel
   const workspace = await db.workspace.findUniqueOrThrow({ where: { slug: "politizai" } });
   await db.$executeRawUnsafe(readFileSync("scripts/sql/configure-politizai-sales.sql", "utf8"));
   await db.$executeRawUnsafe(readFileSync("scripts/sql/configure-politizai-closer-sales.sql", "utf8"));
-  const seller = await db.workspaceMember.findFirstOrThrow({ where: { workspaceId: workspace.id, user: { normalizedEmail: "closer1@demo.politizai.local" } } });
+  const seller = await db.workspaceMember.findFirstOrThrow({ where: { workspaceId: workspace.id, user: { normalizedEmail: "closer2@demo.politizai.local" } } });
   const admin = await db.workspaceMember.findFirstOrThrow({ where: { workspaceId: workspace.id, user: { normalizedEmail: "admin@demo.politizai.local" } } });
   const actor = await db.actor.findFirstOrThrow({ where: { workspaceId: workspace.id, userId: admin.userId, type: "HUMAN" } });
   const month = workspaceDateAt(new Date(), workspace.timeZone).slice(0, 7);
@@ -37,7 +37,7 @@ test("venda confirmada atualiza OTE aberto: 18 mil, entrada de 3 mil e 10 parcel
   const lead = await db.lead.findFirstOrThrow({ where: { workspaceId: workspace.id, fullName: name } });
   await db.lead.update({ where: { id: lead.id }, data: { ownerMemberId: seller.id } });
   await page.context().clearCookies();
-  await login(page, "closer1@demo.politizai.local");
+  await login(page, "closer2@demo.politizai.local");
   const ote = await page.context().newPage();
   await ote.goto(`/ote?month=${month}`);
   await expect(ote.getByRole("heading", { name: "Minha remuneração acumulada no mês" })).toBeVisible();
@@ -76,7 +76,7 @@ test("venda confirmada atualiza OTE aberto: 18 mil, entrada de 3 mil e 10 parcel
   await ote.screenshot({ path: testInfo.outputPath("ote-venda-automatica.png"), fullPage: true });
   await ote.close();
   await page.context().clearCookies();
-  await login(page, "closer2@demo.politizai.local");
+  await login(page, "closer1@demo.politizai.local");
   const other = (await (await page.request.get(`/api/ote?month=${month}`)).json()).result;
   expect(JSON.stringify(other)).not.toContain(name);
   expect(other.plan).toBeNull();

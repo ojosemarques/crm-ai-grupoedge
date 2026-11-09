@@ -34,24 +34,28 @@ export async function readCommercialGoalsScreen(database: PrismaClient, input: {
   const to = workspaceDayRange(toOn, timeZone).start;
   const through = new Date(Math.min(now.getTime(), to.getTime() - 1));
   const today = workspaceDateAt(now, timeZone);
-  const policy = await database.commercialCompensationPolicy.findFirst({
-    where: { workspaceId, effectiveDate: { lte: new Date(workspaceDateAt(through, timeZone)) } }, orderBy: { effectiveDate: "desc" },
-  });
-  if (!policy) return { month, timeZone, active: false, people: [] };
+  const [policy, titles] = await Promise.all([
+    database.commercialCompensationPolicy.findFirst({
+      where: { workspaceId, effectiveDate: { lte: new Date(workspaceDateAt(through, timeZone)) } }, orderBy: { effectiveDate: "desc" },
+    }),
+    readCommercialCompensationScreen(database, workspaceId, from, to, timeZone, memberId ? { sellerId: memberId } : {}),
+  ]);
+  const historicalSellers = new Set(titles.filter((title) => title.kind === "LEGACY_STAGE").map((title) => title.sellerId));
+  if (!policy && !historicalSellers.size) return { month, timeZone, active: false, people: [] };
   const plans = await database.otePlan.findMany({
     where: { workspaceId, ...(memberId ? { memberId } : {}), effectiveMonth: { lte: month } },
     orderBy: [{ effectiveMonth: "desc" }, { id: "asc" }],
   });
-  const effectiveOn = policy.effectiveDate.toISOString().slice(0, 10);
+  const effectiveOn = policy?.effectiveDate.toISOString().slice(0, 10);
   const selectedPlans = [...new Map([...plans].reverse().map((plan) => [plan.memberId, plan])).values()]
-    .filter((plan) => plan.role === "CLOSER" || (plan.role === "SDR" && plan.advertisingBand100Cents !== null));
-  const [members, titles, closer] = await Promise.all([
+    .filter((plan) => plan.role === "CLOSER" ? Boolean(policy) || historicalSellers.has(plan.memberId)
+      : plan.role === "SDR" && Boolean(policy) && plan.advertisingBand100Cents !== null);
+  const [members, closer] = await Promise.all([
     database.workspaceMember.findMany({
       where: { workspaceId, id: { in: selectedPlans.map((plan) => plan.memberId) } },
       select: { id: true, user: { select: { displayName: true } } },
     }),
-    readCommercialCompensationScreen(database, workspaceId, from, to, timeZone, memberId ? { sellerId: memberId } : {}),
-    selectedPlans.some((plan) => plan.role === "CLOSER") ? readCloserCompensationFacts(database, workspaceId, now) : null,
+    policy && selectedPlans.some((plan) => plan.role === "CLOSER") ? readCloserCompensationFacts(database, workspaceId, now) : null,
   ]);
   const legacy = closer ? await database.commission.findMany({
     where: { workspaceId, opportunityId: { in: closer.sales.map((sale) => sale.opportunityId) } },
@@ -65,7 +69,7 @@ export async function readCommercialGoalsScreen(database: PrismaClient, input: {
     const person = {
       memberId: plan.memberId, name: names.get(plan.memberId) ?? plan.label,
       label: plan.label, fixedCents: plan.fixedCents.toString(),
-      commissionCents: generated.filter((title) => title.kind.includes("COMMISSION")).reduce((sum, title) => sum + BigInt(title.amountCents), 0n).toString(),
+      commissionCents: generated.filter((title) => title.kind.includes("COMMISSION") || title.kind === "LEGACY_STAGE").reduce((sum, title) => sum + BigInt(title.amountCents), 0n).toString(),
       bonusCents: generated.filter((title) => title.kind.includes("BONUS")).reduce((sum, title) => sum + BigInt(title.amountCents), 0n).toString(),
       periodPaidCents: ownTitles.reduce((sum, title) => sum + BigInt(title.periodPaidCents), 0n).toString(),
       titles: ownTitles.map((title) => ({
@@ -95,7 +99,7 @@ export async function readCommercialGoalsScreen(database: PrismaClient, input: {
         if (!monthIsOpen) return {
           ...period, facts: snapshotView.safeParse(snapshot?.facts).data ?? null, evaluatedAt: snapshot?.evaluatedAt.toISOString() ?? null, revision: snapshot?.revision ?? null,
         };
-        const cohortFrom = period.fromOn < effectiveOn ? effectiveOn : period.fromOn;
+        const cohortFrom = effectiveOn && period.fromOn < effectiveOn ? effectiveOn : period.fromOn;
         const facts = await readSdrAdvertisingFacts(database, {
           workspaceId, memberId: plan.memberId, from: workspaceDayRange(cohortFrom, timeZone).start,
           to: workspaceDayRange(period.toOn, timeZone).start, through: now,
@@ -109,7 +113,7 @@ export async function readCommercialGoalsScreen(database: PrismaClient, input: {
     }
     const facts = closer?.sales.filter((sale) => sale.sellerMemberId === plan.memberId && !legacySales.has(sale.opportunityId)) ?? [];
     const ramp = plan.rampMonth === month;
-    const goal = ramp || plan.quotaCents <= 0n ? null : plan.quotaCents;
+    const goal = !policy || ramp || plan.quotaCents <= 0n ? null : plan.quotaCents;
     const planInput = ramp && plan.rampEvidence?.trim() ? { kind: "RAMP" as const }
       : goal ? { kind: "TARGET" as const, targetCents: goal } : null;
     const projection = projectCloserMonth({
