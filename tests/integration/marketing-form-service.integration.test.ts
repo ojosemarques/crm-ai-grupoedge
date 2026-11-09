@@ -244,6 +244,7 @@ describe("serviço administrativo de formulários", () => {
     const definition = {
       ...base,
       questions: [...base.questions, { stableKey: "consentimento", type: "CHECKBOX" as const, title: "Você autoriza a mensuração?", required: true, position: 2, mapping: "contactPreference" as const, config: { label: "Autorizo" } }],
+      redirects: { automaticKind: "URL", url: "https://example.com/obrigado" },
       tracking: { internalEvents: true as const, meta: { enabled: true, pixelId: "123456789", connectionId: connection.id, secretReferenceKey } },
     };
     const slug = `meta-${randomUUID().slice(0, 8)}`;
@@ -266,6 +267,7 @@ describe("serviço administrativo de formulários", () => {
       ],
     };
     const first = await submissionService.submit(slug, payload);
+    expect(first.redirect).toEqual({ kind: "URL", url: "https://example.com/obrigado" });
     expect(first.providerEventIds?.meta).toMatch(/^[a-f0-9]{64}$/);
     const receipt = await database.marketingFormReceipt.findFirstOrThrow({ where: { publicId: first.receiptPublicId, workspaceId: tenantA.context.workspaceId } });
     const submission = await database.leadFormSubmission.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, marketingFormReceiptId: receipt.id } });
