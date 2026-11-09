@@ -1,4 +1,5 @@
 import { assertAdvertisingSchedulingAccess, getAdvertisingSchedulingAccess } from "@/modules/meetings/application/advertising-scheduling-access";
+import { PUBLIC_AGENDA_MINUTES, PUBLIC_AGENDA_TITLE } from "@/modules/marketing-forms/domain/public-agenda";
 import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { reassignLeadInTransaction } from "@/modules/leads/application/lead-assignment-operation";
 import type {
@@ -272,7 +273,7 @@ function meetingResource(workspaceId: string, meeting: Pick<MeetingAuthRow, "id"
   };
 }
 
-async function lockCloser(
+export async function lockCloser(
   transaction: Prisma.TransactionClient,
   workspaceId: string,
   memberId: string,
@@ -815,11 +816,24 @@ export function createMeetingService(options: MeetingServiceOptions) {
 
     return options.database.$transaction(async (transaction) => {
       await lockCloser(transaction, context.workspaceId, parsed.data.closerId);
+      return persistBooking(transaction, context, parsed.data, startsAt, endsAt, workspaceRow.timeZone);
+    });
+  }
+
+  async function persistBooking(
+    transaction: Prisma.TransactionClient,
+    context: AuthenticatedContext | { workspaceId: string; actorId: string },
+    input: Omit<z.infer<typeof scheduleSchema>, "startsAtLocal">,
+    startsAt: Date,
+    endsAt: Date,
+    timeZone: string,
+  ) {
+      const staff = "memberId" in context ? context : null;
       // Booking and ownership must serialize even when two different closers are selected.
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`lead-distribution:${context.workspaceId}:${lead.id}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`lead-distribution:${context.workspaceId}:${input.leadId}`}, 0))`;
       const closer = await transaction.workspaceMember.findFirst({
         where: {
-          id: parsed.data.closerId,
+          id: input.closerId,
           ...commercialMemberWhere({
             workspaceId: context.workspaceId,
             functions: ["CLOSER"],
@@ -829,7 +843,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       });
       if (!closer) notFound("Closer não encontrado ou indisponível.");
       const currentLead = await transaction.lead.findFirst({
-        where: { id: lead.id, workspaceId: context.workspaceId, deletedAt: null },
+        where: { id: input.leadId, workspaceId: context.workspaceId, deletedAt: null },
         select: {
           id: true,
           fullName: true,
@@ -852,32 +866,33 @@ export function createMeetingService(options: MeetingServiceOptions) {
         },
       });
       if (!currentLead) notFound("Lead não encontrado.");
-      const schedulingPolicy = currentLead.pipeline.name === ADVERTISING_PIPELINE_NAME
-        ? await assertAdvertisingSchedulingAccess(transaction, context) : "EXISTING_FLOW";
+      const schedulingPolicy = !staff ? "PUBLIC_FORM"
+        : currentLead.pipeline.name === ADVERTISING_PIPELINE_NAME
+          ? await assertAdvertisingSchedulingAccess(transaction, staff) : "EXISTING_FLOW";
       if (currentLead.meetings.length > 0) {
         conflict("LEAD_ALREADY_HAS_ACTIVE_MEETING", "O lead já possui uma reunião ativa.");
       }
-      const opportunityId = parsed.data.opportunityId === null
+      const opportunityId = input.opportunityId === null
         ? null
-        : parsed.data.opportunityId ?? (currentLead.opportunities.length === 1 ? currentLead.opportunities[0]!.id : null);
-      if (parsed.data.opportunityId && !currentLead.opportunities.some((item) => item.id === parsed.data.opportunityId)) {
+        : input.opportunityId ?? (currentLead.opportunities.length === 1 ? currentLead.opportunities[0]!.id : null);
+      if (input.opportunityId && !currentLead.opportunities.some((item) => item.id === input.opportunityId)) {
         conflict("MEETING_OPPORTUNITY_INVALID", "A oportunidade não está aberta ou não pertence ao lead.");
       }
       const occurredAt = options.now();
-      const participantEmails = parsed.data.participantEmails ?? (parsed.data.participantEmail ? [parsed.data.participantEmail] : []);
+      const participantEmails = input.participantEmails ?? (input.participantEmail ? [input.participantEmail] : []);
       const meeting = await transaction.meeting.create({
         data: {
           workspaceId: context.workspaceId,
           leadId: currentLead.id,
           opportunityId,
           ownerMemberId: closer.id,
-          title: parsed.data.title,
+          title: input.title,
           status: "SCHEDULED",
           startsAt,
           endsAt,
-          durationMinutes: parsed.data.durationMinutes,
-          timeZone: workspaceRow.timeZone,
-          observation: parsed.data.observation || null,
+          durationMinutes: input.durationMinutes,
+          timeZone,
+          observation: input.observation || null,
           participantEmail: participantEmails[0] ?? null,
           participantResponseStatus: participantEmails.length ? "NEEDS_ACTION" : null,
           participants: { create: participantEmails.map((email, position) => ({ email, position })) },
@@ -894,11 +909,11 @@ export function createMeetingService(options: MeetingServiceOptions) {
           opportunityId,
           meetingId: meeting.id,
           assigneeMemberId: closer.id,
-          title: `Reunião: ${parsed.data.title}`,
-          description: parsed.data.observation || null,
+          title: `Reunião: ${input.title}`,
+          description: input.observation || null,
           kind: "MEETING",
           status: "OPEN",
-          priority: parsed.data.taskPriority ?? "HIGH",
+          priority: input.taskPriority ?? "HIGH",
           dueAt: startsAt,
           createdByActorId: context.actorId,
           updatedByActorId: context.actorId,
@@ -931,8 +946,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
           type: "MEETING",
           direction: "INTERNAL",
           result: "SCHEDULED",
-          subject: `Reunião agendada: ${parsed.data.title}`,
-          description: parsed.data.observation || null,
+          subject: `Reunião agendada: ${input.title}`,
+          description: input.observation || null,
           occurredAt,
           nextActionAt: startsAt,
           nextActionDescription: task.title,
@@ -941,8 +956,8 @@ export function createMeetingService(options: MeetingServiceOptions) {
             closerId: closer.id,
             startsAt: startsAt.toISOString(),
             endsAt: endsAt.toISOString(),
-            durationMinutes: parsed.data.durationMinutes,
-            timeZone: workspaceRow.timeZone,
+            durationMinutes: input.durationMinutes,
+            timeZone,
           },
           createdByActorId: context.actorId,
           updatedByActorId: context.actorId,
@@ -957,12 +972,12 @@ export function createMeetingService(options: MeetingServiceOptions) {
         opportunityId,
         meetingId: meeting.id,
         activityId: activity.id,
-        creditedMemberId: context.memberId,
-        performedByMemberId: context.memberId,
-        bookedByMemberId: context.memberId,
+        creditedMemberId: staff?.memberId ?? null,
+        performedByMemberId: staff?.memberId ?? null,
+        bookedByMemberId: staff?.memberId ?? null,
         meetingOwnerMemberIdAtEvent: closer.id,
         leadOwnerMemberIdAtEvent: currentLead.ownerMemberId,
-        executionMode: "MANUAL" as const,
+        executionMode: staff ? "MANUAL" as const : "SYSTEM" as const,
       };
       const bookingCredit = await recordCommercialMetricFactInTransaction(transaction, {
         ...meetingFactDimensions,
@@ -996,13 +1011,13 @@ export function createMeetingService(options: MeetingServiceOptions) {
             closerId: closer.id,
             startsAt: startsAt.toISOString(),
             endsAt: endsAt.toISOString(),
-            durationMinutes: parsed.data.durationMinutes,
+            durationMinutes: input.durationMinutes,
             taskId: task.id,
             activityId: activity.id,
             participantConfigured: participantEmails.length > 0,
             participantCount: participantEmails.length,
           },
-          metadata: { timeZone: workspaceRow.timeZone },
+          metadata: { timeZone },
         },
       });
       if (currentLead.currentStage.leadStageCode !== "MEETING_SCHEDULED") {
@@ -1069,14 +1084,14 @@ export function createMeetingService(options: MeetingServiceOptions) {
           },
         );
       }
-      await scheduleMeetingBookingNotificationsInTransaction(transaction, {
-        context,
+      if (staff) await scheduleMeetingBookingNotificationsInTransaction(transaction, {
+        context: staff,
         meetingId: meeting.id,
         leadName: currentLead.fullName,
         closerName: closer.user.displayName,
         title: meeting.title,
         startsAt,
-        timeZone: workspaceRow.timeZone,
+        timeZone,
         occurredAt,
       });
       await scheduleMeetingParticipantEmailsInTransaction(transaction, {
@@ -1099,7 +1114,20 @@ export function createMeetingService(options: MeetingServiceOptions) {
       });
       await options.beforeCommit?.();
       return Object.freeze({ meetingId: meeting.id, taskId: task.id, revision: meeting.revision });
-    });
+  }
+
+  async function scheduleFromPublicForm(
+    transaction: Prisma.TransactionClient,
+    context: { workspaceId: string; actorId: string },
+    input: { leadId: string; closerId: string; startsAt: Date; timeZone: string; participantEmail: string | null },
+  ) {
+    return persistBooking(transaction, context, {
+      leadId: input.leadId,
+      closerId: input.closerId,
+      title: PUBLIC_AGENDA_TITLE,
+      durationMinutes: PUBLIC_AGENDA_MINUTES,
+      participantEmail: input.participantEmail,
+    }, input.startsAt, new Date(input.startsAt.getTime() + PUBLIC_AGENDA_MINUTES * 60_000), input.timeZone);
   }
 
   type PipelineMove = Readonly<{ leadId: string; targetStageId: string; expectedLeadUpdatedAt: Date; managerCorrection: boolean }>;
@@ -1912,7 +1940,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
     });
   }
 
-  return Object.freeze({ getAgenda, getLeadMeetings, searchLeadOptions, schedule, act, reassignCompleted, recordPipelineOutcome, getBriefing, recordTranscript });
+  return Object.freeze({ getAgenda, getLeadMeetings, searchLeadOptions, schedule, scheduleFromPublicForm, act, reassignCompleted, recordPipelineOutcome, getBriefing, recordTranscript });
 }
 
 let service: ReturnType<typeof createMeetingService> | undefined;

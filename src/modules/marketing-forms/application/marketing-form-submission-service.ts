@@ -372,7 +372,9 @@ export function createMarketingFormSubmissionService(options: Options) {
         const existingIds = new Set(existing.map((row) => row.tagId));
         await tx.leadTag.createMany({ data: form.definition.destination.tagIds.filter((tagId) => !existingIds.has(tagId)).map((tagId) => ({ workspaceId: form.workspaceId, leadId: intake.leadId, tagId, createdByActorId: actor.id })) });
       }
-      const redirect = await chooseRedirect(tx, form);
+      const redirect = form.definition.redirects.automaticKind === "AGENDA"
+        ? { kind: "AGENDA", url: `/f/agenda/${receipt.publicId}`, rotationTargetKey: null, rotationAppliedAt: null }
+        : await chooseRedirect(tx, form);
       const accepted = await tx.marketingFormReceipt.update({
         where: { id: receipt.id },
         data: {

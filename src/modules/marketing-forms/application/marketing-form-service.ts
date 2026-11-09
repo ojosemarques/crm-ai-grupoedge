@@ -187,6 +187,13 @@ export function createMarketingFormService(options: Options) {
         await options.authorization.assertAuthorized(context, PermissionKeys.INTEGRATIONS_SECRETS_MANAGE, resource(context, id));
       }
       await assertPublishReferences(tx, context, definition);
+      if (definition.redirects.automaticKind === "AGENDA") {
+        const meetingStage = await tx.pipelineStage.findFirst({
+          where: { workspaceId: context.workspaceId, pipelineId: definition.destination.pipelineId, leadStageCode: "MEETING_SCHEDULED", deletedAt: null },
+          select: { id: true },
+        });
+        if (!meetingStage) fail("Escolha um pipeline com a etapa Reunião agendada para usar AGENDA.", "MARKETING_FORM_AGENDA_STAGE_REQUIRED", 422);
+      }
       const versionNumber = form.publishedVersionId ? form.currentVersion + 1 : 1;
       const publishedAt = options.now();
       const definitionHash = sha256(canonicalJson(definition));

@@ -76,7 +76,7 @@ export const marketingFormDefinitionSchema = z.object({
     priorityBandCode: z.enum(["P1", "P2", "P3"]).default("P3"),
   }).strict(),
   redirects: z.object({
-    automaticKind: z.enum(["NONE", "GROUP", "WHATSAPP", "URL"]).default("NONE"),
+    automaticKind: z.enum(["NONE", "GROUP", "WHATSAPP", "URL", "AGENDA"]).default("NONE"),
     url: httpsUrlSchema.optional(),
     whatsapp: z.object({ phone: z.string().trim().regex(/^\+[1-9]\d{7,14}$/), message: optionalText(1_000) }).strict().optional(),
     group: z.object({ url: httpsUrlSchema.refine((value) => new URL(value).hostname === "chat.whatsapp.com", "Use um link de grupo do WhatsApp."), label: optionalText(120) }).strict().optional(),

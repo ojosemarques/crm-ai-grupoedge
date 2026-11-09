@@ -195,6 +195,39 @@ export function createGoogleCalendarWorkerService(options: Options) {
     return body.access_token;
   }
 
+  async function readBusyIntervals(
+    account: NonNullable<Awaited<ReturnType<typeof options.database.googleCalendarAccount.findFirst>>>,
+    start: Date,
+    end: Date,
+    timeZone: string,
+  ) {
+    if (account.status !== "CONNECTED") throw new GoogleCalendarWorkerError("GOOGLE_CALENDAR_REAUTH_REQUIRED", false, true);
+    const token = await accessToken(account);
+    const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(account.calendarId)}/events`);
+    url.search = new URLSearchParams({
+      timeMin: start.toISOString(), timeMax: end.toISOString(), timeZone,
+      singleEvents: "true", maxResults: "250", fields: "kind,nextPageToken,timeZone,items(id,status,start,end)",
+    }).toString();
+    const intervals: Array<{ startsAt: Date; endsAt: Date }> = [];
+    const signal = AbortSignal.timeout(5_000);
+    for (let page = 0; page < 4; page++) {
+      const response = await fetcher(url, { headers: { Authorization: `Bearer ${token}` }, signal, cache: "no-store" });
+      const body = await googleJson(response, 512 * 1024);
+      if (!response.ok) throw classify(response, body);
+      if (body?.kind !== "calendar#events" || (body.items !== undefined && !Array.isArray(body.items))) {
+        throw new GoogleCalendarWorkerError("GOOGLE_CALENDAR_EVENTS_INVALID", true);
+      }
+      for (const item of body.items as unknown[] ?? []) {
+        const event = normalizeGoogleCalendarEvent(item as Parameters<typeof normalizeGoogleCalendarEvent>[0], typeof body.timeZone === "string" ? body.timeZone : timeZone);
+        if (event.kind === "ACTIVE") intervals.push({ startsAt: event.startsAt, endsAt: event.endsAt });
+      }
+      if (!body.nextPageToken) return intervals;
+      if (typeof body.nextPageToken !== "string") break;
+      url.searchParams.set("pageToken", body.nextPageToken);
+    }
+    throw new GoogleCalendarWorkerError("GOOGLE_CALENDAR_EVENTS_INCOMPLETE", true);
+  }
+
   async function push(job: NonNullable<Awaited<ReturnType<typeof claim>>>, workerId: string, data: Payload) {
     const link = await options.database.googleCalendarEventLink.findFirst({
       where: { id: data.linkId, workspaceId: job.workspaceId },
@@ -763,5 +796,5 @@ export function createGoogleCalendarWorkerService(options: Options) {
     catch (error) { return failPull(account, workerId, error); }
   }
 
-  return Object.freeze({ processNext });
+  return Object.freeze({ processNext, readBusyIntervals });
 }

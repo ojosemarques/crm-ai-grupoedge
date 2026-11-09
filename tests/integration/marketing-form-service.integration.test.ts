@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
+import { encryptGoogleCalendarSecret } from "@/modules/integrations/application/google-calendar-crypto";
+import { bookPublicAgenda, listPublicAgenda } from "@/modules/marketing-forms/application/public-agenda-service";
 import { createLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { createPreSalesPipelineService } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { loadAcquisitionFunnel } from "@/modules/marketing/application/acquisition-funnel-service";
@@ -145,6 +147,71 @@ describe("serviço administrativo de formulários", () => {
     const paused = await service.transition(tenantA.context, form.id, "PAUSE", changed.revision);
     expect(paused.status).toBe("INACTIVE");
     await expect(service.resolvePublic(slug)).rejects.toBeInstanceOf(ApplicationError);
+  });
+
+  it("publica AGENDA e persiste só uma reunião em confirmações concorrentes", async () => {
+    const fixture = await createFixture("agenda");
+    const { context, systemActorId, pipelineId, stageId } = fixture;
+    const { workspaceId } = context;
+    await database.actor.create({ data: { workspaceId, type: "AUTOMATION", key: "automation", displayName: "Automação" } });
+    const slug = `agenda-${randomUUID().slice(0, 8)}`;
+    const form = await service.create(context, { name: "Agenda", publicSlug: slug });
+    const saved = await service.updateDraft(context, form.id, {
+      name: form.name, expectedRevision: form.revision,
+      definition: { ...publishableDefinition(fixture), redirects: { automaticKind: "AGENDA" } },
+    });
+    await expect(service.publish(context, form.id, saved.revision)).rejects.toMatchObject({ code: "MARKETING_FORM_AGENDA_STAGE_REQUIRED" });
+    await database.pipelineStage.update({ where: { id: stageId }, data: { leadStageCode: "NEW" } });
+    await database.pipelineStage.create({ data: {
+      workspaceId, pipelineId, name: "Reunião agendada", leadStageCode: "MEETING_SCHEDULED", position: 1,
+      type: "OPEN", createdByActorId: systemActorId, updatedByActorId: systemActorId,
+    } });
+    const role = await database.role.create({ data: { workspaceId, key: "closer", name: "Vendedor", createdByActorId: systemActorId, updatedByActorId: systemActorId } });
+    const jhon = await database.user.create({ data: { email: "jhoncunha@politizai.com", normalizedEmail: "jhoncunha@politizai.com", displayName: "Jhon" } });
+    const member = await database.workspaceMember.create({ data: {
+      workspaceId, userId: jhon.id, roleId: role.id, status: "ACTIVE", joinedAt: now, createdByActorId: systemActorId, updatedByActorId: systemActorId,
+    } });
+    const encryptionKey = "public-agenda-test-encryption-key";
+    const ciphertext = encryptGoogleCalendarSecret("local-test-token", encryptionKey);
+    await database.googleCalendarAccount.create({ data: {
+      workspaceId, memberId: member.id, googleSubject: randomUUID(), googleEmail: jhon.email,
+      accessTokenCiphertext: ciphertext, refreshTokenCiphertext: ciphertext, tokenExpiresAt: new Date(now.getTime() + 3_600_000),
+      grantedScopes: ["https://www.googleapis.com/auth/calendar.events"], createdByActorId: systemActorId, updatedByActorId: systemActorId,
+    } });
+    const published = await service.publish(context, form.id, saved.revision);
+    const response = await submissionService.submit(slug, {
+      versionPublicId: published.version.publicId, sessionPublicId: randomUUID(), idempotencyToken: randomUUID(),
+      startedAt: new Date(now.getTime() - 2_000).toISOString(), tracking: {},
+      answers: [{ questionKey: "nome-completo", value: "Pessoa Agenda" }, { questionKey: "telefone", value: "+5511997984357" }],
+    });
+    expect(response.redirect).toEqual({ kind: "AGENDA", url: `/f/agenda/${response.receiptPublicId}` });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+    vi.stubEnv("GOOGLE_CALENDAR_CLIENT_ID", "public-agenda-test-client-id");
+    vi.stubEnv("GOOGLE_CALENDAR_CLIENT_SECRET", "public-agenda-test-client-secret");
+    vi.stubEnv("GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY", encryptionKey);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      kind: "calendar#events",
+      items: [{ id: "busy", start: { dateTime: "2033-03-15T15:00:00Z" }, end: { dateTime: "2033-03-15T15:30:00Z" } }],
+    })));
+    try {
+      const availability = await listPublicAgenda(response.receiptPublicId);
+      expect(availability.slots).not.toContainEqual({ day: "2033-03-15", startsAt: "2033-03-15T15:00:00.000Z" });
+      const startsAt = "2033-03-15T16:00:00.000Z";
+      const results = await Promise.all([
+        bookPublicAgenda(response.receiptPublicId, { startsAt }),
+        bookPublicAgenda(response.receiptPublicId, { startsAt: "2033-03-15T17:00:00.000Z" }),
+      ]);
+      expect(results.filter((result) => "startsAt" in result)).toHaveLength(1);
+      const meetings = await database.meeting.findMany({ where: { workspaceId }, include: { googleCalendarLink: true } });
+      expect(meetings).toHaveLength(1);
+      expect(meetings[0]).toMatchObject({ ownerMemberId: member.id, durationMinutes: 30, googleCalendarLink: { syncState: "PENDING_PUSH" } });
+      await expect(listPublicAgenda(response.receiptPublicId)).resolves.toMatchObject({ booked: true, slots: [] });
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("recusa referências cross-tenant antes da publicação", async () => {
