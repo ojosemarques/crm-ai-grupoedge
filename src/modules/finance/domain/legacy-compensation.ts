@@ -2,6 +2,7 @@ import { nextBusinessDate } from "@/modules/prospecting/domain/prospecting-caden
 import { addLocalDays } from "@/shared/core/time/workspace-time";
 
 export const legacyStageDays = [30, 60, 90] as const;
+export const pendingLegacyPaymentAllocation = "Pagamento informado. Aguardando o valor pago e a distribuição entre as etapas.";
 export type LegacyStageDay = typeof legacyStageDays[number];
 
 export function projectLegacyCompensation(input: {
@@ -27,7 +28,7 @@ export function projectLegacyCompensation(input: {
     const dueOn = candidateDueOn && input.verifiedThroughOn && candidateDueOn <= input.verifiedThroughOn ? candidateDueOn : null;
     const balanceCents = amountCents - paidCents;
     const reason = !balanceCents ? null : input.possiblyPaidStages.has(days)
-      ? "Pagamento informado. Aguardando comprovante e alocação desta etapa."
+      ? pendingLegacyPaymentAllocation
       : !milestoneOn ? "Aceite, ativação ou primeira liquidação histórica sem comprovação."
         : !dueOn ? "Calendário histórico sem cobertura verificada." : null;
     return { days, amountCents, paidCents, balanceCents, milestoneOn, dueOn, reason };

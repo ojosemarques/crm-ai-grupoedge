@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { CompensationFilters } from "@/modules/finance/domain/finance-contracts";
+import { pendingLegacyPaymentAllocation } from "@/modules/finance/domain/legacy-compensation";
 import { workspaceDateAt } from "@/shared/core/time/workspace-time";
 
 export async function readCommercialCompensationScreen(
@@ -48,7 +49,10 @@ export async function readCommercialCompensationScreen(
       dueInPeriod: Boolean(row.dueOn && row.dueOn >= dueRange.gte && row.dueOn <= dueRange.lte),
       milestoneOn: row.milestoneOn?.toISOString().slice(0, 10) ?? null,
       dueOn: row.dueOn?.toISOString().slice(0, 10) ?? null,
-      eligibleAt: row.eligibleAt?.toISOString() ?? null, reason: row.reason, sourceFacts: row.sourceFacts,
+      eligibleAt: row.eligibleAt?.toISOString() ?? null,
+      reason: row.kind === "LEGACY_STAGE" && row.reason === "Pagamento informado. Aguardando comprovante e alocação desta etapa."
+        ? pendingLegacyPaymentAllocation : row.reason,
+      sourceFacts: row.sourceFacts,
       payments: row.allocations.map((item) => ({
         entryId: item.financialEntryId, evidence: item.evidence, amountCents: item.amountCents.toString(),
         accountId: item.entry.financialAccountId, description: item.entry.description,
