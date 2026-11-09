@@ -225,7 +225,7 @@ describe("serviço administrativo de formulários", () => {
     await expect(service.publish(tenantA.context, form.id, saved.revision)).rejects.toMatchObject({ code: "MARKETING_FORM_REFERENCE_NOT_FOUND", statusCode: 422 });
   });
 
-  it("exige secretRef e enfileira Meta uma única vez somente após consentimento formal", async () => {
+  it("enfileira Meta uma vez com autorização registrada, sem exigir checkbox no formulário", async () => {
     const connection = await database.integrationConnection.create({ data: {
       workspaceId: tenantA.context.workspaceId,
       key: "meta-ads",
@@ -244,7 +244,6 @@ describe("serviço administrativo de formulários", () => {
     const base = publishableDefinition(tenantA);
     const definition = {
       ...base,
-      questions: [...base.questions, { stableKey: "consentimento", type: "CHECKBOX" as const, title: "Você autoriza a mensuração?", required: true, position: 2, mapping: "contactPreference" as const, config: { label: "Autorizo" } }],
       redirects: { automaticKind: "URL", url: "https://example.com/obrigado" },
       tracking: { internalEvents: true as const, meta: { enabled: true, pixelId: "123456789", connectionId: connection.id, secretReferenceKey } },
     };
@@ -264,7 +263,6 @@ describe("serviço administrativo de formulários", () => {
       answers: [
         { questionKey: "nome-completo", value: "Pessoa Meta" },
         { questionKey: "telefone", value: `+55119${Math.floor(10_000_000 + Math.random() * 89_999_999)}` },
-        { questionKey: "consentimento", value: true },
       ],
     };
     const first = await submissionService.submit(slug, payload);

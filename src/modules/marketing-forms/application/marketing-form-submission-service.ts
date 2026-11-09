@@ -167,7 +167,6 @@ async function queueMetaConversionForReceipt(
     receiptPublicId: string;
     actorId: string;
     now: Date;
-    allowServerSide: boolean;
     browserMatchKeys: ReturnType<typeof metaBrowserMatchKeys>;
   }>,
 ): Promise<string | null> {
@@ -180,7 +179,7 @@ async function queueMetaConversionForReceipt(
   if (!submission?.attributionConversionId || !submission.contactId) return null;
   const semanticKey = metaConversionDeduplicationKey({ workspaceId: input.form.workspaceId, conversionId: submission.attributionConversionId, eventName: "Lead" });
   const browserEventId = metaConversionEventId({ workspaceId: input.form.workspaceId, conversionId: submission.attributionConversionId, eventName: "Lead" });
-  if (!input.allowServerSide || !tracking.connectionId || !tracking.secretReferenceKey) return browserEventId;
+  if (!tracking.connectionId || !tracking.secretReferenceKey) return browserEventId;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${semanticKey}, 0))`;
   const existing = await tx.outboxEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: input.form.workspaceId, idempotencyKey: semanticKey } }, select: { payload: true } });
   if (existing?.payload && typeof existing.payload === "object" && !Array.isArray(existing.payload) && typeof existing.payload.eventId === "string") return existing.payload.eventId;
@@ -421,12 +420,12 @@ export function createMarketingFormSubmissionService(options: Options) {
 
     if (!transactionResult.ok) fail("Não foi possível processar esta resposta.", "MARKETING_FORM_INTAKE_REJECTED", 422);
     await deliverTelegramReceiptAlertAfterCommit(options.database, form.workspaceId, transactionResult.receiptId);
-    if (mapped.contactPreference !== true || !form.definition.tracking.meta?.connectionId || !form.definition.tracking.meta.secretReferenceKey) {
+    if (mapped.contactPreference === false || !form.definition.tracking.meta?.connectionId || !form.definition.tracking.meta.secretReferenceKey) {
       return transactionResult.result;
     }
     let metaEventId: string | null = null;
     try {
-      metaEventId = await options.database.$transaction((tx) => queueMetaConversionForReceipt(tx, { form, receiptId: transactionResult.receiptId, receiptPublicId: transactionResult.result.receiptPublicId, actorId: transactionResult.actorId, now, allowServerSide: mapped.contactPreference === true, browserMatchKeys: metaBrowserMatchKeys({ ...metaCookies, fbclid: input.tracking.clickIds?.fbclid, clickedAt: startedAt }) }));
+      metaEventId = await options.database.$transaction((tx) => queueMetaConversionForReceipt(tx, { form, receiptId: transactionResult.receiptId, receiptPublicId: transactionResult.result.receiptPublicId, actorId: transactionResult.actorId, now, browserMatchKeys: metaBrowserMatchKeys({ ...metaCookies, fbclid: input.tracking.clickIds?.fbclid, clickedAt: startedAt }) }));
     } catch {
       // O provider é best-effort e nunca altera um receipt já aceito.
     }
