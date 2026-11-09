@@ -1,3 +1,4 @@
+import { createConversionFeedbackService, queueAdvertisingStageMetaConversion } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -227,7 +228,7 @@ describe("serviço administrativo de formulários", () => {
   it("exige secretRef e enfileira Meta uma única vez somente após consentimento formal", async () => {
     const connection = await database.integrationConnection.create({ data: {
       workspaceId: tenantA.context.workspaceId,
-      key: `meta-form-${randomUUID().slice(0, 8)}`,
+      key: "meta-ads",
       providerKey: "META_ADS",
       adapterKey: "local-deterministic-v1",
       displayName: "Meta formulário",
@@ -273,19 +274,73 @@ describe("serviço administrativo de formulários", () => {
     const submission = await database.leadFormSubmission.findFirstOrThrow({ where: { workspaceId: tenantA.context.workspaceId, marketingFormReceiptId: receipt.id } });
     expect(submission.contactId).toBeTruthy();
     expect(await database.outboxEvent.count({ where: { workspaceId: tenantA.context.workspaceId, eventType: "marketing.meta_conversion.v1", correlationId: receipt.publicId } })).toBe(0);
+    const queueStage = (stageCode: string) => database.$transaction((tx) => queueAdvertisingStageMetaConversion(tx, {
+      workspaceId: tenantA.context.workspaceId, actorId: tenantA.systemActorId,
+      leadId: submission.leadId!, contactId: submission.contactId,
+      stageCode, stageHistoryId: randomUUID(), occurredAt: now,
+    }));
+    const stageEvents = () => database.outboxEvent.findMany({ where: {
+      workspaceId: tenantA.context.workspaceId, eventType: "marketing.meta_conversion.v1",
+      aggregateType: "Lead", aggregateId: submission.leadId!,
+    } });
+    await queueStage("MEETING_SCHEDULED");
+    expect(await stageEvents()).toHaveLength(0);
     const legalBasis = await database.legalBasis.create({ data: { workspaceId: tenantA.context.workspaceId, code: `meta-form-${randomUUID().slice(0, 8)}`, version: 1, basisType: "CONSENT", name: "Consentimento Meta", description: "Teste isolado", status: "ACTIVE", validFrom: new Date(now.getTime() - 60_000), approvalReference: "TEST-META-FORM", approvedByActorId: tenantA.systemActorId, approvedAt: new Date(now.getTime() - 60_000), createdByActorId: tenantA.systemActorId } });
     const purpose = await database.processingPurpose.create({ data: { workspaceId: tenantA.context.workspaceId, code: "marketing-conversion-feedback", name: "Conversão Meta", description: "Mensuração consentida", createdByActorId: tenantA.systemActorId, updatedByActorId: tenantA.systemActorId } });
     await database.purposeVersion.create({ data: { workspaceId: tenantA.context.workspaceId, purposeId: purpose.id, legalBasisId: legalBasis.id, version: 1, description: purpose.description, audience: "Leads", allowedChannels: ["OTHER"], noticeText: "Autoriza mensuração de conversão.", noticeVersion: "meta-form-v1", status: "ACTIVE", validFrom: new Date(now.getTime() - 60_000), approvedByActorId: tenantA.systemActorId, approvedAt: new Date(now.getTime() - 60_000), createdByActorId: tenantA.systemActorId } });
     await database.consentState.create({ data: { workspaceId: tenantA.context.workspaceId, contactId: submission.contactId!, purposeId: purpose.id, channel: "OTHER", state: "GRANTED", effectiveFrom: new Date(now.getTime() - 1_000), policyVersion: "test-v1", reasonCode: "TEST_EXPLICIT_CONSENT" } });
-    const replay = await submissionService.submit(slug, payload);
+    const fbp = "fb.1.1710000000000.1234567890";
+    const replay = await submissionService.submit(slug, payload, { fbp });
     expect(replay).toMatchObject({ receiptPublicId: first.receiptPublicId, outcome: "ACCEPTED" });
     expect(replay.providerEventIds?.meta).toBe(first.providerEventIds?.meta);
+    await queueStage("DISQUALIFIED");
+    await queueStage("MEETING_NO_SHOW");
+    expect(await stageEvents()).toHaveLength(0);
+    await queueStage("MEETING_SCHEDULED");
+    await queueStage("MEETING_SCHEDULED");
+    await queueStage("PROPOSAL");
+    await queueStage("MEETING_COMPLETED");
+    const milestones = await stageEvents();
+    expect(milestones).toHaveLength(2);
+    expect(milestones.map((event) => event.payload)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ eventName: "Schedule", eventTime: Math.floor(now.getTime() / 1000), userData: expect.objectContaining({ fbp }) }),
+      expect.objectContaining({ eventName: "MeetingAttended", eventTime: Math.floor(now.getTime() / 1000), userData: expect.objectContaining({ fbp }) }),
+    ]));
     const events = await database.outboxEvent.findMany({ where: { workspaceId: tenantA.context.workspaceId, eventType: "marketing.meta_conversion.v1", correlationId: receipt.publicId } });
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ aggregateType: "AttributionConversion", aggregateId: submission.attributionConversionId });
     expect(events[0]?.payload).toMatchObject({ eventId: replay.providerEventIds?.meta, provider: "META", privacy: { consentState: "GRANTED" } });
     expect(JSON.stringify(events[0]?.payload)).not.toContain("Pessoa Meta");
     expect(await database.privacyDecision.count({ where: { workspaceId: tenantA.context.workspaceId, correlationId: receipt.publicId, outcome: "ALLOW" } })).toBe(1);
+    await database.integrationConnectionConfigVersion.create({ data: {
+      workspaceId: tenantA.context.workspaceId, connectionId: connection.id, version: 1,
+      schemaVersion: "1.0", config: { initialSince: now.toISOString().slice(0, 10) },
+      configHash: "fixture", createdByActorId: tenantA.systemActorId,
+    } });
+    const requests: Array<{ url: string; data: unknown }> = [];
+    const worker = createConversionFeedbackService({
+      database,
+      now: () => now,
+      secrets: { resolve: async (key) => key === "META_ADS_DATASET_ID" ? "123456789" : "fixture-token" },
+      fetcher: async (input, init) => {
+        requests.push({ url: String(input), data: JSON.parse(String(init?.body)).data });
+        return Response.json({ events_received: 1 });
+      },
+    });
+    const deliveries = [];
+    for (let index = 0; index < events.length + milestones.length; index++) {
+      deliveries.push(await worker.processNext("marketing-form-meta-fixture"));
+    }
+    expect(deliveries).toEqual(expect.arrayContaining([...events, ...milestones].map(({ id }) => ({ id, status: "DELIVERED_EXTERNAL" }))));
+    expect(await worker.processNext("marketing-form-meta-fixture")).toEqual({ status: "IDLE" });
+    expect(requests).toHaveLength(3);
+    expect(requests.map(({ data }) => data)).toEqual(expect.arrayContaining([
+      [expect.objectContaining({ event_name: "Lead", event_id: replay.providerEventIds?.meta })],
+      [expect.objectContaining({ event_name: "Schedule", user_data: expect.objectContaining({ fbp }) })],
+      [expect.objectContaining({ event_name: "MeetingAttended", user_data: expect.objectContaining({ fbp }) })],
+    ]));
+    expect(requests.every(({ url }) => url.endsWith("/123456789/events"))).toBe(true);
+
   });
 
   it("lista respostas incompletas com os valores já informados sem criar lead", async () => {

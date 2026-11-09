@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { META_CONVERSION_EVENT_TYPE, META_CONVERSION_PURPOSE_CODE } from "@/modules/conversion-feedback/domain/conversion-feedback-contracts";
-import { buildMinimizedMetaConversion, metaConversionDeduplicationKey, metaConversionEventId } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
+import { buildMinimizedMetaConversion, metaBrowserMatchKeys, metaConversionDeduplicationKey, metaConversionEventId } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
 import { createOutboxEventInTransaction } from "@/modules/integrations/application/integration-platform-service";
 import { canonicalJson } from "@/modules/integrations/domain/integration-policy";
 import { getLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
@@ -168,6 +168,7 @@ async function queueMetaConversionForReceipt(
     actorId: string;
     now: Date;
     allowServerSide: boolean;
+    browserMatchKeys: ReturnType<typeof metaBrowserMatchKeys>;
   }>,
 ): Promise<string | null> {
   const tracking = input.form.definition.tracking.meta;
@@ -223,12 +224,12 @@ async function queueMetaConversionForReceipt(
   const purposeVersion = purpose?.versions[0] ?? null;
   if (!connection || !conversion || !purpose || !purposeVersion || purposeVersion.status !== "ACTIVE" || purposeVersion.legalBasis?.status !== "ACTIVE" || !purposeVersion.allowedChannels.includes("OTHER")) return browserEventId;
   if ((purposeVersion.validFrom && purposeVersion.validFrom > input.now) || (purposeVersion.validTo && purposeVersion.validTo <= input.now) || (purposeVersion.legalBasis.validFrom && purposeVersion.legalBasis.validFrom > input.now) || (purposeVersion.legalBasis.validTo && purposeVersion.legalBasis.validTo <= input.now)) return browserEventId;
-  const consent = await tx.consentState.findFirst({ where: { workspaceId: input.form.workspaceId, contactId: submission.contactId, purposeId: purpose.id, channel: "OTHER", state: "GRANTED", effectiveFrom: { lte: input.now } }, orderBy: [{ effectiveFrom: "desc" }, { updatedAt: "desc" }] });
-  if (!consent) return browserEventId;
+  const consent = await tx.consentState.findFirst({ where: { workspaceId: input.form.workspaceId, contactId: submission.contactId, purposeId: purpose.id, channel: "OTHER", effectiveFrom: { lte: input.now } }, orderBy: [{ effectiveFrom: "desc" }, { updatedAt: "desc" }] });
+  if (consent?.state !== "GRANTED") return browserEventId;
   const emails = points.filter((point) => point.type === "EMAIL").map((point) => point.normalizedValue);
   const phones = points.filter((point) => point.type === "PHONE").map((point) => point.normalizedValue);
   if (emails.length + phones.length === 0) return browserEventId;
-  const payload = buildMinimizedMetaConversion({ workspaceId: input.form.workspaceId, conversionId: conversion.id, contactId: submission.contactId, eventName: "Lead", occurredAt: conversion.occurredAt, valueCents: conversion.valueCents, emails, phones, purposeVersionId: purposeVersion.id, consentState: "GRANTED", evaluatedAt: input.now });
+  const payload = buildMinimizedMetaConversion({ workspaceId: input.form.workspaceId, conversionId: conversion.id, contactId: submission.contactId, eventName: "Lead", occurredAt: conversion.occurredAt, valueCents: conversion.valueCents, emails, phones, purposeVersionId: purposeVersion.id, consentState: "GRANTED", evaluatedAt: input.now, browserMatchKeys: input.browserMatchKeys });
   const outbox = await createOutboxEventInTransaction(tx, {
     workspaceId: input.form.workspaceId,
     connectionId: connection.id,
@@ -265,7 +266,7 @@ export function createMarketingFormSubmissionService(options: Options) {
     return { id: form.id, key: form.key, workspaceId: form.workspaceId, versionId: version.id, version: version.version, definition: parsed.data };
   }
 
-  async function submit(rawSlug: string, raw: unknown) {
+  async function submit(rawSlug: string, raw: unknown, metaCookies: { fbc?: string | undefined; fbp?: string | undefined } = {}) {
     const input = publicFormSubmitSchema.parse(raw);
     const form = await resolveActive(rawSlug, input.versionPublicId);
     const now = options.now();
@@ -425,7 +426,7 @@ export function createMarketingFormSubmissionService(options: Options) {
     }
     let metaEventId: string | null = null;
     try {
-      metaEventId = await options.database.$transaction((tx) => queueMetaConversionForReceipt(tx, { form, receiptId: transactionResult.receiptId, receiptPublicId: transactionResult.result.receiptPublicId, actorId: transactionResult.actorId, now, allowServerSide: mapped.contactPreference === true }));
+      metaEventId = await options.database.$transaction((tx) => queueMetaConversionForReceipt(tx, { form, receiptId: transactionResult.receiptId, receiptPublicId: transactionResult.result.receiptPublicId, actorId: transactionResult.actorId, now, allowServerSide: mapped.contactPreference === true, browserMatchKeys: metaBrowserMatchKeys({ ...metaCookies, fbclid: input.tracking.clickIds?.fbclid, clickedAt: startedAt }) }));
     } catch {
       // O provider é best-effort e nunca altera um receipt já aceito.
     }

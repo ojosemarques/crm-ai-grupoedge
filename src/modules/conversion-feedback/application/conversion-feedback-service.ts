@@ -6,7 +6,7 @@ import { environmentSecretResolver, type SecretResolver } from "@/modules/integr
 import { calculateRetryDelaySeconds } from "@/modules/integrations/domain/integration-policy";
 import { metaAdsConfigurationSchema, META_ADS_ACCESS_TOKEN_REFERENCE } from "@/modules/integrations/domain/meta-ads-contracts";
 import { META_CONVERSION_EVENT_TYPE, META_CONVERSION_PURPOSE_CODE, reconciliationQuerySchema } from "@/modules/conversion-feedback/domain/conversion-feedback-contracts";
-import { buildMinimizedMetaConversion, metaConversionDeduplicationKey } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
+import { buildMinimizedMetaConversion, metaAdvertisingStageEvent, metaBrowserMatchKeys, metaConversionDeduplicationKey } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -71,6 +71,63 @@ async function metaConnection(tx: Tx, workspaceId: string) {
     fail("Conexão Meta precisa estar validada, ativa e com credencial vigente.", "META_CONVERSION_CONNECTION_NOT_READY");
   }
   return connection;
+}
+
+// Called only after an authorized stage transition has been recorded, in the same transaction.
+export async function queueAdvertisingStageMetaConversion(tx: Tx, input: {
+  workspaceId: string; actorId: string; leadId: string; contactId: string | null;
+  stageCode: string | null; stageHistoryId: string; occurredAt: Date;
+}) {
+  const eventName = metaAdvertisingStageEvent(input.stageCode);
+  if (!eventName || !input.contactId) return;
+  const connection = await tx.integrationConnection.findFirst({
+    where: {
+      workspaceId: input.workspaceId, key: "meta-ads", providerKey: "META_ADS",
+      enabled: true, disabledAt: null, status: "CONNECTED", capabilityLevel: "CONNECTED",
+      capabilities: { some: { capability: "SYNC_PUSH", enabled: true } },
+    },
+    select: { id: true },
+  });
+  if (!connection) return;
+  const identity = { workspaceId: input.workspaceId, conversionId: input.leadId, eventName };
+  const idempotencyKey = metaConversionDeduplicationKey(identity);
+  // The caller holds the lead advisory lock during the transition.
+  if (await tx.outboxEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: input.workspaceId, idempotencyKey } }, select: { id: true } })) return;
+  const privacy = await privacyEvidence(tx, { ...input, contactId: input.contactId, now: input.occurredAt });
+  if (!privacy.allowed || !privacy.purposeVersionId) return;
+  const points = await tx.contactPoint.findMany({
+    where: { workspaceId: input.workspaceId, contactId: input.contactId, deletedAt: null, doNotContact: false, type: { in: ["EMAIL", "PHONE"] } },
+    orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+    select: { type: true, normalizedValue: true },
+  });
+  if (!points.length) return;
+  // Reuse browser identifiers only from a consented Lead event for this contact and connection.
+  const intake = await tx.attributionConversion.findFirst({
+    where: { workspaceId: input.workspaceId, leadId: input.leadId, contactId: input.contactId, kind: "LEAD_RECEIVED", status: "ACTIVE" },
+    orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+    select: { id: true },
+  });
+  const intakeEvent = intake && await tx.outboxEvent.findFirst({
+    where: {
+      workspaceId: input.workspaceId, connectionId: connection.id,
+      eventType: META_CONVERSION_EVENT_TYPE, aggregateType: "AttributionConversion", aggregateId: intake.id,
+      idempotencyKey: metaConversionDeduplicationKey({ workspaceId: input.workspaceId, conversionId: intake.id, eventName: "Lead" }),
+      status: { notIn: ["CANCELLED", "DEAD_LETTER"] },
+    },
+    select: { payload: true },
+  });
+  const intakePayload = intakeEvent?.payload as { userData?: { fbc?: unknown; fbp?: unknown } } | null | undefined;
+  const payload = buildMinimizedMetaConversion({
+    ...identity, browserMatchKeys: metaBrowserMatchKeys(intakePayload?.userData ?? {}), contactId: input.contactId, occurredAt: input.occurredAt, valueCents: null,
+    emails: points.filter((point) => point.type === "EMAIL").map((point) => point.normalizedValue),
+    phones: points.filter((point) => point.type === "PHONE").map((point) => point.normalizedValue),
+    purposeVersionId: privacy.purposeVersionId, consentState: "GRANTED", evaluatedAt: input.occurredAt,
+  });
+  await createOutboxEventInTransaction(tx, {
+    workspaceId: input.workspaceId, connectionId: connection.id, actorId: input.actorId,
+    eventType: META_CONVERSION_EVENT_TYPE, aggregateType: "Lead", aggregateId: input.leadId,
+    correlationId: input.stageHistoryId, causationId: input.stageHistoryId, idempotencyKey, payload,
+  });
 }
 
 function classifyMetaFailure(response: Response, body: unknown) {
@@ -190,7 +247,7 @@ export function createConversionFeedbackService(options: Options) {
     };
   }
 
-  async function queueMetaConversion(context: AuthenticatedContext, raw: { conversionId: string; eventName: "Lead" | "CompleteRegistration" | "Schedule" | "Purchase"; idempotencyKey: string }) {
+  async function queueMetaConversion(context: AuthenticatedContext, raw: { conversionId: string; eventName: "Lead" | "CompleteRegistration" | "Purchase"; idempotencyKey: string }) {
     await authorize(context, PermissionKeys.INTEGRATIONS_EXECUTE);
     await authorize(context, PermissionKeys.MARKETING_MEDIA_RECONCILE);
     return options.database.$transaction(async (tx) => {
@@ -206,7 +263,7 @@ export function createConversionFeedbackService(options: Options) {
       }
       const conversion = await tx.attributionConversion.findFirst({ where: { id: raw.conversionId, workspaceId: context.workspaceId, status: "ACTIVE" } });
       if (!conversion?.leadId || !conversion.contactId) fail("Conversão precisa estar vinculada a lead e contato canônicos.", "META_CONVERSION_IDENTITY_MISSING", 422);
-      const canonicalEvents: Record<string, readonly string[]> = { LEAD_RECEIVED: ["Lead"], QUALIFIED: ["CompleteRegistration"], MEETING_HELD: ["Schedule"], OPPORTUNITY_CREATED: ["Lead"], WON: ["Purchase"] };
+      const canonicalEvents: Record<string, readonly string[]> = { LEAD_RECEIVED: ["Lead"], QUALIFIED: ["CompleteRegistration"], OPPORTUNITY_CREATED: ["Lead"], WON: ["Purchase"] };
       if (!canonicalEvents[conversion.kind]?.includes(raw.eventName)) fail("O evento Meta não corresponde ao tipo da conversão canônica.", "META_CONVERSION_EVENT_MISMATCH", 422);
       const connection = await metaConnection(tx, context.workspaceId);
       const privacy = await privacyEvidence(tx, { workspaceId: context.workspaceId, actorId: context.actorId, contactId: conversion.contactId, now: options.now() });
@@ -256,11 +313,23 @@ export function createConversionFeedbackService(options: Options) {
       });
       return { status: terminal ? "DEAD_LETTER" as const : "RETRY_PENDING" as const };
     };
-    const conversion = await options.database.attributionConversion.findFirst({ where: { id: item.aggregateId, workspaceId: item.workspaceId, status: "ACTIVE" } });
-    if (!conversion?.contactId) return failItem({ terminal: true, classification: "CONFIGURATION", code: "META_CONVERSION_NOT_ACTIVE", message: "Conversão canônica indisponível para entrega." });
+    const payload = item.payload as Record<string, unknown>;
+    const subject = item.aggregateType === "Lead"
+      ? await options.database.lead.findFirst({ where: { id: item.aggregateId, workspaceId: item.workspaceId, deletedAt: null }, select: { contactId: true } })
+      : await options.database.attributionConversion.findFirst({ where: { id: item.aggregateId, workspaceId: item.workspaceId, status: "ACTIVE" }, select: { contactId: true } });
+    const contactId = subject?.contactId;
+    if (!contactId) return failItem({ terminal: true, classification: "CONFIGURATION", code: "META_CONVERSION_NOT_ACTIVE", message: "Conversão canônica indisponível para entrega." });
+    if (item.aggregateType === "Lead") {
+      const userData = payload.userData as { external_id?: string[] } | null;
+      if (userData?.external_id?.[0] !== createHash("sha256").update(contactId).digest("hex")) {
+        return failItem({ terminal: true, classification: "PRIVACY_BLOCKED", code: "META_CONVERSION_CONTACT_CHANGED", message: "O contato do lead mudou após o enfileiramento." });
+      }
+    } else if (payload.eventName === "Schedule") {
+      return failItem({ terminal: true, classification: "CONFIGURATION", code: "META_CONVERSION_EVENT_MISMATCH", message: "Schedule exige uma transição para reunião agendada." });
+    }
     const actor = await options.database.actor.findFirst({ where: { workspaceId: item.workspaceId, type: "SYSTEM" }, select: { id: true } });
     if (!actor) return failItem({ terminal: true, classification: "CONFIGURATION", code: "SYSTEM_ACTOR_MISSING", message: "Ator de sistema ausente." });
-    const allowed = await options.database.$transaction((tx) => privacyEvidence(tx, { workspaceId: item.workspaceId, actorId: actor.id, contactId: conversion.contactId!, now: options.now() }));
+    const allowed = await options.database.$transaction((tx) => privacyEvidence(tx, { workspaceId: item.workspaceId, actorId: actor.id, contactId, now: options.now() }));
     if (!allowed.allowed) return failItem({ terminal: true, classification: "PRIVACY_BLOCKED", code: "META_CONVERSION_CONSENT_REVOKED", message: "Entrega bloqueada pela decisão atual de privacidade." });
     const connection = await options.database.integrationConnection.findFirst({ where: { id: item.connectionId ?? "", workspaceId: item.workspaceId, enabled: true, status: "CONNECTED", capabilityLevel: "CONNECTED", capabilities: { some: { capability: "SYNC_PUSH", enabled: true } } }, include: { configVersions: true } });
     const activeConfig = connection?.configVersions.find((version) => version.version === connection.currentConfigVersion);
@@ -269,7 +338,6 @@ export function createConversionFeedbackService(options: Options) {
     const datasetId = await options.secrets.resolve("META_ADS_DATASET_ID");
     if (!token || !datasetId || !/^[0-9]{3,40}$/.test(datasetId)) return failItem({ terminal: true, classification: "CONFIGURATION", code: "META_CONVERSION_CREDENTIALS_PENDING", message: "Token ou dataset Meta ausente." });
     const config = metaAdsConfigurationSchema.parse(activeConfig.config);
-    const payload = item.payload as Record<string, unknown>;
     const custom = payload.customData as Record<string, unknown>;
     const valueMinor = typeof custom?.valueMinor === "string" ? custom.valueMinor : null;
     const event = { event_name: payload.eventName, event_time: payload.eventTime, event_id: payload.eventId, action_source: payload.actionSource, user_data: payload.userData, custom_data: { currency: "BRL", ...(valueMinor ? { value: Number(valueMinor) / 100 } : {}) } };

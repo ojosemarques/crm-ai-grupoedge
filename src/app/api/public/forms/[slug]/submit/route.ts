@@ -13,7 +13,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     const { slug } = await params;
     await enforceRateLimit("marketing-form-submit", `${slug}:${requestClientKey(request)}`, { limit: 20, windowMs: 60_000 });
-    const result = await getMarketingFormSubmissionService().submit(slug, await readLimitedJson(request, 128 * 1_024));
+    const result = await getMarketingFormSubmissionService().submit(slug, await readLimitedJson(request, 128 * 1_024), {
+      fbc: request.cookies.get("_fbc")?.value,
+      fbp: request.cookies.get("_fbp")?.value,
+    });
     return NextResponse.json({ result }, { status: 201, headers });
   } catch (error) {
     return handleRouteError(error, request);

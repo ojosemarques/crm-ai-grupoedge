@@ -10,7 +10,7 @@ export const metaConversionCommandSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("QUEUE"),
     conversionId: z.string().uuid(),
-    eventName: z.enum(["Lead", "CompleteRegistration", "Schedule", "Purchase"]),
+    eventName: z.enum(["Lead", "CompleteRegistration", "Purchase"]),
     idempotencyKey: z.string().trim().regex(/^meta-conversion-[A-Za-z0-9_-]{8,100}$/),
   }).strict(),
   z.object({

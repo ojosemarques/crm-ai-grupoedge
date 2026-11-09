@@ -1,3 +1,4 @@
+import { queueAdvertisingStageMetaConversion } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { pipelineArrivalFields, pipelineArrivalWhere } from "./pipeline-arrival-filter";
 import { assertAdvertisingSchedulingAccess } from "@/modules/meetings/application/advertising-scheduling-access";
 import {
@@ -605,6 +606,12 @@ export async function transitionLeadStageInTransaction(
     result: input.managerCorrection ? "MANAGER_CORRECTION" : "TRANSITION",
     executionMode,
   });
+  if (lead.pipeline.name === ADVERTISING_PIPELINE_NAME) {
+    await queueAdvertisingStageMetaConversion(transaction, {
+      workspaceId: context.workspaceId, actorId: context.actorId, leadId: lead.id,
+      contactId: lead.contactId, stageCode: target.leadStageCode, stageHistoryId: enteredHistory.id, occurredAt,
+    });
+  }
   if (target.leadStageCode === "MEETING_SCHEDULED" && input.origin !== "MEETING") {
     const bookingMemberId = performedByMember?.id ?? (lead.pipeline.name === "Anúncios" ? null : lead.ownerMemberId);
     await recordCommercialMetricFactInTransaction(transaction, {
