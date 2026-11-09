@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { PUBLIC_AGENDA_MINUTES, PUBLIC_AGENDA_TITLE, PUBLIC_AGENDA_ZONE } from "@/modules/marketing-forms/domain/public-agenda";
+import mark from "../../../../../public/brand/politizai-mark.png";
 import styles from "./agenda.module.css";
 
 type Availability = { today: string; days: string[]; booked: boolean; slots: { day: string; startsAt: string }[] };
@@ -89,7 +90,7 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
   return <main className={styles.shell}>
     <div className={styles.card}>
       <aside className={styles.summary} aria-label="Sobre a reunião">
-        <div className={styles.brand}><Image src="/brand/politizai-mark.png" width={120} height={120} alt="Politizai" priority /></div>
+        <div className={styles.brand}><Image src={mark} width={120} height={120} alt="Politizai" priority unoptimized /></div>
         <div className={styles.details}>
           <p className={styles.host}>Equipe Politizai</p>
           <h1>{PUBLIC_AGENDA_TITLE}</h1>
