@@ -180,13 +180,30 @@ export function createConversionFeedbackService(options: Options) {
   async function validateMetaWriteCapability(context: AuthenticatedContext) {
     await authorize(context, PermissionKeys.INTEGRATIONS_MANAGE);
     await authorize(context, PermissionKeys.INTEGRATIONS_SECRETS_MANAGE);
+    return validateAndEnableMetaWrite(context);
+  }
+
+  async function provisionMetaWriteFromCron(workspaceId: string, testEventCode: string) {
+    if (!/^TEST\d{1,20}$/.test(testEventCode)) fail("Código de teste Meta inválido.", "META_CONVERSION_TEST_CODE_INVALID");
+    const actor = await options.database.actor.findFirst({ where: { workspaceId, type: "SYSTEM" }, select: { id: true } });
+    if (!actor) fail("Ator de sistema não configurado.", "SYSTEM_ACTOR_MISSING");
+    return validateAndEnableMetaWrite({ workspaceId, actorId: actor.id }, testEventCode);
+  }
+
+  async function validateAndEnableMetaWrite(context: Pick<AuthenticatedContext, "workspaceId" | "actorId">, testEventCode?: string) {
     const connection = await options.database.integrationConnection.findUnique({
       where: { workspaceId_key: { workspaceId: context.workspaceId, key: "meta-ads" } },
-      include: { configVersions: true },
+      include: { configVersions: true, capabilities: { where: { capability: "SYNC_PUSH", enabled: true } } },
     });
-    if (!connection || !connection.enabled || connection.status !== "CONNECTED" || connection.capabilityLevel !== "CONNECTED") {
+    if (!connection || connection.providerKey !== "META_ADS" || !connection.enabled || connection.disabledAt || connection.status !== "CONNECTED" || connection.capabilityLevel !== "CONNECTED") {
       fail("Conexão Meta de leitura precisa estar homologada antes da escrita.", "META_CONVERSION_CONNECTION_NOT_READY");
     }
+    if (testEventCode && connection.capabilities.length) return { alreadyEnabled: true };
+    const provisioningAction = "marketing.meta_conversion.write_provisioned";
+    if (testEventCode && await options.database.auditLog.findFirst({
+      where: { workspaceId: context.workspaceId, action: provisioningAction, entityId: connection.id },
+      select: { id: true },
+    })) return { alreadyProvisioned: true };
     const activeConfig = connection.configVersions.find((version) => version.version === connection.currentConfigVersion);
     if (!activeConfig) fail("Configuração Meta vigente não encontrada.", "META_CONVERSION_CONFIG_NOT_FOUND");
     const config = metaAdsConfigurationSchema.parse(activeConfig.config);
@@ -195,24 +212,45 @@ export function createConversionFeedbackService(options: Options) {
     if (!token || !datasetId || !/^[0-9]{3,40}$/.test(datasetId)) fail("Token ou dataset Meta ausente.", "META_CONVERSION_CREDENTIALS_PENDING", 422);
     let response: Response;
     try {
-      response = await options.fetcher(`https://graph.facebook.com/${config.graphApiVersion}/${datasetId}?fields=id`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const endpoint = `https://graph.facebook.com/${config.graphApiVersion}/${datasetId}`;
+      const syntheticId = createHash("sha256").update("crm-meta-conversion-provisioning-test").digest("hex");
+      response = await options.fetcher(testEventCode ? `${endpoint}/events` : `${endpoint}?fields=id`, {
+        headers: { Authorization: `Bearer ${token}`, ...(testEventCode ? { "Content-Type": "application/json" } : {}) },
+        ...(testEventCode ? {
+          method: "POST",
+          body: JSON.stringify({
+            test_event_code: testEventCode,
+            data: [{
+              event_name: "MeetingAttended",
+              event_time: Math.floor(options.now().getTime() / 1000),
+              event_id: `crm-capi-provision-${connection.id}`,
+              action_source: "system_generated",
+              user_data: { external_id: [syntheticId], em: [createHash("sha256").update("crm-capi-fixture@example.invalid").digest("hex")] },
+            }],
+          }),
+        } : {}),
+        redirect: "error",
         signal: AbortSignal.timeout(config.requestTimeoutMs),
       });
     } catch {
       fail("Não foi possível validar o dataset Meta.", "META_CONVERSION_VALIDATION_NETWORK", 503);
     }
-    const body = await response.json().catch(() => ({})) as { id?: unknown };
-    if (!response.ok || body.id !== datasetId) fail("Dataset Meta não foi validado para esta credencial.", "META_CONVERSION_DATASET_NOT_VALIDATED", 422);
+    const body = await response.json().catch(() => null) as { id?: unknown; events_received?: unknown } | null;
+    if (!response.ok || (testEventCode ? body?.events_received !== 1 : body?.id !== datasetId)) fail("Dataset Meta não foi validado para esta credencial.", "META_CONVERSION_DATASET_NOT_VALIDATED", 422);
     await options.database.$transaction(async (tx) => {
+      const stillActive = await tx.integrationConnection.findFirst({
+        where: { id: connection.id, workspaceId: context.workspaceId, enabled: true, disabledAt: null, status: "CONNECTED", capabilityLevel: "CONNECTED", currentConfigVersion: connection.currentConfigVersion },
+        select: { id: true },
+      });
+      if (!stillActive) fail("A conexão Meta mudou durante a validação.", "META_CONVERSION_CONNECTION_CHANGED");
       await tx.integrationConnectionCapability.upsert({
         where: { workspaceId_connectionId_capability: { workspaceId: context.workspaceId, connectionId: connection.id, capability: "SYNC_PUSH" } },
         create: { workspaceId: context.workspaceId, connectionId: connection.id, capability: "SYNC_PUSH", enabled: true },
         update: { enabled: true },
       });
-      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: "marketing.meta_conversion.dataset_access_validated", entityType: "IntegrationConnection", entityId: connection.id, changes: { provider: "META", datasetIdHash: createHash("sha256").update(datasetId).digest("hex"), apiVersion: config.graphApiVersion, writeConfigured: true, writeExternallyValidated: false, externalEgress: true } } });
+      await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId, action: testEventCode ? provisioningAction : "marketing.meta_conversion.dataset_access_validated", entityType: "IntegrationConnection", entityId: connection.id, changes: { provider: "META", datasetIdHash: createHash("sha256").update(datasetId).digest("hex"), apiVersion: config.graphApiVersion, writeConfigured: true, writeExternallyValidated: Boolean(testEventCode), externalEgress: true } } });
     });
-    return { provider: "META", connectionId: connection.id, capability: "SYNC_PUSH", datasetAccessValidated: true, writeConfigured: true, writeExternallyValidated: false, externalEgress: true };
+    return { provider: "META", connectionId: connection.id, capability: "SYNC_PUSH", datasetAccessValidated: true, writeConfigured: true, writeExternallyValidated: Boolean(testEventCode), externalEgress: true };
   }
 
   async function getReconciliation(context: AuthenticatedContext, raw: unknown = {}) {
@@ -399,7 +437,7 @@ export function createConversionFeedbackService(options: Options) {
     return { provider: "GOOGLE_ADS", importRead: "IMPLEMENTED_AND_GATED_BY_CONNECTION", conversionWrite: "BLOCKED_NOT_VALIDATED_IN_TRIAL_OR_API", canQueue: false, missingEvidence: ["Conta de avaliação ou credencial Google Ads com permissão de upload", "Teste real da ação de conversão e deduplicação pelo order_id"], externalEgress: false };
   }
 
-  return Object.freeze({ getReconciliation, validateMetaWriteCapability, queueMetaConversion, cancelPending, processNext, getDeliveryDiagnostics, googleWriteGate });
+  return Object.freeze({ getReconciliation, validateMetaWriteCapability, provisionMetaWriteFromCron, queueMetaConversion, cancelPending, processNext, getDeliveryDiagnostics, googleWriteGate });
 }
 
 let singleton: ReturnType<typeof createConversionFeedbackService> | null = null;

@@ -315,14 +315,16 @@ describe("serviço administrativo de formulários", () => {
       schemaVersion: "1.0", config: { initialSince: now.toISOString().slice(0, 10) },
       configHash: "fixture", createdByActorId: tenantA.systemActorId,
     } });
-    const requests: Array<{ url: string; data: unknown }> = [];
+    const requests: Array<{ url: string; data: unknown; testCode?: string }> = [];
+    let acceptProbe = false;
     const worker = createConversionFeedbackService({
       database,
       now: () => now,
       secrets: { resolve: async (key) => key === "META_ADS_DATASET_ID" ? "123456789" : "fixture-token" },
       fetcher: async (input, init) => {
-        requests.push({ url: String(input), data: JSON.parse(String(init?.body)).data });
-        return Response.json({ events_received: 1 });
+        const payload = JSON.parse(String(init?.body));
+        requests.push({ url: String(input), data: payload.data, testCode: payload.test_event_code });
+        return Response.json({ events_received: !payload.test_event_code || acceptProbe ? 1 : 0 });
       },
     });
     const deliveries = [];
@@ -344,6 +346,17 @@ describe("serviço administrativo de formulários", () => {
     ]));
     expect(requests.every(({ url }) => url.endsWith("/123456789/events"))).toBe(true);
 
+    const capability = { workspaceId_connectionId_capability: { workspaceId: tenantA.context.workspaceId, connectionId: connection.id, capability: "SYNC_PUSH" as const } };
+    await database.integrationConnectionCapability.update({ where: capability, data: { enabled: false } });
+    await expect(worker.provisionMetaWriteFromCron(tenantA.context.workspaceId, "TEST123")).rejects.toMatchObject({ code: "META_CONVERSION_DATASET_NOT_VALIDATED" });
+    expect((await database.integrationConnectionCapability.findUniqueOrThrow({ where: capability })).enabled).toBe(false);
+    acceptProbe = true;
+    await expect(worker.provisionMetaWriteFromCron(tenantA.context.workspaceId, "TEST123")).resolves.toMatchObject({ writeExternallyValidated: true });
+    expect(requests.at(-1)).toMatchObject({ testCode: "TEST123", data: [expect.objectContaining({ event_name: "MeetingAttended" })] });
+    expect((await database.integrationConnectionCapability.findUniqueOrThrow({ where: capability })).enabled).toBe(true);
+    await database.integrationConnectionCapability.update({ where: capability, data: { enabled: false } });
+    await expect(worker.provisionMetaWriteFromCron(tenantA.context.workspaceId, "TEST123")).resolves.toEqual({ alreadyProvisioned: true });
+    expect(requests).toHaveLength(5);
   });
 
   it("lista respostas incompletas com os valores já informados sem criar lead", async () => {

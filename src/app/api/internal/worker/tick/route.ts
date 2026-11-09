@@ -10,13 +10,26 @@ import {
 } from "@/modules/automations/domain/serverless-worker-policy";
 import { getApplicationConfig } from "@/shared/core/config/application-config";
 import { handleRouteError } from "@/shared/core/errors/route-error-handler";
-import { ConfigurationError } from "@/shared/core/errors/application-error";
+import { ApplicationError, ConfigurationError } from "@/shared/core/errors/application-error";
 import { correlationResponseHeaders, resolveCorrelationId } from "@/shared/core/http/correlation";
 import { logger } from "@/shared/core/logging/logger";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+async function provisionMetaWrite(request: Request, correlationId: string) {
+  const testCode = process.env.META_ADS_CONVERSIONS_PROVISION_TEST_CODE;
+  if (request.method !== "GET" || process.env.VERCEL_ENV !== "production" || !testCode) return;
+  const workspace = z.uuid().safeParse(process.env.META_ADS_REPORTING_WORKSPACE_ID);
+  if (!workspace.success) throw new ConfigurationError(["META_ADS_REPORTING_WORKSPACE_ID"]);
+  try {
+    const result = await getConversionFeedbackService().provisionMetaWriteFromCron(workspace.data, testCode);
+    if ("writeExternallyValidated" in result) logger.info({ correlationId }, "META_CONVERSION_WRITE_PROVISIONED");
+  } catch (error) {
+    logger.warn({ correlationId, code: error instanceof ApplicationError ? error.code : "INTERNAL_ERROR" }, "META_CONVERSION_WRITE_PROVISION_FAILED");
+  }
+}
 
 async function logMetaDiagnostics(correlationId: string) {
   if (process.env.VERCEL_ENV !== "production" || process.env.META_ADS_CONVERSIONS_DIAGNOSTICS_ENABLED !== "true") return;
@@ -46,6 +59,7 @@ async function runTick(request: Request): Promise<NextResponse> {
 
       const workspace = z.uuid().safeParse(process.env.META_ADS_REPORTING_WORKSPACE_ID);
       if (!workspace.success) throw new ConfigurationError(["META_ADS_REPORTING_WORKSPACE_ID"]);
+      await provisionMetaWrite(request, correlationId);
       const service = getConversionFeedbackService();
       const { status } = await service.processNext(`meta-cron:${correlationId}`, workspace.data);
       logger.info({ correlationId, code: status }, "Tick de conversões Meta concluído");
@@ -57,6 +71,7 @@ async function runTick(request: Request): Promise<NextResponse> {
     const policy = loadServerlessWorkerPolicy(process.env);
     assertServerlessWorkerRequest(request, policy);
     assertServerlessWorkerEnabled(policy);
+    await provisionMetaWrite(request, correlationId);
     const config = getApplicationConfig();
     runtimeWorker = createDefaultWorkerBatchRunner(config);
     const result = await runtimeWorker.runner.run({
