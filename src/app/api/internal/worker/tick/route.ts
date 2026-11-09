@@ -18,6 +18,24 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+async function recoverMetaMeeting(request: Request, correlationId: string) {
+  const leadId = process.env.META_ADS_CONVERSIONS_RECOVERY_LEAD_ID;
+  if (request.method !== "GET" || process.env.VERCEL_ENV !== "production" || !leadId) return;
+  const target = z.object({ workspaceId: z.uuid(), leadId: z.uuid() }).safeParse({
+    workspaceId: process.env.META_ADS_REPORTING_WORKSPACE_ID, leadId,
+  });
+  if (!target.success) {
+    logger.warn({ correlationId }, "META_CONVERSION_RECOVERY_TARGET_INVALID");
+    return;
+  }
+  try {
+    const result = await getConversionFeedbackService().recoverMeetingAttended(target.data.workspaceId, target.data.leadId);
+    logger.info({ correlationId, recovery: result }, "META_CONVERSION_RECOVERY");
+  } catch {
+    logger.warn({ correlationId }, "META_CONVERSION_RECOVERY_FAILED");
+  }
+}
+
 async function provisionMetaWrite(request: Request, correlationId: string) {
   const testCode = process.env.META_ADS_CONVERSIONS_PROVISION_TEST_CODE;
   if (request.method !== "GET" || process.env.VERCEL_ENV !== "production" || !testCode) return;
@@ -60,6 +78,7 @@ async function runTick(request: Request): Promise<NextResponse> {
       const workspace = z.uuid().safeParse(process.env.META_ADS_REPORTING_WORKSPACE_ID);
       if (!workspace.success) throw new ConfigurationError(["META_ADS_REPORTING_WORKSPACE_ID"]);
       await provisionMetaWrite(request, correlationId);
+      await recoverMetaMeeting(request, correlationId);
       const service = getConversionFeedbackService();
       const { status } = await service.processNext(`meta-cron:${correlationId}`, workspace.data);
       logger.info({ correlationId, code: status }, "Tick de conversões Meta concluído");
@@ -72,6 +91,7 @@ async function runTick(request: Request): Promise<NextResponse> {
     assertServerlessWorkerRequest(request, policy);
     assertServerlessWorkerEnabled(policy);
     await provisionMetaWrite(request, correlationId);
+    await recoverMetaMeeting(request, correlationId);
     const config = getApplicationConfig();
     runtimeWorker = createDefaultWorkerBatchRunner(config);
     const result = await runtimeWorker.runner.run({

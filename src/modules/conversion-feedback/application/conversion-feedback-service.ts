@@ -7,6 +7,7 @@ import { calculateRetryDelaySeconds } from "@/modules/integrations/domain/integr
 import { metaAdsConfigurationSchema, META_ADS_ACCESS_TOKEN_REFERENCE } from "@/modules/integrations/domain/meta-ads-contracts";
 import { META_CONVERSION_EVENT_TYPE, META_CONVERSION_PURPOSE_CODE, reconciliationQuerySchema } from "@/modules/conversion-feedback/domain/conversion-feedback-contracts";
 import { buildMinimizedMetaConversion, metaAdvertisingStageEvent, metaBrowserMatchKeys, metaConversionDeduplicationKey } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
+import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
@@ -76,10 +77,10 @@ async function metaConnection(tx: Tx, workspaceId: string) {
 // Called only after an authorized stage transition has been recorded, in the same transaction.
 export async function queueAdvertisingStageMetaConversion(tx: Tx, input: {
   workspaceId: string; actorId: string; leadId: string; contactId: string | null;
-  stageCode: string | null; stageHistoryId: string; occurredAt: Date;
+  stageCode: string | null; stageHistoryId: string; occurredAt: Date; evaluatedAt?: Date;
 }) {
   const eventName = metaAdvertisingStageEvent(input.stageCode);
-  if (!eventName || !input.contactId) return;
+  if (!eventName || !input.contactId) return { status: "NOT_ELIGIBLE" as const };
   const connection = await tx.integrationConnection.findFirst({
     where: {
       workspaceId: input.workspaceId, key: "meta-ads", providerKey: "META_ADS",
@@ -88,19 +89,20 @@ export async function queueAdvertisingStageMetaConversion(tx: Tx, input: {
     },
     select: { id: true },
   });
-  if (!connection) return;
+  if (!connection) return { status: "CONNECTION_NOT_READY" as const };
   const identity = { workspaceId: input.workspaceId, conversionId: input.leadId, eventName };
   const idempotencyKey = metaConversionDeduplicationKey(identity);
   // The caller holds the lead advisory lock during the transition.
   if (await tx.outboxEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: input.workspaceId, idempotencyKey } }, select: { id: true } })) return;
-  const privacy = await privacyEvidence(tx, { ...input, contactId: input.contactId, now: input.occurredAt });
-  if (!privacy.allowed || !privacy.purposeVersionId) return;
+  const evaluatedAt = input.evaluatedAt ?? input.occurredAt;
+  const privacy = await privacyEvidence(tx, { ...input, contactId: input.contactId, now: evaluatedAt });
+  if (!privacy.allowed || !privacy.purposeVersionId) return { status: "PRIVACY_BLOCKED" as const, reasons: privacy.reasons };
   const points = await tx.contactPoint.findMany({
     where: { workspaceId: input.workspaceId, contactId: input.contactId, deletedAt: null, doNotContact: false, type: { in: ["EMAIL", "PHONE"] } },
     orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
     select: { type: true, normalizedValue: true },
   });
-  if (!points.length) return;
+  if (!points.length) return { status: "IDENTITY_MISSING" as const };
   // Reuse browser identifiers only from a consented Lead event for this contact and connection.
   const intake = await tx.attributionConversion.findFirst({
     where: { workspaceId: input.workspaceId, leadId: input.leadId, contactId: input.contactId, kind: "LEAD_RECEIVED", status: "ACTIVE" },
@@ -121,13 +123,14 @@ export async function queueAdvertisingStageMetaConversion(tx: Tx, input: {
     ...identity, browserMatchKeys: metaBrowserMatchKeys(intakePayload?.userData ?? {}), contactId: input.contactId, occurredAt: input.occurredAt, valueCents: null,
     emails: points.filter((point) => point.type === "EMAIL").map((point) => point.normalizedValue),
     phones: points.filter((point) => point.type === "PHONE").map((point) => point.normalizedValue),
-    purposeVersionId: privacy.purposeVersionId, consentState: "GRANTED", evaluatedAt: input.occurredAt,
+    purposeVersionId: privacy.purposeVersionId, consentState: "GRANTED", evaluatedAt,
   });
   await createOutboxEventInTransaction(tx, {
     workspaceId: input.workspaceId, connectionId: connection.id, actorId: input.actorId,
     eventType: META_CONVERSION_EVENT_TYPE, aggregateType: "Lead", aggregateId: input.leadId,
     correlationId: input.stageHistoryId, causationId: input.stageHistoryId, idempotencyKey, payload,
   });
+  return { status: "QUEUED" as const };
 }
 
 function classifyMetaFailure(response: Response, body: unknown) {
@@ -146,6 +149,36 @@ function classifyMetaFailure(response: Response, body: unknown) {
 export function createConversionFeedbackService(options: Options) {
   const authorization = getAuthorizationService();
   const authorize = (context: AuthenticatedContext, permission: (typeof PermissionKeys)[keyof typeof PermissionKeys]) => authorization.assertAuthorized(context, permission, resource(context));
+
+  async function recoverMeetingAttended(workspaceId: string, leadId: string) {
+    return options.database.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`lead-distribution:${workspaceId}:${leadId}`}, 0))`;
+      const idempotencyKey = metaConversionDeduplicationKey({ workspaceId, conversionId: leadId, eventName: "MeetingAttended" });
+      const existing = await tx.outboxEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey } }, select: { status: true, errorClass: true } });
+      if (existing) return existing;
+      const action = "marketing.meta_conversion.meeting_recovery";
+      if (await tx.auditLog.findFirst({ where: { workspaceId, action, entityId: leadId }, select: { id: true } })) return { status: "ALREADY_EVALUATED" };
+      const now = options.now();
+      const [lead, actor, transition] = await Promise.all([
+        tx.lead.findFirst({ where: { id: leadId, workspaceId, deletedAt: null, pipeline: { name: ADVERTISING_PIPELINE_NAME }, currentStage: { leadStageCode: { in: ["MEETING_COMPLETED", "PROPOSAL"] } } }, select: { contactId: true } }),
+        tx.actor.findFirst({ where: { workspaceId, type: "SYSTEM" }, select: { id: true } }),
+        tx.stageHistory.findFirst({
+          where: { workspaceId, leadId, pipeline: { name: ADVERTISING_PIPELINE_NAME }, stage: { leadStageCode: "MEETING_COMPLETED" }, enteredAt: { gte: new Date(now.getTime() - 6 * 86_400_000), lte: now } },
+          orderBy: { enteredAt: "desc" },
+          select: { id: true, enteredAt: true },
+        }),
+      ]);
+      if (!lead || !transition || !actor) return { status: "RECOVERY_TARGET_NOT_ELIGIBLE" };
+      const result = await queueAdvertisingStageMetaConversion(tx, {
+        workspaceId, leadId, actorId: actor.id, contactId: lead.contactId,
+        stageCode: "MEETING_COMPLETED", stageHistoryId: transition.id, occurredAt: transition.enteredAt, evaluatedAt: now,
+      });
+      if (result && result.status !== "CONNECTION_NOT_READY") {
+        await tx.auditLog.create({ data: { workspaceId, actorId: actor.id, action, entityType: "Lead", entityId: leadId, changes: { status: result.status, stageHistoryId: transition.id } } });
+      }
+      return result ?? { status: "ALREADY_QUEUED" };
+    });
+  }
 
   async function getDeliveryDiagnostics(workspaceId: string) {
     const since = new Date(options.now().getTime() - 2 * 60 * 60 * 1000);
@@ -437,7 +470,7 @@ export function createConversionFeedbackService(options: Options) {
     return { provider: "GOOGLE_ADS", importRead: "IMPLEMENTED_AND_GATED_BY_CONNECTION", conversionWrite: "BLOCKED_NOT_VALIDATED_IN_TRIAL_OR_API", canQueue: false, missingEvidence: ["Conta de avaliação ou credencial Google Ads com permissão de upload", "Teste real da ação de conversão e deduplicação pelo order_id"], externalEgress: false };
   }
 
-  return Object.freeze({ getReconciliation, validateMetaWriteCapability, provisionMetaWriteFromCron, queueMetaConversion, cancelPending, processNext, getDeliveryDiagnostics, googleWriteGate });
+  return Object.freeze({ getReconciliation, validateMetaWriteCapability, provisionMetaWriteFromCron, recoverMeetingAttended, queueMetaConversion, cancelPending, processNext, getDeliveryDiagnostics, googleWriteGate });
 }
 
 let singleton: ReturnType<typeof createConversionFeedbackService> | null = null;

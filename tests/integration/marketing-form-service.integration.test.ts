@@ -296,13 +296,36 @@ describe("serviço administrativo de formulários", () => {
     expect(await stageEvents()).toHaveLength(0);
     await queueStage("MEETING_SCHEDULED");
     await queueStage("MEETING_SCHEDULED");
+    const completedAt = new Date(now.getTime() + 1_000);
+    await database.$transaction(async (tx) => {
+      const workspaceId = tenantA.context.workspaceId;
+      const leadId = submission.leadId!;
+      const pipelineId = tenantA.pipelineId;
+      const actorId = tenantA.systemActorId;
+      await tx.pipeline.update({ where: { id: pipelineId }, data: { name: "Anúncios" } });
+      const stage = await tx.pipelineStage.create({ data: {
+        workspaceId, pipelineId, leadStageCode: "MEETING_COMPLETED", name: "Reunião realizada", position: 10, type: "OPEN",
+        createdByActorId: actorId, updatedByActorId: actorId,
+      } });
+      await tx.stageHistory.updateMany({ where: { workspaceId, leadId, exitedAt: null }, data: { exitedAt: completedAt, exitedByActorId: actorId } });
+      await tx.lead.update({ where: { id: leadId }, data: { currentStageId: stage.id } });
+      await tx.stageHistory.create({ data: { workspaceId, pipelineId, leadId, stageId: stage.id, enteredAt: completedAt, enteredByActorId: actorId } });
+    });
+    const recovery = createConversionFeedbackService({
+      database, now: () => completedAt, secrets: { resolve: async () => null },
+      fetcher: async () => { throw new Error("A recuperação deve enfileirar, sem chamar a Meta diretamente."); },
+    });
+    await expect(recovery.recoverMeetingAttended(tenantB.context.workspaceId, submission.leadId!)).resolves.toEqual({ status: "RECOVERY_TARGET_NOT_ELIGIBLE" });
+    await expect(recovery.recoverMeetingAttended(tenantA.context.workspaceId, submission.leadId!)).resolves.toEqual({ status: "QUEUED" });
+    await expect(recovery.recoverMeetingAttended(tenantA.context.workspaceId, submission.leadId!)).resolves.toMatchObject({ status: "PENDING" });
+    await database.pipeline.update({ where: { id: tenantA.pipelineId }, data: { name: "Captação" } });
     await queueStage("PROPOSAL");
     await queueStage("MEETING_COMPLETED");
     const milestones = await stageEvents();
     expect(milestones).toHaveLength(2);
     expect(milestones.map((event) => event.payload)).toEqual(expect.arrayContaining([
       expect.objectContaining({ eventName: "Schedule", eventTime: Math.floor(now.getTime() / 1000), userData: expect.objectContaining({ fbp }) }),
-      expect.objectContaining({ eventName: "MeetingAttended", eventTime: Math.floor(now.getTime() / 1000), userData: expect.objectContaining({ fbp }) }),
+      expect.objectContaining({ eventName: "MeetingAttended", eventTime: Math.floor(completedAt.getTime() / 1000), userData: expect.objectContaining({ fbp }) }),
     ]));
     const events = await database.outboxEvent.findMany({ where: { workspaceId: tenantA.context.workspaceId, eventType: "marketing.meta_conversion.v1", correlationId: receipt.publicId } });
     expect(events).toHaveLength(1);
