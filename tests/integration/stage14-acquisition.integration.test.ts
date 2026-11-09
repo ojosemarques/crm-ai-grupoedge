@@ -515,7 +515,7 @@ describe("quizzes externos de mandato", () => {
     expect(new Uint8Array(await (audio as File).arrayBuffer())).toEqual(fixtureMp3Bytes);
     expect(JSON.parse(String(body.get("data")))).toEqual({
       title: expect.stringMatching(/^Politizai - [0-9a-f-]+$/),
-      start_date: "2048-06-01T15:00:30Z", type: "TVOZ", numbers: ["5511988882468"],
+      start_date: "2048-06-01T12:00:30-03:00", type: "TVOZ", numbers: ["5511988882468"],
     });
     expect(await database.job.findFirst({ where: { workspaceId: target.workspaceId, idempotencyKey: `topsend-voice:${leadId}:v1` } })).toMatchObject({
       status: "SUCCEEDED", attempts: 1, result: { id: "fixture-campaign", status: "PENDING" },

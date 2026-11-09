@@ -11,6 +11,17 @@ const API_URL = "https://api.topsend.io/api/v1/campaign/audio/send";
 const JOB_KIND = "TOPSEND_LEAD_VOICE_V1";
 const TOPSEND_VOICE_DELAY_MS = 30_000;
 const MAX_AUDIO_BYTES = 10_000_000;
+const campaignTimeFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Sao_Paulo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+  timeZoneName: "longOffset",
+});
 const campaignSchema = z.object({ id: z.string().min(1), status: z.string().min(1) });
 const payloadSchema = z.object({ leadId: z.string().uuid() });
 
@@ -51,6 +62,13 @@ async function downloadAudio(url: string, fetcher: typeof fetch) {
 
 function idempotencyKey(leadId: string) {
   return `topsend-voice:${leadId}:v1`;
+}
+
+function campaignStartDate(instant: Date) {
+  const parts = Object.fromEntries(campaignTimeFormatter.formatToParts(instant).map(({ type, value }) => [type, value]));
+  const offset = parts.timeZoneName!.replace(/^GMT/, "");
+  // A TopSend agenda pelo horário local de Brasília informado no payload.
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${offset}`;
 }
 
 export async function enqueueTopSendVoiceInTransaction(
@@ -167,7 +185,7 @@ export function createTopSendVoiceWorker(options: Options) {
     body.set("file", audio, "audio-politizai-1.mp3");
     body.set("data", JSON.stringify({
       title: `Politizai - ${jobId}`,
-      start_date: now().toISOString().replace(/\.\d{3}Z$/, "Z"),
+      start_date: campaignStartDate(now()),
       type: "TVOZ",
       numbers: [phone],
     }));
