@@ -18,7 +18,7 @@ import { LeadMeetingsWorkspace } from "@/app/leads/[leadId]/historico/lead-meeti
 import { LeadOpportunitiesWorkspace } from "@/app/leads/[leadId]/historico/lead-opportunities-workspace";
 import { LeadSalePanel } from "@/components/opportunities/lead-sale-preparation-panel";
 import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
-import type { LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
+import { meetingAgendaHref, type LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
 import { MeetingParticipantField } from "@/modules/meetings/ui/meeting-participant-field";
 import { participantEmailsFromForm } from "@/modules/meetings/domain/meeting-participants";
 import type { LeadOpportunityScreen } from "@/modules/opportunities/domain/opportunity-contracts";
@@ -37,6 +37,7 @@ type LeadCommunicationSummary = Awaited<ReturnType<ReturnType<typeof getOmnichan
 type Notice = Readonly<{
   kind: "success" | "error";
   message: string;
+  agendaHref?: string;
 }> | null;
 
 type NextQueueLead = Readonly<{
@@ -530,6 +531,7 @@ export function OperationalHistoryWorkspace({
     data: Record<string, unknown>,
     onSaved?: () => void | Promise<void>,
     successMessage = "Operação registrada com sucesso.",
+    meetingDate?: string,
   ) {
     setPending(true);
     setNotice(null);
@@ -539,7 +541,17 @@ export function OperationalHistoryWorkspace({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, data }),
       });
-      await readResponse(response);
+      const result = await readResponse(response);
+      if (meetingDate && result && typeof result === "object" && "meetingId" in result && typeof result.meetingId === "string") {
+        // Em Anúncios, o agendamento pode transferir o lead para o closer e encerrar o acesso à ficha.
+        const refreshed = await Promise.allSettled([onSaved?.(), refresh()]);
+        setNotice({
+          kind: "success",
+          message: refreshed.some((item) => item.status === "rejected") ? `${successMessage} Consulte o evento na Agenda.` : successMessage,
+          agendaHref: meetingAgendaHref(meetingDate, result.meetingId),
+        });
+        return true;
+      }
       await Promise.all([onSaved?.(), refresh()]);
       setNotice({ kind: "success", message: successMessage });
       return true;
@@ -826,6 +838,8 @@ export function OperationalHistoryWorkspace({
     const element = event.currentTarget;
     const form = new FormData(element);
     const kind = formText(form, "kind");
+    const dueAt = formText(form, "dueAt");
+    const isMeeting = kind === "MEETING";
     const task = {
       title: formText(form, "title"),
       ...(formText(form, "description")
@@ -833,20 +847,20 @@ export function OperationalHistoryWorkspace({
         : {}),
       kind,
       priority: formText(form, "priority"),
-      ...(kind === "MEETING"
+      ...(isMeeting
         ? {
             closerId: formText(form, "closerId"),
-            startsAtLocal: formText(form, "dueAt"),
+            startsAtLocal: dueAt,
             durationMinutes: Number(form.get("durationMinutes")),
             participantEmails: participantEmailsFromForm(form),
           }
-        : { dueAt: isoDate(formText(form, "dueAt")) }),
+        : { dueAt: isoDate(dueAt) }),
     };
-    const saved = await mutate("CREATE_TASK", task, kind === "MEETING" ? refreshMeetings : undefined, kind === "MEETING"
+    const saved = await mutate("CREATE_TASK", task, isMeeting ? refreshMeetings : undefined, isMeeting
       ? participantEmailsFromForm(form).length
         ? "Reunião criada na Agenda. Convite e lembretes do participante foram enfileirados."
         : "Reunião criada na Agenda. O Google Agenda será sincronizado se o closer tiver uma conta conectada."
-      : "Tarefa criada com sucesso.");
+      : "Tarefa criada com sucesso.", isMeeting ? dueAt?.slice(0, 10) : undefined);
     if (saved) {
       element.reset();
       setTaskKind("FOLLOW_UP");
@@ -1139,6 +1153,7 @@ export function OperationalHistoryWorkspace({
       {notice ? (
         <div className={`flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm ${notice.kind === "error" ? "border-red-300 bg-red-50 text-red-900" : "border-emerald-300 bg-emerald-50 text-emerald-950"}`} role={notice.kind === "error" ? "alert" : "status"}>
           <p>{notice.message}</p>
+          {notice.agendaHref ? <Link className="underline" href={notice.agendaHref}>Abrir na agenda</Link> : null}
           {notice.kind === "error" ? <Button disabled={pending} onClick={() => void refresh()} size="sm" type="button" variant="secondary">Recarregar dados</Button> : null}
         </div>
       ) : null}

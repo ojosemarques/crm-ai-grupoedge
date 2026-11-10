@@ -60,24 +60,26 @@ async function responseMessage(response: Response) {
   return body;
 }
 
-export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<{ initialLeadId?: string; initialScreen: AgendaScreen }>) {
+export function AgendaWorkspace({ initialLead, initialMeetingId, initialScreen }: Readonly<{
+  initialLead: LeadOption | null;
+  initialMeetingId: string | undefined;
+  initialScreen: AgendaScreen;
+}>) {
   const router = useRouter();
-  const scopedInitialLeadId = initialScreen.leadOptions.some((lead) => lead.id === initialLeadId) ? initialLeadId : "";
-  const initialSelectedLead = initialScreen.leadOptions.find((lead) => lead.id === scopedInitialLeadId) ?? null;
   const [updatedScreen, setScreen] = useState<AgendaScreen | null>(null);
   const screen = updatedScreen ?? initialScreen;
   const [display, setDisplay] = useState<"calendar" | "list">("calendar");
-  const [showSchedule, setShowSchedule] = useState(Boolean(scopedInitialLeadId));
-  const [scheduleLeadId, setScheduleLeadId] = useState(scopedInitialLeadId);
-  const [leadQuery, setLeadQuery] = useState(initialSelectedLead?.name ?? "");
+  const [showSchedule, setShowSchedule] = useState(Boolean(initialLead));
+  const [scheduleLeadId, setScheduleLeadId] = useState(initialLead?.id ?? "");
+  const [leadQuery, setLeadQuery] = useState(initialLead?.name ?? "");
   const [leadSearchOptions, setLeadSearchOptions] = useState<readonly LeadOption[]>([]);
   const [leadSearchState, setLeadSearchState] = useState<"IDLE" | "LOADING" | "ERROR">("IDLE");
-  const [selectedLeadOption, setSelectedLeadOption] = useState<LeadOption | null>(initialSelectedLead);
+  const [selectedLead, setSelectedLeadOption] = useState<LeadOption | null>(initialLead);
   const [leadListOpen, setLeadListOpen] = useState(false);
   const [activeLeadIndex, setActiveLeadIndex] = useState(-1);
   const leadSearchInputRef = useRef<HTMLInputElement>(null);
   const leadPickerRef = useRef<HTMLDivElement>(null);
-  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(initialMeetingId ?? null);
   const [selectedExternalEventId, setSelectedExternalEventId] = useState<string | null>(null);
   const [hiddenStatuses, setHiddenStatuses] = useState<string[]>([]);
   const [showGoogleEvents, setShowGoogleEvents] = useState(true);
@@ -100,9 +102,6 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const normalizedLeadQuery = leadQuery.trim();
-  const selectedLead = leadSearchOptions.find((lead) => lead.id === scheduleLeadId)
-    ?? screen.leadOptions.find((lead) => lead.id === scheduleLeadId)
-    ?? selectedLeadOption;
   const showLeadOptions = leadListOpen && !scheduleLeadId && normalizedLeadQuery.length >= 2 && leadSearchState === "IDLE" && leadSearchOptions.length > 0;
 
   function chooseLead(lead: LeadOption) {
@@ -115,7 +114,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
   }
 
   useEffect(() => {
-    if (!showSchedule || normalizedLeadQuery.length < 2) return;
+    if (!showSchedule || scheduleLeadId || normalizedLeadQuery.length < 2) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void fetch(`/api/meetings/leads?q=${encodeURIComponent(normalizedLeadQuery)}`, {
@@ -138,7 +137,7 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [normalizedLeadQuery, showSchedule]);
+  }, [normalizedLeadQuery, scheduleLeadId, showSchedule]);
 
   useEffect(() => {
     if (!leadListOpen) return;
@@ -198,18 +197,15 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
         }),
       });
       await responseMessage(response);
-      form.reset();
-      setScheduleLeadId("");
-      setLeadQuery("");
-      setLeadSearchOptions([]);
-      setSelectedLeadOption(null);
-      setLeadListOpen(false);
-      setActiveLeadIndex(-1);
+      const bookingDate = String(data.get("startsAtLocal")).slice(0, 10);
+      const closerFilter = screen.closerId === data.get("closerId") ? screen.closerId : "";
+      closeSchedule();
+      setHiddenStatuses((current) => current.filter((status) => status !== "SCHEDULED" && status !== "PENDING_STATUS"));
       setNotice(participantEmailsFromForm(data).length
         ? "Reunião agendada. Convite e lembretes do participante foram enfileirados."
         : "Reunião agendada, tarefa criada e pipeline atualizado.");
-      await refresh();
-      setShowSchedule(false);
+      navigate(bookingDate, screen.view, closerFilter);
+      if (bookingDate === screen.selectedDate && closerFilter === screen.closerId) router.refresh();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Falha inesperada.");
     } finally {
@@ -226,12 +222,14 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
       {meeting.participants.map((guest) => <p key={guest.email}><Icon name="notificacoes" size={16} />Participante: {guest.email} · {participantResponseLabels[guest.responseStatus]}</p>)}
       {meeting.observation ? <p className={styles.observation}>{meeting.observation}</p> : null}
       <StatusBadge tone={meeting.calendarSync.state === "SYNCED" ? "success" : meeting.calendarSync.state === "CONFLICT" || meeting.calendarSync.state === "FAILED" ? "danger" : "info"}>Calendário: {meeting.calendarSync.state === "NOT_LINKED" ? "não conectado" : meeting.calendarSync.state.toLowerCase().replaceAll("_", " ")}</StatusBadge>
-      <div className={styles.detailLinks}><Link href={`/agenda/reunioes/${meeting.id}`}>Abrir briefing do closer →</Link>{meeting.calendarSync.conferenceUrl ? <a href={meeting.calendarSync.conferenceUrl} rel="noreferrer" target="_blank">Entrar no Google Meet</a> : <Link href="/integracoes/calendario">Conectar calendário</Link>}{meeting.opportunityId ? <Link href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
-      <MeetingActions meeting={meeting} onCommitted={refresh} reassignmentCloserOptions={screen.reassignmentCloserOptions} onOpenLead={() => {
+      {meeting.bookingViewOnly ? <p className="text-xs text-muted-foreground">Reunião encaminhada para {meeting.closerName}.</p> : <>
+        <div className={styles.detailLinks}><Link href={`/agenda/reunioes/${meeting.id}`}>Abrir briefing do closer →</Link>{meeting.calendarSync.conferenceUrl ? <a href={meeting.calendarSync.conferenceUrl} rel="noreferrer" target="_blank">Entrar no Google Meet</a> : <Link href="/integracoes/calendario">Conectar calendário</Link>}{meeting.opportunityId ? <Link href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
+        <MeetingActions meeting={meeting} onCommitted={refresh} reassignmentCloserOptions={screen.reassignmentCloserOptions} onOpenLead={() => {
         setSelectedMeetingId(null);
         setScreen(null);
         router.push(`/leads/${meeting.leadId}/historico`, { scroll: false });
-      }} />
+        }} />
+      </>}
     </div>;
   }
 
@@ -286,7 +284,17 @@ export function AgendaWorkspace({ initialLeadId = "", initialScreen }: Readonly<
               autoComplete="off"
               className={inputClass}
               id="agenda-lead-search"
-              onChange={(event) => { const value = event.target.value; setLeadQuery(value); setScheduleLeadId(""); setSelectedLeadOption(null); setLeadSearchOptions([]); setLeadSearchState(value.trim().length >= 2 ? "LOADING" : "IDLE"); setLeadListOpen(true); setActiveLeadIndex(-1); }}
+              onChange={(event) => {
+                const value = event.target.value;
+                setLeadQuery(value);
+                if (value.trim() === normalizedLeadQuery && !scheduleLeadId) return;
+                setScheduleLeadId("");
+                setSelectedLeadOption(null);
+                setLeadSearchOptions([]);
+                setLeadSearchState(value.trim().length >= 2 ? "LOADING" : "IDLE");
+                setLeadListOpen(true);
+                setActiveLeadIndex(-1);
+              }}
               onFocus={() => setLeadListOpen(true)}
               onKeyDown={(event) => {
                 if (event.key === "Escape" && showLeadOptions) { event.preventDefault(); event.stopPropagation(); setLeadListOpen(false); return; }

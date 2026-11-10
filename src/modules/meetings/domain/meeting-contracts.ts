@@ -25,6 +25,7 @@ export type MeetingListItem = Readonly<{
   participants: readonly Readonly<{ email: string; responseStatus: MeetingParticipantResponseStatusValue; responseUpdatedAt: string | null }>[];
   revision: number;
   canWrite: boolean;
+  bookingViewOnly?: boolean;
   canChooseLeadDestination?: boolean;
   calendarSync: Readonly<{
     state: "NOT_LINKED" | "PENDING_PUSH" | "PENDING_PULL" | "SYNCED" | "CONFLICT" | "FAILED" | "CANCELLED";
@@ -48,6 +49,10 @@ export type MeetingHistoryItem = Readonly<{
 
 export type CloserOption = Readonly<{ id: string; name: string }>;
 export type LeadOption = Readonly<{ id: string; name: string; phone: string | null; opportunities: readonly Readonly<{ id: string; name: string }>[] }>;
+
+export function meetingAgendaHref(date: string, meetingId: string) {
+  return `/agenda?${new URLSearchParams({ view: "day", date, meetingId })}`;
+}
 
 export type GoogleCalendarAgendaItem = Readonly<{
   id: string;

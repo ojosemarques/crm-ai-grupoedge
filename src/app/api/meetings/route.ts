@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
       view: request.nextUrl.searchParams.get("view") ?? undefined,
       date: request.nextUrl.searchParams.get("date") ?? undefined,
       closerId: request.nextUrl.searchParams.get("closerId") ?? undefined,
+      meetingId: request.nextUrl.searchParams.get("meetingId") ?? undefined,
     });
     return NextResponse.json({ result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

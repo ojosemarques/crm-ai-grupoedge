@@ -338,6 +338,20 @@ describe("agenda interna e reuniões", () => {
     expect(agenda.closerOptions).toHaveLength(0);
     expect(agenda.schedulingCloserOptions).toHaveLength(2);
     const result = await schedule(lead.leadId, lead.sdrContext, "2035-02-11T09:30", closer2Id, "MEDIUM");
+    const bookedAgenda = await meetings().getAgenda(lead.sdrContext, { view: "day", date: "2035-02-11" });
+    expect(bookedAgenda.meetings).toContainEqual(expect.objectContaining({ id: result.meetingId, canWrite: false }));
+    expect(bookedAgenda.meetings.find((meeting) => meeting.id === result.meetingId)).toMatchObject({
+      bookingViewOnly: true, observation: null, outcome: null, participants: [], calendarSync: { conferenceUrl: null },
+    });
+    await expect(meetings().getAgenda(lead.sdrContext, { meetingId: result.meetingId }))
+      .resolves.toMatchObject({ selectedDate: "2035-02-11" });
+    const otherSdr = await database.workspaceMember.findFirstOrThrow({
+      where: { workspaceId, id: { not: lead.sdrContext.memberId }, role: { key: "sdr" }, deletedAt: null },
+    });
+    const otherAgenda = await meetings().getAgenda(await contextByMember(otherSdr.id), { view: "day", date: "2035-02-11" });
+    expect(otherAgenda.meetings.map((meeting) => meeting.id)).not.toContain(result.meetingId);
+    const hiddenMeeting = await meetings().getAgenda(await contextByMember(otherSdr.id), { meetingId: result.meetingId });
+    expect(hiddenMeeting.meetings.map((meeting) => meeting.id)).not.toContain(result.meetingId);
     const [meeting, task, storedLead, stage, history, activities, audit] = await Promise.all([
       database.meeting.findUniqueOrThrow({ where: { id: result.meetingId } }),
       database.task.findFirstOrThrow({ where: { workspaceId, meetingId: result.meetingId } }),
@@ -1206,6 +1220,8 @@ describe("agenda interna e reuniões", () => {
     expect(byPhone.find((lead) => lead.id === visible.leadId)?.phone).toBe(visiblePhone);
     const hiddenByPhone = await meetings().searchLeadOptions(closer, { query: hiddenPhone.slice(-8) });
     expect(hiddenByPhone.map((lead) => lead.id)).not.toContain(hidden.leadId);
+    await expect(meetings().getScheduleLeadOption(closer, visible.leadId)).resolves.toMatchObject({ id: visible.leadId });
+    await expect(meetings().getScheduleLeadOption(closer, hidden.leadId)).resolves.toBeNull();
     await expect(meetings().searchLeadOptions(closer, { query: "x" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 

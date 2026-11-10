@@ -102,6 +102,7 @@ const agendaQuerySchema = z.object({
   view: z.enum(["day", "week"]).default("day"),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   closerId: z.string().uuid().optional().default(""),
+  meetingId: z.string().uuid().optional(),
 }).strict();
 
 const leadMeetingsQuerySchema = z.object({ leadId: z.string().uuid() }).strict();
@@ -556,7 +557,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       : decision.scope;
   }
 
-  async function leadOptions(context: AuthenticatedContext, query = "") {
+  async function leadOptions(context: AuthenticatedContext, { query = "", leadId }: { query?: string; leadId?: string } = {}) {
     const permission = await options.authorization.authorize(context, PermissionKeys.LEADS_READ, {
       workspaceId: context.workspaceId,
       resourceType: "MeetingLeadOptions",
@@ -574,6 +575,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
       where: {
         workspaceId: context.workspaceId,
         deletedAt: null,
+        ...(leadId ? { id: leadId } : {}),
         AND: [
           leadVisibilityWhere(context, visibility),
           ...(query ? [{ OR: [
@@ -583,7 +585,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         ],
       },
       orderBy: [{ fullName: "asc" }, { id: "asc" }],
-      take: query ? 20 : 200,
+      take: leadId ? 1 : query ? 20 : 200,
       select: { id: true, fullName: true, normalizedPhone: true, opportunities: { where: { status: "OPEN", deletedAt: null }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], select: { id: true, name: true } } },
     });
     return rows.map((row) => ({ id: row.id, name: row.fullName, phone: row.normalizedPhone, opportunities: row.opportunities }));
@@ -592,7 +594,13 @@ export function createMeetingService(options: MeetingServiceOptions) {
   async function searchLeadOptions(context: AuthenticatedContext, payload: unknown) {
     const parsed = leadOptionSearchSchema.safeParse(payload);
     if (!parsed.success) invalidInput(parsed.error);
-    return leadOptions(context, parsed.data.query);
+    return leadOptions(context, { query: parsed.data.query });
+  }
+
+  async function getScheduleLeadOption(context: AuthenticatedContext, leadId: string | undefined) {
+    if (!leadId || !z.uuid().safeParse(leadId).success) return null;
+    const [lead] = await leadOptions(context, { leadId });
+    return lead ?? null;
   }
 
   async function getAgenda(context: AuthenticatedContext, payload: unknown): Promise<AgendaScreen> {
@@ -612,14 +620,6 @@ export function createMeetingService(options: MeetingServiceOptions) {
       });
       throw new Error("unreachable");
     }
-    const selectedDate = parsed.data.date ?? workspaceDateAt(options.now(), workspaceRow.timeZone);
-    const range = parsed.data.view === "week"
-      ? workspaceWeekRange(selectedDate, workspaceRow.timeZone)
-      : {
-          ...workspaceDayRange(selectedDate, workspaceRow.timeZone),
-          startDate: selectedDate,
-          endDate: selectedDate,
-        };
     const [visibleClosers, writeDecision, leads] = await Promise.all([
       closerOptions(context, readDecision.scope),
       options.authorization.authorize(context, PermissionKeys.MEETINGS_WRITE, {
@@ -642,10 +642,12 @@ export function createMeetingService(options: MeetingServiceOptions) {
         ownerMemberId: parsed.data.closerId,
       });
     }
-    const ownerFilter = parsed.data.closerId
+    const ownerFilter: Prisma.MeetingWhereInput = parsed.data.closerId
       ? { ownerMemberId: parsed.data.closerId }
       : readDecision.scope === "OWN"
-        ? { ownerMemberId: context.memberId }
+        ? context.roleKey === AccessRoleKeys.SDR
+          ? { OR: [{ ownerMemberId: context.memberId }, { createdByActorId: context.actorId }] }
+          : { ownerMemberId: context.memberId }
         : readDecision.scope === "TEAM"
           ? { ownerMemberId: { in: [...allowedCloserIds] } }
           : {};
@@ -656,6 +658,20 @@ export function createMeetingService(options: MeetingServiceOptions) {
         : readDecision.scope === "TEAM"
           ? { memberId: { in: [...allowedCloserIds] } }
           : {};
+    const requestedMeeting = parsed.data.meetingId ? await options.database.meeting.findFirst({
+      where: { workspaceId: context.workspaceId, id: parsed.data.meetingId, deletedAt: null, ...ownerFilter },
+      select: { startsAt: true },
+    }) : null;
+    const selectedDate = requestedMeeting
+      ? workspaceDateAt(requestedMeeting.startsAt, workspaceRow.timeZone)
+      : parsed.data.date ?? workspaceDateAt(options.now(), workspaceRow.timeZone);
+    const range = parsed.data.view === "week"
+      ? workspaceWeekRange(selectedDate, workspaceRow.timeZone)
+      : {
+          ...workspaceDayRange(selectedDate, workspaceRow.timeZone),
+          startDate: selectedDate,
+          endDate: selectedDate,
+        };
     const [rows, externalRows] = await Promise.all([
       options.database.meeting.findMany({
         where: {
@@ -712,7 +728,24 @@ export function createMeetingService(options: MeetingServiceOptions) {
       schedulingCloserOptions: schedulingClosers,
       reassignmentCloserOptions: reassignmentClosers,
       leadOptions: leads,
-      meetings: rows.map((row, index) => serializeMeeting(row, options.now(), permissions[index]?.allowed ?? false)),
+      meetings: rows.map((row, index) => {
+        const bookedForAnotherOwner = readDecision.scope === "OWN" && row.ownerMemberId !== context.memberId;
+        const meeting = serializeMeeting(row, options.now(), permissions[index]?.allowed ?? false);
+        if (!bookedForAnotherOwner) return meeting;
+        return {
+          ...meeting,
+          bookingViewOnly: true,
+          canWrite: false,
+          opportunityId: null,
+          observation: null,
+          outcome: null,
+          participantEmail: null,
+          participantResponseStatus: null,
+          participantResponseUpdatedAt: null,
+          participants: [],
+          calendarSync: { ...meeting.calendarSync, conferenceUrl: null },
+        };
+      }),
       externalEvents: externalRows.map((row) => serializeGoogleCalendarEvent(row, context.memberId)),
     });
   }
@@ -1952,7 +1985,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
     });
   }
 
-  return Object.freeze({ getAgenda, getLeadMeetings, searchLeadOptions, schedule, scheduleFromPublicForm, act, reassign, recordPipelineOutcome, getBriefing, recordTranscript });
+  return Object.freeze({ getAgenda, getLeadMeetings, getScheduleLeadOption, searchLeadOptions, schedule, scheduleFromPublicForm, act, reassign, recordPipelineOutcome, getBriefing, recordTranscript });
 }
 
 let service: ReturnType<typeof createMeetingService> | undefined;

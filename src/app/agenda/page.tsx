@@ -14,17 +14,25 @@ function first(value: string | string[] | undefined) { return Array.isArray(valu
 export default async function AgendaPage({ searchParams }: Readonly<{ searchParams: SearchParams }>) {
   const context = await requirePageAuthentication();
   const params = await searchParams;
+  const meetingService = getMeetingService();
+  const meetingId = first(params.meetingId);
   let screen;
+  let selectedLead;
   try {
-    screen = await getMeetingService().getAgenda(context, {
-      view: first(params.view),
-      date: first(params.date),
-      closerId: first(params.closerId),
-    });
+    [screen, selectedLead] = await Promise.all([
+      meetingService.getAgenda(context, {
+        view: first(params.view),
+        date: first(params.date),
+        closerId: first(params.closerId),
+        ...(meetingId ? { meetingId } : {}),
+      }),
+      meetingService.getScheduleLeadOption(context, first(params.leadId)),
+    ]);
   } catch (error) {
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
     throw error;
   }
+  const selectedMeeting = screen.meetings.find((meeting) => meeting.id === meetingId);
   return (
     <main className="page-canvas">
       <PageHeader
@@ -33,7 +41,12 @@ export default async function AgendaPage({ searchParams }: Readonly<{ searchPara
         meta={`Dados exibidos em ${screen.timeZone}`}
         title="Agenda"
       />
-      <AgendaWorkspace initialLeadId={first(params.leadId) ?? ""} initialScreen={screen} />
+      <AgendaWorkspace
+        initialLead={selectedLead}
+        initialMeetingId={selectedMeeting?.id}
+        initialScreen={screen}
+        key={`${selectedLead?.id ?? ""}:${selectedMeeting?.id ?? ""}`}
+      />
     </main>
   );
 }
