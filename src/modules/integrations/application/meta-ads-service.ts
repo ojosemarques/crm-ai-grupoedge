@@ -305,7 +305,7 @@ export function createMetaAdsService(options: Options) {
     await tx.externalObjectMapping.upsert({ where: { workspaceId_connectionId_externalObjectType_externalId: { workspaceId: context.workspaceId, connectionId, externalObjectType, externalId } }, create: { workspaceId: context.workspaceId, connectionId, externalObjectType, externalId, internalEntityType, internalEntityId, externalVersion: apiVersion, externalHash: factHash({ externalId, internalEntityId }), firstRecognizedAt: now, lastRecognizedAt: now, createdByActorId: context.actorId, updatedByActorId: context.actorId }, update: { internalEntityType, internalEntityId, externalVersion: apiVersion, lastRecognizedAt: now, version: { increment: 1 }, updatedByActorId: context.actorId } });
   }
 
-  async function runSync(context: AuthenticatedContext, input: Readonly<{ mode: "INITIAL" | "INCREMENTAL"; correlationId: string; date?: string }>) {
+  async function runSync(context: AuthenticatedContext, input: Readonly<{ mode: "INITIAL" | "INCREMENTAL"; correlationId: string; date?: string }>, automatic = false) {
     await authorize(context, PermissionKeys.INTEGRATIONS_EXECUTE);
     await authorize(context, PermissionKeys.MARKETING_MEDIA_IMPORT);
     const connection = await findConnection(context); if (!connection) fail("Configure a conexão Meta Ads antes de sincronizar.", "META_CONNECTION_NOT_CONFIGURED", 404);
@@ -321,7 +321,8 @@ export function createMetaAdsService(options: Options) {
     if (input.date && (input.mode !== "INITIAL" || !metaAdsConfigurationSchema.shape.initialSince.safeParse(input.date).success || input.date < config.initialSince || input.date > today)) fail("A data histórica deve estar entre o início configurado e hoje, no modo inicial.", "META_SYNC_DATE_INVALID", 422);
     const until = input.date ?? today;
     const watermarkDate = cursor?.watermark ? localDate(cursor.watermark) : null;
-    const since = input.date ?? (input.mode === "INITIAL" || !watermarkDate ? config.initialSince : subtractDays(watermarkDate, config.lookbackDays));
+    const refreshToday = automatic && input.mode === "INCREMENTAL" && watermarkDate === today;
+    const since = input.date ?? (refreshToday ? today : input.mode === "INITIAL" || !watermarkDate ? config.initialSince : subtractDays(watermarkDate, config.lookbackDays));
     const nextWatermark = cursor?.watermark && cursor.watermark > endInstant(until) ? cursor.watermark : endInstant(until);
     const run = await options.database.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`meta-ads-sync:${context.workspaceId}:${connection.id}`}, 0))`;
@@ -432,9 +433,17 @@ export function createMetaAdsService(options: Options) {
       const config = await currentConfig(connection);
       if (!config.autoSyncEnabled || config.selectedAccountIds.length === 0) continue;
       if (connection.status === "DEGRADED" && connection.lastErroredAt) {
-        const attempt = await options.database.integrationDeliveryAttempt.findFirst({ where: { workspaceId: connection.workspaceId, syncRun: { connectionId: connection.id, objectType: OBJECT_TYPE }, status: "FAILED" }, orderBy: { finishedAt: "desc" }, select: { retryAfterSeconds: true } });
+        const attempt = await options.database.integrationDeliveryAttempt.findFirst({ where: { workspaceId: connection.workspaceId, syncRun: { connectionId: connection.id, objectType: OBJECT_TYPE }, status: "FAILED" }, orderBy: { finishedAt: "desc" }, select: { retryAfterSeconds: true, syncRun: { select: { windowStart: true } } } });
         const failures = await options.database.integrationDeliveryAttempt.count({ where: { workspaceId: connection.workspaceId, kind: "SYNC", syncRun: { connectionId: connection.id, objectType: OBJECT_TYPE }, status: "FAILED", finishedAt: { gt: connection.lastSucceededAt ?? new Date(0) } } });
-        const cooldown = failures >= MAX_CONSECUTIVE_FAILURES ? AUTO_SYNC_OUTAGE_RETRY_MS : AUTO_SYNC_RETRY_MS;
+        // Retry the cheaper same-day request promptly after a broad request failed.
+        const cursor = await options.database.integrationSyncCursor.findUnique({
+          where: { workspaceId_connectionId_direction_objectType: { workspaceId: connection.workspaceId, connectionId: connection.id, direction: "PULL", objectType: OBJECT_TYPE } },
+          select: { watermark: true },
+        });
+        const today = localDate(options.now());
+        const narrowsWindow = cursor?.watermark && localDate(cursor.watermark) === today
+          && attempt?.syncRun?.windowStart && localDate(attempt.syncRun.windowStart) < today;
+        const cooldown = failures >= MAX_CONSECUTIVE_FAILURES && !narrowsWindow ? AUTO_SYNC_OUTAGE_RETRY_MS : AUTO_SYNC_RETRY_MS;
         if (connection.lastErroredAt.getTime() + Math.max(cooldown, (attempt?.retryAfterSeconds ?? 0) * 1000) > options.now().getTime()) continue;
       }
       const actor = await options.database.actor.findFirst({ where: { id: connection.updatedByActorId, workspaceId: connection.workspaceId, type: "HUMAN" }, select: { id: true, userId: true } });
@@ -445,7 +454,11 @@ export function createMetaAdsService(options: Options) {
       }
       const context: AuthenticatedContext = { workspaceId: connection.workspaceId, workspaceSlug: member.workspace.slug, sessionId: `meta-sync:${connection.id}`, userId: member.userId, memberId: member.id, actorId: actor.id, roleId: member.roleId, roleKey: member.role.key, roleName: member.role.name, displayName: member.user.displayName };
       try {
-        const result = await runSync(context, { mode: "INCREMENTAL", correlationId: `meta-auto-${Math.floor(options.now().getTime() / 900_000)}-${connection.id}` });
+        const result = await runSync(context, { mode: "INCREMENTAL", correlationId: `meta-auto-${Math.floor(options.now().getTime() / 900_000)}-${connection.id}` }, true);
+        if (result.status === "SUCCEEDED") logger.info({
+          operation: "meta_ads_sync", since: result.windowStart?.toISOString(), until: result.windowEnd?.toISOString(),
+          readCount: result.readCount, createdCount: result.createdCount, updatedCount: result.updatedCount,
+        }, "META_ADS_AUTOMATIC_COLLECTION_SUCCEEDED");
         return { status: result.status };
       } catch (error) {
         if (error instanceof ApplicationError && ["META_SYNC_ALREADY_RUNNING", "META_CONNECTION_NOT_READY"].includes(error.code)) return { status: "IDLE" };

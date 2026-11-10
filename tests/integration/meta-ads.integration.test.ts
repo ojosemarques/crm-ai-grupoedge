@@ -76,6 +76,7 @@ afterAll(async () => {
 function fixtureAdapter(businessId?: string) {
   let spend = "10.25";
   let videoViews = "100";
+  let insightDate = "2046-04-19";
   const calls: string[] = [];
   const adapter = new MetaAdsReadAdapter({ sleep: async () => undefined, random: () => 0, fetcher: async (input, init) => {
     const url = new URL(String(input)); calls.push(`${init?.method}:${url.pathname}`);
@@ -87,9 +88,9 @@ function fixtureAdapter(businessId?: string) {
     if (ids.join(",") === "200001") return Response.json([{ code: 200, body: JSON.stringify({ id: "200001", account_id: "123456", name: "Campanha Fixture", status: "ACTIVE", start_time: "2046-04-19T00:00:00-0300" }) }]);
     if (ids.join(",") === "300001") return Response.json([{ code: 200, body: JSON.stringify({ id: "300001", campaign_id: "200001", name: "Conjunto Fixture", status: "ACTIVE" }) }]);
     if (ids.join(",") === "400001") return Response.json([{ code: 200, body: JSON.stringify({ id: "400001", adset_id: "300001", name: "Anúncio Fixture", status: "ACTIVE", creative: { id: "500001", name: "Criativo Fixture" } }) }]);
-    return Response.json({ data: [{ account_id: "123456", account_name: "Politizai Fixture", account_currency: "BRL", campaign_id: "200001", campaign_name: "Campanha Fixture", adset_id: "300001", adset_name: "Conjunto Fixture", ad_id: "400001", ad_name: "Anúncio Fixture", date_start: "2046-04-19", date_stop: "2046-04-19", spend, impressions: "1000", clicks: "100", inline_link_clicks: "80", actions: [{ action_type: "lead", value: "10" }, { action_type: "onsite_conversion.lead_grouped", value: "7" }, { action_type: "offsite_conversion.fb_pixel_lead", value: "3" }, { action_type: "custom.future_action", value: "2" }, { action_type: "video_view", value: videoViews }], action_values: [{ action_type: "purchase", value: "500.00" }, { action_type: "omni_purchase", value: "500.00" }] }] });
+    return Response.json({ data: [{ account_id: "123456", account_name: "Politizai Fixture", account_currency: "BRL", campaign_id: "200001", campaign_name: "Campanha Fixture", adset_id: "300001", adset_name: "Conjunto Fixture", ad_id: "400001", ad_name: "Anúncio Fixture", date_start: insightDate, date_stop: insightDate, spend, impressions: "1000", clicks: "100", inline_link_clicks: "80", actions: [{ action_type: "lead", value: "10" }, { action_type: "onsite_conversion.lead_grouped", value: "7" }, { action_type: "offsite_conversion.fb_pixel_lead", value: "3" }, { action_type: "custom.future_action", value: "2" }, { action_type: "video_view", value: videoViews }], action_values: [{ action_type: "purchase", value: "500.00" }, { action_type: "omni_purchase", value: "500.00" }] }] });
   } });
-  return { adapter, calls, updateSpend: (value: string) => { spend = value; }, updateVideoViews: (value: string) => { videoViews = value; } };
+  return { adapter, calls, setInsightDate: (date: string) => { insightDate = date; }, updateSpend: (value: string) => { spend = value; }, updateVideoViews: (value: string) => { videoViews = value; } };
 }
 
 describe("CRM-40 conector Meta Ads read-only", () => {
@@ -191,6 +192,7 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     const media = createMediaPerformanceService({ database, now: () => clock });
     expect((await media.getScreen(admin, { periodStart: "2046-04-19", periodEnd: "2046-04-19" })).mediaSync).toMatchObject({ enabled: true, automatic: true, lastCollectedAt: collectedAt, error: null });
     const pull = vi.spyOn(fixture.adapter, "pull");
+    fixture.setInsightDate("2046-04-20");
     pull.mockRejectedValueOnce(new Error("internal fixture failure without provider payload"));
     clock = new Date(clock.getTime() + 16 * 60_000);
     expect(await service.processDue()).toEqual({ status: "FAILED" });
@@ -199,6 +201,10 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     clock = new Date(clock.getTime() + 6 * 60_000);
     expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
     expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({ status: "CONNECTED", enabled: true, currentErrorCode: null });
+    expect(pull).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), { since: "2046-04-20", until: "2046-04-20" });
+    const today = await media.getScreen(admin, { periodStart: "2046-04-20", periodEnd: "2046-04-20" });
+    expect(today.totals).toMatchObject({ spendCents: 1025, impressions: 1000 });
+    expect(today.mediaSync).toMatchObject({ lastCollectedAt: clock.toISOString(), error: null });
     pull.mockRejectedValueOnce(new MetaAdsAdapterError({ classification: "RATE_LIMIT", code: "META_RATE_LIMIT", safeMessage: "Fixture limitada", retryAfterSeconds: 3600 }));
     clock = new Date(clock.getTime() + 16 * 60_000);
     expect(await service.processDue()).toEqual({ status: "FAILED" });
