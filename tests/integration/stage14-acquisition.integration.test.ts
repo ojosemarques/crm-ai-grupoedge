@@ -1,3 +1,4 @@
+import { verifyQuizAgendaToken } from "@/modules/marketing-forms/domain/quiz-agenda-token";
 import { createHmac, randomUUID } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -546,11 +547,12 @@ describe("quizzes externos de mandato", () => {
 
   it("captura quiz parcial só com telefone e completa o mesmo lead sem reagendar a ligação", async () => {
     enableTopSendFixture();
+    await ensureAdvertisingPipeline(database, admin.workspaceId, admin.actorId);
     const pipeline = await database.pipeline.findFirstOrThrow({
       where: { workspaceId: admin.workspaceId, name: "Anúncios", deletedAt: null },
       include: { stages: { where: { type: "OPEN", deletedAt: null }, orderBy: { position: "asc" }, take: 1 } },
     });
-    const connectionKey = `quiz-partial-${randomUUID().slice(0, 8)}`;
+    const connectionKey = "site-quizmandato";
     const connection = await connections.configure(admin, {
       key: connectionKey, displayName: "Quiz parcial", provider: "FORM", sourceKey,
       secretReferenceKey: "ACQUISITION_STAGE14_FORM_SECRET",
@@ -572,6 +574,7 @@ describe("quizzes externos de mandato", () => {
     };
     const initial = await send(partial);
     expect(initial).toMatchObject({ status: "PROCESSED", outcome: "CREATED" });
+    expect(initial).not.toHaveProperty("agendaToken");
     const leadId = initial.leadId as string;
     const submissionKey = `acq:${connection.id}:external:${submissionId}`;
     const jobWhere = { workspaceId: admin.workspaceId, idempotencyKey: `topsend-voice:${leadId}:v1` };
@@ -582,7 +585,12 @@ describe("quizzes externos de mandato", () => {
     const complete = { ...partial, completionStatus: "COMPLETED", fullName: "Nome do diagnóstico",
       eventId: `quiz:quizmandato:${submissionId}:completed:v1`, occurredAt: new Date(now.getTime() + 1000).toISOString(),
       answers: Array.from({ length: 11 }, (_, index) => ({ questionKey: `resposta_${index}`, question: "Pergunta", value: "Resposta", displayValue: "Resposta" })) };
-    expect(await send(complete)).toMatchObject({ status: "PROCESSED", leadId, submissionId: initial.submissionId });
+    const completed = await send(complete);
+    expect(completed).toMatchObject({ status: "PROCESSED", leadId, submissionId: initial.submissionId });
+    expect(verifyQuizAgendaToken(String(completed.agendaToken), formSecret, now)).toMatchObject({
+      quiz: "quizmandato", submissionId: initial.submissionId,
+    });
+    expect(await send(complete)).toMatchObject({ agendaToken: completed.agendaToken, idempotentReplay: true });
     expect(await database.leadFormSubmission.findFirst({ where: { idempotencyKey: submissionKey } })).toMatchObject({
       leadId, submittedFullName: complete.fullName, rawPayload: { quizResponse: { completionStatus: "COMPLETED", answers: complete.answers } },
     });

@@ -8,7 +8,7 @@ import styles from "./agenda.module.css";
 
 type ConfirmationRedirect = { kind: "WHATSAPP" | "URL"; url: string };
 
-type Availability = { today: string; days: string[]; booked: boolean; slots: { day: string; startsAt: string }[] };
+type Availability = { today: string; days: string[]; booked: boolean; redirect?: ConfirmationRedirect; slots: { day: string; startsAt: string }[] };
 
 const dateLabel = new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long" });
 const monthLabel = new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC", month: "long", year: "numeric" });
@@ -49,6 +49,7 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
       setDay((day) => day && data.days.includes(day) ? day : data.today);
       setMonth((month) => month && data.days.some((day) => day.startsWith(month)) ? month : data.today.slice(0, 7));
       setBooked(data.booked);
+      setRedirect(data.redirect ?? null);
       setLoadError("");
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setLoadError(error instanceof Error ? error.message : "Não foi possível carregar os horários.");

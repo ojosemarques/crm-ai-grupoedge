@@ -1,3 +1,4 @@
+import { createQuizAgendaToken } from "@/modules/marketing-forms/domain/quiz-agenda-token";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { getLeadIntakeService, type LeadIntakeInput } from "@/modules/leads/application/lead-intake-service";
@@ -73,6 +74,10 @@ export function createAcquisitionWebhookService(options: Options) {
       return results.length === 1 ? results[0]! : { status: "BATCH_PROCESSED" as const, processed: results.length, results };
     }
     const info = eventInfo(connection.providerKey, body, options.now()); if (!/^[A-Za-z0-9_.:-]{8,160}$/.test(info.id) || Number.isNaN(info.occurredAt.getTime())) fail("Identificador ou data do evento inválido.", "ACQUISITION_EVENT_INVALID", 422);
+    const agendaDetails = (submissionId: string) =>
+      input.workspaceSlug === "politizai" && quizEvent?.success && input.connectionKey === `site-${quizEvent.data.quiz.id}` && quizEvent.data.completionStatus === "COMPLETED" && !quizEvent.data.historicalImport
+        ? { agendaToken: createQuizAgendaToken(quizEvent.data.quiz.id, submissionId, info.occurredAt, secret) }
+        : {};
     const entry = Array.isArray(body.entry) ? body.entry[0] as Record<string, unknown> : undefined;
     const change = Array.isArray(entry?.changes) ? entry.changes[0] as Record<string, unknown> : undefined;
     const nativeValue = change?.value as Record<string, unknown> | undefined;
@@ -91,18 +96,20 @@ export function createAcquisitionWebhookService(options: Options) {
       if (prior) { if (prior.payloadHash !== payloadHash) fail("Evento repetido com conteúdo divergente.", "ACQUISITION_IDEMPOTENCY_CONFLICT", 409); return { row: prior, replay: true }; }
       const row = await tx.webhookInbox.create({ data: { workspaceId: connection.workspace.id, connectionId: connection.id, providerEventId: info.id, eventType: "lead.received", contractVersion: "1.0", payloadHash, nonceHash, payloadSizeBytes: Buffer.byteLength(input.rawBody, "utf8"), payload: safeBody, dataClass: "CONTACT_DATA", signatureStatus: "VERIFIED", externalOccurredAt: info.occurredAt, receivedAt: options.now(), status: "VERIFIED", attempts: 0, correlationId: info.id } }); return { row, replay: false };
     });
-    if (inbox.replay && ["PROCESSED", "IGNORED"].includes(inbox.row.status)) {
-      const receipt = quizTarget && inbox.row.status === "PROCESSED"
-        ? await options.database.leadFormSubmission.findUnique({
-          where: { workspaceId_idempotencyKey: { workspaceId: connection.workspace.id, idempotencyKey: `acq:${connection.id}:external:${info.externalId}` } },
-          select: { id: true, leadId: true },
-        }) : null;
-      return { inboxId: inbox.row.id, status: inbox.row.status, idempotentReplay: true, ...(receipt?.leadId ? { leadId: receipt.leadId, submissionId: receipt.id } : {}) };
-    }
+    const processedResult = async () => {
+      const receipt = quizTarget ? await options.database.leadFormSubmission.findUnique({
+        where: { workspaceId_idempotencyKey: { workspaceId: connection.workspace.id, idempotencyKey: `acq:${connection.id}:external:${info.externalId}` } },
+        select: { id: true, leadId: true },
+      }) : null;
+      return { inboxId: inbox.row.id, status: "PROCESSED" as const, idempotentReplay: true,
+        ...(receipt?.leadId ? { leadId: receipt.leadId, submissionId: receipt.id, ...agendaDetails(receipt.id) } : {}) };
+    };
+    if (inbox.replay && inbox.row.status === "PROCESSED") return processedResult();
+    if (inbox.replay && inbox.row.status === "IGNORED") return { inboxId: inbox.row.id, status: "IGNORED", idempotentReplay: true };
     const currentMapping = await options.database.externalObjectMapping.findUnique({ where: { workspaceId_connectionId_externalObjectType_externalId: { workspaceId: connection.workspace.id, connectionId: connection.id, externalObjectType: "lead", externalId: info.externalId } } });
     if (currentMapping?.externalHash === payloadHash && currentMapping.externalVersion === info.occurredAt.toISOString()) {
       await options.database.webhookInbox.update({ where: { id: inbox.row.id }, data: { status: "PROCESSED", processedAt: options.now() } });
-      return { inboxId: inbox.row.id, status: "PROCESSED", idempotentReplay: true };
+      return processedResult();
     }
     if (currentMapping?.externalVersion && currentMapping.externalVersion >= info.occurredAt.toISOString()) { await options.database.webhookInbox.update({ where: { id: inbox.row.id }, data: { status: "IGNORED", attempts: { increment: 1 }, processedAt: options.now(), errorCode: "OUT_OF_ORDER", errorMessage: "Evento anterior ao cursor do objeto externo." } }); return { inboxId: inbox.row.id, status: "IGNORED" as const, idempotentReplay: inbox.replay, reason: "OUT_OF_ORDER" as const }; }
     let providerFields = fieldsFromProvider(connection.providerKey, body);
@@ -191,7 +198,7 @@ export function createAcquisitionWebhookService(options: Options) {
       return "PROCESSED" as const;
     });
     if (completion === "IGNORED") return { inboxId: inbox.row.id, status: "IGNORED" as const, idempotentReplay: inbox.replay, reason: "OUT_OF_ORDER" as const };
-    return { inboxId: inbox.row.id, status: "PROCESSED" as const, leadId: result.leadId, submissionId: result.submissionId, outcome: result.outcome, idempotentReplay: inbox.replay || result.idempotentReplay };
+    return { inboxId: inbox.row.id, status: "PROCESSED" as const, leadId: result.leadId, submissionId: result.submissionId, ...agendaDetails(result.submissionId), outcome: result.outcome, idempotentReplay: inbox.replay || result.idempotentReplay };
   }
   return Object.freeze({ receive, verifyMetaChallenge });
 }

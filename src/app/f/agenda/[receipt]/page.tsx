@@ -1,3 +1,4 @@
+import { parseQuizAgendaToken } from "@/modules/marketing-forms/domain/quiz-agenda-token";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -11,6 +12,6 @@ export const metadata: Metadata = {
 
 export default async function AgendaPage({ params }: { params: Promise<{ receipt: string }> }) {
   const { receipt } = await params;
-  if (!z.uuid().safeParse(receipt).success) notFound();
+  if (!z.uuid().safeParse(receipt).success && !parseQuizAgendaToken(receipt)) notFound();
   return <AgendaPicker receipt={receipt} />;
 }

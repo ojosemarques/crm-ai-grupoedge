@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createQuizAgendaToken } from "../domain/quiz-agenda-token";
 import { bookPublicAgenda, listPublicAgenda } from "./public-agenda-service";
 
 const setup = vi.hoisted(() => {
   const db = {
+    integrationConnection: { findFirst: vi.fn() },
     marketingFormReceipt: { findMany: vi.fn() },
     marketingForm: { findFirst: vi.fn() },
     marketingFormVersion: { findUnique: vi.fn() },
@@ -55,6 +57,27 @@ beforeEach(() => {
 });
 
 describe("reserva pelo formulário", () => {
+  it.each(["quizmandato", "chatmandato"] as const)("agenda %s e devolve a página de obrigado", async (quiz) => {
+    const secret = "local-test-quiz-signing-secret";
+    vi.stubEnv("ACQUISITION_TEST_QUIZ_SECRET", secret);
+    setup.db.integrationConnection.findFirst.mockResolvedValue({ workspaceId: "workspace", secrets: [{ referenceKey: "ACQUISITION_TEST_QUIZ_SECRET" }] });
+    const token = createQuizAgendaToken(quiz, receipt, new Date(), secret);
+    try {
+      const badToken = token.slice(0, -1) + (token.endsWith("0") ? "1" : "0");
+      await expect(bookPublicAgenda(badToken, { startsAt: morning })).rejects.toMatchObject({ statusCode: 404 });
+      expect(setup.schedule).not.toHaveBeenCalled();
+      await expect(listPublicAgenda(token)).resolves.toMatchObject({ booked: false });
+      await expect(bookPublicAgenda(token, { startsAt: morning })).resolves.toEqual({
+        booked: true, startsAt: morning, redirect: { kind: "URL", url: "https://site.politizai.com/obrigadoquiz" },
+      });
+      expect(setup.db.leadFormSubmission.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ workspaceId: "workspace", id: receipt, formIdentifier: `site-${quiz}` }),
+      }));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("nega um recibo inexistente antes de consultar o Google", async () => {
     setup.db.marketingFormReceipt.findMany.mockResolvedValue([]);
     await expect(listPublicAgenda(receipt)).rejects.toMatchObject({ statusCode: 404 });

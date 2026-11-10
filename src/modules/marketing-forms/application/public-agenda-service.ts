@@ -15,6 +15,10 @@ import {
 
 import { agendaConfirmationRedirectSchema, buildMarketingWhatsAppUrl } from "../domain/marketing-form-contracts";
 
+import { environmentSecretResolver } from "@/modules/integrations/application/secret-resolver";
+import { parseQuizAgendaToken, verifyQuizAgendaToken } from "../domain/quiz-agenda-token";
+
+const quizThankYou = "https://site.politizai.com/obrigadoquiz";
 const receiptSchema = z.uuid();
 const bookingSchema = z.object({ startsAt: z.iso.datetime() }).strict();
 const receiptLifetime = 72 * 60 * 60_000;
@@ -39,7 +43,7 @@ function slotTaken(): never {
 }
 
 async function resolveReceipt(db: Prisma.TransactionClient, publicId: string, now: Date) {
-  if (!receiptSchema.safeParse(publicId).success) invalidReceipt();
+  if (!receiptSchema.safeParse(publicId).success) return resolveQuizReceipt(db, publicId, now);
   const receipts = await db.marketingFormReceipt.findMany({
     where: { publicId, status: "ACCEPTED", redirectKind: "AGENDA", deletedAt: null, acceptedAt: { gte: new Date(now.getTime() - receiptLifetime) } },
     take: 2,
@@ -63,7 +67,31 @@ async function resolveReceipt(db: Prisma.TransactionClient, publicId: string, no
     }),
   ]);
   if (!form || !submission?.leadId || !actor) invalidReceipt();
-  return { workspaceId, marketingFormId: receipt.marketingFormId, versionId: receipt.marketingFormVersionId, actorId: actor.id, leadId: submission.leadId, participantEmail: participantEmailSchema.safeParse(submission.normalizedEmail).data ?? null };
+  return { workspaceId, destination: { kind: "FORM" as const, formId: receipt.marketingFormId, versionId: receipt.marketingFormVersionId }, actorId: actor.id, leadId: submission.leadId, participantEmail: participantEmailSchema.safeParse(submission.normalizedEmail).data ?? null };
+}
+
+async function resolveQuizReceipt(db: Prisma.TransactionClient, token: string, now: Date) {
+  const parsed = parseQuizAgendaToken(token);
+  if (!parsed) invalidReceipt();
+  const connectionKey = `site-${parsed.quiz}`;
+  const connection = await db.integrationConnection.findFirst({
+    where: { key: connectionKey, providerKey: "FORM", enabled: true, disabledAt: null, status: { in: ["ACTIVE_LOCAL", "CONNECTED"] }, workspace: { slug: "politizai", status: "ACTIVE", deletedAt: null } },
+    select: { workspaceId: true, secrets: { where: { alias: "webhook-hmac", present: true, disabledAt: null }, orderBy: { version: "desc" }, take: 1, select: { referenceKey: true } } },
+  });
+  const reference = connection?.secrets[0]?.referenceKey;
+  const secret = reference && await environmentSecretResolver.resolve(reference);
+  if (!connection || !secret || !verifyQuizAgendaToken(token, secret, now)) invalidReceipt();
+
+  const { workspaceId } = connection;
+  const [submission, actor] = await Promise.all([
+    db.leadFormSubmission.findFirst({
+      where: { workspaceId, id: parsed.submissionId, formIdentifier: connectionKey, lead: { deletedAt: null, currentStage: { leadStageCode: { notIn: ["CLIENT", "DISQUALIFIED"] } } } },
+      select: { leadId: true, normalizedEmail: true },
+    }),
+    db.actor.findFirst({ where: { workspaceId, type: "SYSTEM", key: "system", userId: null }, select: { id: true } }),
+  ]);
+  if (!submission?.leadId || !actor) invalidReceipt();
+  return { workspaceId, destination: { kind: "QUIZ" as const }, actorId: actor.id, leadId: submission.leadId, participantEmail: participantEmailSchema.safeParse(submission.normalizedEmail).data ?? null };
 }
 
 type Booking = Awaited<ReturnType<typeof resolveReceipt>>;
@@ -79,8 +107,9 @@ async function existingMeeting(db: Prisma.TransactionClient, booking: Booking) {
 }
 
 async function confirmedBooking(db: Prisma.TransactionClient, booking: Booking, startsAt: string) {
+  if (booking.destination.kind === "QUIZ") return { booked: true as const, startsAt, redirect: { kind: "URL" as const, url: quizThankYou } };
   const version = await db.marketingFormVersion.findUnique({
-    where: { workspaceId_marketingFormId_id: { workspaceId: booking.workspaceId, marketingFormId: booking.marketingFormId, id: booking.versionId } },
+    where: { workspaceId_marketingFormId_id: { workspaceId: booking.workspaceId, marketingFormId: booking.destination.formId, id: booking.destination.versionId } },
     select: { definition: true },
   });
   const definition = version?.definition as { redirects?: { afterAgenda?: unknown } } | null | undefined;
@@ -148,7 +177,12 @@ export async function listPublicAgenda(publicId: string) {
   const now = new Date();
   const booking = await resolveReceipt(database, publicId, now);
   const { today, days, slots } = publicAgendaWindow(now);
-  if (await existingMeeting(database, booking)) return { today, days, booked: true, slots: [] };
+  const meeting = await existingMeeting(database, booking);
+  if (meeting) {
+    const redirect = booking.destination.kind === "QUIZ" && !meeting.deletedAt && meeting.status !== "CANCELLED"
+      ? { kind: "URL" as const, url: quizThankYou } : undefined;
+    return { today, days, booked: true, slots: [], ...(redirect ? { redirect } : {}) };
+  }
   const start = slots[0]!.startsAt;
   const end = slots.at(-1)!.endsAt;
   const sellers = await googleAvailability(booking.workspaceId, start, end);
