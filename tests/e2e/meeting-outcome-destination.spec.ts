@@ -21,6 +21,7 @@ test.afterAll(async () => getDatabaseClient().$disconnect());
 
 for (const surface of ["agenda", "tarefa"] as const) {
   test(`vendedor registra resumo e destino pela ${surface}`, async ({ page }, testInfo) => {
+    await page.addInitScript(() => Object.defineProperty(navigator, "onLine", { get: () => false }));
     if (!new URL(process.env.DATABASE_URL!).searchParams.get("schema")?.startsWith("politizai_test_")) throw new Error("Ephemeral schema required");
     const db = getDatabaseClient();
     const workspace = await db.workspace.findUniqueOrThrow({ where: { slug: "politizai" } });
@@ -41,12 +42,14 @@ for (const surface of ["agenda", "tarefa"] as const) {
     expect(booked.status(), JSON.stringify(await booked.json())).toBe(201);
     const meeting = await db.meeting.findFirstOrThrow({ where: { workspaceId: workspace.id, leadId: result.leadId } });
     await login(page, seller.user.email);
+    const boardUrl = `/anuncios?q=${encodeURIComponent(title)}`;
     if (surface === "agenda") {
       await page.goto(`/agenda?view=day&date=2020-02-09&meetingId=${meeting.id}`);
-      await page.locator("button[data-status]").filter({ hasText: title }).click();
+      await expect(page.getByRole("dialog", { name: title, exact: true })).toBeVisible();
     } else {
-      await page.goto(`/leads/${result.leadId}/historico`);
-      const task = page.locator("li").filter({ has: page.getByText(`Reunião: ${title}`, { exact: true }) });
+      await page.goto(boardUrl);
+      await page.getByRole("region", { name: "Etapa Reunião marcada", exact: true }).locator("article").filter({ hasText: title }).click();
+      const task = page.getByRole("dialog", { name: "Ficha completa do lead" }).locator("li").filter({ has: page.getByText(`Reunião: ${title}`, { exact: true }) });
       await task.locator("summary").click();
       await expect(task.getByRole("button", { name: "Concluir tarefa", exact: true })).toHaveCount(0);
       await task.getByRole("button", { name: "Registrar resultado da reunião", exact: true }).click();
@@ -63,5 +66,13 @@ for (const surface of ["agenda", "tarefa"] as const) {
     await expect.poll(async () => (await db.meeting.findUniqueOrThrow({ where: { id: meeting.id } })).status).toBe("COMPLETED");
     expect(await db.lead.findUniqueOrThrow({ where: { id: result.leadId }, include: { currentStage: true } })).toMatchObject({ currentStage: { leadStageCode: surface === "agenda" ? "PROPOSAL" : "MEETING_COMPLETED" } });
     expect(await db.task.findFirstOrThrow({ where: { meetingId: meeting.id, kind: "MEETING" } })).toMatchObject({ status: "COMPLETED", result: "Diagnóstico realizado. Cliente quer avaliar a proposta comercial." });
+    if (surface === "agenda") {
+      await page.goto(boardUrl);
+    } else {
+      await page.getByRole("button", { name: "Fechar ficha e voltar ao pipeline", exact: true }).click();
+    }
+    const stage = surface === "agenda" ? "Proposta" : "Reunião feita";
+    await expect(page.getByRole("region", { name: `Etapa ${stage}`, exact: true }).locator("article").filter({ hasText: title })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Etapa Reunião marcada", exact: true }).locator("article").filter({ hasText: title })).toHaveCount(0);
   });
 }

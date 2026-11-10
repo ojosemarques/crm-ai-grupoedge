@@ -93,7 +93,7 @@ export default async function AdvertisingPage({ searchParams }: Readonly<{ searc
 
   return (
     <main className="page-canvas">
-      <RouteAutoRefresh />
+      <RouteAutoRefresh refreshOnReturnTo="/anuncios" />
       <PageHeader description="Pipeline exclusivo para leads de anúncios, com atividades e indicadores separados da Prospecção Ativa." eyebrow="Trabalho" title={ADVERTISING_PIPELINE_NAME} />
       <AdvertisingNav active={view} />
       {pipelineError ? <p role="alert">{pipelineError} <Link href="/anuncios?view=pipeline">Limpar filtros</Link></p> : null}

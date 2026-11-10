@@ -1,13 +1,25 @@
 "use client";
 
-import { useEffect, useTransition } from "react";
+import { useEffect, useRef, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-export function RouteAutoRefresh({ enabled = true }: Readonly<{ enabled?: boolean }> = {}) {
+export function RouteAutoRefresh({ enabled = true, refreshOnReturnTo }: Readonly<{
+  enabled?: boolean;
+  refreshOnReturnTo?: string;
+}> = {}) {
   const router = useRouter();
   const pathname = usePathname();
   const query = useSearchParams().toString();
+  const previousPathname = useRef(pathname);
   const [pending, startTransition] = useTransition();
+  useEffect(() => {
+    const previous = previousPathname.current;
+    previousPathname.current = pathname;
+    // A página continua montada por trás da ficha interceptada. Ao voltar, a navegação pode restaurar o quadro anterior.
+    if (enabled && pathname === refreshOnReturnTo && previous !== pathname) {
+      startTransition(() => router.refresh());
+    }
+  }, [enabled, pathname, refreshOnReturnTo, router]);
   useEffect(() => {
     if (!enabled) return;
     const refresh = () => {

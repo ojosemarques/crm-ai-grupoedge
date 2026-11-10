@@ -67,10 +67,15 @@ test("Carlos vê todos os leads de Anúncios e entrega o card ao vendedor que re
   await panel.getByLabel("Data e horário", { exact: true }).fill("2035-06-11T09:30");
   await panel.getByRole("button", { name: "Agendar reunião", exact: true }).click();
   await expect(panel.getByText("Diagnóstico agendado pelo Carlos", { exact: true }).first()).toBeVisible();
-  expect((await db.lead.findUniqueOrThrow({ where: { id: leads[0]! } })).ownerMemberId).toBe(seller.id);
+  expect(await db.lead.findUniqueOrThrow({ where: { id: leads[0]! }, include: { currentStage: true } }))
+    .toMatchObject({ ownerMemberId: seller.id, currentStage: { leadStageCode: "MEETING_SCHEDULED" } });
 
-  await page.goto(`/anuncios?view=pipeline&q=${encodeURIComponent(prefix)}`);
-  await page.locator("article").filter({ hasText: `${prefix} FORM` }).click();
+  const cardIn = (stage: string) => page.getByRole("region", { name: `Etapa ${stage}`, exact: true }).locator("article").filter({ hasText: `${prefix} FORM` });
+  const closeProfile = () => profile.getByRole("button", { name: "Fechar ficha e voltar ao pipeline", exact: true }).click();
+  await closeProfile();
+  await expect(cardIn("Reunião marcada")).toBeVisible();
+  await expect(cardIn("Novo lead")).toHaveCount(0);
+  await cardIn("Reunião marcada").click();
   const activities = profile.getByRole("tab", { name: "Atividades", exact: true });
   await activities.click();
   const taskForm = profile.locator("#criar-tarefa");
@@ -86,9 +91,13 @@ test("Carlos vê todos os leads de Anúncios e entrega o card ao vendedor que re
   await panel.getByLabel("Prazo da próxima ação", { exact: true }).fill("2035-06-12T09:00");
   await panel.getByRole("button", { name: "Confirmar ação", exact: true }).click();
   await expect(panel.getByText("Cancelada", { exact: true }).first()).toBeVisible();
+  await page.goBack();
+  await expect(cardIn("Noshow")).toBeVisible();
+  await cardIn("Noshow").click();
 
   await activities.click();
   await taskForm.locator("summary").click();
+  await taskForm.locator("select[name=kind]").selectOption("MEETING");
   await expect(bookFromTask).toBeEnabled();
   await taskForm.getByLabel("Título", { exact: true }).fill("Novo diagnóstico");
   await taskForm.getByLabel("Closer").selectOption(seller.id);
@@ -96,6 +105,9 @@ test("Carlos vê todos os leads de Anúncios e entrega o card ao vendedor que re
   await bookFromTask.click();
   await expect(profile.getByText("Reunião: Novo diagnóstico", { exact: true }).first()).toBeVisible();
   expect(await db.task.count({ where: { leadId: leads[0]!, kind: "MEETING", meeting: { title: "Novo diagnóstico", status: "SCHEDULED" } } })).toBe(1);
+  await closeProfile();
+  await expect(cardIn("Reunião marcada")).toBeVisible();
+  await cardIn("Reunião marcada").click();
 
   await profile.getByRole("tab", { name: "Resumo", exact: true }).click();
   await profile.screenshot({ path: testInfo.outputPath("carlos-assigned-lead.png") });
