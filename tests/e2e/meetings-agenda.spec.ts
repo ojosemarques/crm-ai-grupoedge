@@ -174,6 +174,11 @@ test("Carlos gerencia reunião de outro vendedor e abre o lead na agenda", async
     await dialog.getByRole("button", { name: "Confirmar", exact: true }).click();
     await expect(dialog.getByText("Confirmada", { exact: true })).toBeVisible();
     await expect(database.meeting.findFirstOrThrow({ where: { workspaceId: workspace.id, leadId: lead.id, title }, select: { status: true } })).resolves.toEqual({ status: "CONFIRMED" });
+    await dialog.getByRole("button", { name: "Ir ao lead", exact: true }).click();
+    await leadDialog.getByRole("tab", { name: "Reuniões", exact: true }).click();
+    await leadDialog.getByRole("link", { name: "Abrir na agenda", exact: true }).click();
+    await expect(leadDialog).not.toBeVisible();
+    await expect(dialog.getByText("Confirmada", { exact: true })).toBeVisible();
   } finally {
     await context.close();
     await database.user.update({ where: { id: user.id }, data: { email: user.email, normalizedEmail: user.normalizedEmail } });

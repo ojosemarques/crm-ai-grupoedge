@@ -103,7 +103,7 @@ export function LeadMeetingsWorkspace({
             <Button disabled={pending} type="submit">{pending ? "Agendando…" : "Agendar reunião"}</Button>
           </form>
         ) : <p className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">Para agendar, o lead precisa estar sem reunião ativa, deve existir um closer disponível e seu perfil deve ter permissão.</p>}
-        {notice ? <p className="mt-3 text-sm" role="status">{notice}{agendaHref ? <> <Link className="underline" href={agendaHref}>Abrir na agenda</Link></> : null}</p> : null}
+        {notice ? <p className="mt-3 text-sm" role="status">{notice}{agendaHref ? <> <a className="underline" href={agendaHref}>Abrir na agenda</a></> : null}</p> : null}
       </section>
 
       <section className="surface-panel bg-[var(--surface-subtle)] p-5">
@@ -118,7 +118,7 @@ export function LeadMeetingsWorkspace({
                 {meeting.observation ? <p className="mt-3 whitespace-pre-wrap text-sm">{meeting.observation}</p> : null}
                 {meeting.participants.map((guest) => <p className="mt-3 text-sm" key={guest.email}>Participante: {guest.email}</p>)}
                 {meeting.outcome ? <p className="mt-3 text-sm"><strong>Resultado:</strong> {meeting.outcome}</p> : null}
-                <div className="mt-3 flex flex-wrap gap-3 text-sm font-medium"><Link className="underline" href={`/agenda/reunioes/${meeting.id}`}>Ver detalhes e briefing</Link><Link className="underline" href={meetingAgendaHref(workspaceDateAt(new Date(meeting.startsAt), screen.timeZone), meeting.id)}>Abrir na agenda</Link>{meeting.opportunityId ? <Link className="underline" href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
+                <div className="mt-3 flex flex-wrap gap-3 text-sm font-medium"><Link className="underline" href={`/agenda/reunioes/${meeting.id}`}>Ver detalhes e briefing</Link><a className="underline" href={meetingAgendaHref(workspaceDateAt(new Date(meeting.startsAt), screen.timeZone), meeting.id)}>Abrir na agenda</a>{meeting.opportunityId ? <Link className="underline" href={`/oportunidades?opportunityId=${meeting.opportunityId}`}>Abrir oportunidade</Link> : null}</div>
                 <MeetingActions meeting={meeting} onCommitted={onCommitted} />
                 <details className="mt-4"><summary className="cursor-pointer text-sm font-medium">Ver histórico ({meeting.history.length})</summary><ol className="mt-3 space-y-2">{meeting.history.map((item) => <li className="border-l-2 pl-3 text-sm" key={item.id}><p>{historyLabels[item.action]} · {formatDate(item.occurredAt, screen.timeZone)}</p><p className="text-xs text-muted-foreground">{item.actorName}{item.reason ? ` · ${item.reason}` : ""}</p>{item.previousStartsAt && item.previousStartsAt !== item.newStartsAt ? <p className="text-xs text-muted-foreground">De {formatDate(item.previousStartsAt, screen.timeZone)} para {formatDate(item.newStartsAt, screen.timeZone)}</p> : null}</li>)}</ol></details>
               </li>

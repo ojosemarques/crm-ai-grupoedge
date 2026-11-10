@@ -1153,7 +1153,7 @@ export function OperationalHistoryWorkspace({
       {notice ? (
         <div className={`flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm ${notice.kind === "error" ? "border-red-300 bg-red-50 text-red-900" : "border-emerald-300 bg-emerald-50 text-emerald-950"}`} role={notice.kind === "error" ? "alert" : "status"}>
           <p>{notice.message}</p>
-          {notice.agendaHref ? <Link className="underline" href={notice.agendaHref}>Abrir na agenda</Link> : null}
+          {notice.agendaHref ? <a className="underline" href={notice.agendaHref}>Abrir na agenda</a> : null}
           {notice.kind === "error" ? <Button disabled={pending} onClick={() => void refresh()} size="sm" type="button" variant="secondary">Recarregar dados</Button> : null}
         </div>
       ) : null}
