@@ -553,13 +553,17 @@ describe("quizzes externos de mandato", () => {
       include: { stages: { where: { type: "OPEN", deletedAt: null }, orderBy: { position: "asc" }, take: 1 } },
     });
     const connectionKey = "site-quizmandato";
-    const connection = await connections.configure(admin, {
+    const existing = await database.integrationConnection.findFirst({
+      where: { workspaceId: admin.workspaceId, key: connectionKey },
+      select: { id: true },
+    });
+    const connection = existing ?? await connections.configure(admin, {
       key: connectionKey, displayName: "Quiz parcial", provider: "FORM", sourceKey,
       secretReferenceKey: "ACQUISITION_STAGE14_FORM_SECRET",
       externalQuiz: { quizId: "quizmandato", pipelineId: pipeline.id, initialStageId: pipeline.stages[0]!.id },
       mapping: { fullName: "fullName", phone: "phone", sessionPublicId: "sessionPublicId", interestSummary: "interestSummary" },
     });
-    await connections.command(admin, { action: "ACTIVATE", connectionId: connection.id, revision: 1 });
+    if (!existing) await connections.command(admin, { action: "ACTIVATE", connectionId: connection.id, revision: 1 });
     const submissionId = randomUUID();
     const quiz = { id: "quizmandato", name: "QuizMandato", version: "1", url: "https://site.politizai.com/quizmandato" };
     const partial = {
