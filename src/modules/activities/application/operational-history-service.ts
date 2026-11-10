@@ -715,7 +715,10 @@ async function applyContactFacts(
       firstConnectedAt: true,
     },
   });
-  if (cycles.length === 0) {
+  if (cycles.length === 0 && await transaction.leadSlaCycle.findFirst({
+    where: { workspaceId: input.workspaceId, leadId: input.lead.id },
+    select: { id: true },
+  })) {
     conflict(
       "SLA_CYCLE_UNAVAILABLE",
       "Não existe ciclo de SLA elegível para este horário.",
@@ -2022,6 +2025,7 @@ export function createOperationalHistoryService(
           id: true,
           updatedAt: true,
           createdAt: true,
+          slaStartedAt: true,
           fullName: true,
           normalizedPhone: true,
           normalizedEmail: true,
@@ -2246,18 +2250,9 @@ export function createOperationalHistoryService(
     );
 
     const currentCycle = publicLead.slaCycles[0];
-    if (!currentCycle) {
-      conflict(
-        "SLA_CYCLE_UNAVAILABLE",
-        "O lead não possui um ciclo de SLA persistido.",
-      );
-    }
     const latestScore = publicLead.currentScore?.leadScore ?? null;
     const latestSubmission = publicLead.submissions[0] ?? null;
-    const receivedAt = currentCycle.receivedAt;
-    const elapsedSeconds =
-      currentCycle.firstHumanAttemptSeconds ??
-      Math.max(0, Math.floor((now.getTime() - receivedAt.getTime()) / 1_000));
+    const receivedAt = currentCycle?.receivedAt ?? publicLead.slaStartedAt;
     const interestSummary =
       publicLead.interestSummary ?? publicLead.latestInterestSummary;
     const missingFields = [
@@ -2323,9 +2318,9 @@ export function createOperationalHistoryService(
         contactPreference: publicLead.contactPreference,
         status: publicLead.status,
         stageName: publicLead.currentStage.name,
-        priorityCode: latestScore?.priorityBandCode ?? currentCycle.priorityBand.code,
+        priorityCode: latestScore?.priorityBandCode ?? currentCycle?.priorityBand.code ?? null,
         score: latestScore?.score ?? null,
-        priorityReason: latestScore?.reason ?? currentCycle.priorityBand.name,
+        priorityReason: latestScore?.reason ?? currentCycle?.priorityBand.name ?? null,
         operationalOwner:
           publicLead.owner?.user.displayName ??
           publicLead.queue?.name ??
@@ -2344,9 +2339,10 @@ export function createOperationalHistoryService(
         awaitingHumanResponse: publicLead.awaitingHumanResponse,
         lastInboundResponseAt:
           publicLead.lastInboundResponseAt?.toISOString() ?? null,
-        sla: {
+        sla: currentCycle ? {
           policyName: currentCycle.priorityBand.slaPolicy.name,
-          elapsedSeconds,
+          elapsedSeconds: currentCycle.firstHumanAttemptSeconds ??
+            Math.max(0, Math.floor((now.getTime() - receivedAt.getTime()) / 1_000)),
           healthyMaxSeconds:
             currentCycle.priorityBand.slaPolicy.healthyMaxSeconds,
           attentionMaxSeconds:
@@ -2356,7 +2352,7 @@ export function createOperationalHistoryService(
           firstConnectedAt: currentCycle.firstConnectedAt?.toISOString() ?? null,
           firstHumanAttemptSeconds: currentCycle.firstHumanAttemptSeconds,
           firstResponseTimeSeconds: currentCycle.firstResponseTimeSeconds,
-        },
+        } : null,
         lastActivity: activities[0]
           ? {
               subject: activities[0].subject,

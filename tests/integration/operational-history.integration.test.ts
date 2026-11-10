@@ -162,6 +162,33 @@ afterAll(async () => {
 });
 
 describe("histórico operacional baseado em eventos", () => {
+  it("abre a ficha e registra atendimento de lead sem ciclo de SLA", async () => {
+    const receivedAt = new Date("2033-06-10T12:00:00Z");
+    const lead = await createLead(receivedAt);
+    await database.task.update({ where: { id: lead.taskId }, data: { slaCycleId: null } });
+    await database.leadSlaCycle.delete({ where: { id: lead.slaCycleId } });
+    const service = historyService();
+
+    await expect(service.getLeadOperations(managerContext, { leadId: lead.leadId }))
+      .resolves.toMatchObject({ lead: { id: lead.leadId, sla: null, receivedAt: receivedAt.toISOString() } });
+
+    clock = new Date(receivedAt.getTime() + 60_000);
+    const activity = await service.recordActivity(managerContext, {
+      leadId: lead.leadId,
+      type: "CALL_CONNECTED",
+      direction: "OUTBOUND",
+      subject: "Ligação atendida no lead histórico",
+    });
+    const operations = await service.getLeadOperations(managerContext, { leadId: lead.leadId });
+    expect(operations.lead.sla).toBeNull();
+    expect(operations.timeline).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: activity.id, type: "CALL_CONNECTED" }),
+    ]));
+    await expect(database.lead.findUniqueOrThrow({ where: { id: lead.leadId } }))
+      .resolves.toMatchObject({ firstRespondedAt: clock });
+    await expect(database.leadSlaCycle.count({ where: { leadId: lead.leadId } })).resolves.toBe(0);
+  });
+
   it("registra ligação antecipada e conclui Ligar agora sem exigir tarefa seguinte", async () => {
     const base = new Date("2033-06-11T12:00:00Z");
     const lead = await createLead(base);
@@ -481,6 +508,13 @@ describe("histórico operacional baseado em eventos", () => {
     const lead = await createLead(base);
     const service = historyService();
     const firstAttempt = new Date(base.getTime() + 61_900);
+    await expect(service.recordActivity(managerContext, {
+      leadId: lead.leadId,
+      type: "CALL_UNANSWERED",
+      direction: "OUTBOUND",
+      subject: "Ligação anterior ao ciclo",
+      occurredAt: new Date(base.getTime() - 1_000),
+    })).rejects.toMatchObject({ code: "SLA_CYCLE_UNAVAILABLE" });
     await service.recordActivity(managerContext, {
       leadId: lead.leadId,
       type: "CALL_UNANSWERED",

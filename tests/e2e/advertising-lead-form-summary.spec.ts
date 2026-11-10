@@ -31,6 +31,9 @@ test("vendedor abre as respostas fechadas no Resumo da ficha de Anúncios", asyn
   const actor = await db.actor.findFirstOrThrow({ where: { workspaceId: workspace.id, key: "system" } });
   const seller = await db.workspaceMember.findFirstOrThrow({ where: { workspaceId: workspace.id, user: { normalizedEmail: "sdr1@demo.politizai.local" } } });
   await db.lead.update({ where: { id: lead.id }, data: { ownerMemberId: seller.id, queueId: null } });
+  // Respostas históricas podem chegar a Anúncios sem um ciclo de SLA.
+  await db.task.updateMany({ where: { workspaceId: workspace.id, leadId: lead.id }, data: { slaCycleId: null } });
+  await db.leadSlaCycle.deleteMany({ where: { workspaceId: workspace.id, leadId: lead.id } });
   await db.leadFormSubmission.create({ data: { workspaceId: workspace.id, leadId: lead.id, sourceId: lead.sourceId, channel: "AD", status: "LINKED", intakeOutcome: "ATTACHED",
     formIdentifier: `meta-native:summary-${randomUUID()}`, idempotencyKey: randomUUID(), submittedFullName: name, submittedAt: new Date(), createdByActorId: actor.id,
     rawPayload: { provider: "META_LEAD_ADS", nativeResponse: { formName: "Formulário nativo de teste", answers: [{ questionKey: "objetivo", question: "Qual é o seu objetivo?", displayValue: "Organizar atendimento" }] } } } });
@@ -39,6 +42,8 @@ test("vendedor abre as respostas fechadas no Resumo da ficha de Anúncios", asyn
   await page.goto(`/anuncios?q=${encodeURIComponent(name)}`);
   await page.locator("article").filter({ hasText: name }).click();
   const profile = page.getByRole("dialog");
+  await expect(profile.getByRole("heading", { name, exact: true })).toBeVisible();
+  await expect(profile.getByText("SLA não registrado", { exact: true })).toBeVisible();
   await profile.getByRole("tab", { name: "Resumo", exact: true }).click();
   const responses = profile.getByRole("region", { name: "Respostas do formulário", exact: true });
   const disclosure = responses.locator("details");

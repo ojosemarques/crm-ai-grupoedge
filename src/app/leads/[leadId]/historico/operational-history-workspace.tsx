@@ -956,16 +956,17 @@ export function OperationalHistoryWorkspace({
     }
   }
 
-  const runningSlaSeconds = operations.lead.sla.firstHumanAttemptSeconds ??
-    operations.lead.sla.elapsedSeconds + Math.max(
+  const slaCycle = operations.lead.sla;
+  const runningSlaSeconds = slaCycle ? slaCycle.firstHumanAttemptSeconds ??
+    slaCycle.elapsedSeconds + Math.max(
       0,
       Math.floor((clock - new Date(operations.generatedAt).getTime()) / 1_000),
-    );
-  const sla = slaPresentation(
+    ) : null;
+  const sla = slaCycle && runningSlaSeconds !== null ? slaPresentation(
     runningSlaSeconds,
-    operations.lead.sla.healthyMaxSeconds,
-    operations.lead.sla.attentionMaxSeconds,
-  );
+    slaCycle.healthyMaxSeconds,
+    slaCycle.attentionMaxSeconds,
+  ) : null;
   const timeSinceEntry = Math.max(
     0,
     Math.floor((clock - new Date(operations.lead.receivedAt).getTime()) / 1_000),
@@ -1024,10 +1025,12 @@ export function OperationalHistoryWorkspace({
               {operations.lead.jobTitle ?? "Atuação não informada"} · {operations.lead.organizationName ?? operations.lead.account?.name ?? "Partido, mandato ou equipe não informado"}
             </p>
           </div>
-          <div className={`rounded-md border px-3 py-2 text-right ${sla.className}`}>
-            <p className="text-xs font-semibold">SLA · {sla.label}</p>
-            <p className="font-mono text-lg font-bold">{runningSlaSeconds}s</p>
-            <p className="text-[11px]">{operations.lead.sla.policyName}</p>
+          <div className={`rounded-md border px-3 py-2 text-right ${sla?.className ?? "text-muted-foreground"}`}>
+            {sla && slaCycle ? <>
+              <p className="text-xs font-semibold">SLA · {sla.label}</p>
+              <p className="font-mono text-lg font-bold">{runningSlaSeconds}s</p>
+              <p className="text-[11px]">{slaCycle.policyName}</p>
+            </> : <p className="text-xs font-semibold">SLA não registrado</p>}
           </div>
         </div>
 

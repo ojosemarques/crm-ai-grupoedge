@@ -87,7 +87,7 @@ export type LeadCardOperations = Readonly<{
       firstConnectedAt: string | null;
       firstHumanAttemptSeconds: number | null;
       firstResponseTimeSeconds: number | null;
-    }>;
+    }> | null;
     lastActivity: Readonly<{
       subject: string;
       occurredAt: string;
