@@ -1,3 +1,5 @@
+import { assignLeadFormBudgetTag } from "@/modules/leads/application/lead-form-budget-tag";
+import { marketingFormBudgetObservation } from "@/modules/marketing-forms/domain/form-budget-response";
 import { tracksMarketingFormCompletion } from "@/modules/marketing-forms/domain/form-completion-status";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { deliverTelegramLeadAlertAfterCommit, enqueueTelegramLeadAlertInTransaction } from "@/modules/integrations/application/telegram-lead-alert-service";
@@ -17,12 +19,29 @@ const payloadSchema = z.object({ kind: z.literal(PARTIAL_LEAD_JOB_KIND), partial
 export async function enqueuePartialLeadInTransaction(tx: Prisma.TransactionClient, partialId: string, workspaceId: string, actorId: string, now: Date) {
   const workspace = await tx.workspace.findFirst({ where: { id: workspaceId, slug: "politizai", status: "ACTIVE", deletedAt: null }, select: { id: true } });
   if (!workspace) return false;
-  const partial = await tx.marketingFormPartialResponse.findFirst({ where: { id: partialId, workspaceId, completedAt: null, deletedAt: null }, select: { respondentPhone: true, respondentName: true } });
+  const partial = await tx.marketingFormPartialResponse.findFirst({ where: { id: partialId, workspaceId, completedAt: null, deletedAt: null }, select: { respondentPhone: true, respondentName: true, answers: true, lastAnsweredAt: true, marketingFormVersionId: true } });
   if (!partial?.respondentPhone || !normalizePhone(partial.respondentPhone).success) return false;
-  if (partial.respondentName && partial.respondentName.trim().length >= 2) {
-    const submission = await tx.leadFormSubmission.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: partialLeadKey(partialId) } }, select: { leadId: true } });
-    const phone = normalizePhone(partial.respondentPhone);
-    if (submission?.leadId && phone.success) await tx.lead.updateMany({ where: { id: submission.leadId, workspaceId, deletedAt: null, fullName: PARTIAL_LEAD_PLACEHOLDER, normalizedPhone: phone.normalizedPhone }, data: { fullName: partial.respondentName.trim(), updatedByActorId: actorId } });
+  const submission = await tx.leadFormSubmission.findUnique({
+    where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: partialLeadKey(partialId) } },
+    select: { normalizedPhone: true, marketingFormVersionId: true, lead: { select: { id: true, deletedAt: true } } },
+  });
+  const phone = normalizePhone(partial.respondentPhone);
+  if (submission?.lead && !submission.lead.deletedAt && phone.success && submission.normalizedPhone === phone.normalizedPhone
+    && submission.marketingFormVersionId === partial.marketingFormVersionId) {
+    const leadId = submission.lead.id;
+    if (partial.respondentName && partial.respondentName.trim().length >= 2) {
+      await tx.lead.updateMany({
+        where: { id: leadId, workspaceId, deletedAt: null, fullName: PARTIAL_LEAD_PLACEHOLDER, normalizedPhone: phone.normalizedPhone },
+        data: { fullName: partial.respondentName.trim(), updatedByActorId: actorId },
+      });
+    }
+    const version = await tx.marketingFormVersion.findFirst({
+      where: { id: partial.marketingFormVersionId, workspaceId }, select: { definition: true },
+    });
+    if (version) await assignLeadFormBudgetTag(tx, {
+      workspaceId, actorId, leadId,
+      observation: marketingFormBudgetObservation(version.definition, partial.answers, partial.lastAnsweredAt, false),
+    });
   }
   await tx.job.upsert({
     where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: partialLeadKey(partialId) } }, update: {},
@@ -66,6 +85,10 @@ export function createMarketingFormPartialLeadWorker(options: Options) {
         ...(current.utmCampaign ? { utmCampaign: current.utmCampaign } : {}), ...(current.utmContent ? { utmContent: current.utmContent } : {}), ...(current.utmTerm ? { utmTerm: current.utmTerm } : {}) },
     }, { workspaceId, actorId: actor.id, actorType: "SYSTEM", actorKey: "system" }, tx, { scheduleTopSendVoice: true, ...(tracksMarketingFormCompletion(form.key) ? { formCompletionStatus: "PARTIAL" } : {}) });
     if (result.outcome === "REJECTED") throw new ApplicationError("Entrada parcial rejeitada.", { code: result.code, statusCode: 422 });
+    await assignLeadFormBudgetTag(tx, {
+      workspaceId, actorId: actor.id, leadId: result.leadId,
+      observation: marketingFormBudgetObservation(definition, current.answers, current.lastAnsweredAt, false),
+    });
     const session = await tx.marketingSession.findUnique({ where: { workspaceId_publicId: { workspaceId, publicId: current.sessionPublicId } }, select: { id: true } });
     await tx.leadFormSubmission.update({ where: { id: result.submissionId }, data: { marketingFormId: current.marketingFormId, marketingFormVersionId: current.marketingFormVersionId, marketingSessionId: session?.id ?? null } });
     // A retomada da mesma sessão mantém o card e as datas de chegada originais.

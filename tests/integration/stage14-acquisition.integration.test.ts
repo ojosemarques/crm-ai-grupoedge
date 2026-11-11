@@ -362,8 +362,8 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
       const url = new URL(String(input)); providerCalls.push(url.pathname);
       if (url.pathname.endsWith(`/` + testLeadId)) return Response.json({ id: testLeadId, form_id: formId, created_time: capturedAt, field_data: [{ name: "full_name", values: ["Test Lead"] }, { name: "phone", values: ["<test lead: dummy data for phone>"] }] });
       if (url.pathname.endsWith(`/` + phoneOnlyId)) return Response.json({ id: phoneOnlyId, form_id: formId, created_time: capturedAt, field_data: [{ name: "phone", values: ["+5511999981920"] }] });
-      if (url.pathname.endsWith(`/` + leadId) || url.pathname.endsWith("/1234567890123499")) return Response.json({ id: url.pathname.split("/").at(-1), form_id: wrongForm ? "999999999" : formId, created_time: capturedAt, field_data: [{ name: "full_name", values: ["Lead nativo integrado"] }, { name: "phone", values: ["+5511999981919"] }, { name: "qual_é_o_desafio/atual?", values: ["Organizar o gabinete"] }] });
-      if (url.pathname.endsWith(`/` + formId)) return Response.json({ id: formId, page_id: pageId, name: "Mandato nativo", questions: [{ key: "phone", type: "PHONE" }, { key: "qual_é_o_desafio/atual?", type: "CUSTOM", label: "Qual é o desafio?" }] });
+      if (url.pathname.endsWith(`/` + leadId) || url.pathname.endsWith("/1234567890123499")) return Response.json({ id: url.pathname.split("/").at(-1), form_id: wrongForm ? "999999999" : formId, created_time: capturedAt, field_data: [{ name: "full_name", values: ["Lead nativo integrado"] }, { name: "phone", values: ["+5511999981919"] }, { name: "qual_é_o_desafio/atual?", values: ["Organizar o gabinete"] }, { name: "investimento", values: ["Não"] }] });
+      if (url.pathname.endsWith(`/` + formId)) return Response.json({ id: formId, page_id: pageId, name: "Mandato nativo", questions: [{ key: "phone", type: "PHONE" }, { key: "qual_é_o_desafio/atual?", type: "CUSTOM", label: "Qual é o desafio?" }, { key: "investimento", type: "CUSTOM", label: "Você estaria disposto a investir pelo menos R$ 1.000 por mês?" }] });
       if (url.pathname.endsWith("/leadgen_forms")) return Response.json({ data: [{ id: formId, name: "Formulário nativo fixture", status: "ACTIVE", page_id: pageId }] });
       if (url.pathname.endsWith("/leads")) {
         expect(JSON.parse(url.searchParams.get("filtering")!)[0]).toMatchObject({ field: "time_created", operator: "GREATER_THAN" });
@@ -389,9 +389,9 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
     expect(await database.job.count({ where: { workspaceId: admin.workspaceId, idempotencyKey: `topsend-voice:${submission.leadId}:v1` } })).toBe(0);
     expect(submission).toMatchObject({ channel: "AD", submittedAt: new Date(capturedAt), rawPayload: expect.objectContaining({ pageId, formId, eventId: leadId }) });
     expect(await database.lead.findUniqueOrThrow({ where: { id: submission.leadId! } })).toMatchObject({ pipelineId: pipeline.id, currentStageId: pipeline.stages[0]!.id });
-    expect((await responsesByLead(database, admin.workspaceId, [submission.leadId!])).get(submission.leadId!)?.[0]).toMatchObject({ formName: "Mandato nativo · Forms Nativo", answers: [{ questionKey: "qual_é_o_desafio/atual?", question: "Qual é o desafio?", displayValue: "Organizar o gabinete" }] });
+    expect((await responsesByLead(database, admin.workspaceId, [submission.leadId!])).get(submission.leadId!)?.[0]).toMatchObject({ formName: "Mandato nativo · Forms Nativo", answers: expect.arrayContaining([{ questionKey: "qual_é_o_desafio/atual?", question: "Qual é o desafio?", displayValue: "Organizar o gabinete" }]) });
     const summary = await createPreSalesPipelineService({ database, authorization, now: () => now }).getLeadState(admin, { leadId: submission.leadId! });
-    expect(summary).toMatchObject({ pipelineName: "Anúncios", formCompletionTag: "Completo", formResponses: [{ formName: "Mandato nativo · Forms Nativo", answers: [{ question: "Qual é o desafio?", displayValue: "Organizar o gabinete" }] }] });
+    expect(summary).toMatchObject({ pipelineName: "Anúncios", formCompletionTag: "Completo", formBudgetTag: "SEM BUDGET", formResponses: [{ formName: "Mandato nativo · Forms Nativo", answers: expect.arrayContaining([expect.objectContaining({ question: "Qual é o desafio?", displayValue: "Organizar o gabinete" })]) }] });
     const seller = await context("sdr1@demo.politizai.local");
     await database.lead.update({ where: { id: submission.leadId! }, data: { ownerMemberId: seller.memberId, queueId: null } });
     expect((await createPreSalesPipelineService({ database, authorization, now: () => now }).getLeadState(seller, { leadId: submission.leadId! })).formResponses).toEqual(summary.formResponses);
@@ -600,7 +600,9 @@ describe("quizzes externos de mandato", () => {
 
     const complete = { ...partial, completionStatus: "COMPLETED", fullName: "Nome do diagnóstico",
       eventId: `quiz:quizmandato:${submissionId}:completed:v1`, occurredAt: new Date(now.getTime() + 1000).toISOString(),
-      answers: Array.from({ length: 11 }, (_, index) => ({ questionKey: `resposta_${index}`, question: "Pergunta", value: "Resposta", displayValue: "Resposta" })) };
+      answers: Array.from({ length: 11 }, (_, index) => index === 10
+        ? { questionKey: "investimento_mensal", question: "Você está disposto a investir R$ 1.000 por mês?", value: "Sim, se fizer sentido", displayValue: "Sim, se fizer sentido" }
+        : { questionKey: `resposta_${index}`, question: "Pergunta", value: "Resposta", displayValue: "Resposta" }) };
     const completed = await send(complete);
     expect(completed).toMatchObject({ status: "PROCESSED", leadId, submissionId: initial.submissionId });
     expect(verifyQuizAgendaToken(String(completed.agendaToken), formSecret, now)).toMatchObject({
@@ -612,7 +614,7 @@ describe("quizzes externos de mandato", () => {
     });
     expect(await database.lead.findUniqueOrThrow({ where: { id: leadId } })).toMatchObject({ fullName: complete.fullName });
     expect(await database.job.count({ where: jobWhere })).toBe(1);
-    expect(await database.leadTag.findMany({ where: { leadId, removedAt: null }, select: { tag: { select: { name: true } } } })).toEqual([{ tag: { name: "Completo" } }]);
+    expect((await database.leadTag.findMany({ where: { leadId, removedAt: null }, select: { tag: { select: { name: true } } } })).map(({ tag }) => tag.name).sort()).toEqual(["Completo", "YELLOW BUDGET"]);
     expect(await database.leadFormSubmission.findFirst({ where: { idempotencyKey: submissionKey } })).toMatchObject({
       submittedAt: now,
     });

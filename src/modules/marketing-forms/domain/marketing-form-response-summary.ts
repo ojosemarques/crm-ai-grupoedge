@@ -1,4 +1,3 @@
-import type { Prisma } from "@/generated/prisma/client";
 import {
   marketingFormDefinitionSchema,
   type MarketingFormDefinition,
@@ -43,7 +42,7 @@ function answerLabel(
   return String(value ?? "");
 }
 
-function storedAnswers(value: Prisma.JsonValue): Array<{ questionKey: string; value: Prisma.JsonValue }> {
+function storedAnswers(value: unknown): Array<{ questionKey: string; value: unknown }> {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     if (
@@ -59,8 +58,8 @@ function storedAnswers(value: Prisma.JsonValue): Array<{ questionKey: string; va
 }
 
 export function summarizeMarketingFormAnswers(
-  definitionValue: Prisma.JsonValue,
-  answersValue: Prisma.JsonValue,
+  definitionValue: unknown,
+  answersValue: unknown,
 ): readonly MarketingFormResponseAnswer[] {
   const definition = marketingFormDefinitionSchema.safeParse(definitionValue);
   if (!definition.success) return [];

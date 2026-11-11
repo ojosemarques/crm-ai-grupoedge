@@ -1,3 +1,6 @@
+import { assignLeadFormBudgetTag } from "./lead-form-budget-tag";
+import { formBudgetObservation } from "@/modules/marketing-forms/domain/form-budget-response";
+import { metaNativeResponseSchema } from "@/modules/acquisition-api/domain/meta-native-answers";
 import { assignLeadFormCompletionTag } from "./lead-form-completion-tag";
 import type { FormCompletionStatus } from "@/modules/marketing-forms/domain/form-completion-status";
 import { EXTERNAL_QUIZ_UNNAMED_LEAD, readExternalQuizResponse } from "@/modules/acquisition-api/domain/external-quiz-contracts";
@@ -969,10 +972,19 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         ? readExternalQuizResponse(parsed.rawPayload)
         : null;
       const formCompletionStatus = quiz?.completionStatus ?? intakeOptions?.formCompletionStatus;
+      const nativeResponse = intakeOptions?.formCompletionStatus === "COMPLETED" && parsed.channel === "AD"
+        ? metaNativeResponseSchema.safeParse(parsed.rawPayload.nativeResponse)
+        : null;
+      const budgetAnswers = quiz?.answers ?? (nativeResponse?.success ? nativeResponse.data.answers : []);
+      const budgetObservation = formBudgetObservation(budgetAnswers, parsed.submittedAt ?? parsed.receivedAt, formCompletionStatus === "COMPLETED");
       async function tagFormResponse(leadId: string) {
-        if (!formCompletionStatus) return;
-        await assignLeadFormCompletionTag(transaction, {
+        const { workspaceId, actorId } = context;
+        if (formCompletionStatus) await assignLeadFormCompletionTag(transaction, {
           workspaceId: context.workspaceId, actorId: context.actorId, leadId, status: formCompletionStatus, now: options.now(),
+        });
+        await assignLeadFormBudgetTag(transaction, {
+          workspaceId, actorId, leadId,
+          observation: budgetObservation,
         });
       }
 
@@ -1028,8 +1040,8 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
               data: { fullName: parsed.fullName, updatedByActorId: context.actorId },
             });
           }
+          await tagFormResponse(priorSubmission.lead.id);
           if (quiz.completionStatus === "COMPLETED") {
-            await tagFormResponse(priorSubmission.lead.id);
             await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId,
               action: "lead.external_quiz_completed", entityType: "Lead", entityId: priorSubmission.lead.id,
               origin: "SYSTEM", changes: { submissionId: priorSubmission.id, quizId: quiz.quiz.id, historicalImport: priorRaw.historicalImport === true } } });

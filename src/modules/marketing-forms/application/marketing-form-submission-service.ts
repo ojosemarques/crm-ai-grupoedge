@@ -1,3 +1,5 @@
+import { assignLeadFormBudgetTag } from "@/modules/leads/application/lead-form-budget-tag";
+import { marketingFormBudgetObservation } from "@/modules/marketing-forms/domain/form-budget-response";
 import { assignLeadFormCompletionTag } from "@/modules/leads/application/lead-form-completion-tag";
 import { tracksMarketingFormCompletion } from "@/modules/marketing-forms/domain/form-completion-status";
 import { createHash } from "node:crypto";
@@ -382,6 +384,10 @@ export function createMarketingFormSubmissionService(options: Options) {
           rotationAppliedAt: redirect?.rotationAppliedAt ?? null,
         },
         select: { publicId: true, status: true, redirectKind: true, redirectUrl: true },
+      });
+      await assignLeadFormBudgetTag(tx, {
+        workspaceId: form.workspaceId, actorId: actor.id, leadId: intake.leadId,
+        observation: marketingFormBudgetObservation(form.definition, answers, now, true),
       });
       await tx.marketingFormEvent.createMany({
         data: ["FORM_SUBMITTED", "FORM_COMPLETED"].map((kind) => ({

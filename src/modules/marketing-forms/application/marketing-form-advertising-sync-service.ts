@@ -1,3 +1,5 @@
+import { assignLeadFormBudgetTag } from "@/modules/leads/application/lead-form-budget-tag";
+import { marketingFormBudgetObservation } from "@/modules/marketing-forms/domain/form-budget-response";
 import { assignLeadFormCompletionTag } from "@/modules/leads/application/lead-form-completion-tag";
 import { tracksMarketingFormCompletion } from "@/modules/marketing-forms/domain/form-completion-status";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
@@ -167,6 +169,7 @@ export function createMarketingFormAdvertisingSyncService(options: Options) {
             orderBy: [{ submittedAt: "asc" }, { id: "asc" }],
             select: {
               id: true,
+              marketingFormReceiptId: true,
               contactId: true,
               sourceId: true,
               campaignId: true,
@@ -203,6 +206,16 @@ export function createMarketingFormAdvertisingSyncService(options: Options) {
       const queuedSubmissions = destinationQueue
         ? unlinkedSubmissions.map((submission) => ({ submission, queueId: destinationQueue.id }))
         : [];
+      const sourceReceipts = unlinkedSubmissions.length ? await transaction.marketingFormReceipt.findMany({
+        where: { workspaceId: context.workspaceId, marketingFormId: formId, id: { in: unlinkedSubmissions.flatMap((row) => row.marketingFormReceiptId ? [row.marketingFormReceiptId] : []) } },
+        select: { id: true, marketingFormVersionId: true, answers: true, submittedAt: true },
+      }) : [];
+      const sourceVersions = sourceReceipts.length ? await transaction.marketingFormVersion.findMany({
+        where: { workspaceId: context.workspaceId, marketingFormId: formId, id: { in: sourceReceipts.map((row) => row.marketingFormVersionId) } },
+        select: { id: true, definition: true },
+      }) : [];
+      const receiptsById = new Map(sourceReceipts.map((row) => [row.id, row]));
+      const definitionsById = new Map(sourceVersions.map((row) => [row.id, row.definition]));
       const created = [] as string[];
       for (const { submission, queueId } of queuedSubmissions) {
         const lead = await transaction.lead.create({
@@ -263,6 +276,11 @@ export function createMarketingFormAdvertisingSyncService(options: Options) {
         if (tracksMarketingFormCompletion(snapshot.form.key)) {
           await assignLeadFormCompletionTag(transaction, { workspaceId: context.workspaceId, actorId: context.actorId, leadId: lead.id, status: "COMPLETED", now: options.now() });
         }
+        const receipt = submission.marketingFormReceiptId ? receiptsById.get(submission.marketingFormReceiptId) : undefined;
+        if (receipt) await assignLeadFormBudgetTag(transaction, {
+          workspaceId: context.workspaceId, actorId: context.actorId, leadId: lead.id,
+          observation: marketingFormBudgetObservation(definitionsById.get(receipt.marketingFormVersionId), receipt.answers, receipt.submittedAt, true),
+        });
         created.push(lead.id);
       }
       if (created.length > 0) snapshot = await inspect(context, formId, transaction);

@@ -1,3 +1,5 @@
+import { resolveLeadFormBudgetTag } from "@/modules/leads/application/lead-form-budget-tag";
+import { formBudgetTags } from "@/modules/marketing-forms/domain/form-budget-response";
 import { formCompletionTagSelection, resolveLeadFormCompletionTag } from "@/modules/leads/application/lead-form-completion-tag";
 import { queueAdvertisingStageMetaConversion } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { pipelineArrivalFields, pipelineArrivalWhere } from "./pipeline-arrival-filter";
@@ -309,8 +311,19 @@ async function leadIdsByGender(
   return rows.map((row) => row.id);
 }
 
+const acquisitionTagSelection = {
+  ...formCompletionTagSelection,
+  where: {
+    ...formCompletionTagSelection.where,
+    tag: {
+      ...formCompletionTagSelection.where.tag,
+      name: { in: [...formCompletionTagSelection.where.tag.name.in, ...formBudgetTags], mode: "insensitive" },
+    },
+  },
+} satisfies Prisma.LeadTagFindManyArgs;
+
 const pipelineCardInclude = {
-  tags: formCompletionTagSelection,
+  tags: acquisitionTagSelection,
   owner: { select: { user: { select: { displayName: true } } } },
   queue: { select: { name: true } },
   currentScore: { select: { leadScore: { select: { score: true, priorityBandCode: true } } } },
@@ -371,6 +384,7 @@ function toPipelineCard(
     jobTitle: lead.jobTitle,
     formResponses,
     formCompletionTag: resolveLeadFormCompletionTag(lead.tags),
+    formBudgetTag: resolveLeadFormBudgetTag(lead.tags),
     priorityCode: lead.currentScore?.leadScore.priorityBandCode ?? null,
     score: lead.currentScore?.leadScore.score ?? null,
     responsibleName: lead.owner?.user.displayName ?? lead.queue?.name ?? "Responsável não identificado",
@@ -823,7 +837,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         where: { id: leadForAuth.id },
         include: {
           currentStage: true,
-          tags: formCompletionTagSelection,
+          tags: acquisitionTagSelection,
           tasks: {
             where: activeTaskWhere(context.workspaceId, leadForAuth.id),
             orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
@@ -864,6 +878,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       pipelineName: pipeline.name,
       formResponses,
       formCompletionTag: resolveLeadFormCompletionTag(lead.tags),
+      formBudgetTag: resolveLeadFormBudgetTag(lead.tags),
       currentStageId: lead.currentStage.id,
       currentStageCode: lead.currentStage.leadStageCode,
       currentStageName: lead.currentStage.name,

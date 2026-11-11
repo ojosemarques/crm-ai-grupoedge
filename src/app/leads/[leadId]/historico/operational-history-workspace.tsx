@@ -1183,6 +1183,7 @@ export function OperationalHistoryWorkspace({
       <div className={styles.layout}>
         <aside className={styles.profile}>
           <h2>Informações do contato</h2>
+          {pipeline.formBudgetTag ? <p><span className="stage-badge">{pipeline.formBudgetTag}</span></p> : null}
         <dl className={styles.facts}>
           <div><dt className="text-xs text-muted-foreground">Telefone</dt><dd className="mt-1 font-medium">{operations.lead.normalizedPhone ?? "Não informado"}</dd></div>
           <div><dt className="text-xs text-muted-foreground">E-mail</dt><dd className="mt-1 break-all font-medium">{operations.lead.normalizedEmail ?? "Não informado"}</dd></div>

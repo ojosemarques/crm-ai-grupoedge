@@ -47,6 +47,10 @@ async function partialForm(formKey?: string) {
   const slug = `telegram-parcial-${randomUUID().slice(0, 8)}`;
   const definition = createEmptyMarketingFormDefinition();
   definition.questions.push({ stableKey: "telefone", type: "PHONE", title: "Telefone", required: true, position: 1, mapping: "phone", config: { defaultCountry: "BR" } });
+  if (formKey === "forms-mandato") definition.questions.push({
+    stableKey: "investimento", title: "Você está disposto a investir pelo menos R$ 1.000 por mês?", position: 2,
+    type: "SINGLE_CHOICE", required: true, config: { options: [{ stableKey: "sim", label: "Sim" }, { stableKey: "nao", label: "Não" }] },
+  });
   definition.destination = { sourceKey: "manual", pipelineId, initialStageId: stageId, queueId: null, tagIds: [], priorityBandCode: "P3" };
   const form = await db.marketingForm.create({ data: { workspaceId, key: formKey ?? slug, name: "Form Telegram", publicSlug: slug, status: "ACTIVE", draftDefinition: definition, createdByActorId: actorId, updatedByActorId: actorId } });
   const version = await db.marketingFormVersion.create({ data: { workspaceId, marketingFormId: form.id, version: 1, schemaVersion: "marketing-form.v1", definition, definitionHash: "fixture", publishedAt: now, publishedByActorId: actorId, createdByActorId: actorId } });
@@ -169,15 +173,16 @@ describe("formulários parciais em Anúncios", () => {
     expect(await db.job.findFirst({ where: voiceJobWhere })).toMatchObject({ status: "PENDING", runAt: new Date(now.getTime() + 30_000) });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(await db.marketingFormReceipt.count({ where: { marketingFormId: onlyPhone.form.id } })).toBe(0);
-    await onlyPhone.record([{ key: "nome-completo", answer: name }]);
+    await onlyPhone.record([{ key: "nome-completo", answer: name }, { key: "investimento", answer: "nao" }]);
+    expect(await tags()).toContainEqual({ tag: { name: "SEM BUDGET" } });
     expect((await db.lead.findUniqueOrThrow({ where: { id: lead.id } })).fullName).toBe(name);
     const funnel = await loadAcquisitionFunnel(db, workspaceId, new Date(now.getTime() - 86400000), new Date(now.getTime() + 86400000), "Anúncios");
     expect(funnel.incompleteCount).toBe(2);
-    const accepted = await onlyPhone.formService.submit(onlyPhone.slug, { versionPublicId: onlyPhone.version.publicId, sessionPublicId: onlyPhone.sessionPublicId, idempotencyToken: randomUUID(), startedAt: new Date(now.getTime() - 2000).toISOString(), tracking: {}, answers: [{ questionKey: "nome-completo", value: name }, { questionKey: "telefone", value: phone }] });
+    const accepted = await onlyPhone.formService.submit(onlyPhone.slug, { versionPublicId: onlyPhone.version.publicId, sessionPublicId: onlyPhone.sessionPublicId, idempotencyToken: randomUUID(), startedAt: new Date(now.getTime() - 2000).toISOString(), tracking: {}, answers: [{ questionKey: "nome-completo", value: name }, { questionKey: "telefone", value: phone }, { questionKey: "investimento", value: "sim" }] });
     expect(accepted.outcome).toBe("ACCEPTED");
     const completed = await db.leadFormSubmission.findFirstOrThrow({ where: { workspaceId, marketingFormId: onlyPhone.form.id, marketingFormReceiptId: { not: null } } });
     expect(completed.leadId).toBe(lead.id);
-    expect(await tags()).toEqual([{ tag: { name: "Completo" } }]);
+    expect((await tags()).map(({ tag }) => tag.name).sort()).toEqual(["Completo", "GREEN BUDGET"]);
     expect(await db.lead.count({ where: { workspaceId, normalizedPhone: phone } })).toBe(1);
     expect(await db.job.count({ where: { workspaceId, idempotencyKey: `telegram-ad-lead:${lead.id}:carlos` } })).toBe(1);
     expect(await db.job.count({ where: voiceJobWhere })).toBe(1);
