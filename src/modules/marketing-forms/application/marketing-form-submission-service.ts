@@ -5,10 +5,8 @@ import { tracksMarketingFormCompletion } from "@/modules/marketing-forms/domain/
 import { createHash } from "node:crypto";
 
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
-import { evaluateMetaConversionPrivacy } from "@/modules/conversion-feedback/application/conversion-feedback-service";
-import { META_CONVERSION_EVENT_TYPE } from "@/modules/conversion-feedback/domain/conversion-feedback-contracts";
-import { buildMinimizedMetaConversion, metaBrowserMatchKeys, metaConversionDeduplicationKey, metaConversionEventId } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
-import { createOutboxEventInTransaction } from "@/modules/integrations/application/integration-platform-service";
+import { queueMetaWebsiteLead, usesWorkspaceMetaWebsiteDataset } from "@/modules/conversion-feedback/application/conversion-feedback-service";
+import { metaBrowserMatchKeys, metaConversionEventId } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
 import { canonicalJson } from "@/modules/integrations/domain/integration-policy";
 import { getLeadIntakeService } from "@/modules/leads/application/lead-intake-service";
 import { deliverTelegramReceiptAlertAfterCommit } from "@/modules/integrations/application/telegram-lead-alert-service";
@@ -164,75 +162,6 @@ function browserMetaLeadId(form: ResolvedForm, receiptPublicId: string, attribut
     : sha256(`meta-browser-lead:${form.workspaceId}:${receiptPublicId}`);
 }
 
-async function queueMetaConversionForReceipt(
-  tx: Prisma.TransactionClient,
-  input: Readonly<{
-    form: ResolvedForm;
-    receiptId: string;
-    receiptPublicId: string;
-    actorId: string;
-    now: Date;
-    browserMatchKeys: ReturnType<typeof metaBrowserMatchKeys>;
-  }>,
-): Promise<string | null> {
-  const tracking = input.form.definition.tracking.meta;
-  if (!tracking?.enabled || !tracking.pixelId) return null;
-  const submission = await tx.leadFormSubmission.findFirst({
-    where: { workspaceId: input.form.workspaceId, marketingFormReceiptId: input.receiptId },
-    select: { attributionConversionId: true, contactId: true },
-  });
-  if (!submission?.attributionConversionId || !submission.contactId) return null;
-  const semanticKey = metaConversionDeduplicationKey({ workspaceId: input.form.workspaceId, conversionId: submission.attributionConversionId, eventName: "Lead" });
-  const browserEventId = metaConversionEventId({ workspaceId: input.form.workspaceId, conversionId: submission.attributionConversionId, eventName: "Lead" });
-  if (!tracking.connectionId || !tracking.secretReferenceKey) return browserEventId;
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${semanticKey}, 0))`;
-  const existing = await tx.outboxEvent.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: input.form.workspaceId, idempotencyKey: semanticKey } }, select: { payload: true } });
-  if (existing?.payload && typeof existing.payload === "object" && !Array.isArray(existing.payload) && typeof existing.payload.eventId === "string") return existing.payload.eventId;
-
-  const [connection, conversion, points] = await Promise.all([
-    tx.integrationConnection.findFirst({ where: {
-      id: tracking.connectionId,
-      workspaceId: input.form.workspaceId,
-      providerKey: "META_ADS",
-      enabled: true,
-      disabledAt: null,
-      status: "CONNECTED",
-      capabilityLevel: "CONNECTED",
-      capabilities: { some: { capability: "SYNC_PUSH", enabled: true } },
-      secrets: { some: { referenceKey: tracking.secretReferenceKey, present: true, disabledAt: null } },
-    }, select: { id: true } }),
-    tx.attributionConversion.findFirst({ where: { id: submission.attributionConversionId, workspaceId: input.form.workspaceId, status: "ACTIVE", contactId: submission.contactId, leadId: { not: null } } }),
-    tx.contactPoint.findMany({
-      where: { workspaceId: input.form.workspaceId, contactId: submission.contactId, deletedAt: null, doNotContact: false, type: { in: ["EMAIL", "PHONE"] } },
-      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
-    }),
-  ]);
-  if (!connection || !conversion) return browserEventId;
-  const privacy = await evaluateMetaConversionPrivacy(tx, {
-    workspaceId: input.form.workspaceId, actorId: input.actorId, contactId: submission.contactId,
-    now: input.now, correlationId: input.receiptPublicId,
-  });
-  if (!privacy.allowed) return browserEventId;
-  const emails = points.filter((point) => point.type === "EMAIL").map((point) => point.normalizedValue);
-  const phones = points.filter((point) => point.type === "PHONE").map((point) => point.normalizedValue);
-  if (emails.length + phones.length === 0) return browserEventId;
-  const payload = buildMinimizedMetaConversion({ workspaceId: input.form.workspaceId, conversionId: conversion.id, contactId: submission.contactId, eventName: "Lead", occurredAt: conversion.occurredAt, valueCents: conversion.valueCents, emails, phones, purposeVersionId: privacy.purposeVersionId, consentState: privacy.consentState, evaluatedAt: input.now, browserMatchKeys: input.browserMatchKeys });
-  const outbox = await createOutboxEventInTransaction(tx, {
-    workspaceId: input.form.workspaceId,
-    connectionId: connection.id,
-    actorId: input.actorId,
-    eventType: META_CONVERSION_EVENT_TYPE,
-    aggregateType: "AttributionConversion",
-    aggregateId: conversion.id,
-    correlationId: input.receiptPublicId,
-    causationId: conversion.sourceEventId,
-    idempotencyKey: semanticKey,
-    payload,
-  });
-  await tx.auditLog.create({ data: { workspaceId: input.form.workspaceId, actorId: input.actorId, action: "marketing.form.meta_conversion.queued", entityType: "OutboxEvent", entityId: outbox.id, changes: { receiptId: input.receiptId, conversionId: conversion.id, eventId: payload.eventId, rawIdentityPersisted: false } } });
-  return payload.eventId;
-}
-
 export function createMarketingFormSubmissionService(options: Options) {
   async function resolveActive(slug: string, versionPublicId: string): Promise<ResolvedForm> {
     const form = await options.database.marketingForm.findUnique({
@@ -252,7 +181,7 @@ export function createMarketingFormSubmissionService(options: Options) {
     return { id: form.id, key: form.key, workspaceId: form.workspaceId, versionId: version.id, version: version.version, definition: parsed.data };
   }
 
-  async function submit(rawSlug: string, raw: unknown, metaCookies: { fbc?: string | undefined; fbp?: string | undefined } = {}) {
+  async function submit(rawSlug: string, raw: unknown, metaCookies: { fbc?: string | undefined; fbp?: string | undefined; userAgent?: string | undefined } = {}) {
     const input = publicFormSubmitSchema.parse(raw);
     const form = await resolveActive(rawSlug, input.versionPublicId);
     const now = options.now();
@@ -264,6 +193,28 @@ export function createMarketingFormSubmissionService(options: Options) {
     const mapped = mapAnswersToLead(form.definition, answers);
     const idempotencyHash = sha256(`${form.workspaceId}:${form.versionId}:${input.idempotencyToken}`);
 
+    const tracking = form.definition.tracking.meta;
+    const configuredConnection = tracking?.connectionId && tracking.secretReferenceKey
+      ? { id: tracking.connectionId, secretReferenceKey: tracking.secretReferenceKey }
+      : undefined;
+    const defaultDataset = tracking?.pixelId && !tracking.connectionId && !tracking.secretReferenceKey
+      && tracksMarketingFormCompletion(form.key) && usesWorkspaceMetaWebsiteDataset(form.workspaceId, tracking.pixelId)
+      ? tracking.pixelId : undefined;
+    async function trackAcceptedLead(tx: Prisma.TransactionClient, submission: { id: string; attributionConversionId: string | null } | null, actorId: string, receiptPublicId: string, occurredAt: Date) {
+      const browserEventId = browserMetaLeadId(form, receiptPublicId, submission?.attributionConversionId);
+      if (mapped.contactPreference === false) return null;
+      if (!submission || !browserEventId || (!configuredConnection && !defaultDataset)) return browserEventId;
+      return await queueMetaWebsiteLead(tx, {
+        workspaceId: form.workspaceId, submissionId: submission.id, actorId, correlationId: receiptPublicId, now, occurredAt,
+        ...(configuredConnection ? { configuredConnection } : {}),
+        ...(defaultDataset ? { expectedDatasetId: defaultDataset } : {}),
+        ...(defaultDataset && metaCookies.userAgent ? {
+          website: { url: `https://crm-ai-grupoedge.vercel.app/f/${rawSlug}`, userAgent: metaCookies.userAgent },
+        } : {}),
+        browserMatchKeys: metaBrowserMatchKeys({ ...metaCookies, fbclid: input.tracking.clickIds?.fbclid, clickedAt: startedAt }),
+      }) ?? browserEventId;
+    }
+
     const transactionResult = await options.database.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`marketing-form-partial:${form.workspaceId}:${form.versionId}:${input.sessionPublicId}`}, 0))`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`marketing-form-submit:${form.workspaceId}:${form.versionId}:${idempotencyHash}`}, 0))`;
@@ -274,7 +225,7 @@ export function createMarketingFormSubmissionService(options: Options) {
 
       const prior = await tx.marketingFormReceipt.findUnique({
         where: { workspaceId_marketingFormVersionId_idempotencyHash: { workspaceId: form.workspaceId, marketingFormVersionId: form.versionId, idempotencyHash } },
-        select: { id: true, publicId: true, status: true, answers: true, redirectKind: true, redirectUrl: true },
+        select: { id: true, publicId: true, status: true, answers: true, redirectKind: true, redirectUrl: true, acceptedAt: true },
       });
       if (prior && canonicalJson(prior.answers) !== canonicalJson(answers)) {
         fail("A chave de reenvio pertence a outra resposta.", "MARKETING_FORM_IDEMPOTENCY_CONFLICT", 409);
@@ -283,10 +234,10 @@ export function createMarketingFormSubmissionService(options: Options) {
         await closePartialResponse(tx, { form, sessionPublicId: input.sessionPublicId, receiptId: prior.id, actorId: actor.id, now });
         const submission = form.definition.tracking.meta?.enabled ? await tx.leadFormSubmission.findFirst({
           where: { workspaceId: form.workspaceId, marketingFormReceiptId: prior.id },
-          select: { attributionConversionId: true },
+          select: { id: true, attributionConversionId: true },
         }) : null;
-        const eventId = browserMetaLeadId(form, prior.publicId, submission?.attributionConversionId);
-        return { ok: true as const, receiptId: prior.id, actorId: actor.id, result: publicResult(prior, eventId ?? undefined) };
+        const eventId = await trackAcceptedLead(tx, submission, actor.id, prior.publicId, prior.acceptedAt ?? now);
+        return { ok: true as const, receiptId: prior.id, result: publicResult(prior, eventId ?? undefined) };
       }
 
       const receipt = prior
@@ -358,7 +309,7 @@ export function createMarketingFormSubmissionService(options: Options) {
       const session = await tx.marketingSession.findUnique({ where: { workspaceId_publicId: { workspaceId: form.workspaceId, publicId: input.sessionPublicId } }, select: { id: true } });
       const submission = await tx.leadFormSubmission.update({
         where: { id: intake.submissionId },
-        select: { attributionConversionId: true },
+        select: { id: true, attributionConversionId: true },
         data: { marketingFormReceiptId: receipt.id, marketingFormId: form.id, marketingFormVersionId: form.versionId, marketingSessionId: session?.id ?? null },
       });
       if (form.definition.destination.tagIds.length) {
@@ -409,21 +360,13 @@ export function createMarketingFormSubmissionService(options: Options) {
         skipDuplicates: true,
       });
       await closePartialResponse(tx, { form, sessionPublicId: input.sessionPublicId, receiptId: receipt.id, actorId: actor.id, now });
-      return { ok: true as const, receiptId: receipt.id, actorId: actor.id, result: publicResult(accepted, browserMetaLeadId(form, accepted.publicId, submission.attributionConversionId) ?? undefined) };
+      const eventId = await trackAcceptedLead(tx, submission, actor.id, accepted.publicId, now);
+      return { ok: true as const, receiptId: receipt.id, result: publicResult(accepted, eventId ?? undefined) };
     }, { isolationLevel: "Serializable" });
 
     if (!transactionResult.ok) fail("Não foi possível processar esta resposta.", "MARKETING_FORM_INTAKE_REJECTED", 422);
     await deliverTelegramReceiptAlertAfterCommit(options.database, form.workspaceId, transactionResult.receiptId);
-    if (mapped.contactPreference === false || !form.definition.tracking.meta?.connectionId || !form.definition.tracking.meta.secretReferenceKey) {
-      return transactionResult.result;
-    }
-    let metaEventId: string | null = null;
-    try {
-      metaEventId = await options.database.$transaction((tx) => queueMetaConversionForReceipt(tx, { form, receiptId: transactionResult.receiptId, receiptPublicId: transactionResult.result.receiptPublicId, actorId: transactionResult.actorId, now, browserMatchKeys: metaBrowserMatchKeys({ ...metaCookies, fbclid: input.tracking.clickIds?.fbclid, clickedAt: startedAt }) }));
-    } catch {
-      // O provider é best-effort e nunca altera um receipt já aceito.
-    }
-    return metaEventId ? { ...transactionResult.result, providerEventIds: { meta: metaEventId } } : transactionResult.result;
+    return transactionResult.result;
   }
 
   async function recordEvents(rawSlug: string, raw: unknown) {

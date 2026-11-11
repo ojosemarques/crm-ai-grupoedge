@@ -225,6 +225,65 @@ describe("serviço administrativo de formulários", () => {
     await expect(service.publish(tenantA.context, form.id, saved.revision)).rejects.toMatchObject({ code: "MARKETING_FORM_REFERENCE_NOT_FOUND", statusCode: 422 });
   });
 
+  it("envia Lead do Forms VSL pelo dataset do workspace quando só o Pixel está configurado", async () => {
+    const fixture = await createFixture("meta-default");
+    const workspaceId = fixture.context.workspaceId;
+    const pixelId = "123456789";
+    const connection = await database.integrationConnection.create({ data: {
+      workspaceId, key: "meta-ads", providerKey: "META_ADS", adapterKey: "meta-ads-read-v1",
+      displayName: "Meta VSL", environment: "LOCAL", status: "CONNECTED", capabilityLevel: "CONNECTED",
+      enabled: true, createdByActorId: fixture.systemActorId, updatedByActorId: fixture.systemActorId,
+    } });
+    await database.integrationConnectionCapability.create({ data: { workspaceId, connectionId: connection.id, capability: "SYNC_PUSH", enabled: true } });
+    const slug = "forms-vsl";
+    const form = await service.create(fixture.context, { name: "Forms VSL", publicSlug: slug });
+    const definition = { ...publishableDefinition(fixture), tracking: { internalEvents: true, meta: { enabled: true, pixelId } } };
+    const saved = await service.updateDraft(fixture.context, form.id, { name: form.name, expectedRevision: form.revision, definition });
+    const published = await service.publish(fixture.context, form.id, saved.revision);
+    const payload = {
+      versionPublicId: published.version.publicId, sessionPublicId: randomUUID(), idempotencyToken: randomUUID(),
+      startedAt: new Date(now.getTime() - 2_000).toISOString(), honeypot: "", tracking: { clickIds: { fbclid: "fixture" } },
+      answers: [{ questionKey: "nome-completo", value: "Pessoa VSL" }, { questionKey: "telefone", value: "+5511988772233" }],
+    };
+    vi.stubEnv("META_ADS_REPORTING_WORKSPACE_ID", workspaceId);
+    vi.stubEnv("META_ADS_CONVERSIONS_UPSTREAM_PRIVACY", "true");
+    vi.stubEnv("META_ADS_DATASET_ID", "987654321");
+    try {
+      const first = await submissionService.submit(slug, payload, { userAgent: "Browser de teste" });
+      const where = { workspaceId, eventType: "marketing.meta_conversion.v1", correlationId: first.receiptPublicId };
+      expect(await database.outboxEvent.count({ where })).toBe(0);
+      vi.stubEnv("META_ADS_DATASET_ID", pixelId);
+      const second = await submissionService.submit(slug, payload, { userAgent: "Browser de teste" });
+      await submissionService.submit(slug, payload, { userAgent: "Browser de teste" });
+      const events = await database.outboxEvent.findMany({ where });
+      expect(events).toHaveLength(1);
+      expect(second.providerEventIds?.meta).toBe(first.providerEventIds?.meta);
+      expect(events[0]?.payload).toMatchObject({
+        eventName: "Lead", eventId: first.providerEventIds?.meta, actionSource: "website", expectedDatasetId: pixelId,
+        userData: { client_user_agent: "Browser de teste", fbc: expect.stringContaining(".fixture") },
+      });
+      await database.integrationConnectionConfigVersion.create({ data: {
+        workspaceId, connectionId: connection.id, version: 1, schemaVersion: "1.0",
+        config: { initialSince: now.toISOString().slice(0, 10) },
+        configHash: "fixture", createdByActorId: fixture.systemActorId,
+      } });
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ events_received: 1 }));
+      const worker = createConversionFeedbackService({
+        database, now: () => now, fetcher,
+        secrets: { resolve: async (key) => key === "META_ADS_DATASET_ID" ? pixelId : "fixture-token" },
+      });
+      await expect(worker.processNext("marketing-form-vsl", workspaceId)).resolves.toMatchObject({ status: "DELIVERED_EXTERNAL" });
+      const request = fetcher.mock.calls[0];
+      expect(JSON.parse(String(request?.[1]?.body)).data[0]).toMatchObject({
+        event_name: "Lead", event_id: first.providerEventIds?.meta, action_source: "website",
+        event_source_url: expect.stringContaining("/f/forms-vsl"),
+        user_data: { client_user_agent: "Browser de teste", fbc: expect.stringContaining(".fixture") },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("enfileira Meta uma vez com autorização registrada, sem exigir checkbox no formulário", async () => {
     const connection = await database.integrationConnection.create({ data: {
       workspaceId: tenantA.context.workspaceId,
@@ -371,7 +430,7 @@ describe("serviço administrativo de formulários", () => {
       deliveries.push(await worker.processNext("marketing-form-meta-fixture", tenantA.context.workspaceId));
     }
     expect(deliveries).toEqual(expect.arrayContaining([...events, ...milestones].map(({ id }) => ({ id, status: "DELIVERED_EXTERNAL" }))));
-    expect(await worker.processNext("marketing-form-meta-fixture")).toEqual({ status: "IDLE" });
+    expect(await worker.processNext("marketing-form-meta-fixture", tenantA.context.workspaceId)).toEqual({ status: "IDLE" });
     expect(await worker.getDeliveryDiagnostics(tenantA.context.workspaceId)).toMatchObject({
       connection: { active: true, syncPush: true },
       decisions: expect.arrayContaining([expect.objectContaining({ outcome: "DENY" })]),

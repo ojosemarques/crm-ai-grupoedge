@@ -462,6 +462,20 @@ describe("quizzes externos de mandato", () => {
     const ads = await ensureAdvertisingPipeline(database, admin.workspaceId, admin.actorId);
     const pipeline = await database.pipeline.findFirstOrThrow({ where: { workspaceId: admin.workspaceId, name: "Anúncios", deletedAt: null }, include: { stages: { where: { type: "OPEN", deletedAt: null }, orderBy: { position: "asc" }, take: 1 } } });
     void ads;
+    const pixelId = "123456789";
+    vi.stubEnv("META_ADS_REPORTING_WORKSPACE_ID", admin.workspaceId);
+    vi.stubEnv("META_ADS_DATASET_ID", pixelId);
+    vi.stubEnv("META_ADS_CONVERSIONS_UPSTREAM_PRIVACY", "true");
+    const meta = await database.integrationConnection.upsert({
+      where: { workspaceId_key: { workspaceId: admin.workspaceId, key: "meta-ads" } },
+      update: {},
+      create: {
+        workspaceId: admin.workspaceId, key: "meta-ads", providerKey: "META_ADS", adapterKey: "meta-ads-read-v1",
+        displayName: "Meta Quiz", environment: "LOCAL", status: "CONNECTED", capabilityLevel: "CONNECTED",
+        enabled: true, createdByActorId: admin.actorId, updatedByActorId: admin.actorId,
+        capabilities: { create: [{ capability: "SYNC_PUSH", enabled: true }] },
+      },
+    });
     const keys = ["chatmandato", "quizmandato"] as const;
     const requests: Parameters<typeof webhooks.receive>[0][] = [];
     const results: Record<string, unknown>[] = [];
@@ -471,7 +485,7 @@ describe("quizzes externos de mandato", () => {
       await connections.command(admin, { action: "ACTIVATE", connectionId: configured.id, revision: 1 });
       const submissionId = randomUUID();
       const body = { contractVersion: "quiz-lead.v1", eventId: `quiz:${quizId}:${submissionId}:completed:v1`, submissionId, occurredAt: now.toISOString(), fullName: "Validação Integração Mandato", phone: "+5511988882468", email: "mandato-identity@example.test", jobTitle: "Vereador(a)", city: "São Paulo", stateCode: "SP", interestSummary: "Desafio: organizar demandas; prazo: nos próximos 30 dias.", quiz: { id: quizId, name: quizId === "chatmandato" ? "ChatMandato" : "QuizMandato", version: "1", url: `https://site.politizai.com/${quizId}` }, answers: ["nome", "cargo", "whatsapp", "localidade", "desafio", "organizacao", "frequencia", "presenca_digital", "prioridade", "prazo", "investimento_mensal"].map((questionKey) => ({ questionKey, question: `Pergunta ${questionKey}`, value: `Resposta ${questionKey}`, displayValue: `Resposta ${questionKey}` })), landingUrl: `https://site.politizai.com/${quizId}`, sessionPublicId: submissionId, referrerUrl: "https://example.test/origem", utmSource: "google", utmMedium: "cpc", utmCampaign: "mandato", utmContent: "criativo", utmTerm: "gabinete" };
-      const rawBody = JSON.stringify(body);
+      const rawBody = JSON.stringify({ ...body, metaBrowser: { pixelId, userAgent: "Browser de teste", fbc: "fb.1.1774400000000.fixture" } });
       const request = { workspaceSlug: admin.workspaceSlug, connectionKey: key, rawBody, headers: { timestamp: now.toISOString(), signature: formSignature(rawBody, now.toISOString()) } };
       await expect(webhooks.receive({ ...request, headers: { ...request.headers, signature: "bad" } })).rejects.toMatchObject({ code: "ACQUISITION_SIGNATURE_INVALID" });
       await expect(webhooks.receive({ ...request, headers: { timestamp: "2000-01-01T00:00:00Z", signature: formSignature(rawBody, "2000-01-01T00:00:00Z") } })).rejects.toMatchObject({ code: "ACQUISITION_SIGNATURE_INVALID" });
@@ -490,6 +504,16 @@ describe("quizzes externos de mandato", () => {
       const submission = await database.leadFormSubmission.findUniqueOrThrow({ where: { id: primary.submissionId as string } });
       expect(submission).toMatchObject({ submittedCity: "São Paulo", submittedStateCode: "SP", submittedInterestSummary: body.interestSummary });
       expect(submission.rawPayload).toMatchObject({ quizResponse: { quiz: body.quiz, answers: body.answers } });
+      const leadEvents = await database.outboxEvent.findMany({ where: {
+        workspaceId: admin.workspaceId, connectionId: meta.id, correlationId: body.eventId,
+        eventType: "marketing.meta_conversion.v1",
+      } });
+      expect(leadEvents).toHaveLength(1);
+      expect(leadEvents[0]!.payload).toMatchObject({
+        eventId: `${quizId === "chatmandato" ? "chat_mandato" : "quiz_mandato_politizai"}:lead:${submissionId}`,
+        eventName: "Lead", actionSource: "website", eventSourceUrl: body.quiz.url, expectedDatasetId: pixelId,
+        userData: { fbc: "fb.1.1774400000000.fixture", client_user_agent: "Browser de teste" },
+      });
       const session = await database.marketingTouchpoint.findUniqueOrThrow({ where: { id: submission.marketingTouchpointId! } });
       expect(session).toMatchObject({ utmSource: "google", utmMedium: "cpc", utmCampaign: "mandato", utmContent: "criativo", utmTerm: "gabinete", referrerHost: "example.test", landingPath: `/${quizId}` });
     }

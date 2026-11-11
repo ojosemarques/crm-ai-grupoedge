@@ -1,3 +1,5 @@
+import { metaBrowserMatchKeys } from "@/modules/conversion-feedback/domain/meta-conversion-policy";
+import { queueMetaWebsiteLead, usesWorkspaceMetaWebsiteDataset } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { createQuizAgendaToken } from "@/modules/marketing-forms/domain/quiz-agenda-token";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
@@ -15,6 +17,8 @@ import { assertMetaNativeTarget } from "./meta-native-target";
 import { isMetaNativeTestLead, metaNativeAnswers } from "../domain/meta-native-answers";
 import { EXTERNAL_QUIZ_UNNAMED_LEAD, externalQuizConfigurationSchema, externalQuizEventSchema } from "../domain/external-quiz-contracts";
 import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
+
+const mandatoQuizMetaContent = { chatmandato: "chat_mandato", quizmandato: "quiz_mandato_politizai" } as const;
 
 type Options = Readonly<{ database: PrismaClient; secrets: SecretResolver; now: () => Date; intake: ReturnType<typeof getLeadIntakeService>; fetcher: typeof fetch }>;
 type Headers = Readonly<{ signature?: string; timestamp?: string }>;
@@ -175,6 +179,19 @@ export function createAcquisitionWebhookService(options: Options) {
         return "PROCESSED" as const;
       }
       if (newest?.externalVersion && newest.externalVersion >= info.occurredAt.toISOString()) { await tx.webhookInbox.update({ where: { id: inbox.row.id }, data: { status: "IGNORED", attempts: { increment: 1 }, processedAt: options.now(), errorCode: "OUT_OF_ORDER", errorMessage: "Evento anterior ou igual à versão externa vigente." } }); await tx.integrationDeliveryAttempt.create({ data: { workspaceId: connection.workspace.id, kind: "INBOX", inboxId: inbox.row.id, attemptNumber: inbox.row.attempts + 1, status: "SUCCEEDED", startedAt: inbox.row.receivedAt, finishedAt: options.now(), resultMetadata: json({ outcome: "IGNORED", reason: "OUT_OF_ORDER" }) } }); return "IGNORED" as const; }
+      if (!imported && input.workspaceSlug === "politizai" && quizEvent?.success
+        && quizEvent.data.completionStatus !== "PARTIAL" && quizEvent.data.metaBrowser && consent !== false
+        && usesWorkspaceMetaWebsiteDataset(connection.workspace.id, quizEvent.data.metaBrowser.pixelId)) {
+        const quiz = quizEvent.data;
+        await queueMetaWebsiteLead(tx, {
+          workspaceId: connection.workspace.id, actorId: actor.id, submissionId: result.submissionId,
+          correlationId: info.id, now: options.now(), occurredAt: info.occurredAt,
+          eventId: `${mandatoQuizMetaContent[quiz.quiz.id]}:lead:${quiz.submissionId}`,
+          website: { url: quiz.quiz.url, userAgent: quizEvent.data.metaBrowser.userAgent },
+          browserMatchKeys: metaBrowserMatchKeys(quizEvent.data.metaBrowser),
+          expectedDatasetId: quizEvent.data.metaBrowser.pixelId,
+        });
+      }
       await tx.externalObjectMapping.upsert({ where: { workspaceId_connectionId_externalObjectType_externalId: { workspaceId: connection.workspace.id, connectionId: connection.id, externalObjectType: "lead", externalId: info.externalId } }, create: { workspaceId: connection.workspace.id, connectionId: connection.id, externalObjectType: "lead", externalId: info.externalId, internalEntityType: "LEAD", internalEntityId: result.leadId, externalVersion: info.occurredAt.toISOString(), externalHash: payloadHash, firstRecognizedAt: options.now(), lastRecognizedAt: options.now(), createdByActorId: actor.id, updatedByActorId: actor.id }, update: { internalEntityId: result.leadId, externalVersion: info.occurredAt.toISOString(), externalHash: payloadHash, version: { increment: 1 }, lastRecognizedAt: options.now(), updatedByActorId: actor.id } });
       await tx.webhookInbox.update({ where: { id: inbox.row.id }, data: { status: "PROCESSED", attempts: { increment: 1 }, processedAt: options.now(), mappingId: connection.fieldMappings[0]!.id } });
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`acquisition-cursor:${connection.workspace.id}:${connection.id}:lead`}, 0))`;

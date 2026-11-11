@@ -41,6 +41,12 @@ export const externalQuizEventSchema = externalQuizResponseBase.extend({
   contractVersion: z.literal("quiz-lead.v1"),
   eventId: z.string().regex(/^[A-Za-z0-9_.:-]{8,160}$/),
   historicalImport: z.literal(true).optional(),
+  metaBrowser: z.object({
+    pixelId: z.string().regex(/^\d{3,40}$/),
+    userAgent: z.string().min(1).max(512).refine(value => [...value].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127)),
+    fbc: z.string().max(521).optional(),
+    fbp: z.string().max(80).optional(),
+  }).strict().optional(),
   submissionId: z.string().uuid(),
   occurredAt: z.iso.datetime(),
   fullName: z.string().trim().min(2).max(200).optional(),

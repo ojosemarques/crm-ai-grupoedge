@@ -16,6 +16,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const result = await getMarketingFormSubmissionService().submit(slug, await readLimitedJson(request, 128 * 1_024), {
       fbc: request.cookies.get("_fbc")?.value,
       fbp: request.cookies.get("_fbp")?.value,
+      userAgent: request.headers.get("user-agent")?.slice(0, 512),
     });
     return NextResponse.json({ result }, { status: 201, headers });
   } catch (error) {
