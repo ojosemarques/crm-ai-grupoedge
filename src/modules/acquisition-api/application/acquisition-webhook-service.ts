@@ -163,6 +163,7 @@ export function createAcquisitionWebhookService(options: Options) {
     const result = await options.intake.intake(intake, context, undefined, {
       scheduleTopSendVoice: !imported && Boolean(native || quizTarget),
       suppressTelegramAlert: historicalQuiz,
+      ...(historicalQuiz && quizEvent?.data?.completionStatus === "COMPLETED" ? { historicalReceivedAt: info.occurredAt } : {}),
     });
     if (result.outcome === "REJECTED") { await options.database.$transaction(async (tx) => { await tx.webhookInbox.update({ where: { id: inbox.row.id }, data: { status: "DEAD_LETTER", attempts: { increment: 1 }, errorClass: "INVALID_PAYLOAD", errorCode: result.code, errorMessage: result.issues.map((issue) => issue.message).join(" ") } }); await tx.integrationDeliveryAttempt.create({ data: { workspaceId: connection.workspace.id, kind: "INBOX", inboxId: inbox.row.id, attemptNumber: inbox.row.attempts + 1, status: "DEAD_LETTERED", errorClass: "INVALID_PAYLOAD", errorCode: result.code, errorMessage: result.issues.map((issue) => issue.message).join(" "), startedAt: inbox.row.receivedAt, finishedAt: options.now() } }); }); fail("Entrada rejeitada pelo contrato canônico.", result.code, 422); }
     const completion = await options.database.$transaction(async (tx) => {

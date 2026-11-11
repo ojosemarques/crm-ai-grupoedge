@@ -127,10 +127,10 @@ export function AdvertisingMetrics({ screen }: Readonly<{ screen: Screen }>) {
 
       <section className={styles.section} aria-label="Respostas dos quizzes">
         <h2>Respostas dos quizzes no período</h2>
-        <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Quiz</th><th>Respostas concluídas recebidas</th><th>Novos leads</th><th>Submissões anexadas</th><th>Leads únicos no quiz</th></tr></thead><tbody>
-          {screen.metrics.quizBreakdown.map((quiz) => <tr key={quiz.id}><td><Link href={`/anuncios?view=pipeline&quizId=${quiz.id}`}>{quiz.name}</Link></td><td>{quiz.submissions}</td><td>{quiz.newLeads}</td><td>{quiz.attached}</td><td>{quiz.uniqueLeads}</td></tr>)}
+        <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Quiz</th><th>Completos</th><th>Incompletos</th><th>Sem status</th><th>Envios</th><th>Novos leads</th><th>Submissões anexadas</th><th>Leads únicos no quiz</th></tr></thead><tbody>
+          {screen.metrics.quizBreakdown.map((quiz) => <tr key={quiz.id}><td><Link href={`/anuncios?view=pipeline&quizId=${quiz.id}`}>{quiz.name}</Link></td><td>{quiz.completeLeads}</td><td>{quiz.incompleteLeads}</td><td>{quiz.unknownLeads}</td><td>{quiz.submissions}</td><td>{quiz.newLeads}</td><td>{quiz.attached}</td><td>{quiz.uniqueLeads}</td></tr>)}
         </tbody></table></div>
-        <p>{screen.metrics.quizOverlap} leads responderam aos dois quizzes neste período. Os recortes de leads únicos podem se sobrepor. Novos leads seguem a identidade canônica do CRM. Conversão por visita e investimento não estão disponíveis nesta integração.</p>
+        <p>{screen.metrics.quizOverlap} leads responderam aos dois quizzes neste período. O status considera cada lead uma vez por quiz, pela data da entrada. Uma conclusão prevalece sobre envios incompletos do mesmo lead no recorte.</p>
       </section>
       <section className={styles.grid} aria-label="Métricas do período de Anúncios">{cards.map(([label, value]) => <article className={styles.card} key={label}><h2>{label}</h2><div className={styles.metric}>{value}</div><p>No período selecionado</p></article>)}</section>
       <p>Contatos, ligações e mensagens consideram os leads recebidos no período selecionado. Mensagens somam os registros de envio; contatos contam cada lead uma única vez.</p>

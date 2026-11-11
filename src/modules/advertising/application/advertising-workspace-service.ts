@@ -1,4 +1,4 @@
-import { excludedMetricLeadIds } from "@/modules/metrics/application/metric-lead-exclusions";
+import { EXTERNAL_QUIZ_IDS, EXTERNAL_QUIZ_NAMES, readExternalQuizResponse } from "@/modules/acquisition-api/domain/external-quiz-contracts";
 import { createRealtimeDashboardService } from "@/modules/realtime-dashboard/application/realtime-dashboard-service";
 import { readRealtimeDashboardFacts, realtimeActivityFact } from "@/modules/realtime-dashboard/application/realtime-dashboard-facts";
 import { advertisingLeadArrivals, advertisingPeriodFacts } from "@/modules/realtime-dashboard/domain/realtime-advertising-metrics";
@@ -150,18 +150,39 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
       createRealtimeDashboardService(options).advertisingSnapshot(context),
       resolveIntegratedActivityReadScope(options, context, period.start, to),
     ]);
-    const excludedIds = await excludedMetricLeadIds(options.database, context.workspaceId);
     const quizSubmissions = await options.database.leadFormSubmission.findMany({
-      where: { workspaceId: context.workspaceId, lead: { AND: [leadWhere, { id: { notIn: excludedIds } }] }, submittedAt: { gte: period.start, lt: to }, formIdentifier: { in: ["site-chatmandato", "site-quizmandato"] }, intakeOutcome: { in: ["CREATED", "ATTACHED"] } },
-      select: { leadId: true, formIdentifier: true, intakeOutcome: true },
+      where: {
+        workspaceId: context.workspaceId, lead: leadWhere,
+        submittedAt: { gte: period.start, lt: to },
+        formIdentifier: { in: EXTERNAL_QUIZ_IDS.map((id) => `site-${id}`) },
+        intakeOutcome: { in: ["CREATED", "ATTACHED"] },
+      },
+      select: { leadId: true, formIdentifier: true, intakeOutcome: true, rawPayload: true },
     });
-    const quizIds = ["chatmandato", "quizmandato"] as const;
-    const idsByQuiz = quizIds.map((id) => new Set(quizSubmissions.filter((s) => s.formIdentifier === `site-${id}`).flatMap((s) => s.leadId ? [s.leadId] : [])));
-    const quizBreakdown = quizIds.map((id, index) => {
-      const rows = quizSubmissions.filter((s) => s.formIdentifier === `site-${id}`);
-      return { id, name: id === "chatmandato" ? "ChatMandato" : "QuizMandato", submissions: rows.length, newLeads: rows.filter((s) => s.intakeOutcome === "CREATED").length, attached: rows.filter((s) => s.intakeOutcome === "ATTACHED").length, uniqueLeads: idsByQuiz[index]!.size };
+    const leadIdsByQuiz = new Map<string, Set<string>>();
+    const quizBreakdown = EXTERNAL_QUIZ_IDS.map((id) => {
+      const rows = quizSubmissions.filter((row) => row.formIdentifier === `site-${id}`);
+      const leadIds = new Set<string>();
+      const completed = new Set<string>();
+      const partial = new Set<string>();
+      for (const row of rows) {
+        if (!row.leadId) continue;
+        leadIds.add(row.leadId);
+        const status = readExternalQuizResponse(row.rawPayload)?.completionStatus;
+        if (status === "COMPLETED") completed.add(row.leadId);
+        if (status === "PARTIAL") partial.add(row.leadId);
+      }
+      const incompleteLeads = [...partial].filter((leadId) => !completed.has(leadId)).length;
+      leadIdsByQuiz.set(id, leadIds);
+      return {
+        id, name: EXTERNAL_QUIZ_NAMES[id], submissions: rows.length,
+        newLeads: rows.filter((row) => row.intakeOutcome === "CREATED").length,
+        attached: rows.filter((row) => row.intakeOutcome === "ATTACHED").length,
+        uniqueLeads: leadIds.size, completeLeads: completed.size, incompleteLeads,
+        unknownLeads: leadIds.size - completed.size - incompleteLeads,
+      };
     });
-    const quizOverlap = [...idsByQuiz[0]!].filter((id) => idsByQuiz[1]!.has(id)).length;
+    const quizOverlap = [...leadIdsByQuiz.get("chatmandato")!].filter((id) => leadIdsByQuiz.get("quizmandato")!.has(id)).length;
     const selected = await readRealtimeDashboardFacts(options.database, context.workspaceId, period.start, to, "ADVERTISING", metricScope);
     const selectedFacts = advertisingPeriodFacts(selected.factRows.map(realtimeActivityFact));
     const selectedTotals = summarizeRealtimeDashboardTotals(selectedFacts, []);

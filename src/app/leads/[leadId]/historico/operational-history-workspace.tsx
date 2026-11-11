@@ -1268,7 +1268,7 @@ export function OperationalHistoryWorkspace({
               <h2 className="text-lg font-semibold">Respostas do formulário</h2>
               {pipeline.formResponses.length > 0 ? (
                 <div className="mt-3 min-w-0 [&>div]:min-w-0">
-                  <LeadFormResponseDetails responses={pipeline.formResponses} timeZone={operations.timeZone} />
+                  <LeadFormResponseDetails openQuizResponses responses={pipeline.formResponses} timeZone={operations.timeZone} />
                 </div>
               ) : <p className="mt-2 text-sm text-muted-foreground">Este lead ainda não tem respostas de formulário vinculadas.</p>}
             </section>

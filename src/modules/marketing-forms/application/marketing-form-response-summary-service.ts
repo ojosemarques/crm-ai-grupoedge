@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@/generated/prisma/client";
-import { externalQuizResponseSchema } from "@/modules/acquisition-api/domain/external-quiz-contracts";
+import { EXTERNAL_QUIZ_IDS, readExternalQuizResponse } from "@/modules/acquisition-api/domain/external-quiz-contracts";
 import { metaNativeResponseSchema } from "@/modules/acquisition-api/domain/meta-native-answers";
 import {
   summarizeMarketingFormAnswers,
@@ -18,7 +18,7 @@ export async function responsesByLead(
       workspaceId,
       leadId: { in: uniqueLeadIds },
       OR: [
-        { channel: "FORM", rawPayload: { path: ["quizResponse", "quiz", "id"], string_starts_with: "" } },
+        ...EXTERNAL_QUIZ_IDS.map((id) => ({ channel: "FORM" as const, rawPayload: { path: ["quizResponse", "quiz", "id"], equals: id } })),
         { marketingFormId: { not: null }, marketingFormVersionId: { not: null }, marketingFormReceiptId: { not: null } },
         { channel: "AD", formIdentifier: { startsWith: "meta-native:" }, rawPayload: { path: ["provider"], equals: "META_LEAD_ADS" } },
       ],
@@ -56,13 +56,18 @@ export async function responsesByLead(
   const result = new Map<string, MarketingFormResponseSummary[]>();
   for (const submission of submissions) {
     const raw = submission.rawPayload as Record<string, unknown> | null;
-    if (submission.leadId && raw?.provider === "FORM" && raw.quizResponse) {
-      const quiz = externalQuizResponseSchema.safeParse(raw.quizResponse);
-      if (quiz.success) {
-        const current = result.get(submission.leadId) ?? [];
-        current.push({ receiptId: submission.id, responseKind: "EXTERNAL_QUIZ", quizId: quiz.data.quiz.id, formName: `Quiz · ${quiz.data.quiz.name}${quiz.data.completionStatus === "PARTIAL" ? " · Diagnóstico incompleto" : ""}`, submittedAt: submission.submittedAt.toISOString(), phone: submission.submittedPhone, answers: quiz.data.answers, ...(typeof raw.interestSummary === "string" ? { summary: raw.interestSummary } : {}), ...(quiz.data.result ? { result: quiz.data.result } : {}) });
-        result.set(submission.leadId, current);
-      }
+    const quiz = readExternalQuizResponse(raw);
+    if (submission.leadId && quiz) {
+      const current = result.get(submission.leadId) ?? [];
+      current.push({
+        receiptId: submission.id, responseKind: "EXTERNAL_QUIZ", quizId: quiz.quiz.id,
+        completionStatus: quiz.completionStatus, formName: `Quiz · ${quiz.quiz.name}`,
+        submittedAt: submission.submittedAt.toISOString(), phone: submission.submittedPhone,
+        answers: quiz.answers,
+        ...(typeof raw?.interestSummary === "string" ? { summary: raw.interestSummary } : {}),
+        ...(quiz.result ? { result: quiz.result } : {}),
+      });
+      result.set(submission.leadId, current);
       continue;
     }
     if (submission.leadId && raw?.provider === "META_LEAD_ADS") {

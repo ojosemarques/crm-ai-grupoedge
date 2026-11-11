@@ -1,16 +1,20 @@
 import { z } from "zod";
 
+export const EXTERNAL_QUIZ_IDS = ["chatmandato", "quizmandato"] as const;
+export const EXTERNAL_QUIZ_NAMES = { chatmandato: "ChatMandato", quizmandato: "QuizMandato" } as const;
+export const EXTERNAL_QUIZ_COMPLETE_TAG = "Completo";
+
 export const EXTERNAL_QUIZ_UNNAMED_LEAD = "Lead de quiz — nome não informado";
 
 export const externalQuizConfigurationSchema = z.object({
-  quizId: z.enum(["chatmandato", "quizmandato"]),
+  quizId: z.enum(EXTERNAL_QUIZ_IDS),
   pipelineId: z.string().uuid(),
   initialStageId: z.string().uuid(),
 }).strict();
 
 const externalQuizResponseBase = z.object({
   quiz: z.object({
-    id: z.enum(["chatmandato", "quizmandato"]),
+    id: z.enum(EXTERNAL_QUIZ_IDS),
     name: z.enum(["ChatMandato", "QuizMandato"]),
     version: z.literal("1"),
     url: z.string().url().max(500),
@@ -26,6 +30,13 @@ const externalQuizResponseBase = z.object({
 }).strict();
 
 export const externalQuizResponseSchema = externalQuizResponseBase.refine((response) => response.completionStatus === "PARTIAL" ? response.answers.length < 11 : response.answers.length === 11);
+
+export function readExternalQuizResponse(rawPayload: unknown) {
+  if (!rawPayload || typeof rawPayload !== "object" || !("provider" in rawPayload) || rawPayload.provider !== "FORM" || !("quizResponse" in rawPayload)) return null;
+  const response = externalQuizResponseSchema.safeParse(rawPayload.quizResponse);
+  if (!response.success) return null;
+  return { ...response.data, completionStatus: response.data.completionStatus ?? "COMPLETED" as const };
+}
 
 export const externalQuizEventSchema = externalQuizResponseBase.extend({
   contractVersion: z.literal("quiz-lead.v1"),
@@ -50,4 +61,4 @@ export const externalQuizEventSchema = externalQuizResponseBase.extend({
   utmTerm: z.string().max(2048).optional(),
 }).strict().refine((event) => event.completionStatus === "PARTIAL"
   ? event.answers.length < 11
-  : !event.historicalImport && Boolean(event.fullName) && event.answers.length === 11);
+  : Boolean(event.fullName) && event.answers.length === 11);

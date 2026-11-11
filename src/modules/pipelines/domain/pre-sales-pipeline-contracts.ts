@@ -1,3 +1,4 @@
+import type { MarketingFormResponseSummary } from "@/modules/marketing-forms/domain/marketing-form-response-summary";
 export const defaultLeadStageCodes = [
   "NEW",
   "TRYING_CONTACT",
@@ -57,17 +58,7 @@ export type LeadPipelineCard = Readonly<{
   fullName: string;
   phone: string | null;
   jobTitle: string | null;
-  formResponses: readonly Readonly<{
-    receiptId: string;
-    formName: string;
-    submittedAt: string;
-    phone: string | null;
-    answers: readonly Readonly<{
-      questionKey: string;
-      question: string;
-      displayValue: string;
-    }>[];
-  }>[];
+  formResponses: readonly MarketingFormResponseSummary[];
   priorityCode: "P1" | "P2" | "P3" | null;
   score: number | null;
   responsibleName: string;

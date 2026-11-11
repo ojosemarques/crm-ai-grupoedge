@@ -12,10 +12,12 @@ export function LeadFormResponseDetails({
   responses,
   timeZone,
   compact = false,
+  openQuizResponses = false,
 }: Readonly<{
   responses: readonly MarketingFormResponseSummary[];
   timeZone: string;
   compact?: boolean;
+  openQuizResponses?: boolean;
 }>) {
   if (responses.length === 0) return null;
   return (
@@ -26,11 +28,14 @@ export function LeadFormResponseDetails({
     >
       {responses.filter((response) => response.responseKind === "EXTERNAL_QUIZ").map((response) => (
         <div className="mb-2 grid gap-1" key={response.receiptId}>
-          <span className="font-semibold">{response.formName}</span>
-          <span className="whitespace-pre-wrap break-words">{response.summary}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold">{response.formName}</span>
+            <span className="stage-badge">{response.completionStatus === "COMPLETED" ? "Completo" : "Incompleto"}</span>
+          </div>
+          {compact ? null : <span className="whitespace-pre-wrap break-words">{response.summary}</span>}
         </div>
       ))}
-      <details>
+      <details open={openQuizResponses && responses.some((response) => response.responseKind === "EXTERNAL_QUIZ") ? true : undefined}>
         <summary className="cursor-pointer font-semibold text-primary">
           {responses.length === 1 ? "Ver respostas do formulário" : `Ver ${responses.length} respostas do formulário`}
         </summary>

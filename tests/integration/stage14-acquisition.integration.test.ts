@@ -538,8 +538,8 @@ describe("quizzes externos de mandato", () => {
     expect(await database.commercialMetricFact.count({ where: { leadId, eventType: "LEAD_SUBMISSION_ATTACHED" } })).toBe(1);
     const screen = await createAdvertisingWorkspaceService({ database, authorization, now: () => now }).getScreen(admin, { pipelineId: pipeline.id, metricsPreset: "TODAY" });
     expect(screen.metrics.quizBreakdown).toEqual([
-      { id: "chatmandato", name: "ChatMandato", submissions: 2, newLeads: 2, attached: 0, uniqueLeads: 2 },
-      { id: "quizmandato", name: "QuizMandato", submissions: 1, newLeads: 0, attached: 1, uniqueLeads: 1 },
+      { id: "chatmandato", name: "ChatMandato", submissions: 2, newLeads: 2, attached: 0, uniqueLeads: 2, completeLeads: 2, incompleteLeads: 0, unknownLeads: 0 },
+      { id: "quizmandato", name: "QuizMandato", submissions: 1, newLeads: 0, attached: 1, uniqueLeads: 1, completeLeads: 1, incompleteLeads: 0, unknownLeads: 0 },
     ]);
     expect(screen.metrics.quizOverlap).toBe(1);
 
@@ -586,6 +586,18 @@ describe("quizzes externos de mandato", () => {
     expect(await database.job.findFirst({ where: jobWhere })).toMatchObject({ runAt: new Date(now.getTime() + 30_000) });
     expect(await send(partial)).toMatchObject({ status: "PROCESSED", leadId, submissionId: initial.submissionId, idempotentReplay: true });
 
+    const progress = {
+      ...partial, fullName: "Nome do diagnóstico",
+      eventId: `quiz:quizmandato:${submissionId}:partial:4:v1`,
+      occurredAt: new Date(now.getTime() + 500).toISOString(),
+      answers: [{ questionKey: "nome", question: "Qual é o seu nome?", value: "Nome do diagnóstico", displayValue: "Nome do diagnóstico" }],
+    };
+    expect(await send(progress)).toMatchObject({ status: "PROCESSED", leadId, submissionId: initial.submissionId });
+    expect(await database.leadFormSubmission.findFirst({ where: { idempotencyKey: submissionKey } })).toMatchObject({
+      rawPayload: { quizResponse: { completionStatus: "PARTIAL", answers: progress.answers } },
+    });
+    expect(await database.leadTag.count({ where: { leadId, removedAt: null, tag: { name: "Completo" } } })).toBe(0);
+
     const complete = { ...partial, completionStatus: "COMPLETED", fullName: "Nome do diagnóstico",
       eventId: `quiz:quizmandato:${submissionId}:completed:v1`, occurredAt: new Date(now.getTime() + 1000).toISOString(),
       answers: Array.from({ length: 11 }, (_, index) => ({ questionKey: `resposta_${index}`, question: "Pergunta", value: "Resposta", displayValue: "Resposta" })) };
@@ -600,6 +612,10 @@ describe("quizzes externos de mandato", () => {
     });
     expect(await database.lead.findUniqueOrThrow({ where: { id: leadId } })).toMatchObject({ fullName: complete.fullName });
     expect(await database.job.count({ where: jobWhere })).toBe(1);
+    expect(await database.leadTag.count({ where: { leadId, removedAt: null, tag: { name: "Completo" } } })).toBe(1);
+    expect(await database.leadFormSubmission.findFirst({ where: { idempotencyKey: submissionKey } })).toMatchObject({
+      submittedAt: now,
+    });
 
     const historicalId = randomUUID();
     const historical = await send({ ...partial, historicalImport: true, submissionId: historicalId, sessionPublicId: historicalId,
@@ -608,6 +624,20 @@ describe("quizzes externos de mandato", () => {
     expect(await database.job.count({ where: { workspaceId: admin.workspaceId, idempotencyKey: { in: [
       `topsend-voice:${historical.leadId}:v1`, `telegram-ad-lead:${historical.leadId}:carlos`,
     ] } } })).toBe(0);
+    const importedId = randomUUID();
+    const importedAt = new Date(now.getTime() - 86_400_000).toISOString();
+    const imported = await send({ ...complete, historicalImport: true, submissionId: importedId, sessionPublicId: importedId,
+      occurredAt: importedAt, phone: "+5511987660303", eventId: `quiz:quizmandato:${importedId}:reconcile:v1` });
+    expect(imported).toMatchObject({ status: "PROCESSED", outcome: "CREATED" });
+    expect(imported).not.toHaveProperty("agendaToken");
+    expect(await database.leadFormSubmission.findUnique({ where: { id: imported.submissionId as string } })).toMatchObject({
+      submittedAt: new Date(importedAt), rawPayload: { historicalImport: true },
+    });
+    expect(await database.leadTag.count({ where: { leadId: imported.leadId as string, removedAt: null, tag: { name: "Completo" } } })).toBe(1);
+    expect(await database.job.count({ where: { workspaceId: admin.workspaceId, idempotencyKey: { in: [
+      `topsend-voice:${imported.leadId}:v1`, `telegram-ad-lead:${imported.leadId}:carlos`,
+    ] } } })).toBe(0);
+
   });
 
   it("recusa etapa de outro workspace na configuração", async () => {
@@ -636,7 +666,7 @@ describe("carga histórica somente no pipeline", () => {
   });
   const partial = await responsesByLead(database,admin.workspaceId,[initial.leadId]);
   expect(partial.get(initial.leadId)![0]!.answers).toHaveLength(3);
-  expect(partial.get(initial.leadId)![0]!.formName).toContain("incompleto");
+  expect(partial.get(initial.leadId)![0]!.completionStatus).toBe("PARTIAL");
   const before=await createAdvertisingWorkspaceService({database,authorization,now:()=>now}).getScreen(admin,{pipelineId:pipeline.id,metricsPreset:"TODAY"});
   const rawBody=JSON.stringify({contractVersion:"quiz-lead.v1",eventId:`quiz:quizmandato:${sourceId}:completed:v1`,submissionId:sourceId,occurredAt:now.toISOString(),quiz,answers,fullName:"Histórico parcial mandato",phone:"+5511987660102",interestSummary:"Diagnóstico completo",landingUrl:quiz.url,sessionPublicId:sourceId});
   const request={workspaceSlug:admin.workspaceSlug,connectionKey:key,rawBody,headers:{timestamp:now.toISOString(),signature:formSignature(rawBody,now.toISOString())}};
@@ -645,7 +675,7 @@ describe("carga histórica somente no pipeline", () => {
   expect(await database.leadFormSubmission.count({where:{workspaceId:admin.workspaceId,idempotencyKey}})).toBe(1);
   const responses=await responsesByLead(database,admin.workspaceId,[initial.leadId]);
   expect(responses.get(initial.leadId)![0]!.answers).toHaveLength(11);
-  expect(responses.get(initial.leadId)![0]!.formName).not.toContain("incompleto");
+  expect(responses.get(initial.leadId)![0]!.completionStatus).toBe("COMPLETED");
   const after=await createAdvertisingWorkspaceService({database,authorization,now:()=>now}).getScreen(admin,{pipelineId:pipeline.id,metricsPreset:"TODAY"});
   expect(after.metrics.totals).toEqual(before.metrics.totals);
   expect(after.metrics.live.today.leadsReceived).toBe(before.metrics.live.today.leadsReceived);

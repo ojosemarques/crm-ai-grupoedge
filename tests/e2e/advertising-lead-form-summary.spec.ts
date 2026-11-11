@@ -59,4 +59,20 @@ test("vendedor abre as respostas fechadas no Resumo da ficha de Anúncios", asyn
   await responses.screenshot({ path: testInfo.outputPath("form-responses-mobile.png") });
   await disclosure.locator("summary").click();
   await expect(responses.getByText("Organizar atendimento", { exact: true })).not.toBeVisible();
+  await db.leadFormSubmission.create({ data: {
+    workspaceId: workspace.id, leadId: lead.id, sourceId: lead.sourceId, channel: "FORM",
+    status: "LINKED", intakeOutcome: "ATTACHED", formIdentifier: "site-quizmandato",
+    idempotencyKey: randomUUID(), submittedAt: new Date(), createdByActorId: actor.id,
+    rawPayload: { provider: "FORM", quizResponse: {
+      quiz: { id: "quizmandato", name: "QuizMandato", version: "1", url: "https://site.politizai.com/quizmandato" },
+      completionStatus: "PARTIAL",
+      answers: [{ questionKey: "desafio", question: "Qual é o maior desafio?", value: "Organizar demandas", displayValue: "Organizar demandas" }],
+    } },
+  } });
+  await page.goto(`/anuncios?q=${encodeURIComponent(name)}`);
+  await page.getByRole("button", { name: `Abrir ficha completa de ${name}`, exact: true }).click();
+  await profile.getByRole("tab", { name: "Resumo", exact: true }).click();
+  await expect(responses.getByText("Incompleto", { exact: true })).toBeVisible();
+  await expect(responses.getByText("Qual é o maior desafio?", { exact: true })).toBeVisible();
+  await expect(responses.getByText("Organizar demandas", { exact: true })).toBeVisible();
 });

@@ -14,6 +14,7 @@ export type MarketingFormResponseSummary = Readonly<{
   receiptId: string;
   responseKind?: "EXTERNAL_QUIZ";
   quizId?: "chatmandato" | "quizmandato";
+  completionStatus?: "COMPLETED" | "PARTIAL";
   summary?: string;
   result?: Readonly<{ key: string; label: string }>;
   formName: string;

@@ -1,4 +1,4 @@
-import { EXTERNAL_QUIZ_UNNAMED_LEAD, externalQuizResponseSchema } from "@/modules/acquisition-api/domain/external-quiz-contracts";
+import { EXTERNAL_QUIZ_COMPLETE_TAG, EXTERNAL_QUIZ_UNNAMED_LEAD, readExternalQuizResponse } from "@/modules/acquisition-api/domain/external-quiz-contracts";
 import type {
   ContactPreference,
   LeadAssignmentType,
@@ -902,9 +902,9 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
     payload: unknown,
     context: LeadIntakeActorContext,
     transactionOverride?: Prisma.TransactionClient,
-    intakeOptions?: Readonly<{ partialResponseId?: string; scheduleTopSendVoice?: boolean; suppressTelegramAlert?: boolean }>,
+    intakeOptions?: Readonly<{ partialResponseId?: string; scheduleTopSendVoice?: boolean; suppressTelegramAlert?: boolean; historicalReceivedAt?: Date }>,
   ): Promise<LeadIntakeResult> {
-    const parsed = parseInput(payload, options.now());
+    const parsed = parseInput(payload, intakeOptions?.historicalReceivedAt ?? options.now());
     if (isRejectedResult(parsed)) return parsed;
 
     const generalQueue = await (transactionOverride ?? options.database).queue.findFirst({
@@ -963,6 +963,26 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       }
       await lockIntakeIdentity(transaction, context.workspaceId, parsed);
 
+      const quiz = !isHumanContext(context) && parsed.channel === "FORM"
+        ? readExternalQuizResponse(parsed.rawPayload)
+        : null;
+      async function tagCompletedQuiz(leadId: string) {
+        if (quiz?.completionStatus !== "COMPLETED") return;
+        const { workspaceId, actorId } = context;
+        await transaction.tag.createMany({
+          data: [{ workspaceId, name: EXTERNAL_QUIZ_COMPLETE_TAG, createdByActorId: actorId, updatedByActorId: actorId }],
+          skipDuplicates: true,
+        });
+        const tag = await transaction.tag.findFirstOrThrow({
+          where: { workspaceId, name: { equals: EXTERNAL_QUIZ_COMPLETE_TAG, mode: "insensitive" }, deletedAt: null },
+          select: { id: true },
+        });
+        await transaction.leadTag.createMany({
+          data: [{ workspaceId, leadId, tagId: tag.id, createdByActorId: actorId }],
+          skipDuplicates: true,
+        });
+      }
+
       const priorSubmission = await transaction.leadFormSubmission.findUnique({
         where: {
           workspaceId_idempotencyKey: {
@@ -993,16 +1013,14 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       });
       if (priorSubmission) {
         const priorRaw = priorSubmission.rawPayload as Record<string, unknown> | null;
-        const oldQuiz = externalQuizResponseSchema.safeParse(priorRaw?.quizResponse);
-        const newQuiz = externalQuizResponseSchema.safeParse(parsed.rawPayload.quizResponse);
-        // A partial quiz owns this submission identity. Completion refreshes
-        // its snapshot without creating another lead, SLA cycle, metric or alert.
-        if (priorSubmission.lead && !isHumanContext(context) && parsed.channel === "FORM"
-          && priorRaw?.provider === "FORM" && parsed.rawPayload.provider === "FORM"
-          && oldQuiz.success && oldQuiz.data.completionStatus === "PARTIAL" && newQuiz.success && newQuiz.data.completionStatus !== "PARTIAL"
-          && oldQuiz.data.quiz.id === newQuiz.data.quiz.id && priorSubmission.formIdentifier === parsed.formIdentifier
+        const oldQuiz = readExternalQuizResponse(priorRaw);
+        // One submission keeps its original intake date and operational records.
+        // A late partial event cannot replace a completed snapshot.
+        if (priorSubmission.lead && oldQuiz?.completionStatus === "PARTIAL" && quiz
+          && (quiz.completionStatus === "COMPLETED" || quiz.answers.length > oldQuiz.answers.length)
+          && oldQuiz.quiz.id === quiz.quiz.id && priorSubmission.formIdentifier === parsed.formIdentifier
           && priorSubmission.normalizedPhone === parsed.normalizedPhone
-          && typeof priorRaw.externalSubmissionId === "string" && priorRaw.externalSubmissionId === parsed.rawPayload.externalSubmissionId) {
+          && typeof priorRaw?.externalSubmissionId === "string" && priorRaw.externalSubmissionId === parsed.rawPayload.externalSubmissionId) {
           await transaction.leadFormSubmission.update({ where: { id: priorSubmission.id }, data: {
             rawPayload: { ...parsed.rawPayload, ...(priorRaw.historicalImport === true ? { historicalImport: true } : {}) },
             submittedFullName: parsed.fullName,
@@ -1010,15 +1028,19 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
             submittedCity: parsed.city ?? null,
             submittedStateCode: parsed.stateCode ?? null,
             submittedInterestSummary: parsed.interestSummary ?? null,
-            submittedAt: parsed.submittedAt ?? parsed.receivedAt,
           } });
-          await transaction.lead.updateMany({
-            where: { id: priorSubmission.lead.id, workspaceId: context.workspaceId, fullName: EXTERNAL_QUIZ_UNNAMED_LEAD, deletedAt: null },
-            data: { fullName: parsed.fullName, updatedByActorId: context.actorId },
-          });
-          await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId,
-            action: "lead.external_quiz_completed", entityType: "Lead", entityId: priorSubmission.lead.id,
-            origin: "SYSTEM", changes: { submissionId: priorSubmission.id, quizId: newQuiz.data.quiz.id, historicalImport: priorRaw.historicalImport === true } } });
+          if (parsed.fullName !== EXTERNAL_QUIZ_UNNAMED_LEAD) {
+            await transaction.lead.updateMany({
+              where: { id: priorSubmission.lead.id, workspaceId: context.workspaceId, fullName: EXTERNAL_QUIZ_UNNAMED_LEAD, deletedAt: null },
+              data: { fullName: parsed.fullName, updatedByActorId: context.actorId },
+            });
+          }
+          if (quiz.completionStatus === "COMPLETED") {
+            await tagCompletedQuiz(priorSubmission.lead.id);
+            await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId,
+              action: "lead.external_quiz_completed", entityType: "Lead", entityId: priorSubmission.lead.id,
+              origin: "SYSTEM", changes: { submissionId: priorSubmission.id, quizId: quiz.quiz.id, historicalImport: priorRaw.historicalImport === true } } });
+          }
         }
         const replay = acceptedReplay(priorSubmission);
         return (
@@ -1210,6 +1232,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
           where: { id: submission.id },
           data: { leadId: lead.id, status: "LINKED", intakeOutcome: "CREATED" },
         });
+        await tagCompletedQuiz(lead.id);
         const contactIdentity = await ensureContactForLeadInTransaction(
           transaction,
           {
@@ -1515,6 +1538,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         where: { id: submission.id },
         data: { leadId: lead.id, status: "LINKED", intakeOutcome: "ATTACHED" },
       });
+      await tagCompletedQuiz(lead.id);
 
       const contactIdentity = await ensureContactForLeadInTransaction(
         transaction,
@@ -1715,7 +1739,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       ? await executeIntake(transactionOverride)
       : await options.database.$transaction(executeIntake);
 
-    if (result.outcome !== "REJECTED" && options.automationPublisher) {
+    if (result.outcome !== "REJECTED" && options.automationPublisher && !intakeOptions?.historicalReceivedAt) {
       const publish = async (transaction: Prisma.TransactionClient) => {
         const persistedLead = await transaction.lead.findFirst({
           where: { id: result.leadId, workspaceId: context.workspaceId, deletedAt: null },
