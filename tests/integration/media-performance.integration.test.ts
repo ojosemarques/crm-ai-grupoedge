@@ -35,25 +35,29 @@ describe("CRM-39 mídia paga local",()=>{
    }
    await database.lead.updateMany({ where: { id: { in: leads } }, data: { createdAt: now } });
    let sequence = 0;
-   async function booking(leadId: string, occurredAt = now) {
+   async function booking(leadId: string, occurredAt = now, selfBooked = false) {
      const startsAt = new Date(now.getTime() + (10 + sequence++) * 86_400_000);
      const meeting = await database.meeting.create({ data: {
        workspaceId, leadId, ownerMemberId: manager.memberId, title: "MQL reunião futura", startsAt,
        endsAt: new Date(startsAt.getTime() + 1_800_000), durationMinutes: 30, timeZone: "America/Sao_Paulo",
        createdByActorId: manager.actorId, updatedByActorId: manager.actorId, createdAt: occurredAt,
      } });
+     if (selfBooked) await database.auditLog.create({ data: {
+       workspaceId, actorId: manager.actorId, action: "meeting.scheduled", entityType: "Meeting", entityId: meeting.id,
+       changes: { schedulingPolicy: "PUBLIC_FORM" }, occurredAt,
+     } });
      await database.$transaction(tx => recordCommercialMetricFactInTransaction(tx, {
        workspaceId, eventKey: `mql:${meeting.id}`, eventType: "MEETING_SCHEDULED", occurredAt,
        sourceEntityType: "MeetingHistory", sourceEntityId: randomUUID(), leadId, meetingId: meeting.id,
-       pipelineId: pipeline.id, bookedByMemberId: manager.memberId, creditedMemberId: manager.memberId,
+       pipelineId: pipeline.id, bookedByMemberId: selfBooked ? null : manager.memberId, creditedMemberId: selfBooked ? null : manager.memberId,
      }));
    }
-   for (const leadId of [...leads, leads[0]!, leads[1]!]) await booking(leadId);
+   for (const [index, leadId] of [...leads, leads[0]!, leads[1]!].entries()) await booking(leadId, new Date(now.getTime() + index), index < 2);
    const service = createMediaPerformanceService({ database, now: () => now });
    const period = { periodStart: "2046-04-21", periodEnd: "2046-04-21" };
    const screen = await service.getScreen(manager, period);
    expect(screen.advertisingFunnel.byDimension.source.reduce((sum, row) => sum + row.scheduled, 0)).toBe(4);
-   expect(screen).toMatchObject({ advertisingBookings: 4 });
+   expect(screen).toMatchObject({ advertisingBookings: 4, advertisingBookingOrigins: { selfBooked: 2, staffBooked: 2, unknown: 0 } });
    const original = await database.lead.findUniqueOrThrow({ where: { id: leads[0]! } });
    const duplicateCard = await database.lead.create({ data: {
      workspaceId, contactId: original.contactId, sourceId: original.sourceId, ownerMemberId: manager.memberId,
@@ -61,7 +65,7 @@ describe("CRM-39 mídia paga local",()=>{
      slaStartedAt: now, slaDueAt: now, lastActivityAt: now,
      createdByActorId: manager.actorId, updatedByActorId: manager.actorId, createdAt: new Date("2046-04-20T12:00:00Z"),
    } });
-   await booking(duplicateCard.id);
+   await booking(duplicateCard.id, new Date(now.getTime() + 10));
    expect((await service.getScreen(manager, period)).advertisingBookings).toBe(4);
    const old = await intake.intake({ channel: "MANUAL", idempotencyKey: randomUUID(), fullName: "MQL lead anterior", phone: "+5511987000010", sourceKey: "manual", pipelineId: pipeline.id, rawPayload: {} }, manager);
    if (old.outcome === "REJECTED") throw new Error(old.issues[0]?.message ?? old.code);
