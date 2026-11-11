@@ -43,12 +43,12 @@ beforeAll(async () => {
   await db.integrationConnectionConfigVersion.create({ data: { workspaceId, connectionId, version: 1, schemaVersion: TELEGRAM_CONFIG_VERSION, configHash: "fixture", config: { state: "PENDING", recipientMemberId: memberId, activationHash: createHash("sha256").update(activation).digest("hex"), expiresAt: new Date(now.getTime() + 86400000).toISOString() }, createdByActorId: actorId } });
 });
 
-async function partialForm() {
+async function partialForm(formKey?: string) {
   const slug = `telegram-parcial-${randomUUID().slice(0, 8)}`;
   const definition = createEmptyMarketingFormDefinition();
   definition.questions.push({ stableKey: "telefone", type: "PHONE", title: "Telefone", required: true, position: 1, mapping: "phone", config: { defaultCountry: "BR" } });
   definition.destination = { sourceKey: "manual", pipelineId, initialStageId: stageId, queueId: null, tagIds: [], priorityBandCode: "P3" };
-  const form = await db.marketingForm.create({ data: { workspaceId, key: slug, name: "Form Telegram", publicSlug: slug, status: "ACTIVE", draftDefinition: definition, createdByActorId: actorId, updatedByActorId: actorId } });
+  const form = await db.marketingForm.create({ data: { workspaceId, key: formKey ?? slug, name: "Form Telegram", publicSlug: slug, status: "ACTIVE", draftDefinition: definition, createdByActorId: actorId, updatedByActorId: actorId } });
   const version = await db.marketingFormVersion.create({ data: { workspaceId, marketingFormId: form.id, version: 1, schemaVersion: "marketing-form.v1", definition, definitionHash: "fixture", publishedAt: now, publishedByActorId: actorId, createdByActorId: actorId } });
   await db.marketingForm.update({ where: { id: form.id }, data: { publishedVersionId: version.id } });
   const formService = createMarketingFormSubmissionService({ database: db, now: () => now, leadIntake: service() });
@@ -154,7 +154,7 @@ describe("formulários parciais em Anúncios", () => {
     const first = await db.marketingFormPartialResponse.findFirstOrThrow({ where: { marketingFormId: f.form.id } });
     expect(await db.job.count({ where: { workspaceId, idempotencyKey: partialLeadKey(first.id) } })).toBe(0);
     // Another respondent supplies only a phone; the later name belongs to this session.
-    const onlyPhone = await partialForm();
+    const onlyPhone = await partialForm("forms-mandato");
     for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, result: { message_id: 10 } }), { status: 200 }));
     vi.stubGlobal("fetch", fetchImpl);
@@ -163,6 +163,8 @@ describe("formulários parciais em Anúncios", () => {
     const submission = await db.leadFormSubmission.findUniqueOrThrow({ where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey: partialLeadKey(partial.id) } } });
     const lead = await db.lead.findUniqueOrThrow({ where: { id: submission.leadId! } });
     expect(lead).toMatchObject({ fullName: PARTIAL_LEAD_PLACEHOLDER, normalizedPhone: phone, pipelineId, createdAt: partial.firstAnsweredAt });
+    const tags = () => db.leadTag.findMany({ where: { workspaceId, leadId: lead.id, removedAt: null }, select: { tag: { select: { name: true } } } });
+    expect(await tags()).toEqual([{ tag: { name: "Incompleto" } }]);
     const voiceJobWhere = { workspaceId, idempotencyKey: `topsend-voice:${lead.id}:v1` };
     expect(await db.job.findFirst({ where: voiceJobWhere })).toMatchObject({ status: "PENDING", runAt: new Date(now.getTime() + 30_000) });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -175,6 +177,7 @@ describe("formulários parciais em Anúncios", () => {
     expect(accepted.outcome).toBe("ACCEPTED");
     const completed = await db.leadFormSubmission.findFirstOrThrow({ where: { workspaceId, marketingFormId: onlyPhone.form.id, marketingFormReceiptId: { not: null } } });
     expect(completed.leadId).toBe(lead.id);
+    expect(await tags()).toEqual([{ tag: { name: "Completo" } }]);
     expect(await db.lead.count({ where: { workspaceId, normalizedPhone: phone } })).toBe(1);
     expect(await db.job.count({ where: { workspaceId, idempotencyKey: `telegram-ad-lead:${lead.id}:carlos` } })).toBe(1);
     expect(await db.job.count({ where: voiceJobWhere })).toBe(1);
@@ -190,7 +193,7 @@ describe("formulários parciais em Anúncios", () => {
 
   it("agenda o torpedo ao concluir um formulário Politizai sem cadastro parcial", async () => {
     for (const [key, value] of Object.entries(topSendEnv)) vi.stubEnv(key, value);
-    const form = await partialForm();
+    const form = await partialForm("forms-vsl");
     const accepted = await form.formService.submit(form.slug, {
       versionPublicId: form.version.publicId, sessionPublicId: form.sessionPublicId, idempotencyToken: randomUUID(),
       startedAt: new Date(now.getTime() - 2000).toISOString(), tracking: {},
@@ -198,6 +201,7 @@ describe("formulários parciais em Anúncios", () => {
     });
     expect(accepted.outcome).toBe("ACCEPTED");
     const submission = await db.leadFormSubmission.findFirstOrThrow({ where: { workspaceId, marketingFormId: form.form.id } });
+    expect(await db.leadTag.count({ where: { workspaceId, leadId: submission.leadId!, removedAt: null, tag: { name: "Completo" } } })).toBe(1);
     expect(await db.job.findFirst({ where: { workspaceId, idempotencyKey: `topsend-voice:${submission.leadId}:v1` } })).toMatchObject({
       status: "PENDING", runAt: new Date(now.getTime() + 30_000),
     });

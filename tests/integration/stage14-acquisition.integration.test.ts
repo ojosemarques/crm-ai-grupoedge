@@ -391,7 +391,7 @@ describe("Forms Nativo — Página, data, identidade e feedback", () => {
     expect(await database.lead.findUniqueOrThrow({ where: { id: submission.leadId! } })).toMatchObject({ pipelineId: pipeline.id, currentStageId: pipeline.stages[0]!.id });
     expect((await responsesByLead(database, admin.workspaceId, [submission.leadId!])).get(submission.leadId!)?.[0]).toMatchObject({ formName: "Mandato nativo · Forms Nativo", answers: [{ questionKey: "qual_é_o_desafio/atual?", question: "Qual é o desafio?", displayValue: "Organizar o gabinete" }] });
     const summary = await createPreSalesPipelineService({ database, authorization, now: () => now }).getLeadState(admin, { leadId: submission.leadId! });
-    expect(summary).toMatchObject({ pipelineName: "Anúncios", formResponses: [{ formName: "Mandato nativo · Forms Nativo", answers: [{ question: "Qual é o desafio?", displayValue: "Organizar o gabinete" }] }] });
+    expect(summary).toMatchObject({ pipelineName: "Anúncios", formCompletionTag: "Completo", formResponses: [{ formName: "Mandato nativo · Forms Nativo", answers: [{ question: "Qual é o desafio?", displayValue: "Organizar o gabinete" }] }] });
     const seller = await context("sdr1@demo.politizai.local");
     await database.lead.update({ where: { id: submission.leadId! }, data: { ownerMemberId: seller.memberId, queueId: null } });
     expect((await createPreSalesPipelineService({ database, authorization, now: () => now }).getLeadState(seller, { leadId: submission.leadId! })).formResponses).toEqual(summary.formResponses);
@@ -596,7 +596,7 @@ describe("quizzes externos de mandato", () => {
     expect(await database.leadFormSubmission.findFirst({ where: { idempotencyKey: submissionKey } })).toMatchObject({
       rawPayload: { quizResponse: { completionStatus: "PARTIAL", answers: progress.answers } },
     });
-    expect(await database.leadTag.count({ where: { leadId, removedAt: null, tag: { name: "Completo" } } })).toBe(0);
+    expect(await database.leadTag.findMany({ where: { leadId, removedAt: null }, select: { tag: { select: { name: true } } } })).toEqual([{ tag: { name: "Incompleto" } }]);
 
     const complete = { ...partial, completionStatus: "COMPLETED", fullName: "Nome do diagnóstico",
       eventId: `quiz:quizmandato:${submissionId}:completed:v1`, occurredAt: new Date(now.getTime() + 1000).toISOString(),
@@ -612,7 +612,7 @@ describe("quizzes externos de mandato", () => {
     });
     expect(await database.lead.findUniqueOrThrow({ where: { id: leadId } })).toMatchObject({ fullName: complete.fullName });
     expect(await database.job.count({ where: jobWhere })).toBe(1);
-    expect(await database.leadTag.count({ where: { leadId, removedAt: null, tag: { name: "Completo" } } })).toBe(1);
+    expect(await database.leadTag.findMany({ where: { leadId, removedAt: null }, select: { tag: { select: { name: true } } } })).toEqual([{ tag: { name: "Completo" } }]);
     expect(await database.leadFormSubmission.findFirst({ where: { idempotencyKey: submissionKey } })).toMatchObject({
       submittedAt: now,
     });

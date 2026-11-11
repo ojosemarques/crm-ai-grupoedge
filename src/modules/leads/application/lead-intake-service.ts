@@ -1,4 +1,6 @@
-import { EXTERNAL_QUIZ_COMPLETE_TAG, EXTERNAL_QUIZ_UNNAMED_LEAD, readExternalQuizResponse } from "@/modules/acquisition-api/domain/external-quiz-contracts";
+import { assignLeadFormCompletionTag } from "./lead-form-completion-tag";
+import type { FormCompletionStatus } from "@/modules/marketing-forms/domain/form-completion-status";
+import { EXTERNAL_QUIZ_UNNAMED_LEAD, readExternalQuizResponse } from "@/modules/acquisition-api/domain/external-quiz-contracts";
 import type {
   ContactPreference,
   LeadAssignmentType,
@@ -902,7 +904,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
     payload: unknown,
     context: LeadIntakeActorContext,
     transactionOverride?: Prisma.TransactionClient,
-    intakeOptions?: Readonly<{ partialResponseId?: string; scheduleTopSendVoice?: boolean; suppressTelegramAlert?: boolean; historicalReceivedAt?: Date }>,
+    intakeOptions?: Readonly<{ partialResponseId?: string; scheduleTopSendVoice?: boolean; suppressTelegramAlert?: boolean; historicalReceivedAt?: Date; formCompletionStatus?: FormCompletionStatus }>,
   ): Promise<LeadIntakeResult> {
     const parsed = parseInput(payload, intakeOptions?.historicalReceivedAt ?? options.now());
     if (isRejectedResult(parsed)) return parsed;
@@ -966,20 +968,11 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
       const quiz = !isHumanContext(context) && parsed.channel === "FORM"
         ? readExternalQuizResponse(parsed.rawPayload)
         : null;
-      async function tagCompletedQuiz(leadId: string) {
-        if (quiz?.completionStatus !== "COMPLETED") return;
-        const { workspaceId, actorId } = context;
-        await transaction.tag.createMany({
-          data: [{ workspaceId, name: EXTERNAL_QUIZ_COMPLETE_TAG, createdByActorId: actorId, updatedByActorId: actorId }],
-          skipDuplicates: true,
-        });
-        const tag = await transaction.tag.findFirstOrThrow({
-          where: { workspaceId, name: { equals: EXTERNAL_QUIZ_COMPLETE_TAG, mode: "insensitive" }, deletedAt: null },
-          select: { id: true },
-        });
-        await transaction.leadTag.createMany({
-          data: [{ workspaceId, leadId, tagId: tag.id, createdByActorId: actorId }],
-          skipDuplicates: true,
+      const formCompletionStatus = quiz?.completionStatus ?? intakeOptions?.formCompletionStatus;
+      async function tagFormResponse(leadId: string) {
+        if (!formCompletionStatus) return;
+        await assignLeadFormCompletionTag(transaction, {
+          workspaceId: context.workspaceId, actorId: context.actorId, leadId, status: formCompletionStatus, now: options.now(),
         });
       }
 
@@ -1036,7 +1029,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
             });
           }
           if (quiz.completionStatus === "COMPLETED") {
-            await tagCompletedQuiz(priorSubmission.lead.id);
+            await tagFormResponse(priorSubmission.lead.id);
             await transaction.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.actorId,
               action: "lead.external_quiz_completed", entityType: "Lead", entityId: priorSubmission.lead.id,
               origin: "SYSTEM", changes: { submissionId: priorSubmission.id, quizId: quiz.quiz.id, historicalImport: priorRaw.historicalImport === true } } });
@@ -1232,7 +1225,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
           where: { id: submission.id },
           data: { leadId: lead.id, status: "LINKED", intakeOutcome: "CREATED" },
         });
-        await tagCompletedQuiz(lead.id);
+        await tagFormResponse(lead.id);
         const contactIdentity = await ensureContactForLeadInTransaction(
           transaction,
           {
@@ -1538,7 +1531,7 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
         where: { id: submission.id },
         data: { leadId: lead.id, status: "LINKED", intakeOutcome: "ATTACHED" },
       });
-      await tagCompletedQuiz(lead.id);
+      await tagFormResponse(lead.id);
 
       const contactIdentity = await ensureContactForLeadInTransaction(
         transaction,

@@ -1,3 +1,4 @@
+import { formCompletionTagSelection, resolveLeadFormCompletionTag } from "@/modules/leads/application/lead-form-completion-tag";
 import { queueAdvertisingStageMetaConversion } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { pipelineArrivalFields, pipelineArrivalWhere } from "./pipeline-arrival-filter";
 import { assertAdvertisingSchedulingAccess } from "@/modules/meetings/application/advertising-scheduling-access";
@@ -309,6 +310,7 @@ async function leadIdsByGender(
 }
 
 const pipelineCardInclude = {
+  tags: formCompletionTagSelection,
   owner: { select: { user: { select: { displayName: true } } } },
   queue: { select: { name: true } },
   currentScore: { select: { leadScore: { select: { score: true, priorityBandCode: true } } } },
@@ -368,6 +370,7 @@ function toPipelineCard(
     phone: formResponses[0]?.phone ?? lead.normalizedPhone,
     jobTitle: lead.jobTitle,
     formResponses,
+    formCompletionTag: resolveLeadFormCompletionTag(lead.tags),
     priorityCode: lead.currentScore?.leadScore.priorityBandCode ?? null,
     score: lead.currentScore?.leadScore.score ?? null,
     responsibleName: lead.owner?.user.displayName ?? lead.queue?.name ?? "Responsável não identificado",
@@ -820,6 +823,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
         where: { id: leadForAuth.id },
         include: {
           currentStage: true,
+          tags: formCompletionTagSelection,
           tasks: {
             where: activeTaskWhere(context.workspaceId, leadForAuth.id),
             orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
@@ -859,6 +863,7 @@ export function createPreSalesPipelineService(options: PreSalesPipelineServiceOp
       leadId: lead.id,
       pipelineName: pipeline.name,
       formResponses,
+      formCompletionTag: resolveLeadFormCompletionTag(lead.tags),
       currentStageId: lead.currentStage.id,
       currentStageCode: lead.currentStage.leadStageCode,
       currentStageName: lead.currentStage.name,

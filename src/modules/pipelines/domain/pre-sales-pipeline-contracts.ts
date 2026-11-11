@@ -1,3 +1,4 @@
+import type { FormCompletionTag } from "@/modules/marketing-forms/domain/form-completion-status";
 import type { MarketingFormResponseSummary } from "@/modules/marketing-forms/domain/marketing-form-response-summary";
 export const defaultLeadStageCodes = [
   "NEW",
@@ -59,6 +60,7 @@ export type LeadPipelineCard = Readonly<{
   phone: string | null;
   jobTitle: string | null;
   formResponses: readonly MarketingFormResponseSummary[];
+  formCompletionTag: FormCompletionTag | null;
   priorityCode: "P1" | "P2" | "P3" | null;
   score: number | null;
   responsibleName: string;
@@ -102,6 +104,7 @@ export type LeadPipelineState = Readonly<{
   leadId: string;
   pipelineName: string;
   formResponses: LeadPipelineCard["formResponses"];
+  formCompletionTag: FormCompletionTag | null;
   currentStageId: string;
   currentStageCode: LeadStageCode;
   currentStageName: string;

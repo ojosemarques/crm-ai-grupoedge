@@ -1265,7 +1265,10 @@ export function OperationalHistoryWorkspace({
         <div aria-labelledby="tab-summary" className="grid gap-6" id="panel-summary" role="tabpanel">
           {pipeline.pipelineName === ADVERTISING_PIPELINE_NAME ? (
             <section aria-label="Respostas do formulário" className="surface-panel surface-panel--soft p-5 [&_section]:text-sm [&_summary]:text-sm">
-              <h2 className="text-lg font-semibold">Respostas do formulário</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-lg font-semibold">Respostas do formulário</h2>
+                {pipeline.formCompletionTag ? <span className="stage-badge" aria-label="Status do lead no formulário">{pipeline.formCompletionTag}</span> : null}
+              </div>
               {pipeline.formResponses.length > 0 ? (
                 <div className="mt-3 min-w-0 [&>div]:min-w-0">
                   <LeadFormResponseDetails openQuizResponses responses={pipeline.formResponses} timeZone={operations.timeZone} />

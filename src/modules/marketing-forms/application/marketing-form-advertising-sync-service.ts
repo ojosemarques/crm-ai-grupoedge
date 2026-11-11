@@ -1,3 +1,5 @@
+import { assignLeadFormCompletionTag } from "@/modules/leads/application/lead-form-completion-tag";
+import { tracksMarketingFormCompletion } from "@/modules/marketing-forms/domain/form-completion-status";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { getMarketingFormService } from "@/modules/marketing-forms/application/marketing-form-service";
@@ -63,6 +65,7 @@ export function createMarketingFormAdvertisingSyncService(options: Options) {
       select: {
         id: true,
         name: true,
+        key: true,
         status: true,
         revision: true,
         draftDefinition: true,
@@ -257,6 +260,9 @@ export function createMarketingFormAdvertisingSyncService(options: Options) {
           where: { id: submission.id },
           data: { leadId: lead.id, status: "LINKED", intakeOutcome: "CREATED" },
         });
+        if (tracksMarketingFormCompletion(snapshot.form.key)) {
+          await assignLeadFormCompletionTag(transaction, { workspaceId: context.workspaceId, actorId: context.actorId, leadId: lead.id, status: "COMPLETED", now: options.now() });
+        }
         created.push(lead.id);
       }
       if (created.length > 0) snapshot = await inspect(context, formId, transaction);

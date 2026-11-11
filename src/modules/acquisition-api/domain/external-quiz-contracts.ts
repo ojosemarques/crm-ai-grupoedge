@@ -2,7 +2,6 @@ import { z } from "zod";
 
 export const EXTERNAL_QUIZ_IDS = ["chatmandato", "quizmandato"] as const;
 export const EXTERNAL_QUIZ_NAMES = { chatmandato: "ChatMandato", quizmandato: "QuizMandato" } as const;
-export const EXTERNAL_QUIZ_COMPLETE_TAG = "Completo";
 
 export const EXTERNAL_QUIZ_UNNAMED_LEAD = "Lead de quiz — nome não informado";
 

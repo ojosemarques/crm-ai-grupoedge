@@ -1,3 +1,5 @@
+import { assignLeadFormCompletionTag } from "@/modules/leads/application/lead-form-completion-tag";
+import { tracksMarketingFormCompletion } from "@/modules/marketing-forms/domain/form-completion-status";
 import { createHash } from "node:crypto";
 
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
@@ -361,6 +363,9 @@ export function createMarketingFormSubmissionService(options: Options) {
         const existing = await tx.leadTag.findMany({ where: { workspaceId: form.workspaceId, leadId: intake.leadId, tagId: { in: form.definition.destination.tagIds }, removedAt: null }, select: { tagId: true } });
         const existingIds = new Set(existing.map((row) => row.tagId));
         await tx.leadTag.createMany({ data: form.definition.destination.tagIds.filter((tagId) => !existingIds.has(tagId)).map((tagId) => ({ workspaceId: form.workspaceId, leadId: intake.leadId, tagId, createdByActorId: actor.id })) });
+      }
+      if (tracksMarketingFormCompletion(form.key)) {
+        await assignLeadFormCompletionTag(tx, { workspaceId: form.workspaceId, actorId: actor.id, leadId: intake.leadId, status: "COMPLETED", now });
       }
       const redirect = form.definition.redirects.automaticKind === "AGENDA"
         ? { kind: "AGENDA", url: `/f/agenda/${receipt.publicId}`, rotationTargetKey: null, rotationAppliedAt: null }

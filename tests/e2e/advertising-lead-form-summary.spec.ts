@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import { DEMO_SEED_PASSWORD, DEMO_USERS } from "@/modules/settings/application/demo-seed-service";
+import { assignLeadFormCompletionTag } from "@/modules/leads/application/lead-form-completion-tag";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { enterDemoCompany } from "./helpers/company-hub";
 
@@ -37,15 +38,21 @@ test("vendedor abre as respostas fechadas no Resumo da ficha de Anúncios", asyn
   await db.leadFormSubmission.create({ data: { workspaceId: workspace.id, leadId: lead.id, sourceId: lead.sourceId, channel: "AD", status: "LINKED", intakeOutcome: "ATTACHED",
     formIdentifier: `meta-native:summary-${randomUUID()}`, idempotencyKey: randomUUID(), submittedFullName: name, submittedAt: new Date(), createdByActorId: actor.id,
     rawPayload: { provider: "META_LEAD_ADS", nativeResponse: { formName: "Formulário nativo de teste", answers: [{ questionKey: "objetivo", question: "Qual é o seu objetivo?", displayValue: "Organizar atendimento" }] } } } });
+  await db.$transaction((tx) => assignLeadFormCompletionTag(tx, {
+    workspaceId: workspace.id, leadId: lead.id, actorId: actor.id, status: "COMPLETED", now: new Date(),
+  }));
   await page.context().clearCookies();
   await login(page, "sdr1@demo.politizai.local");
   await page.goto(`/anuncios?q=${encodeURIComponent(name)}`);
-  await page.locator("article").filter({ hasText: name }).click();
+  const card = page.locator("article").filter({ hasText: name });
+  await expect(card.getByText("Completo", { exact: true })).toBeVisible();
+  await card.click();
   const profile = page.getByRole("dialog");
   await expect(profile.getByRole("heading", { name, exact: true })).toBeVisible();
   await expect(profile.getByText("SLA não registrado", { exact: true })).toBeVisible();
   await profile.getByRole("tab", { name: "Resumo", exact: true }).click();
   const responses = profile.getByRole("region", { name: "Respostas do formulário", exact: true });
+  await expect(responses.getByText("Completo", { exact: true })).toBeVisible();
   const disclosure = responses.locator("details");
   await expect(disclosure).not.toHaveAttribute("open", "");
   await expect(responses.getByText("Organizar atendimento", { exact: true })).not.toBeVisible();
