@@ -1,4 +1,6 @@
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
+import { resolveLeadFormCompletionTag } from "@/modules/leads/application/lead-form-completion-tag";
+import { formCompletionTagNames } from "@/modules/marketing-forms/domain/form-completion-status";
 import { PAYMENT_PROVIDER_KEY } from "@/modules/payments/domain/payment-contracts";
 import { loadAcquisitionFormArrivals, loadLeadArrivalDates } from "./acquisition-form-arrivals";
 import { summarizeAcquisitionFunnel, summarizeAcquisitionReceipts, type AcquisitionReceipt, type FunnelDimension, type FunnelLead } from "../domain/acquisition-funnel";
@@ -86,12 +88,19 @@ async function loadAcquisitionFunnelSnapshot(database: Prisma.TransactionClient,
   if (incomplete.length < formArrivals.incomplete.length) truncated = true;
   cohort.push(...incomplete);
   const promotedIncompleteIds = new Set(formArrivals.promotedIncompleteLeadIds);
-  const promotedIncompleteCount = leads.filter((lead) => promotedIncompleteIds.has(lead.id)).length;
+  const crmLeads = { total: leads.length, complete: 0, incomplete: 0, unclassified: 0 };
+  for (const lead of leads) {
+    const completion = resolveLeadFormCompletionTag(lead.tags);
+    if (completion === formCompletionTagNames.COMPLETED) crmLeads.complete++;
+    else if (completion === formCompletionTagNames.PARTIAL || promotedIncompleteIds.has(lead.id)) crmLeads.incomplete++;
+    else crmLeads.unclassified++;
+  }
   const dimensions: FunnelDimension[] = ["source", "campaign", "creative", "utmCampaign", "utmContent"];
   return {
     cohortSize: cohort.length,
-    registeredLeadCount: leads.length - promotedIncompleteCount,
-    incompleteCount: incomplete.length + promotedIncompleteCount,
+    crmLeads,
+    registeredLeadCount: crmLeads.total - crmLeads.incomplete,
+    incompleteCount: incomplete.length + crmLeads.incomplete,
     truncated,
     excludedReceiptCount: cohort.reduce((sum, lead) => sum + (lead.receipts?.excludedCount ?? 0), 0),
     receiptCurrency: "BRL" as const,

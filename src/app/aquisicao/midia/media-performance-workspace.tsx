@@ -51,12 +51,13 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
   const previousStartDate = workspaceDateAt(new Date(previousStart), timeZone);
   const previousEndDate = workspaceDateAt(new Date(Date.parse(previousEnd) - 1), timeZone);
   const advertisingRows = initial.advertisingFunnel.byDimension.source;
+  const { crmLeads } = initial.advertisingFunnel;
   const scheduledMeetings = initial.advertisingBookings;
   const costPerScheduledMeeting = mediaAvailable && scheduledMeetings > 0
     ? Math.round(initial.totals.spendCents / scheduledMeetings)
     : null;
   const advertisingStages = [
-    { key: "received", label: "Leads recebidos", value: initial.advertisingFunnel.cohortSize },
+    { key: "received", label: "Leads recebidos", value: crmLeads.total },
     { key: "scheduled", label: "Pessoas agendadas no período", value: scheduledMeetings },
     { key: "completed", label: "Realizaram reunião", value: advertisingRows.reduce((sum, row) => sum + row.completed, 0) },
     { key: "buyers", label: "Compraram", value: advertisingRows.reduce((sum, row) => sum + row.buyers, 0) },
@@ -109,7 +110,11 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
       { label: "Impressões", value: mediaAvailable ? initial.totals.impressions.toLocaleString("pt-BR") : "Sem dados", hint: "Exibições dos anúncios", icon: "tendencia" as const },
       { label: "Cliques", value: mediaAvailable ? initial.totals.clicks.toLocaleString("pt-BR") : "Sem dados", hint: "Interações reportadas", icon: "entrada" as const },
       { label: "Leads reportados", value: mediaAvailable ? initial.totals.reportedLeads.toLocaleString("pt-BR") : "Sem dados", hint: "Volume informado pela mídia", icon: "leads" as const },
-      { label: "Leads recebidos no CRM", value: initial.advertisingFunnel.cohortSize.toLocaleString("pt-BR"), hint: `${initial.advertisingFunnel.registeredLeadCount} cadastros · ${initial.advertisingFunnel.incompleteCount} ${initial.advertisingFunnel.incompleteCount === 1 ? "resposta incompleta" : "respostas incompletas"}`, icon: "leads" as const },
+      { label: "Leads recebidos no CRM", value: crmLeads.total.toLocaleString("pt-BR"), hint: [
+        `${crmLeads.complete} ${crmLeads.complete === 1 ? "completo" : "completos"}`,
+        `${crmLeads.incomplete} ${crmLeads.incomplete === 1 ? "incompleto" : "incompletos"}`,
+        ...(crmLeads.unclassified ? [`${crmLeads.unclassified} sem classificação`] : []),
+      ].join(" · "), icon: "leads" as const },
       { label: "CPC", value: metricValue(initial.metrics.find((metric) => metric.key === "cpc")?.value ?? null, "BRL_CENTS"), hint: "Investimento / cliques reportados", icon: "receita" as const },
       { label: "CPL · custo por lead", value: metricValue(initial.metrics.find((metric) => metric.key === "cpl")?.value ?? null, "BRL_CENTS"), hint: `${initial.totals.reportedLeads.toLocaleString("pt-BR")} leads reportados · Investimento / leads da mídia`, icon: "leads" as const },
       { label: "MQL · custo por reunião marcada", value: metricValue(costPerScheduledMeeting, "BRL_CENTS"), hint: `${scheduledMeetings.toLocaleString("pt-BR")} ${scheduledMeetings === 1 ? "pessoa agendada" : "pessoas agendadas"} no período · Investimento / pessoas agendadas`, icon: "agenda" as const },
