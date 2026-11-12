@@ -1,10 +1,15 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useSyncExternalStore, type FormEvent } from "react";
 import { AgendaPicker } from "./agenda-picker";
 import styles from "./agenda.module.css";
 
+const subscribeHydration = () => () => {};
+const clientReady = () => true;
+const serverReady = () => false;
+
 export function NativeAgendaEntry() {
+  const ready = useSyncExternalStore(subscribeHydration, clientReady, serverReady);
   const [receipt, setReceipt] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -39,11 +44,11 @@ export function NativeAgendaEntry() {
     <section className={styles.nativeEntry} aria-labelledby="native-agenda-title">
       <h1 id="native-agenda-title">Agende sua reunião</h1>
       <p>Use os mesmos dados do formulário para acessar os horários.</p>
-      <form onSubmit={identify}>
+      <form method="post" onSubmit={identify}>
         <label>Nome completo<input name="name" autoComplete="name" minLength={3} maxLength={200} required /></label>
         <label>WhatsApp com DDD<input name="phone" type="tel" autoComplete="tel" minLength={10} maxLength={25} required /></label>
         {error && <p role="alert">{error}</p>}
-        <button type="submit" disabled={pending}>{pending ? "Abrindo agenda…" : "Ver horários"}</button>
+        <button type="submit" disabled={!ready || pending}>{!ready ? "Carregando…" : pending ? "Abrindo agenda…" : "Ver horários"}</button>
       </form>
     </section>
   </main>;
