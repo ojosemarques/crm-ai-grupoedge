@@ -1,3 +1,4 @@
+import { publishPolitizaiFormJobTitleOption } from "../../scripts/publish-politizai-form-job-title-option";
 import { createConversionFeedbackService, evaluateMetaConversionPrivacy, queueAdvertisingStageMetaConversion } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { randomUUID } from "node:crypto";
 
@@ -52,8 +53,7 @@ async function createContext(workspaceId: string, workspaceSlug: string, roleId:
   return { sessionId: randomUUID(), workspaceId, workspaceSlug, userId: user.id, memberId: member.id, actorId: actor.id, roleId, roleKey, roleName: roleKey, displayName: label };
 }
 
-async function createFixture(label: string): Promise<Fixture> {
-  const slug = `forms-${label}-${randomUUID().slice(0, 8)}`;
+async function createFixture(label: string, slug = `forms-${label}-${randomUUID().slice(0, 8)}`): Promise<Fixture> {
   const workspace = await database.workspace.create({ data: { slug, name: `Forms ${label}` } });
   const system = await database.actor.create({ data: { workspaceId: workspace.id, type: "SYSTEM", key: "system", displayName: "Sistema" } });
   const [managerRole, viewerRole] = await Promise.all([
@@ -225,8 +225,8 @@ describe("serviço administrativo de formulários", () => {
     await expect(service.publish(tenantA.context, form.id, saved.revision)).rejects.toMatchObject({ code: "MARKETING_FORM_REFERENCE_NOT_FOUND", statusCode: 422 });
   });
 
-  it("envia Lead do Forms VSL pelo dataset do workspace quando só o Pixel está configurado", async () => {
-    const fixture = await createFixture("meta-default");
+  it("publica a opção F nos dois formulários, salva o cargo e preserva a entrega do Lead do VSL", async () => {
+    const fixture = await createFixture("meta-default", "politizai");
     const workspaceId = fixture.context.workspaceId;
     const pixelId = "123456789";
     const connection = await database.integrationConnection.create({ data: {
@@ -235,21 +235,63 @@ describe("serviço administrativo de formulários", () => {
       enabled: true, createdByActorId: fixture.systemActorId, updatedByActorId: fixture.systemActorId,
     } });
     await database.integrationConnectionCapability.create({ data: { workspaceId, connectionId: connection.id, capability: "SYNC_PUSH", enabled: true } });
+    const slugs = ["forms-mandato", "forms-vsl"];
+    const previousVersions = new Map<string, { id: string; publicId: string }>();
+    const jobTitle = {
+      stableKey: "pergunta-4ca04f5a", title: "Qual o seu cargo atual?",
+      type: "SINGLE_CHOICE" as const, required: true, position: 2, mapping: "jobTitle" as const,
+      config: { options: ["Prefeito (a)", "Vice-prefeito (a)", "Vereador (a)", "Deputado Federal ou Estadual", "Assessor/Chefe de gabinete"]
+        .map((label, index) => ({ stableKey: `cargo-${index}`, label })) },
+    };
+    const base = publishableDefinition(fixture);
+    const definition = { ...base, questions: [...base.questions, jobTitle] };
+    for (const slug of slugs) {
+      const form = await service.create(fixture.context, { name: slug, publicSlug: slug });
+      const saved = await service.updateDraft(fixture.context, form.id, {
+        name: form.name, expectedRevision: form.revision,
+        definition: slug === "forms-vsl" ? { ...definition, tracking: { internalEvents: true, meta: { enabled: true, pixelId } } } : definition,
+      });
+      const previous = await service.publish(fixture.context, form.id, saved.revision);
+      previousVersions.set(slug, previous.version);
+    }
+    expect(await publishPolitizaiFormJobTitleOption(database, false)).toEqual(slugs.map((slug) => ({ slug, fromVersion: 1, toVersion: 2, changed: true })));
+    expect((await service.resolvePublic("forms-vsl")).versionPublicId).toBe(previousVersions.get("forms-vsl")?.publicId);
+    await publishPolitizaiFormJobTitleOption(database, true);
+    expect(await publishPolitizaiFormJobTitleOption(database, true)).toEqual(slugs.map((slug) => ({ slug, fromVersion: 2, toVersion: 2, changed: false })));
+    for (const slug of slugs) {
+      const publicForm = await service.resolvePublic(slug);
+      const oldVersion = await database.marketingFormVersion.findUniqueOrThrow({ where: { id: previousVersions.get(slug)!.id } });
+      const currentForm = await database.marketingForm.findUniqueOrThrow({ where: { publicSlug: slug } });
+      const expectedQuestion = { ...jobTitle, config: { options: [...jobTitle.config.options, { stableKey: "nenhuma-anterior", label: "Nenhuma Anterior" }] } };
+      expect(publicForm.questions).toContainEqual(expectedQuestion);
+      expect(oldVersion.definition).toMatchObject({ questions: expect.arrayContaining([jobTitle]) });
+      expect(currentForm.draftDefinition).toMatchObject({ questions: expect.arrayContaining([expectedQuestion]) });
+    }
     const slug = "forms-vsl";
-    const form = await service.create(fixture.context, { name: "Forms VSL", publicSlug: slug });
-    const definition = { ...publishableDefinition(fixture), tracking: { internalEvents: true, meta: { enabled: true, pixelId } } };
-    const saved = await service.updateDraft(fixture.context, form.id, { name: form.name, expectedRevision: form.revision, definition });
-    const published = await service.publish(fixture.context, form.id, saved.revision);
+    const vsl = await service.resolvePublic(slug);
     const payload = {
-      versionPublicId: published.version.publicId, sessionPublicId: randomUUID(), idempotencyToken: randomUUID(),
+      versionPublicId: vsl.versionPublicId, sessionPublicId: randomUUID(), idempotencyToken: randomUUID(),
       startedAt: new Date(now.getTime() - 2_000).toISOString(), honeypot: "", tracking: { clickIds: { fbclid: "fixture" } },
-      answers: [{ questionKey: "nome-completo", value: "Pessoa VSL" }, { questionKey: "telefone", value: "+5511988772233" }],
+      answers: [{ questionKey: "nome-completo", value: "Pessoa VSL" }, { questionKey: "telefone", value: "+5511988772233" }, { questionKey: jobTitle.stableKey, value: "nenhuma-anterior" }],
     };
     vi.stubEnv("META_ADS_REPORTING_WORKSPACE_ID", workspaceId);
     vi.stubEnv("META_ADS_CONVERSIONS_UPSTREAM_PRIVACY", "true");
     vi.stubEnv("META_ADS_DATASET_ID", "987654321");
     try {
       const first = await submissionService.submit(slug, payload, { userAgent: "Browser de teste" });
+      const mandato = await service.resolvePublic("forms-mandato");
+      const mandateReceipt = await submissionService.submit("forms-mandato", {
+        ...payload, versionPublicId: mandato.versionPublicId, sessionPublicId: randomUUID(), idempotencyToken: randomUUID(),
+        answers: payload.answers.map((answer) => answer.questionKey === "telefone" ? { ...answer, value: "+5511988772244" } : answer),
+      });
+      for (const result of [first, mandateReceipt]) {
+        expect(result.outcome).toBe("ACCEPTED");
+        const receipt = await database.marketingFormReceipt.findUniqueOrThrow({ where: { workspaceId_publicId: { workspaceId, publicId: result.receiptPublicId } } });
+        expect(receipt.answers).toEqual(expect.arrayContaining([{ questionKey: jobTitle.stableKey, value: "nenhuma-anterior" }]));
+        const submission = await database.leadFormSubmission.findFirstOrThrow({ where: { workspaceId, marketingFormReceiptId: receipt.id }, include: { lead: true } });
+        expect(submission.submittedJobTitle).toBe("Nenhuma Anterior");
+        expect(submission.lead?.jobTitle).toBe("Nenhuma Anterior");
+      }
       const where = { workspaceId, eventType: "marketing.meta_conversion.v1", correlationId: first.receiptPublicId };
       expect(await database.outboxEvent.count({ where })).toBe(0);
       vi.stubEnv("META_ADS_DATASET_ID", pixelId);
