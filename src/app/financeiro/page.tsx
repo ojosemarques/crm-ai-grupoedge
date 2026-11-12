@@ -67,7 +67,11 @@ export default async function FinancePage({ searchParams }: Readonly<{ searchPar
       to = workspaceDayRange(period.to, workspace.timeZone).end;
       cashFlowFilters = { ...period, today, statementFilter, invalidPeriod: (custom && !valid) || (!custom && monthStart > today) };
     }
-    screen = await finance.screen(context, { from, to }, cashFlowFilters ? { accountId: query.account } : section === "dashboard" ? { dashboard: true } : undefined);
+    const view = cashFlowFilters ? { accountId: query.account }
+      : section === "dashboard" ? { dashboard: true }
+      : section === "lancamentos" ? { entries: true }
+      : undefined;
+    screen = await finance.screen(context, { from, to }, view);
     if (section === "metricas-metas") goals = await finance.goals(context, `${year}-${String(month).padStart(2, "0")}`);
   } catch (error) {
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");

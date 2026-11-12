@@ -14,6 +14,8 @@ import { dreGroups } from "@/modules/finance/domain/finance-reporting";
 import { CommercialCompensationPanel } from "./commercial-compensation-panel";
 import type { CommercialCompensationRow } from "@/modules/finance/application/commercial-compensation-screen";
 import type { FinanceDashboardData } from "@/modules/finance/application/finance-service";
+import { FinanceEntries } from "./finance-entries";
+import { cents, date, money, statusLabel, statusTone, text, type Row } from "./finance-display";
 import styles from "./finance-workspace.module.css";
 
 const FinanceDashboard = dynamic(() => import("./finance-dashboard").then((module) => module.FinanceDashboard));
@@ -21,7 +23,6 @@ const FinanceDashboard = dynamic(() => import("./finance-dashboard").then((modul
 export type FinanceSection = "dashboard" | "lancamentos" | "entradas" | "despesas" | "fluxo-caixa" | "dre" | "contas" | "pagar-receber" | "conciliacao" | "recorrencias" | "centros-custo" | "comprovantes" | "comissoes" | "metricas-metas" | "categorias";
 export type FinanceScreenView = Readonly<Record<string, unknown>>;
 
-type Row = Record<string, unknown>;
 export type CashFlowFilters = Readonly<{
   from: string;
   to: string;
@@ -42,14 +43,8 @@ const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", 
 function object(value: unknown): Row { return value && typeof value === "object" && !Array.isArray(value) ? value as Row : {}; }
 function list(value: unknown): Row[] { return Array.isArray(value) ? value.filter((item): item is Row => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : []; }
 function pickList(source: Row, ...keys: string[]) { for (const key of keys) { const value = list(source[key]); if (value.length || Array.isArray(source[key])) return value; } return []; }
-function text(value: unknown, fallback = "—") { return typeof value === "string" && value.trim() ? value : typeof value === "number" ? String(value) : fallback; }
-function cents(value: unknown) { try { return typeof value === "bigint" ? value : BigInt(typeof value === "number" ? Math.round(value) : typeof value === "string" && /^-?\d+$/.test(value) ? value : "0"); } catch { return 0n; } }
-function money(value: unknown) { const amount = cents(value); const abs = amount < 0n ? -amount : amount; return `${amount < 0n ? "−" : ""}R$ ${new Intl.NumberFormat("pt-BR").format(abs / 100n)},${(abs % 100n).toString().padStart(2, "0")}`; }
-function date(value: unknown, timeZone = "UTC") { if (typeof value !== "string" && !(value instanceof Date)) return "—"; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? "—" : new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone }).format(parsed); }
 function reaisToCents(value: FormDataEntryValue | null, allowZero = false) { const parsed = Number(String(value ?? "").trim().replace(/\./g, "").replace(",", ".")); if (!Number.isFinite(parsed) || parsed < 0 || (!allowZero && parsed === 0)) throw new Error(allowZero ? "Informe um valor monetário válido." : "Informe um valor maior que zero."); return String(Math.round(parsed * 100)); }
 function apiMessage(body: unknown, fallback: string) { const root = object(body); const error = object(root.error); return text(error.message, fallback); }
-function statusTone(status: string): "success" | "warning" | "danger" | "info" | "neutral" { if (["PAID", "RECEIVED", "SETTLED", "ACTIVE", "APPROVED"].includes(status)) return "success"; if (["OVERDUE", "REVERSED", "CANCELLED"].includes(status)) return "danger"; if (["PLANNED", "PENDING", "OPEN", "PARTIALLY_PAID", "DUE"].includes(status)) return "warning"; return "neutral"; }
-function statusLabel(status: string) { return ({ PAID: "Pago", RECEIVED: "Recebido", SETTLED: "Liquidado", PLANNED: "Previsto", OPEN: "Em aberto", PENDING: "Pendente", OVERDUE: "Vencido", PARTIALLY_PAID: "Parcial", CANCELLED: "Cancelado", REVERSED: "Estornado", ACTIVE: "Ativa", APPROVED: "Aprovada", DRAFT: "Rascunho" } as Record<string, string>)[status] ?? status; }
 
 function Panel({ title, description, action, children, className = "" }: Readonly<{ title: string; description?: string; action?: ReactNode; children: ReactNode; className?: string | undefined }>) {
   return <section className={`${styles.panel} ${className}`}><header className={styles.panelHeader}><div><h2>{title}</h2>{description ? <p>{description}</p> : null}</div>{action}</header>{children}</section>;
@@ -137,7 +132,8 @@ export function FinanceWorkspace({ initialScreen, section, month, year, goals, c
     {notice ? <p className={notice.kind === "error" ? styles.error : styles.success} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
 
     {section === "dashboard" && dashboard ? <FinanceDashboard data={dashboard} href={href}/> : null}
-    {section === "lancamentos" ? <Panel title="Todos os lançamentos" description={`${entries.length} registros do período e títulos em aberto`}><EntryTable timeZone={timeZone} empty="Nenhum lançamento encontrado" onSettle={canManage ? setSettling : undefined} rows={entries}/></Panel> : null}
+    {section === "lancamentos" ? <FinanceEntries key={`${year}-${month}`} rows={entries} period={object(screen.period)}
+      timeZone={timeZone} onSettle={canManage ? setSettling : undefined} /> : null}
     {section === "entradas" ? <Panel title="Entradas" description="Receitas previstas e recebimentos confirmados" action={canManage ? <Button onClick={() => setDialog("entry")} size="sm">Nova entrada</Button> : null}><EntryTable timeZone={timeZone} empty="Nenhuma entrada no período" onSettle={canManage ? setSettling : undefined} rows={income}/></Panel> : null}
     {section === "despesas" ? <><ApprovalQueue canManage={canManage} command={command} rows={expenses.filter((row) => row.approvalStatus === "PENDING")}/><Panel title="Despesas" description="Custos, despesas recorrentes e pagamentos" action={canManage ? <Button onClick={() => setDialog("entry")} size="sm">Nova despesa</Button> : null}><EntryTable timeZone={timeZone} empty="Nenhuma despesa no período" onSettle={canManage ? setSettling : undefined} rows={expenses}/></Panel></> : null}
     {section === "fluxo-caixa" && cashFlowFilters ? <CashFlow report={object(screen.cashFlowReport)} accounts={accounts} filters={cashFlowFilters} reconciliationHref={href("conciliacao")}/> : null}

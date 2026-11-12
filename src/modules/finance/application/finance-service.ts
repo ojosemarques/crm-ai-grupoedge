@@ -164,7 +164,7 @@ export function createFinanceService(options: Options) {
     return { from: dates._min.occurredAt, to: dates._max.occurredAt };
   }
 
-  async function screen(context: AuthenticatedContext, raw: unknown = {}, view?: Readonly<{ accountId?: string | undefined; dashboard?: boolean }>) {
+  async function screen(context: AuthenticatedContext, raw: unknown = {}, view?: Readonly<{ accountId?: string | undefined; dashboard?: boolean; entries?: boolean }>) {
     await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_READ, resource(context.workspaceId));
     const query = financeQuerySchema.parse(raw);
     const workspace = await options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
@@ -205,7 +205,15 @@ export function createFinanceService(options: Options) {
       }) : [],
     ]);
 
-    const receiptEvents = payments.length ? await options.database.paymentEvent.findMany({ where: { workspaceId: context.workspaceId, paymentId: { in: payments.map((item) => item.id) }, type: "PAYMENT_CONFIRMED" }, select: { paymentId: true, safeMetadata: true } }) : [];
+    const settledEntryIds = view?.entries ? entries.filter((item) => item.status === "SETTLED").map((item) => item.id) : [];
+    const [receiptEvents, reconciledRows] = await Promise.all([
+      payments.length ? await options.database.paymentEvent.findMany({ where: { workspaceId: context.workspaceId, paymentId: { in: payments.map((item) => item.id) }, type: "PAYMENT_CONFIRMED" }, select: { paymentId: true, safeMetadata: true } }) : [],
+      settledEntryIds.length ? options.database.bankStatementLine.findMany({
+        where: { workspaceId: context.workspaceId, status: "MATCHED", financialEntryId: { in: settledEntryIds } },
+        distinct: ["financialEntryId"], select: { financialEntryId: true },
+      }) : [],
+    ]);
+    const reconciledIds = new Set(reconciledRows.map((item) => item.financialEntryId));
     const receiptByPayment = new Map(receiptEvents.flatMap((event) => {
       const data = event.safeMetadata;
       if (!event.paymentId || !data || typeof data !== "object" || Array.isArray(data) || typeof data.financialAccountId !== "string") return [];
@@ -264,13 +272,13 @@ export function createFinanceService(options: Options) {
     const categoryName = new Map(categories.map((item) => [item.id, item.name]));
     const accountName = new Map(financialAccounts.map((item) => [item.id, item.name]));
     const normalizedEntries = [
-      ...entries.map((item) => ({ id: item.id, type: "MANUAL" as const, sourceLabel: item.recurrenceId ? `Parcela ${item.installmentNumber ?? ""}` : "Lançamento manual", categoryId: item.categoryId, categoryName: categoryName.get(item.categoryId) ?? "Sem categoria", reportingKind: reportingKind(item.categoryId), financialAccountId: item.financialAccountId, financialAccountName: accountName.get(item.financialAccountId), customerAccountId: item.customerAccountId, costCenterId: item.costCenterId, recurrenceId: item.recurrenceId, approvalStatus: item.approvalStatus, approvalReason: item.approvalReason, customerName: null, direction: item.direction, status: item.status, description: item.description, counterparty: item.counterparty, amountCents: money(item.amountCents), competenceAt: iso(item.competenceAt), dueAt: iso(item.dueAt), settledAt: iso(item.settledAt), revision: item.revision })),
+      ...entries.map((item) => ({ id: item.id, type: "MANUAL" as const, sourceLabel: item.recurrenceId ? `Parcela ${item.installmentNumber ?? ""}` : "Lançamento manual", categoryId: item.categoryId, categoryName: categoryName.get(item.categoryId) ?? "Sem categoria", reportingKind: reportingKind(item.categoryId), financialAccountId: item.financialAccountId, financialAccountName: accountName.get(item.financialAccountId), ...(view?.entries ? { reconciled: reconciledIds.has(item.id) } : {}), customerAccountId: item.customerAccountId, costCenterId: item.costCenterId, recurrenceId: item.recurrenceId, approvalStatus: item.approvalStatus, approvalReason: item.approvalReason, customerName: null, direction: item.direction, status: item.status, description: item.description, counterparty: item.counterparty, amountCents: money(item.amountCents), competenceAt: iso(item.competenceAt), dueAt: iso(item.dueAt), settledAt: iso(item.settledAt), revision: item.revision })),
       ...invoices.map((item) => ({ id: `invoice:${item.id}`, type: "INVOICE" as const, sourceLabel: "Cobrança de cliente", categoryId: null, categoryName: "Receita de cliente", financialAccountId: null, customerAccountId: item.accountId, customerName: item.accountNameSnapshot, direction: "INCOME" as const, status: item.status, description: item.descriptionSnapshot, counterparty: item.accountNameSnapshot, amountCents: money(item.totalCents), outstandingCents: money(item.totalCents - item.paidCents), competenceAt: item.billingPeriodStart.toISOString(), dueAt: item.dueAt.toISOString(), settledAt: iso(item.paidAt), revision: item.revision })),
       ...payments.flatMap((item) => {
         const rows: Array<Record<string, unknown>> = [];
         const receipt = receiptByPayment.get(item.id);
-        if (item.occurredAt >= from && item.occurredAt < to) rows.push({ id: `payment:${item.id}:confirmed`, type: "PAYMENT", sourceLabel: "Pagamento confirmado", categoryId: null, categoryName: "Receita recebida", financialAccountId: receipt?.financialAccountId ?? null, customerAccountId: receipt?.customerAccountId ?? null, customerName: receipt?.customerName ?? null, direction: "INCOME", status: "SETTLED", description: "Pagamento confirmado de cliente", counterparty: null, amountCents: money(paymentCashCents(item)), competenceAt: item.occurredAt.toISOString(), dueAt: item.occurredAt.toISOString(), settledAt: item.occurredAt.toISOString(), revision: 1 });
-        if (item.reversedAt && item.reversedAt >= from && item.reversedAt < to) rows.push({ id: `payment:${item.id}:reversed`, type: "PAYMENT_REVERSAL", sourceLabel: item.status === "CHARGEBACK" ? "Chargeback" : "Pagamento estornado", categoryId: null, categoryName: "Estornos", financialAccountId: receipt?.financialAccountId ?? null, customerAccountId: receipt?.customerAccountId ?? null, customerName: receipt?.customerName ?? null, direction: "EXPENSE", status: "SETTLED", description: item.reversalReason ?? "Reversão de pagamento", counterparty: null, amountCents: money(paymentCashCents(item)), competenceAt: item.reversedAt.toISOString(), dueAt: item.reversedAt.toISOString(), settledAt: item.reversedAt.toISOString(), revision: 1 });
+        if (item.occurredAt >= from && item.occurredAt < to) rows.push({ id: `payment:${item.id}:confirmed`, type: "PAYMENT", sourceLabel: "Pagamento confirmado", categoryId: null, categoryName: "Receita recebida", financialAccountId: receipt?.financialAccountId ?? null, financialAccountName: receipt ? accountName.get(receipt.financialAccountId) : undefined, customerAccountId: receipt?.customerAccountId ?? null, customerName: receipt?.customerName ?? null, direction: "INCOME", status: "SETTLED", description: "Pagamento confirmado de cliente", counterparty: null, amountCents: money(paymentCashCents(item)), competenceAt: item.occurredAt.toISOString(), dueAt: item.occurredAt.toISOString(), settledAt: item.occurredAt.toISOString(), revision: 1 });
+        if (item.reversedAt && item.reversedAt >= from && item.reversedAt < to) rows.push({ id: `payment:${item.id}:reversed`, type: "PAYMENT_REVERSAL", sourceLabel: item.status === "CHARGEBACK" ? "Chargeback" : "Pagamento estornado", categoryId: null, categoryName: "Estornos", financialAccountId: receipt?.financialAccountId ?? null, financialAccountName: receipt ? accountName.get(receipt.financialAccountId) : undefined, customerAccountId: receipt?.customerAccountId ?? null, customerName: receipt?.customerName ?? null, direction: "EXPENSE", status: "SETTLED", description: item.reversalReason ?? "Reversão de pagamento", counterparty: null, amountCents: money(paymentCashCents(item)), competenceAt: item.reversedAt.toISOString(), dueAt: item.reversedAt.toISOString(), settledAt: item.reversedAt.toISOString(), revision: 1 });
         return rows;
       }),
     ].sort((left, right) => String(right.dueAt).localeCompare(String(left.dueAt)));
@@ -295,7 +303,7 @@ export function createFinanceService(options: Options) {
     const reportDays = selectedAccount
       ? dailyCashFlow(from, to, reportOpening, cashMovements.filter((item) => item.accountId === selectedAccount.id), workspace.timeZone)
       : cashFlow;
-    const cashFlowReport = view && !view.dashboard ? {
+    const cashFlowReport = view && "accountId" in view ? {
       accountId: selectedAccount ? selectedAccount.id : null,
       openingCents: money(reportOpening),
       closingCents: reportDays.at(-1)?.balanceCents ?? money(reportOpening),

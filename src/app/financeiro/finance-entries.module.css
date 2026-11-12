@@ -1,0 +1,56 @@
+.workspace {
+  --entry-income: #167249;
+  --entry-expense: #be3844;
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.metric, .panel { background: var(--card); border: 1px solid var(--border); border-radius: 18px; min-width: 0; }
+.metric { display: grid; align-content: start; gap: 7px; padding: 16px; }
+.metric > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted-foreground); font-size: 12px; }
+.metric svg { flex: none; }
+.metric > strong { font-size: clamp(16px, 1.7vw, 24px); letter-spacing: -0.04em; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.metric small, .header p, .filters label, .tableWrap td small, .muted { color: var(--muted-foreground); font-size: 11px; }
+.metric [data-tone="income"], .value [data-tone="income"], .matched { color: color-mix(in srgb, var(--entry-income) 66%, var(--foreground)); }
+.metric [data-tone="expense"], .value [data-tone="expense"] { color: color-mix(in srgb, var(--entry-expense) 72%, var(--foreground)); }
+:global([data-theme="dark"]) .workspace { --entry-income: #54db98; --entry-expense: #ff828d; }
+.header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 17px 17px 11px; }
+.header h2 { font-size: 14px; }
+.filters { display: flex; align-items: end; flex-wrap: wrap; gap: 9px; padding: 0 17px 16px; }
+.filters label { display: grid; gap: 4px; flex: 1 1 105px; min-width: 0; }
+.filters label:first-child { flex-basis: 205px; }
+.filters :is(input,select) { width: 100%; min-width: 0; height: 36px; padding: 0 9px; color: var(--foreground); background: var(--background); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+.tableWrap { overflow-x: auto; border-top: 1px solid var(--border); }
+.tableWrap table { border-collapse: collapse; width: 100%; min-width: 930px; }
+.tableWrap th { background: var(--surface-subtle); color: var(--muted-foreground); font-weight: 600; font-size: 11px; white-space: nowrap; }
+.tableWrap :is(th, td) { text-align: left; padding: 10px 9px; }
+.tableWrap :is(th, td):first-child { padding-left: 17px; }
+.tableWrap :is(th, td):last-child { padding-right: 17px; }
+.tableWrap th:nth-child(6), .value { text-align: right; }
+.tableWrap tbody tr + tr { border-top: 1px solid var(--border); }
+.tableWrap tbody tr:hover { background: var(--surface-subtle); }
+.tableWrap td { font-size: 12px; }
+.tableWrap td small { display: block; margin-top: 4px; font-size: 10px; }
+.description { min-width: 170px; }
+.description strong { font-weight: 600; }
+.description a, .tableWrap td > a { color: var(--primary); }
+.due, .account, .contact { color: var(--muted-foreground); }
+.due, .value { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.category { display: inline-block; border-radius: 999px; font-size: 10px; padding: 3px 7px; background: var(--surface-subtle); }
+.category[data-tone="income"] { background: color-mix(in srgb, var(--entry-income) 11%, var(--card)); color: color-mix(in srgb, var(--entry-income) 70%, var(--foreground)); }
+.category[data-tone="expense"] { background: color-mix(in srgb, var(--entry-expense) 10%, var(--card)); color: color-mix(in srgb, var(--entry-expense) 74%, var(--foreground)); }
+.matched { font-size: 11px; white-space: nowrap; }
+.empty { padding: 17px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 12px; }
+@media (max-width: 760px) {
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .metric { padding: 11px; }
+  .tableWrap table, .tableWrap tbody { display: block; width: 100%; min-width: 0; }
+  .tableWrap thead { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; }
+  .tableWrap tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 11px 8px; padding: 13px; }
+  .tableWrap tbody td, .tableWrap tbody td:first-child, .tableWrap tbody td:last-child { display: block; min-width: 0; padding: 0; overflow-wrap: anywhere; }
+  .tableWrap td::before { content: attr(data-label); display: block; font-size: 10px; color: var(--muted-foreground); margin-bottom: 3px; }
+  .tableWrap td.description { grid-column: 1 / -1; grid-row: 1; font-size: 14px; }
+  .tableWrap td.description::before { content: none; }
+  .tableWrap td.value { text-align: left; }
+}
