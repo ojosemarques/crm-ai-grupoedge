@@ -39,6 +39,36 @@ describe("finance service", () => {
     expect(result.cashFlow).toHaveLength(30);
     expect(result.cashProjection[0]?.balanceCents).toBe("900");
     expect(database.financialEntry.groupBy).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: "workspace", status: "SETTLED", settledAt: { lt: new Date("2026-09-01") } } }));
+    database.financialCategory.findMany.mockResolvedValue([
+      { id: "category", name: "Vendas", kind: "INCOME", dreGroup: null },
+      { id: "transfer", name: "Transferência", kind: "EXPENSE", dreGroup: "movimentacao_interna" },
+      { id: "adjustment", name: "Ajuste de saldo", kind: "INCOME", dreGroup: "ajuste_saldo" },
+      { id: "refund", name: "Estorno de despesa", kind: "INCOME", dreGroup: "despesas_operacionais", key: "estorno_despesa_teste" },
+      { id: "expense", name: "Despesa", kind: "EXPENSE", dreGroup: "despesas_operacionais" },
+    ]);
+    database.financialAccount.findMany.mockResolvedValue([
+      { id: "bank", name: "Banco", openingBalanceCents: 1_000n },
+      { id: "card", name: "Cartão", openingBalanceCents: 0n },
+    ]);
+    const settledAt = new Date("2026-09-02T12:00:00.000Z");
+    const movement = { ...entry, competenceAt: settledAt, dueAt: settledAt, settledAt };
+    database.financialEntry.findMany.mockResolvedValue([
+      { ...movement, id: "transfer-out", categoryId: "transfer", direction: "EXPENSE", amountCents: 100n },
+      { ...movement, id: "transfer-in", categoryId: "transfer", financialAccountId: "card", amountCents: 100n, settledAt: new Date("2026-09-03T12:00:00.000Z") },
+      { ...movement, id: "adjustment", categoryId: "adjustment", amountCents: 5n },
+      { ...movement, id: "expense", categoryId: "expense", direction: "EXPENSE", amountCents: 50n },
+      { ...movement, id: "refund", categoryId: "refund", amountCents: 10n },
+      { ...movement, id: "receipt", amountCents: 200n },
+    ]);
+    const reconciled = await service.screen(context);
+    expect(reconciled.summary).toMatchObject({
+      openingBalanceCents: "1200", closingBalanceCents: "1365", incomeCents: "200",
+      expenseCents: "40", resultCents: "160", netIncomeCents: "160",
+    });
+    expect(reconciled.cashFlow[1]).toMatchObject({ balanceCents: "1265", incomeCents: "200", expenseCents: "40" });
+    expect(reconciled.cashFlow[2]).toMatchObject({ balanceCents: "1365", incomeCents: "0", expenseCents: "0" });
+    expect(reconciled.accounts.map((account) => account.balanceCents)).toEqual(["1265", "100"]);
+    expect(reconciled.entries).toHaveLength(6);
   });
 
   it("concilia regra histórica pela vigência da venda e ignora comissão já registrada", async () => {
