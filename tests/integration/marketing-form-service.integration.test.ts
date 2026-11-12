@@ -189,6 +189,7 @@ describe("serviço administrativo de formulários", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(now);
     vi.stubEnv("GOOGLE_CALENDAR_CLIENT_ID", "public-agenda-test-client-id");
+    vi.stubEnv("APP_CANONICAL_URL", "https://example.test");
     vi.stubEnv("GOOGLE_CALENDAR_CLIENT_SECRET", "public-agenda-test-client-secret");
     vi.stubEnv("GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY", encryptionKey);
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({
@@ -209,7 +210,8 @@ describe("serviço administrativo de formulários", () => {
       }));
       const meetings = await database.meeting.findMany({ where: { workspaceId }, include: { googleCalendarLink: true } });
       expect(meetings).toHaveLength(1);
-      expect(meetings[0]).toMatchObject({ ownerMemberId: member.id, durationMinutes: 30, googleCalendarLink: { syncState: "PENDING_PUSH" } });
+      expect(meetings[0]).toMatchObject({ ownerMemberId: member.id, durationMinutes: 60, googleCalendarLink: { syncState: "PENDING_PUSH" } });
+      expect(meetings[0]!.endsAt.getTime() - meetings[0]!.startsAt.getTime()).toBe(60 * 60_000);
       await expect(listPublicAgenda(response.receiptPublicId)).resolves.toMatchObject({ booked: true, slots: [] });
     } finally {
       vi.useRealTimers();

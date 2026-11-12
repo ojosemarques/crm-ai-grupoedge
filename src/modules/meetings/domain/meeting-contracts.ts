@@ -24,7 +24,7 @@ export type MeetingListItem = Readonly<{
   operationalStatus: MeetingStatusValue | "PENDING_STATUS";
   startsAt: string;
   endsAt: string;
-  durationMinutes: 30 | 40;
+  durationMinutes: 30 | 40 | 60;
   timeZone: string;
   observation: string | null;
   outcome: string | null;
