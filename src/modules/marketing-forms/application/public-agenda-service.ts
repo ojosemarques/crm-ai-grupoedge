@@ -16,8 +16,14 @@ import {
 import { agendaConfirmationRedirectSchema, buildMarketingWhatsAppUrl } from "../domain/marketing-form-contracts";
 
 import { environmentSecretResolver } from "@/modules/integrations/application/secret-resolver";
-import { parseQuizAgendaToken, verifyQuizAgendaToken } from "../domain/quiz-agenda-token";
+import { createQuizAgendaToken, parseQuizAgendaToken, verifyQuizAgendaToken } from "../domain/quiz-agenda-token";
 
+import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
+
+const nativeThankYou = "https://site.politizai.com/obrigadok#agenda-confirmada";
+const nativeConnectionKey = "meta-native-leads";
+const nativeFormPrefix = "meta-native:";
+const nativeIdentity = z.object({ name: z.string().trim().min(3).max(200), phone: z.string().trim().min(10).max(25) }).strict();
 const quizThankYou = "https://site.politizai.com/obrigadoquiz";
 const receiptSchema = z.uuid();
 const bookingSchema = z.object({ startsAt: z.iso.datetime() }).strict();
@@ -70,28 +76,60 @@ async function resolveReceipt(db: Prisma.TransactionClient, publicId: string, no
   return { workspaceId, destination: { kind: "FORM" as const, formId: receipt.marketingFormId, versionId: receipt.marketingFormVersionId }, actorId: actor.id, leadId: submission.leadId, participantEmail: participantEmailSchema.safeParse(submission.normalizedEmail).data ?? null };
 }
 
-async function resolveQuizReceipt(db: Prisma.TransactionClient, token: string, now: Date) {
-  const parsed = parseQuizAgendaToken(token);
-  if (!parsed) invalidReceipt();
-  const connectionKey = `site-${parsed.quiz}`;
+async function agendaConnection(db: Prisma.TransactionClient, key: string, providerKey: "FORM" | "META_LEAD_ADS") {
   const connection = await db.integrationConnection.findFirst({
-    where: { key: connectionKey, providerKey: "FORM", enabled: true, disabledAt: null, status: { in: ["ACTIVE_LOCAL", "CONNECTED"] }, workspace: { slug: "politizai", status: "ACTIVE", deletedAt: null } },
+    where: { key, providerKey, enabled: true, disabledAt: null, status: { in: ["ACTIVE_LOCAL", "CONNECTED"] }, workspace: { slug: "politizai", status: "ACTIVE", deletedAt: null } },
     select: { workspaceId: true, secrets: { where: { alias: "webhook-hmac", present: true, disabledAt: null }, orderBy: { version: "desc" }, take: 1, select: { referenceKey: true } } },
   });
   const reference = connection?.secrets[0]?.referenceKey;
   const secret = reference && await environmentSecretResolver.resolve(reference);
-  if (!connection || !secret || !verifyQuizAgendaToken(token, secret, now)) invalidReceipt();
+  if (!connection || !secret) invalidReceipt();
+  return { workspaceId: connection.workspaceId, secret };
+}
 
-  const { workspaceId } = connection;
+export async function startNativePublicAgenda(raw: unknown) {
+  const { name, phone } = nativeIdentity.parse(raw);
+  const normalized = normalizePhone(phone);
+  if (!normalized.success) invalidReceipt();
+  const db = getDatabaseClient();
+  const { workspaceId, secret } = await agendaConnection(db, nativeConnectionKey, "META_LEAD_ADS");
+  const now = new Date();
+  const candidates = await db.leadFormSubmission.findMany({
+    where: {
+      workspaceId, normalizedPhone: normalized.normalizedPhone, formIdentifier: { startsWith: nativeFormPrefix },
+      submittedAt: { gte: new Date(now.getTime() - receiptLifetime), lte: now },
+      intakeOutcome: { in: ["CREATED", "ATTACHED"] }, rawPayload: { path: ["provider"], equals: "META_LEAD_ADS" },
+      lead: { deletedAt: null, currentStage: { leadStageCode: { notIn: ["CLIENT", "DISQUALIFIED"] } } },
+    },
+    orderBy: [{ submittedAt: "desc" }, { id: "desc" }], take: 10,
+    select: { id: true, leadId: true, submittedAt: true, submittedFullName: true },
+  });
+  const canonicalName = (value: string) => value.normalize("NFD").replace(/\p{M}/gu, "").trim().replace(/\s+/g, " ").toLocaleLowerCase("pt-BR");
+  const matching = candidates.filter(row => row.submittedFullName && canonicalName(row.submittedFullName) === canonicalName(name));
+  const submission = matching[0];
+  if (!submission?.leadId || matching.some(row => row.leadId !== submission.leadId)) invalidReceipt();
+  return createQuizAgendaToken("meta-native", submission.id, submission.submittedAt, secret);
+}
+
+async function resolveQuizReceipt(db: Prisma.TransactionClient, token: string, now: Date) {
+  const parsed = parseQuizAgendaToken(token);
+  if (!parsed) invalidReceipt();
+  const native = parsed.quiz === "meta-native";
+  const connectionKey = native ? nativeConnectionKey : `site-${parsed.quiz}`;
+  const { workspaceId, secret } = await agendaConnection(db, connectionKey, native ? "META_LEAD_ADS" : "FORM");
+  if (!verifyQuizAgendaToken(token, secret, now)) invalidReceipt();
+
   const [submission, actor] = await Promise.all([
     db.leadFormSubmission.findFirst({
-      where: { workspaceId, id: parsed.submissionId, formIdentifier: connectionKey, lead: { deletedAt: null, currentStage: { leadStageCode: { notIn: ["CLIENT", "DISQUALIFIED"] } } } },
+      where: { workspaceId, id: parsed.submissionId,
+        ...(native ? { formIdentifier: { startsWith: nativeFormPrefix }, rawPayload: { path: ["provider"], equals: "META_LEAD_ADS" } } : { formIdentifier: connectionKey }),
+        lead: { deletedAt: null, currentStage: { leadStageCode: { notIn: ["CLIENT", "DISQUALIFIED"] } } } },
       select: { leadId: true, normalizedEmail: true },
     }),
     db.actor.findFirst({ where: { workspaceId, type: "SYSTEM", key: "system", userId: null }, select: { id: true } }),
   ]);
   if (!submission?.leadId || !actor) invalidReceipt();
-  return { workspaceId, destination: { kind: "QUIZ" as const }, actorId: actor.id, leadId: submission.leadId, participantEmail: participantEmailSchema.safeParse(submission.normalizedEmail).data ?? null };
+  return { workspaceId, destination: native ? { kind: "NATIVE" as const } : { kind: "QUIZ" as const }, actorId: actor.id, leadId: submission.leadId, participantEmail: participantEmailSchema.safeParse(submission.normalizedEmail).data ?? null };
 }
 
 type Booking = Awaited<ReturnType<typeof resolveReceipt>>;
@@ -107,6 +145,7 @@ async function existingMeeting(db: Prisma.TransactionClient, booking: Booking) {
 }
 
 async function confirmedBooking(db: Prisma.TransactionClient, booking: Booking, startsAt: string) {
+  if (booking.destination.kind === "NATIVE") return { booked: true as const, startsAt, redirect: { kind: "URL" as const, url: nativeThankYou } };
   if (booking.destination.kind === "QUIZ") return { booked: true as const, startsAt, redirect: { kind: "URL" as const, url: quizThankYou } };
   const version = await db.marketingFormVersion.findUnique({
     where: { workspaceId_marketingFormId_id: { workspaceId: booking.workspaceId, marketingFormId: booking.destination.formId, id: booking.destination.versionId } },
@@ -116,7 +155,7 @@ async function confirmedBooking(db: Prisma.TransactionClient, booking: Booking, 
   const target = agendaConfirmationRedirectSchema.safeParse(definition?.redirects?.afterAgenda).data;
   const redirect = target && {
     kind: target.kind,
-    url: target.kind === "URL" ? target.url : buildMarketingWhatsAppUrl(target.phone, target.message),
+    url: target.kind === "URL" ? (target.url === "https://site.politizai.com/obrigadok" ? nativeThankYou : target.url) : buildMarketingWhatsAppUrl(target.phone, target.message),
   };
   return { booked: true as const, startsAt, ...(redirect ? { redirect } : {}) };
 }
@@ -179,8 +218,8 @@ export async function listPublicAgenda(publicId: string) {
   const { today, days, slots } = publicAgendaWindow(now);
   const meeting = await existingMeeting(database, booking);
   if (meeting) {
-    const redirect = booking.destination.kind === "QUIZ" && !meeting.deletedAt && meeting.status !== "CANCELLED"
-      ? { kind: "URL" as const, url: quizThankYou } : undefined;
+    const redirect = booking.destination.kind !== "FORM" && !meeting.deletedAt && meeting.status !== "CANCELLED"
+      ? { kind: "URL" as const, url: booking.destination.kind === "NATIVE" ? nativeThankYou : quizThankYou } : undefined;
     return { today, days, booked: true, slots: [], ...(redirect ? { redirect } : {}) };
   }
   const start = slots[0]!.startsAt;

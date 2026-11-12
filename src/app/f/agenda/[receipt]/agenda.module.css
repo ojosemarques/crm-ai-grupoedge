@@ -72,3 +72,38 @@
   .brand img { width: 64px; height: 64px; }
   .details h1 { font-size: 24px; }
 }
+
+.nativeEntry {
+  width: min(100%, 440px);
+  margin: 0 auto;
+  padding: 32px;
+  border: 1px solid #dae4ef;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.nativeEntry form,
+.nativeEntry label {
+  display: grid;
+  gap: 8px;
+}
+
+.nativeEntry form {
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.nativeEntry input,
+.nativeEntry button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid #a7b9cc;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.nativeEntry button {
+  background: #0759c9;
+  color: #fff;
+  cursor: pointer;
+}

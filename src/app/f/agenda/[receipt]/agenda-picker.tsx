@@ -59,6 +59,9 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
 
   useEffect(() => {
     if (!redirect) return;
+    if (window.parent !== window && redirect.url === "https://site.politizai.com/obrigadok#agenda-confirmada") {
+      window.parent.postMessage({ type: "politizai:agenda-confirmada" }, "https://site.politizai.com");
+    }
     const timer = window.setTimeout(() => {
       try {
         (window.top ?? window).location.href = redirect.url;

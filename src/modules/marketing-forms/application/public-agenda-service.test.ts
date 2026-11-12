@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createQuizAgendaToken } from "../domain/quiz-agenda-token";
-import { bookPublicAgenda, listPublicAgenda } from "./public-agenda-service";
+import { bookPublicAgenda, listPublicAgenda, startNativePublicAgenda } from "./public-agenda-service";
 
 const setup = vi.hoisted(() => {
   const db = {
@@ -8,7 +8,7 @@ const setup = vi.hoisted(() => {
     marketingFormReceipt: { findMany: vi.fn() },
     marketingForm: { findFirst: vi.fn() },
     marketingFormVersion: { findUnique: vi.fn() },
-    leadFormSubmission: { findFirst: vi.fn() },
+    leadFormSubmission: { findFirst: vi.fn(), findMany: vi.fn() },
     actor: { findFirst: vi.fn() },
     workspaceMember: { findMany: vi.fn() },
     googleCalendarAccount: { findMany: vi.fn() },
@@ -76,6 +76,36 @@ describe("reserva pelo formulário", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it("vincula o formulário nativo pelo nome e WhatsApp e libera a VSL depois da reserva", async () => {
+    const secret = "local-test-native-signing-secret";
+    vi.stubEnv("ACQUISITION_TEST_NATIVE_SECRET", secret);
+    setup.db.integrationConnection.findFirst.mockResolvedValue({ workspaceId: "workspace", secrets: [{ referenceKey: "ACQUISITION_TEST_NATIVE_SECRET" }] });
+    setup.db.leadFormSubmission.findMany.mockResolvedValue([{ id: receipt, leadId: "lead", submittedAt: new Date(), submittedFullName: "João Silva" }]);
+    try {
+      await expect(startNativePublicAgenda({ name: "Outro Nome", phone: "(11) 99999-9999" })).rejects.toMatchObject({ statusCode: 404 });
+      const token = await startNativePublicAgenda({ name: "JOAO  SILVA", phone: "(11) 99999-9999" });
+      expect(setup.db.leadFormSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ workspaceId: "workspace", normalizedPhone: "+5511999999999", formIdentifier: { startsWith: "meta-native:" } }),
+      }));
+      await expect(listPublicAgenda(token)).resolves.not.toHaveProperty("redirect");
+      await expect(bookPublicAgenda(token, { startsAt: morning })).resolves.toEqual({
+        booked: true, startsAt: morning, redirect: { kind: "URL", url: "https://site.politizai.com/obrigadok#agenda-confirmada" },
+      });
+      expect(setup.schedule).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("libera a mesma VSL quando a reserva vem do formulário do CRM", async () => {
+    setup.db.marketingFormVersion.findUnique.mockResolvedValue({
+      definition: { redirects: { afterAgenda: { kind: "URL", url: "https://site.politizai.com/obrigadok" } } },
+    });
+    await expect(bookPublicAgenda(receipt, { startsAt: morning })).resolves.toMatchObject({
+      redirect: { kind: "URL", url: "https://site.politizai.com/obrigadok#agenda-confirmada" },
+    });
   });
 
   it("nega um recibo inexistente antes de consultar o Google", async () => {
