@@ -35,6 +35,12 @@ import type { getOmnichannelService } from "@/modules/communications/application
 
 type LeadCommunicationSummary = Awaited<ReturnType<ReturnType<typeof getOmnichannelService>["getLeadSummary"]>>;
 
+const tierByBudgetTag = {
+  "GREEN BUDGET": "B1",
+  "YELLOW BUDGET": "B2",
+  "SEM BUDGET": "B3",
+} satisfies Record<NonNullable<LeadPipelineState["formBudgetTag"]>, string>;
+
 type Notice = Readonly<{
   kind: "success" | "error";
   message: string;
@@ -1266,6 +1272,7 @@ export function OperationalHistoryWorkspace({
         <div className={styles.content}>
       {activeTab === "summary" ? (
         <div aria-labelledby="tab-summary" className="grid gap-6" id="panel-summary" role="tabpanel">
+          {pipeline.formBudgetTag ? <div><span className="stage-badge">Tier {tierByBudgetTag[pipeline.formBudgetTag]}</span></div> : null}
           {pipeline.pipelineName === ADVERTISING_PIPELINE_NAME ? (
             <section aria-label="Respostas do formulário" className="surface-panel surface-panel--soft p-5 [&_section]:text-sm [&_summary]:text-sm">
               <div className="flex flex-wrap items-center gap-2">

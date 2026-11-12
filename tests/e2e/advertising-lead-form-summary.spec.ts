@@ -57,6 +57,7 @@ test("vendedor abre as respostas fechadas no Resumo da ficha de Anúncios", asyn
   await expect(profile.getByRole("heading", { name, exact: true })).toBeVisible();
   await expect(profile.getByText("SLA não registrado", { exact: true })).toBeVisible();
   await profile.getByRole("tab", { name: "Resumo", exact: true }).click();
+  await expect(profile.getByRole("tabpanel", { name: "Resumo" }).getByText("Tier B2", { exact: true })).toBeVisible();
   const responses = profile.getByRole("region", { name: "Respostas do formulário", exact: true });
   await expect(responses.getByText("Completo", { exact: true })).toBeVisible();
   await expect(profile.getByText("YELLOW BUDGET", { exact: true })).toBeVisible();
