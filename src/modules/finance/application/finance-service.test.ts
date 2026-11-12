@@ -18,6 +18,7 @@ describe("finance service", () => {
       },
       invoice: { findMany: vi.fn().mockResolvedValue([]) },
       payment: { findMany: vi.fn().mockResolvedValue([]) },
+      paymentEvent: { findMany: vi.fn().mockResolvedValue([]) },
       subscription: { findMany: vi.fn().mockResolvedValue([]) },
       revenueMovement: { findMany: vi.fn().mockResolvedValue([]) },
       opportunity: { findMany: vi.fn().mockResolvedValue([]) },
@@ -30,7 +31,7 @@ describe("finance service", () => {
       bankStatementLine: { findMany: vi.fn().mockResolvedValue([]) },
       financialAttachment: { findMany: vi.fn().mockResolvedValue([]) },
     };
-    const service = createFinanceService({ database: database as never, authorization: { assertAuthorized: vi.fn(), authorize: vi.fn().mockResolvedValue({ allowed: true }) } as never, now: () => new Date("2026-09-30") });
+    const service = createFinanceService({ database: database as never, authorization: { assertAuthorized: vi.fn(), authorize: vi.fn().mockResolvedValue({ allowed: true }) } as never, now: () => new Date("2026-09-30T15:00:00.000Z") });
     const result = await service.screen(context);
     expect(result.summary).toMatchObject({ openingBalanceCents: "1200", cashBalanceCents: "1200", payableOpenCents: "300", projectedCashCents: "900" });
     expect(result.accounts[0]?.balanceCents).toBe("1200");
@@ -82,6 +83,26 @@ describe("finance service", () => {
         { bucket: "2026-09-03", transferCents: "0", adjustmentCents: "0", balanceCents: "1265" },
       ],
     });
+
+    const endOfToday = new Date("2026-10-01T03:00:00.000Z");
+    database.financialEntry.findMany.mockResolvedValue([
+      { ...entry, id: "early-receipt", dueAt: endOfToday, settledAt: new Date("2026-10-01T02:59:00.000Z") },
+      { ...entry, id: "future-settlement", settledAt: endOfToday },
+      { ...entry, id: "planned-today", status: "PLANNED", direction: "EXPENSE", dueAt: new Date("2026-09-30T12:00:00.000Z"), settledAt: null },
+      entry,
+    ]);
+    database.invoice.findMany.mockResolvedValue([{
+      id: "future", status: "OPEN", totalCents: 250n, paidCents: 0n, dueAt: endOfToday, billingPeriodStart: endOfToday, paidAt: null,
+    }]);
+    database.payment.findMany.mockResolvedValue([{
+      id: "receipt", status: "REVERSED", amountCents: 100n, occurredAt: new Date("2026-09-29T12:00:00.000Z"), reversedAt: new Date("2026-09-30T12:00:00.000Z"),
+    }]);
+    const selectedPeriod = { from: "2026-09-01T03:00:00.000Z", to: "2026-10-02T03:00:00.000Z" };
+    const ledger = await service.screen(context, selectedPeriod, { entries: true });
+    expect(ledger.entries.map((item) => item.id)).toEqual(["early-receipt", "payment:receipt:reversed", "payment:receipt:confirmed"]);
+    const receivables = await service.screen(context, selectedPeriod);
+    expect(receivables.entries.map((item) => item.id)).toEqual(expect.arrayContaining(["invoice:future", "planned-today"]));
+    expect(ledger.summary.payableOpenCents).toBe(receivables.summary.payableOpenCents);
   });
 
   it("concilia regra histórica pela vigência da venda e ignora comissão já registrada", async () => {

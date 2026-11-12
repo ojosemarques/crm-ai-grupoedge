@@ -137,8 +137,7 @@ export function FinanceWorkspace({ initialScreen, section, month, year, goals, c
     {notice ? <p className={notice.kind === "error" ? styles.error : styles.success} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
 
     {section === "dashboard" && dashboard ? <FinanceDashboard data={dashboard} href={href}/> : null}
-    {section === "lancamentos" ? <FinanceEntries key={`${year}-${month}`} rows={entries} period={object(screen.period)}
-      timeZone={timeZone} onSettle={canManage ? setSettling : undefined} /> : null}
+    {section === "lancamentos" ? <FinanceEntries key={`${year}-${month}`} rows={entries} timeZone={timeZone} /> : null}
     {section === "entradas" ? <Panel title="Entradas" description="Receitas previstas e recebimentos confirmados" action={canManage ? <Button onClick={() => openEntry("INCOME")} size="sm">Nova entrada</Button> : null}><EntryTable timeZone={timeZone} empty="Nenhuma entrada no período" onSettle={canManage ? setSettling : undefined} rows={income}/></Panel> : null}
     {section === "despesas" ? <><ApprovalQueue canManage={canManage} command={command} rows={expenses.filter((row) => row.approvalStatus === "PENDING")}/><Panel title="Despesas" description="Custos, despesas recorrentes e pagamentos" action={canManage ? <Button onClick={() => openEntry("EXPENSE")} size="sm">Nova despesa</Button> : null}><EntryTable timeZone={timeZone} empty="Nenhuma despesa no período" onSettle={canManage ? setSettling : undefined} rows={expenses}/></Panel></> : null}
     {section === "fluxo-caixa" && cashFlowFilters ? <CashFlow report={object(screen.cashFlowReport)} accounts={accounts} filters={cashFlowFilters} reconciliationHref={href("conciliacao")}/> : null}
