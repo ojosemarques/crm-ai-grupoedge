@@ -7,9 +7,9 @@ describe("agenda pública", () => {
     expect(today).toBe("2026-10-31");
     expect(days).toEqual(["2026-10-31", "2026-11-01", "2026-11-02"]);
     expect(slots[0]?.startsAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
-    expect(slots.at(-1)?.endsAt.toISOString()).toBe("2026-11-02T21:00:00.000Z");
+    expect(slots.at(-1)?.endsAt.toISOString()).toBe("2026-11-02T22:00:00.000Z");
     expect(slots.filter((slot) => slot.day === "2026-11-01").map((slot) => slot.hour))
-      .toEqual([9, 10, 11, 12, 13, 14, 15, 16, 17]);
+      .toEqual([9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
   });
 
   it("respeita a abertura de cada vendedor e sobreposições na hora inteira", () => {
