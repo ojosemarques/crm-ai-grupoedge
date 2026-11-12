@@ -257,20 +257,22 @@ describe("agenda interna e reuniões", () => {
     const operations = createOperationalHistoryService({ database, authorization, now: () => clock });
     expect((await operations.getLeadOperations(closer, { leadId: intake.leadId })).tasks).toContainEqual(expect.objectContaining({ id: saved.taskId, meetingId: saved.meetingId }));
     await expect(operations.completeTask(closer, { leadId: intake.leadId, taskId: saved.taskId, result: "Concluída sem resultado na agenda" })).rejects.toMatchObject({ code: "MEETING_RESULT_REQUIRED" });
-    const input = { action: "ATTENDED", meetingId: saved.meetingId, expectedRevision: 1, outcome: "Diagnóstico realizado e próximos passos definidos.", leadDestination, nextAction: { title: "Retomar conversa", dueAtLocal: "2035-02-11T10:00" } };
+    const input = { action: "ATTENDED", meetingId: saved.meetingId, expectedRevision: 1, outcome: "Diagnóstico realizado e próximos passos definidos.", leadDestination, qualification: "TIER_B", nextAction: { title: "Retomar conversa", dueAtLocal: "2035-02-11T10:00" } };
     await expect(meetings().act(closer, { ...input, leadDestination: "CLIENT" })).rejects.toThrow();
+    await expect(meetings().act(closer, { ...input, qualification: "TIER_D" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(meetings({ beforeCommit: async () => { throw new Error("rollback destino"); } }).act(closer, input)).rejects.toThrow("rollback destino");
     const noticeWhere = { workspaceId, idempotencyKey: { startsWith: `meeting-lifecycle-notification:${saved.meetingId}:` } };
     expect(await database.job.count({ where: noticeWhere })).toBe(0);
-    expect(await database.meeting.findUniqueOrThrow({ where: { id: saved.meetingId } })).toMatchObject({ status: "SCHEDULED", revision: 1 });
+    expect(await database.meeting.findUniqueOrThrow({ where: { id: saved.meetingId } })).toMatchObject({ status: "SCHEDULED", revision: 1, qualification: null });
     await meetings().act(closer, input);
     expect(await database.job.count({ where: noticeWhere })).toBe(3);
     expect(await database.lead.findUniqueOrThrow({ where: { id: intake.leadId }, include: { currentStage: true } })).toMatchObject({ currentStage: { leadStageCode: leadDestination } });
     expect(await database.task.findUniqueOrThrow({ where: { id: saved.taskId } })).toMatchObject({ status: "COMPLETED", result: input.outcome });
-    expect(await database.meeting.findUniqueOrThrow({ where: { id: saved.meetingId } })).toMatchObject({ status: "COMPLETED", outcome: input.outcome });
+    expect(await database.meeting.findUniqueOrThrow({ where: { id: saved.meetingId } })).toMatchObject({ status: "COMPLETED", outcome: input.outcome, qualification: input.qualification });
     expect(await database.opportunity.count({ where: { workspaceId, leadId: intake.leadId } })).toBe(0);
     await meetings().act(closer, { action: "EDIT", meetingId: saved.meetingId, expectedRevision: 2, title: "Resultado corrigido", startsAtLocal: "2035-02-09T09:30", durationMinutes: 30, status: "COMPLETED", observation: null, outcome: input.outcome, leadDestination: leadDestination === "PROPOSAL" ? "MEETING_COMPLETED" : "PROPOSAL", reason: "Correção da etapa escolhida após reunião." });
     expect(await database.lead.findUniqueOrThrow({ where: { id: intake.leadId }, include: { currentStage: true } })).toMatchObject({ currentStage: { leadStageCode: leadDestination === "PROPOSAL" ? "MEETING_COMPLETED" : "PROPOSAL" } });
+    expect((await meetings().getLeadMeetings(closer, { leadId: intake.leadId })).meetings[0]).toMatchObject({ qualification: input.qualification });
     await expect(meetings().act(viewerContext, { ...input, expectedRevision: 3 })).rejects.toThrow();
   });
 

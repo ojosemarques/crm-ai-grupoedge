@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import type { CloserOption, MeetingListItem } from "@/modules/meetings/domain/meeting-contracts";
+import { meetingQualificationLabels, meetingQualifications, type CloserOption, type MeetingListItem } from "@/modules/meetings/domain/meeting-contracts";
 import { participantEmailsFromForm } from "@/modules/meetings/domain/meeting-participants";
 import { MeetingParticipantField } from "./meeting-participant-field";
 
@@ -110,7 +110,11 @@ export function MeetingActions({
     await post({
       ...common,
       ...(action === "ATTENDED"
-        ? { outcome: data.get("outcome"), ...(meeting.canChooseLeadDestination ? { leadDestination: data.get("leadDestination") } : {}) }
+        ? {
+          qualification: data.get("qualification"),
+          outcome: data.get("outcome"),
+          ...(meeting.canChooseLeadDestination ? { leadDestination: data.get("leadDestination") } : {}),
+        }
         : { reason: data.get("reason") }),
       nextAction,
     });
@@ -171,6 +175,15 @@ export function MeetingActions({
             </>
           ) : (
             <>
+              {action === "ATTENDED" ? (
+                <label className="text-sm sm:col-span-2">
+                  Qualificação
+                  <select className={inputClass} defaultValue="" name="qualification" required>
+                    <option disabled value="">Selecione a qualificação</option>
+                    {meetingQualifications.map((tier) => <option key={tier} value={tier}>{meetingQualificationLabels[tier]}</option>)}
+                  </select>
+                </label>
+              ) : null}
               <label className="text-sm sm:col-span-2">{action === "ATTENDED" ? "Resumo da reunião" : "Motivo"}<textarea className={inputClass} minLength={3} name={action === "ATTENDED" ? "outcome" : "reason"} required /></label>
               {action === "ATTENDED" && meeting.canChooseLeadDestination ? <LeadDestinationField /> : null}
               <label className="text-sm">Próxima ação<input className={inputClass} name="nextActionTitle" required /></label>

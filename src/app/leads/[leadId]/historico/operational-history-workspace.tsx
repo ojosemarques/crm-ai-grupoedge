@@ -19,6 +19,7 @@ import { LeadOpportunitiesWorkspace } from "@/app/leads/[leadId]/historico/lead-
 import { LeadSalePanel } from "@/components/opportunities/lead-sale-preparation-panel";
 import type { LeadCardOperations } from "@/modules/leads/domain/lead-card-contracts";
 import { meetingAgendaHref, type LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
+import { MeetingQualificationBadge } from "@/modules/meetings/ui/meeting-qualification-badge";
 import { MeetingParticipantField } from "@/modules/meetings/ui/meeting-participant-field";
 import { participantEmailsFromForm } from "@/modules/meetings/domain/meeting-participants";
 import type { LeadOpportunityScreen } from "@/modules/opportunities/domain/opportunity-contracts";
@@ -999,6 +1000,7 @@ export function OperationalHistoryWorkspace({
   ) ?? null;
   const quickCompletion = sdrQueueTaskCompletion({ taskId: quickCurrentTask?.id ?? null, kind: quickCurrentTask?.kind ?? null, sourceKey: quickCurrentTask?.sourceKey ?? null });
   const visibleTasks = operations.tasks.filter(task => task.status !== "CANCELLED");
+  const meetingsById = new Map(meetings.meetings.map((meeting) => [meeting.id, meeting]));
   const visibleStageCodes = leadStageCodes.filter((code) =>
     code === pipeline.currentStageCode || pipeline.transitions.some((stage) => stage.code === code));
 
@@ -1479,6 +1481,9 @@ export function OperationalHistoryWorkspace({
               {visibleTasks.length === 0 ? <p className="mt-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">Nenhuma tarefa em aberto ou concluída para este lead.</p> : (
                 <ul className="mt-4 space-y-3">
                   {visibleTasks.map((task) => {
+                    const qualification = task.kind === "MEETING" && task.status === "COMPLETED" && task.meetingId
+                      ? meetingsById.get(task.meetingId)?.qualification
+                      : null;
                     const priority = taskPriorityPresentation[task.priority] ?? taskPriorityPresentation.MEDIUM!;
                     const completion = sdrQueueTaskCompletion({ taskId: task.id, kind: task.kind, sourceKey: task.sourceKey });
                     const status = task.overdue
@@ -1499,6 +1504,7 @@ export function OperationalHistoryWorkspace({
                               <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${status.className}`}>
                                 {status.label}
                               </span>
+                              {qualification ? <MeetingQualificationBadge qualification={qualification} /> : null}
                               <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-full border bg-background/80 text-sm transition-transform group-open:rotate-180">⌄</span>
                             </div>
                           </summary>

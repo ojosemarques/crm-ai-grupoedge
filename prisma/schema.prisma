@@ -1216,6 +1216,12 @@ enum MeetingStatus {
   NO_SHOW
 }
 
+enum MeetingQualification {
+  TIER_A
+  TIER_B
+  TIER_C
+}
+
 enum MeetingParticipantResponseStatus {
   NEEDS_ACTION
   ACCEPTED
@@ -6720,6 +6726,7 @@ model Meeting {
   location         String?
   observation      String?
   outcome          String?
+  qualification    MeetingQualification?
   participantEmail             String?
   participantResponseStatus    MeetingParticipantResponseStatus?
   participantResponseUpdatedAt DateTime? @db.Timestamptz(3)

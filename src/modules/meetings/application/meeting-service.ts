@@ -21,6 +21,7 @@ import {
   leadVisibilityWhere,
   resolveLeadVisibilityScope,
 } from "@/modules/leads/application/lead-list-service";
+import { meetingQualifications } from "@/modules/meetings/domain/meeting-contracts";
 import type {
   AgendaScreen,
   CloserOption,
@@ -152,6 +153,7 @@ const actionSchema = z.discriminatedUnion("action", [
     meetingId: z.string().uuid(),
     expectedRevision: z.number().int().positive(),
     outcome: z.string().trim().min(3).max(5_000),
+    qualification: z.enum(meetingQualifications).optional(),
     leadDestination: leadDestinationSchema.optional(),
     nextAction: nextActionSchema,
   }).strict(),
@@ -319,6 +321,7 @@ function serializeMeeting(row: MeetingRow, now: Date, canWrite: boolean): Meetin
     timeZone: row.timeZone,
     observation: row.observation,
     outcome: row.outcome,
+    qualification: row.status === "COMPLETED" ? row.qualification : null,
     participantEmail: row.participantEmail,
     participantResponseStatus: row.participantResponseStatus,
     participantResponseUpdatedAt: row.participantResponseUpdatedAt?.toISOString() ?? null,
@@ -739,6 +742,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           opportunityId: null,
           observation: null,
           outcome: null,
+          qualification: null,
           participantEmail: null,
           participantResponseStatus: null,
           participantResponseUpdatedAt: null,
@@ -1311,6 +1315,9 @@ export function createMeetingService(options: MeetingServiceOptions) {
         outcome = parsed.data.reason;
       }
 
+      const qualification = parsed.data.action === "ATTENDED"
+        ? parsed.data.qualification ?? null
+        : newStatus === "COMPLETED" && meeting.status === "COMPLETED" ? meeting.qualification : null;
       const participantEmail = participantEmails[0] ?? null;
       const metricOccurredAt = meeting.lead.pipeline.name === ADVERTISING_PIPELINE_NAME && parsed.data.action === "EDIT" && newStatus === meeting.status
         ? newStatus === "COMPLETED" ? meeting.completedAt ?? now : newStatus === "NO_SHOW" ? meeting.noShowAt ?? now : now
@@ -1335,6 +1342,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
           durationMinutes: Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000),
           observation,
           outcome,
+          qualification,
           participantEmail,
           participantResponseStatus: participantEmail ? primaryGuest?.responseStatus ?? "NEEDS_ACTION" : null,
           participantResponseUpdatedAt: primaryGuest?.responseUpdatedAt ?? null,
@@ -1511,6 +1519,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
             endsAt: meeting.endsAt.toISOString(),
             observation: meeting.observation,
             outcome: meeting.outcome,
+            qualification: meeting.qualification,
             revision: meeting.revision,
           },
           newValues: {
@@ -1520,6 +1529,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
             endsAt: endsAt.toISOString(),
             observation,
             outcome,
+            qualification,
             revision: updated.revision,
             ...((parsed.data.action === "ATTENDED" || parsed.data.action === "EDIT") && parsed.data.leadDestination
               ? { leadDestination: parsed.data.leadDestination } : {}),

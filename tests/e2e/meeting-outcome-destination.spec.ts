@@ -20,7 +20,7 @@ async function login(page: Page, email: string) {
 test.afterAll(async () => getDatabaseClient().$disconnect());
 
 for (const surface of ["agenda", "tarefa"] as const) {
-  test(`vendedor registra resumo e destino pela ${surface}`, async ({ page }, testInfo) => {
+  test(`vendedor registra qualificação, resumo e destino pela ${surface}`, async ({ page }, testInfo) => {
     await page.addInitScript(() => Object.defineProperty(navigator, "onLine", { get: () => false }));
     if (!new URL(process.env.DATABASE_URL!).searchParams.get("schema")?.startsWith("politizai_test_")) throw new Error("Ephemeral schema required");
     const db = getDatabaseClient();
@@ -55,7 +55,14 @@ for (const surface of ["agenda", "tarefa"] as const) {
       await task.getByRole("button", { name: "Registrar resultado da reunião", exact: true }).click();
     }
     await page.getByRole("button", { name: "Compareceu", exact: true }).click();
-    await page.getByLabel("Resumo da reunião", { exact: true }).fill("Diagnóstico realizado. Cliente quer avaliar a proposta comercial.");
+    const qualification = page.getByRole("combobox", { name: "Qualificação", exact: true });
+    await expect(qualification).toHaveAttribute("required", "");
+    await expect(qualification.locator("option")).toHaveText(["Selecione a qualificação", "Tier A · Bom", "Tier B · Médio", "Tier C · Ruim"]);
+    const tier = surface === "agenda" ? "TIER_A" : "TIER_C";
+    const tierLabel = surface === "agenda" ? "Tier A · Bom" : "Tier C · Ruim";
+    const summary = "Diagnóstico realizado. Cliente quer avaliar a proposta comercial.";
+    await qualification.selectOption(tier);
+    await page.getByLabel("Resumo da reunião", { exact: true }).fill(summary);
     const destination = page.getByRole("combobox", { name: "Para onde mover o lead?", exact: true });
     await expect(destination).toHaveAttribute("required", "");
     await destination.selectOption(surface === "agenda" ? "PROPOSAL" : "MEETING_COMPLETED");
@@ -63,9 +70,25 @@ for (const surface of ["agenda", "tarefa"] as const) {
     await page.getByLabel("Prazo da próxima ação", { exact: true }).fill("2040-02-10T10:00");
     await page.screenshot({ path: testInfo.outputPath(`resultado-${surface}.png`), fullPage: true });
     await page.getByRole("button", { name: "Confirmar ação", exact: true }).click();
-    await expect.poll(async () => (await db.meeting.findUniqueOrThrow({ where: { id: meeting.id } })).status).toBe("COMPLETED");
+    await expect.poll(() => db.meeting.findUniqueOrThrow({ where: { id: meeting.id } })).toMatchObject({
+      status: "COMPLETED",
+      qualification: tier,
+      outcome: summary,
+    });
+    if (surface === "agenda") {
+      const dialog = page.getByRole("dialog", { name: title, exact: true });
+      await expect(dialog.getByText(tierLabel, { exact: true })).toBeVisible();
+      await page.reload();
+      await expect(dialog.getByText(tierLabel, { exact: true })).toBeVisible();
+    } else {
+      const sheet = page.getByRole("dialog", { name: "Ficha completa do lead" });
+      await expect(sheet.getByText(tierLabel, { exact: true })).toBeVisible();
+      await sheet.getByRole("tab", { name: "Atividades", exact: true }).click();
+      const task = sheet.locator("li").filter({ has: page.getByText(`Reunião: ${title}`, { exact: true }) });
+      await expect(task.getByText(tierLabel, { exact: true })).toBeVisible();
+    }
     expect(await db.lead.findUniqueOrThrow({ where: { id: result.leadId }, include: { currentStage: true } })).toMatchObject({ currentStage: { leadStageCode: surface === "agenda" ? "PROPOSAL" : "MEETING_COMPLETED" } });
-    expect(await db.task.findFirstOrThrow({ where: { meetingId: meeting.id, kind: "MEETING" } })).toMatchObject({ status: "COMPLETED", result: "Diagnóstico realizado. Cliente quer avaliar a proposta comercial." });
+    expect(await db.task.findFirstOrThrow({ where: { meetingId: meeting.id, kind: "MEETING" } })).toMatchObject({ status: "COMPLETED", result: summary });
     if (surface === "agenda") {
       await page.goto(boardUrl);
     } else {

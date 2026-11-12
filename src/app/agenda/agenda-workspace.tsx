@@ -13,6 +13,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import type { AgendaScreen, LeadOption } from "@/modules/meetings/domain/meeting-contracts";
 import { MeetingActions } from "@/modules/meetings/ui/meeting-actions";
+import { MeetingQualificationBadge } from "@/modules/meetings/ui/meeting-qualification-badge";
 import { MeetingParticipantField } from "@/modules/meetings/ui/meeting-participant-field";
 import { participantEmailsFromForm } from "@/modules/meetings/domain/meeting-participants";
 
@@ -215,7 +216,11 @@ export function AgendaWorkspace({ initialLead, initialMeetingId, initialScreen }
 
   function meetingDetail(meeting: AgendaScreen["meetings"][number]) {
     return <div className={styles.meetingDetail}>
-      <div className={styles.detailMeta}><StatusBadge tone={statusTone(meeting.operationalStatus)}>{statusLabels[meeting.operationalStatus]}</StatusBadge><span>{meeting.durationMinutes} minutos</span></div>
+      <div className={styles.detailMeta}>
+        <StatusBadge tone={statusTone(meeting.operationalStatus)}>{statusLabels[meeting.operationalStatus]}</StatusBadge>
+        {meeting.qualification ? <MeetingQualificationBadge qualification={meeting.qualification} /> : null}
+        <span>{meeting.durationMinutes} minutos</span>
+      </div>
       <p><Icon name="agenda" size={16} />{formatDate(meeting.startsAt, screen.timeZone)}</p>
       <p><Icon name="leads" size={16} />{meeting.leadName} · {meeting.closerName}</p>
       <p><Icon name="equipe" size={16} />Agendada por: {meeting.scheduledByName}</p>

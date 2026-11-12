@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { meetingAgendaHref, type LeadMeetingsScreen } from "@/modules/meetings/domain/meeting-contracts";
 import { workspaceDateAt } from "@/shared/core/time/workspace-time";
 import { MeetingActions } from "@/modules/meetings/ui/meeting-actions";
+import { MeetingQualificationBadge } from "@/modules/meetings/ui/meeting-qualification-badge";
 import { MeetingParticipantField } from "@/modules/meetings/ui/meeting-participant-field";
 import { participantEmailsFromForm } from "@/modules/meetings/domain/meeting-participants";
 
@@ -114,7 +115,12 @@ export function LeadMeetingsWorkspace({
           <ol className="mt-4 space-y-4">
             {screen.meetings.map((meeting) => (
               <li className="rounded-md border p-4" key={meeting.id}>
-                <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{meeting.title}</p><p className="mt-1 text-sm">{meeting.closerName} · {formatDate(meeting.startsAt, screen.timeZone)} · {meeting.durationMinutes} min</p><p className="mt-1 text-xs text-muted-foreground">Calendário: {meeting.calendarSync.state === "NOT_LINKED" ? "não ligado" : meeting.calendarSync.state.toLowerCase().replaceAll("_", " ")}</p></div><span className="rounded-full border px-2.5 py-1 text-xs">{statusLabels[meeting.operationalStatus]}</span></div>
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{meeting.title}</p><p className="mt-1 text-sm">{meeting.closerName} · {formatDate(meeting.startsAt, screen.timeZone)} · {meeting.durationMinutes} min</p><p className="mt-1 text-xs text-muted-foreground">Calendário: {meeting.calendarSync.state === "NOT_LINKED" ? "não ligado" : meeting.calendarSync.state.toLowerCase().replaceAll("_", " ")}</p></div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border px-2.5 py-1 text-xs">{statusLabels[meeting.operationalStatus]}</span>
+                    {meeting.qualification ? <MeetingQualificationBadge qualification={meeting.qualification} /> : null}
+                  </div>
+                </div>
                 {meeting.observation ? <p className="mt-3 whitespace-pre-wrap text-sm">{meeting.observation}</p> : null}
                 {meeting.participants.map((guest) => <p className="mt-3 text-sm" key={guest.email}>Participante: {guest.email}</p>)}
                 {meeting.outcome ? <p className="mt-3 text-sm"><strong>Resultado:</strong> {meeting.outcome}</p> : null}

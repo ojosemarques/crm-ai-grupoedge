@@ -2,6 +2,15 @@ export const meetingStatuses = ["SCHEDULED", "CONFIRMED", "COMPLETED", "CANCELLE
 export type MeetingStatusValue = (typeof meetingStatuses)[number];
 export type MeetingParticipantResponseStatusValue = "NEEDS_ACTION" | "ACCEPTED" | "TENTATIVE" | "DECLINED" | "UNKNOWN";
 
+export const meetingQualifications = ["TIER_A", "TIER_B", "TIER_C"] as const;
+export type MeetingQualification = (typeof meetingQualifications)[number];
+
+export const meetingQualificationLabels = {
+  TIER_A: "Tier A · Bom",
+  TIER_B: "Tier B · Médio",
+  TIER_C: "Tier C · Ruim",
+} as const satisfies Record<MeetingQualification, string>;
+
 export type MeetingListItem = Readonly<{
   id: string;
   leadId: string;
@@ -19,6 +28,7 @@ export type MeetingListItem = Readonly<{
   timeZone: string;
   observation: string | null;
   outcome: string | null;
+  qualification: MeetingQualification | null;
   participantEmail: string | null;
   participantResponseStatus: MeetingParticipantResponseStatusValue | null;
   participantResponseUpdatedAt: string | null;
