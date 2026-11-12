@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { PUBLIC_AGENDA_MINUTES, PUBLIC_AGENDA_TITLE, PUBLIC_AGENDA_ZONE } from "@/modules/marketing-forms/domain/public-agenda";
 import mark from "../../../../../public/brand/politizai-mark.png";
 import styles from "./agenda.module.css";
@@ -25,7 +25,9 @@ function Icon({ name }: { name: "clock" | "phone" | "globe" }) {
   </svg>;
 }
 
-export function AgendaPicker({ receipt }: { receipt: string }) {
+type AgendaPickerProps = { receipt: string; native?: false } | { native: true; receipt?: never };
+
+export function AgendaPicker({ receipt, native = false }: AgendaPickerProps) {
   const [availability, setAvailability] = useState<Availability | null>(null);
   const [selectedDay, setDay] = useState<string | null>(null);
   const [shownMonth, setMonth] = useState<string | null>(null);
@@ -37,7 +39,7 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
   const [booked, setBooked] = useState(false);
   const [redirect, setRedirect] = useState<ConfirmationRedirect | null>(null);
   const [confirmedTime, setConfirmedTime] = useState<string | null>(null);
-  const endpoint = `/api/public/agenda/${encodeURIComponent(receipt)}`;
+  const endpoint = native ? "/api/public/agenda/native" : `/api/public/agenda/${encodeURIComponent(receipt ?? "")}`;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -72,13 +74,13 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
     return () => window.clearTimeout(timer);
   }, [redirect]);
 
-  async function confirm(time: string) {
+  async function confirm(time: string, identity?: { name: FormDataEntryValue | null; phone: FormDataEntryValue | null }) {
     setBooking(true);
     setBookingError("");
     try {
       const response = await fetch(endpoint, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startsAt: time }),
+        body: JSON.stringify({ startsAt: time, ...identity }),
       });
       if (!response.ok) {
         if (response.status === 409) {
@@ -86,7 +88,9 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
           setRevision((value) => value + 1);
           setBookingError("Este horário não está mais disponível. Escolha outro.");
         } else {
-          setBookingError(response.status === 404 ? "Este link de agendamento não está disponível." : "Não foi possível confirmar. Tente novamente.");
+          setBookingError(response.status === 404
+            ? native ? "Confira o nome e o WhatsApp usados no formulário da Meta e tente novamente." : "Este link de agendamento não está disponível."
+            : response.status === 429 ? "Aguarde um minuto e tente novamente." : "Não foi possível confirmar. Tente novamente.");
         }
         return;
       }
@@ -99,6 +103,13 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
     } finally {
       setBooking(false);
     }
+  }
+
+  function confirmNative(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedTime || booking) return;
+    const fields = new FormData(event.currentTarget);
+    void confirm(selectedTime, { name: fields.get("name"), phone: fields.get("phone") });
   }
 
   const monthStart = shownMonth ? asDay(`${shownMonth}-01`) : null;
@@ -160,14 +171,24 @@ export function AgendaPicker({ receipt }: { receipt: string }) {
                 <div className={styles.times} aria-label="Horários disponíveis">
                   {selectedDay && <h3>{dateLabel.format(asDay(selectedDay))}</h3>}
                   {!times.length && <p>Sem horários disponíveis neste dia.</p>}
-                  {times.map(({ startsAt }) => <div className={styles.timeRow} key={startsAt}>
-                    <button type="button" aria-pressed={selectedTime === startsAt} disabled={booking}
-                      onClick={() => { setTime(startsAt); setBookingError(""); }}>{clock.format(new Date(startsAt))}</button>
-                    {selectedTime === startsAt && <button type="button" className={styles.confirm} disabled={booking} onClick={() => void confirm(startsAt)}>
-                      {booking ? "Confirmando…" : "Confirmar"}
-                    </button>}
-                  </div>)}
-                  {bookingError && <p className={styles.error} role="alert">{bookingError}</p>}
+                  {times.map(({ startsAt }) => <Fragment key={startsAt}>
+                    <div className={styles.timeRow}>
+                      <button type="button" aria-pressed={selectedTime === startsAt} disabled={booking}
+                        onClick={() => { setTime(startsAt); setBookingError(""); }}>{clock.format(new Date(startsAt))}</button>
+                      {!native && selectedTime === startsAt && <button type="button" className={styles.confirm} disabled={booking} onClick={() => void confirm(startsAt)}>
+                        {booking ? "Confirmando…" : "Confirmar"}
+                      </button>}
+                    </div>
+                    {native && selectedTime === startsAt && <form className={styles.nativeConfirmation} method="post" onSubmit={confirmNative}>
+                      <h4>Confirme o horário de {clock.format(new Date(startsAt))}</h4>
+                      <p>Use o nome e o WhatsApp do formulário da Meta.</p>
+                      <label>Nome completo<input name="name" autoComplete="name" minLength={3} maxLength={200} required /></label>
+                      <label>WhatsApp com DDD<input name="phone" type="tel" autoComplete="tel" minLength={10} maxLength={25} required /></label>
+                      {bookingError && <p className={styles.error} role="alert">{bookingError}</p>}
+                      <button type="submit" className={styles.confirm} disabled={booking}>{booking ? "Confirmando…" : "Confirmar agendamento"}</button>
+                    </form>}
+                  </Fragment>)}
+                  {bookingError && (!native || !selectedTime) && <p className={styles.error} role="alert">{bookingError}</p>}
                 </div>
               </div>}
         </>}

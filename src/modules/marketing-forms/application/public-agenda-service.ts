@@ -87,6 +87,12 @@ async function agendaConnection(db: Prisma.TransactionClient, key: string, provi
   return { workspaceId: connection.workspaceId, secret };
 }
 
+export async function submitNativePublicAgenda(raw: unknown) {
+  const { startsAt, ...identity } = nativeIdentity.extend({ startsAt: bookingSchema.shape.startsAt.optional() }).parse(raw);
+  const receipt = await startNativePublicAgenda(identity);
+  return startsAt ? bookPublicAgenda(receipt, { startsAt }) : { receipt };
+}
+
 export async function startNativePublicAgenda(raw: unknown) {
   const { name, phone } = nativeIdentity.parse(raw);
   const normalized = normalizePhone(phone);
@@ -168,6 +174,9 @@ async function replayBooking(db: Prisma.TransactionClient, booking: Booking, sta
     && existing.startsAt.toISOString() === startsAt) {
     return confirmedBooking(db, booking, startsAt);
   }
+  if (booking.destination.kind === "NATIVE" && !existing.deletedAt && existing.status !== "CANCELLED") {
+    return { booked: true as const, redirect: { kind: "URL" as const, url: nativeThankYou } };
+  }
   return { booked: true as const };
 }
 
@@ -222,10 +231,20 @@ export async function listPublicAgenda(publicId: string) {
       ? { kind: "URL" as const, url: booking.destination.kind === "NATIVE" ? nativeThankYou : quizThankYou } : undefined;
     return { today, days, booked: true, slots: [], ...(redirect ? { redirect } : {}) };
   }
+  return listOpenSlots(database, booking.workspaceId, { today, days, slots });
+}
+
+export async function listNativePublicAgenda() {
+  const database = getDatabaseClient();
+  const { workspaceId } = await agendaConnection(database, nativeConnectionKey, "META_LEAD_ADS");
+  return listOpenSlots(database, workspaceId, publicAgendaWindow(new Date()));
+}
+
+async function listOpenSlots(database: Prisma.TransactionClient, workspaceId: string, { today, days, slots }: ReturnType<typeof publicAgendaWindow>) {
   const start = slots[0]!.startsAt;
   const end = slots.at(-1)!.endsAt;
-  const sellers = await googleAvailability(booking.workspaceId, start, end);
-  const meetings = await crmAvailability(database, booking.workspaceId, sellers, start, end);
+  const sellers = await googleAvailability(workspaceId, start, end);
+  const meetings = await crmAvailability(database, workspaceId, sellers, start, end);
   return {
     today, days, booked: false,
     slots: slots.filter((slot) => slot.startsAt.getTime() > Date.now() && eligible(slot, sellers, meetings).length > 0)

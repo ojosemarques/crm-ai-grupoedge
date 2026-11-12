@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createQuizAgendaToken } from "../domain/quiz-agenda-token";
-import { bookPublicAgenda, listPublicAgenda, startNativePublicAgenda } from "./public-agenda-service";
+import { bookPublicAgenda, listPublicAgenda, listNativePublicAgenda, startNativePublicAgenda, submitNativePublicAgenda } from "./public-agenda-service";
 
 const setup = vi.hoisted(() => {
   const db = {
@@ -84,13 +84,18 @@ describe("reserva pelo formulário", () => {
     setup.db.integrationConnection.findFirst.mockResolvedValue({ workspaceId: "workspace", secrets: [{ referenceKey: "ACQUISITION_TEST_NATIVE_SECRET" }] });
     setup.db.leadFormSubmission.findMany.mockResolvedValue([{ id: receipt, leadId: "lead", submittedAt: new Date(), submittedFullName: "João Silva" }]);
     try {
-      await expect(startNativePublicAgenda({ name: "Outro Nome", phone: "(11) 99999-9999" })).rejects.toMatchObject({ statusCode: 404 });
+      const open = await listNativePublicAgenda();
+      expect(open).toMatchObject({ booked: false, slots: expect.arrayContaining([{ day: "2026-11-09", startsAt: morning }]) });
+      expect(setup.db.leadFormSubmission.findMany).not.toHaveBeenCalled();
+      expect(setup.db.meeting.findFirst).not.toHaveBeenCalled();
+      await expect(submitNativePublicAgenda({ name: "Outro Nome", phone: "(11) 99999-9999", startsAt: morning })).rejects.toMatchObject({ statusCode: 404 });
+      expect(setup.schedule).not.toHaveBeenCalled();
       const token = await startNativePublicAgenda({ name: "JOAO  SILVA", phone: "(11) 99999-9999" });
       expect(setup.db.leadFormSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({
         where: expect.objectContaining({ workspaceId: "workspace", normalizedPhone: "+5511999999999", formIdentifier: { startsWith: "meta-native:" } }),
       }));
       await expect(listPublicAgenda(token)).resolves.not.toHaveProperty("redirect");
-      await expect(bookPublicAgenda(token, { startsAt: morning })).resolves.toEqual({
+      await expect(submitNativePublicAgenda({ name: "João Silva", phone: "(11) 99999-9999", startsAt: morning })).resolves.toEqual({
         booked: true, startsAt: morning, redirect: { kind: "URL", url: "https://site.politizai.com/obrigadok#agenda-confirmada" },
       });
       expect(setup.schedule).toHaveBeenCalledTimes(1);
