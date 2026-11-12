@@ -14,7 +14,6 @@ import styles from "./finance-dashboard.module.css";
 const currency = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const compact = new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 });
 const percent = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
-const colors = ["#ed5660", "#f59e24", "#7367e8", "#32a9be", "#df69ad", "#8294b6"];
 const dateLabel = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
 const amount = (cents: string | number) => currency.format(Number(cents) / 100);
 const monthLabel = (month: string) => new Intl.DateTimeFormat("pt-BR", { month: "short", timeZone: "UTC" })
@@ -113,7 +112,7 @@ function Distribution({ expenses, total, href }: Readonly<{
   total: string;
   href: string;
 }>) {
-  const chart = expenses.map((expense, index) => ({ ...expense, value: Number(expense.cents), color: colors[index % colors.length]! }));
+  const chart = expenses.map((expense, index) => ({ ...expense, value: Number(expense.cents), color: `var(--fin-category-${index + 1})` }));
   return <Panel title="Distribuição de despesas" note="Saídas brutas liquidadas por categoria" href={href}>
     {chart.length ? <>
       <div className={styles.donut}>
@@ -127,7 +126,7 @@ function Distribution({ expenses, total, href }: Readonly<{
         <span><small>Total bruto</small><strong>{amount(total)}</strong></span>
       </div>
       <ul className={styles.legend}>{chart.map((expense) => <li key={expense.name}>
-        <i style={{ background: expense.color }}/><span>{expense.name}</span><strong>{amount(expense.cents)}</strong>
+        <i aria-hidden="true"/><span>{expense.name}</span><strong>{amount(expense.cents)}</strong>
         <small>{percent.format(expense.value / Number(total))}</small>
       </li>)}</ul>
     </> : <p className={styles.empty}>Nenhuma despesa liquidada no mês.</p>}

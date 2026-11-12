@@ -2,6 +2,12 @@
   --fin-blue: #3978ee;
   --fin-green: #20af66;
   --fin-red: #e4515c;
+  --fin-category-1: #ed5660;
+  --fin-category-2: #f59e24;
+  --fin-category-3: #7367e8;
+  --fin-category-4: #32a9be;
+  --fin-category-5: #df69ad;
+  --fin-category-6: #8294b6;
   display: grid;
   gap: 20px;
   min-width: 0;
@@ -41,7 +47,12 @@
 .donut strong { font-size: 14px; }
 .legend, .dueList, .accounts { display: grid; gap: 8px; padding: 0; list-style: none; }
 .legend li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 36px; align-items: center; gap: 7px; font-size: 10px; }
-.legend i { width: 7px; height: 7px; border-radius: 50%; }
+.legend i { width: 7px; height: 7px; border-radius: 50%; background: var(--fin-category-1); }
+.legend li:nth-child(2) i { background: var(--fin-category-2); }
+.legend li:nth-child(3) i { background: var(--fin-category-3); }
+.legend li:nth-child(4) i { background: var(--fin-category-4); }
+.legend li:nth-child(5) i { background: var(--fin-category-5); }
+.legend li:nth-child(6) i { background: var(--fin-category-6); }
 .legend small { text-align: right; color: var(--muted-foreground); font-size: 10px; }
 .dueAmount { font-size: 20px; letter-spacing: -0.035em; }
 .dueSummary { margin-top: 5px; }
