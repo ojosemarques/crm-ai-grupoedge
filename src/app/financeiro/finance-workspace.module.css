@@ -3,3 +3,13 @@
 @media(max-width:700px){.workspace{gap:16px}.hero{align-items:start;flex-direction:column}.hero>div:last-child{text-align:left}.tabs{gap:18px}.period button:last-child{margin-left:0}.metrics,.openGrid,.chartGrid,.accountGrid{grid-template-columns:1fr}.projection{grid-column:auto}.metric strong{font-size:21px}.form{grid-template-columns:1fr}.formActions{grid-column:auto}.bars{height:190px}.distribution li{grid-template-columns:1fr}.panel{padding:16px}}
 :global(:root[data-theme=dark]) .positiveBanner{background:#203d2a;border-color:#326b44;color:#78d797}:global(:root[data-theme=dark]) .negativeBanner,:global(:root[data-theme=dark]) .error{background:#402724;border-color:#6c3934;color:#f1a39b}:global(:root[data-theme=dark]) .success{background:#203a27;border-color:#365e41;color:#8bd5a2}
 .inlineActions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.cashFilters{align-items:end}
+.cashFilters label{display:grid;gap:5px;color:var(--muted-foreground);font-size:11px}
+.cashFilters input[type=date]{background:var(--background);border:1px solid var(--border);border-radius:10px;color:var(--foreground);font-size:12px;min-height:38px;padding:8px 12px}
+.cashFilters a,.panelHeader a{align-self:center;color:var(--primary);font-size:12px}
+.cashFilters a:focus-visible,.panelHeader a:focus-visible{outline:2px solid var(--primary);outline-offset:3px}
+.cashMetrics{grid-template-columns:repeat(auto-fit,minmax(152px,1fr))}
+.cashChartLabel{color:var(--muted-foreground);font-size:11px}
+.tableWrap tfoot{background:var(--surface-subtle)}
+.tableWrap tfoot :is(th,td){font-weight:600}

@@ -60,7 +60,7 @@ describe("finance service", () => {
       { ...movement, id: "refund", categoryId: "refund", amountCents: 10n },
       { ...movement, id: "receipt", amountCents: 200n },
     ]);
-    const reconciled = await service.screen(context);
+    const reconciled = await service.screen(context, {}, { accountId: undefined });
     expect(reconciled.summary).toMatchObject({
       openingBalanceCents: "1200", closingBalanceCents: "1365", incomeCents: "200",
       expenseCents: "40", resultCents: "160", netIncomeCents: "160",
@@ -69,6 +69,19 @@ describe("finance service", () => {
     expect(reconciled.cashFlow[2]).toMatchObject({ balanceCents: "1365", incomeCents: "0", expenseCents: "0" });
     expect(reconciled.accounts.map((account) => account.balanceCents)).toEqual(["1265", "100"]);
     expect(reconciled.entries).toHaveLength(6);
+    expect(reconciled.cashFlowReport).toMatchObject({
+      openingCents: "1200", closingCents: "1365",
+      totals: { incomeCents: "200", expenseCents: "40", transferCents: "0", adjustmentCents: "5" },
+    });
+    const bank = await service.screen(context, { from: "2026-09-02T03:00:00.000Z", to: "2026-09-04T03:00:00.000Z" }, { accountId: "bank" });
+    expect(bank.cashFlowReport).toMatchObject({
+      accountId: "bank", openingCents: "1200", closingCents: "1265",
+      totals: { incomeCents: "200", expenseCents: "40", transferCents: "-100", adjustmentCents: "5" },
+      days: [
+        { bucket: "2026-09-02", transferCents: "-100", adjustmentCents: "5", balanceCents: "1265" },
+        { bucket: "2026-09-03", transferCents: "0", adjustmentCents: "0", balanceCents: "1265" },
+      ],
+    });
   });
 
   it("concilia regra histórica pela vigência da venda e ignora comissão já registrada", async () => {

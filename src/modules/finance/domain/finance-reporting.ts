@@ -1,14 +1,18 @@
 import { addLocalDays, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 
-export type CashMovement = Readonly<{ at: Date; direction: "INCOME" | "EXPENSE"; amountCents: bigint; balanceOnly?: boolean }>;
+export type CashMovement = Readonly<{ at: Date; direction: "INCOME" | "EXPENSE"; amountCents: bigint; balanceKind?: "TRANSFER" | "ADJUSTMENT"; accountId?: string | null }>;
 
 export function dailyCashFlow(from: Date, to: Date, openingBalanceCents: bigint, movements: readonly CashMovement[], timeZone = "UTC") {
-  const grouped = new Map<string, { income: bigint; expense: bigint; adjustment: bigint }>();
+  const grouped = new Map<string, { income: bigint; expense: bigint; transfer: bigint; adjustment: bigint }>();
   for (const movement of movements) {
     if (movement.at < from || movement.at >= to) continue;
     const key = workspaceDateAt(movement.at, timeZone);
-    const row = grouped.get(key) ?? { income: 0n, expense: 0n, adjustment: 0n };
-    if (movement.balanceOnly) row.adjustment += movement.direction === "INCOME" ? movement.amountCents : -movement.amountCents;
+    const row = grouped.get(key) ?? { income: 0n, expense: 0n, transfer: 0n, adjustment: 0n };
+    if (movement.balanceKind) {
+      const signed = movement.direction === "INCOME" ? movement.amountCents : -movement.amountCents;
+      if (movement.balanceKind === "TRANSFER") row.transfer += signed;
+      else row.adjustment += signed;
+    }
     else if (movement.direction === "INCOME") row.income += movement.amountCents;
     else row.expense += movement.amountCents;
     grouped.set(key, row);
@@ -16,9 +20,9 @@ export function dailyCashFlow(from: Date, to: Date, openingBalanceCents: bigint,
   let balance = openingBalanceCents;
   const rows = [];
   for (let bucket = workspaceDateAt(from, timeZone); workspaceDayRange(bucket, timeZone).start < to; bucket = addLocalDays(bucket, 1)) {
-    const row = grouped.get(bucket) ?? { income: 0n, expense: 0n, adjustment: 0n };
-    balance += row.income - row.expense + row.adjustment;
-    rows.push({ bucket, label: `${bucket.slice(8)}/${bucket.slice(5, 7)}`, incomeCents: row.income.toString(), expenseCents: row.expense.toString(), resultCents: (row.income - row.expense).toString(), balanceCents: balance.toString() });
+    const row = grouped.get(bucket) ?? { income: 0n, expense: 0n, transfer: 0n, adjustment: 0n };
+    balance += row.income - row.expense + row.transfer + row.adjustment;
+    rows.push({ bucket, label: `${bucket.slice(8)}/${bucket.slice(5, 7)}`, incomeCents: row.income.toString(), expenseCents: row.expense.toString(), transferCents: row.transfer.toString(), adjustmentCents: row.adjustment.toString(), resultCents: (row.income - row.expense).toString(), balanceCents: balance.toString() });
   }
   return rows;
 }

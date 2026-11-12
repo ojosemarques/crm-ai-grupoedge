@@ -153,7 +153,17 @@ export async function reconcileCommissionsInTransaction(tx: Transaction, context
 }
 
 export function createFinanceService(options: Options) {
-  async function screen(context: AuthenticatedContext, raw: unknown = {}) {
+  async function statementMovementDates(context: AuthenticatedContext, until: Date) {
+    await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_READ, resource(context.workspaceId));
+    const dates = await options.database.bankStatementLine.aggregate({
+      where: { workspaceId: context.workspaceId, status: "MATCHED", occurredAt: { lt: until } },
+      _min: { occurredAt: true },
+      _max: { occurredAt: true },
+    });
+    return { from: dates._min.occurredAt, to: dates._max.occurredAt };
+  }
+
+  async function screen(context: AuthenticatedContext, raw: unknown = {}, cashView?: Readonly<{ accountId: string | undefined }>) {
     await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_READ, resource(context.workspaceId));
     const query = financeQuerySchema.parse(raw);
     const workspace = await options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
@@ -191,7 +201,7 @@ export function createFinanceService(options: Options) {
       if (!event.paymentId || !data || typeof data !== "object" || Array.isArray(data) || typeof data.financialAccountId !== "string") return [];
       return [[event.paymentId, { financialAccountId: data.financialAccountId, customerAccountId: typeof data.customerAccountId === "string" ? data.customerAccountId : null, customerName: typeof data.customerName === "string" ? data.customerName : null }]] as const;
     }));
-    const accountPaymentBalance = (accountId: string) => payments.filter((item) => receiptByPayment.get(item.id)?.financialAccountId === accountId).reduce((sum, item) => sum + (item.occurredAt < to ? paymentCashCents(item) : 0n) - (item.reversedAt && item.reversedAt < to ? paymentCashCents(item) : 0n), 0n);
+    const accountPaymentBalance = (accountId: string, until = to) => payments.filter((item) => receiptByPayment.get(item.id)?.financialAccountId === accountId).reduce((sum, item) => sum + (item.occurredAt < until ? paymentCashCents(item) : 0n) - (item.reversedAt && item.reversedAt < until ? paymentCashCents(item) : 0n), 0n);
     const categoryGroup = new Map(categories.map((item) => [item.id, item.dreGroup]));
     const categoryKey = new Map(categories.map((item) => [item.id, item.key]));
     const reportingKind = (categoryId: string) => {
@@ -201,14 +211,18 @@ export function createFinanceService(options: Options) {
     };
     const settledInPeriod = entries.filter((item) => item.status === "SETTLED" && item.settledAt !== null && item.settledAt >= from && item.settledAt < to);
     const manualCashMovements: CashMovement[] = settledInPeriod.map((item) => {
-      const kind = reportingKind(item.categoryId);
-      if (kind === "EXPENSE_REFUND" && item.direction === "INCOME") {
-        return { at: item.settledAt!, direction: "EXPENSE", amountCents: -item.amountCents };
+      const movement = { at: item.settledAt!, accountId: item.financialAccountId };
+      if (reportingKind(item.categoryId) === "EXPENSE_REFUND" && item.direction === "INCOME") {
+        return { ...movement, direction: "EXPENSE", amountCents: -item.amountCents };
       }
-      return { at: item.settledAt!, direction: item.direction, amountCents: item.amountCents, balanceOnly: kind === "BALANCE_ONLY" };
+      const group = categoryGroup.get(item.categoryId);
+      if (group === "movimentacao_interna" || group === "ajuste_saldo") {
+        return { ...movement, direction: item.direction, amountCents: item.amountCents, balanceKind: group === "movimentacao_interna" ? "TRANSFER" : "ADJUSTMENT" };
+      }
+      return { ...movement, direction: item.direction, amountCents: item.amountCents };
     });
     const manualCashTotal = (direction: CashMovement["direction"]) => manualCashMovements
-      .filter((item) => !item.balanceOnly && item.direction === direction)
+      .filter((item) => !item.balanceKind && item.direction === direction)
       .reduce((sum, item) => sum + item.amountCents, 0n);
     const manualReceived = manualCashTotal("INCOME");
     const manualExpenses = manualCashTotal("EXPENSE");
@@ -252,9 +266,36 @@ export function createFinanceService(options: Options) {
     const cashOpeningBalance = openingBalance + priorManualBalance() + paymentBalance(from);
     const cashMovements: CashMovement[] = [
       ...manualCashMovements,
-      ...payments.flatMap((item): CashMovement[] => [{ at: item.occurredAt, direction: "INCOME", amountCents: paymentCashCents(item) }, ...(item.reversedAt ? [{ at: item.reversedAt, direction: "EXPENSE" as const, amountCents: paymentCashCents(item) }] : [])]),
+      ...payments.flatMap((item): CashMovement[] => {
+        const accountId = receiptByPayment.get(item.id)?.financialAccountId;
+        const amountCents = paymentCashCents(item);
+        const movement = { accountId: accountId ?? null, amountCents };
+        return [
+          { ...movement, at: item.occurredAt, direction: "INCOME" },
+          ...(item.reversedAt ? [{ ...movement, at: item.reversedAt, direction: "EXPENSE" as const }] : []),
+        ];
+      }),
     ];
     const cashFlow = dailyCashFlow(from, to, cashOpeningBalance, cashMovements, workspace.timeZone);
+    const selectedAccount = cashView && financialAccounts.find((item) => item.id === cashView.accountId);
+    const reportOpening = selectedAccount
+      ? selectedAccount.openingBalanceCents + priorManualBalance(selectedAccount.id) + accountPaymentBalance(selectedAccount.id, from)
+      : cashOpeningBalance;
+    const reportDays = selectedAccount
+      ? dailyCashFlow(from, to, reportOpening, cashMovements.filter((item) => item.accountId === selectedAccount.id), workspace.timeZone)
+      : cashFlow;
+    const cashFlowReport = cashView ? {
+      accountId: selectedAccount ? selectedAccount.id : null,
+      openingCents: money(reportOpening),
+      closingCents: reportDays.at(-1)?.balanceCents ?? money(reportOpening),
+      totals: reportDays.reduce((totals, day) => ({
+        incomeCents: money(BigInt(totals.incomeCents) + BigInt(day.incomeCents)),
+        expenseCents: money(BigInt(totals.expenseCents) + BigInt(day.expenseCents)),
+        transferCents: money(BigInt(totals.transferCents) + BigInt(day.transferCents)),
+        adjustmentCents: money(BigInt(totals.adjustmentCents) + BigInt(day.adjustmentCents)),
+      }), { incomeCents: "0", expenseCents: "0", transferCents: "0", adjustmentCents: "0" }),
+      days: reportDays,
+    } : null;
     const projectionMovements: CashMovement[] = [
       ...entries.filter((item) => item.status === "PLANNED" && item.dueAt < projectionTo).map((item) => ({ at: item.dueAt < to ? to : item.dueAt, direction: item.direction, amountCents: item.amountCents })),
       ...invoices.filter((item) => ["OPEN", "PARTIALLY_PAID"].includes(item.status) && item.dueAt < projectionTo).map((item) => ({ at: item.dueAt < to ? to : item.dueAt, direction: "INCOME" as const, amountCents: item.totalCents - item.paidCents })),
@@ -280,6 +321,7 @@ export function createFinanceService(options: Options) {
       summary,
       metrics: summary,
       cashFlow,
+      cashFlowReport,
       cashProjection,
       projectionPeriod: { from: to.toISOString(), to: projectionTo.toISOString() },
       dre,
@@ -478,7 +520,7 @@ export function createFinanceService(options: Options) {
     return readCommercialGoalsScreen(options.database, { workspaceId: context.workspaceId, month: monthSchema.parse(month), now: options.now() });
   }
 
-  return Object.freeze({ screen, goals, command, addAttachment, getAttachment });
+  return Object.freeze({ screen, statementMovementDates, goals, command, addAttachment, getAttachment });
 }
 
 let service: ReturnType<typeof createFinanceService> | undefined;

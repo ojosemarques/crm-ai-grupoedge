@@ -19,6 +19,13 @@ export type FinanceSection = "dashboard" | "lancamentos" | "entradas" | "despesa
 export type FinanceScreenView = Readonly<Record<string, unknown>>;
 
 type Row = Record<string, unknown>;
+export type CashFlowFilters = Readonly<{
+  from: string;
+  to: string;
+  today: string;
+  statementFilter: { from: string; to: string } | null;
+  invalidPeriod: boolean;
+}>;
 type DialogKind = "entry" | "account" | "category" | "commission" | "statement" | "recurrence" | "costCenter" | "attachment" | null;
 
 const tabs: readonly Readonly<{ id: FinanceSection; label: string }>[] = [
@@ -54,7 +61,7 @@ function EntryTable({ rows, empty, onSettle, timeZone }: Readonly<{ rows: Row[];
   return <div className={styles.tableWrap}><table><thead><tr><th>Descrição</th><th>Cliente / fornecedor</th><th>Categoria</th><th>Competência</th><th>Vencimento</th><th>Status</th><th className={styles.number}>Valor / em aberto</th>{onSettle ? <th>Ações</th> : null}</tr></thead><tbody>{rows.map((row, index) => { const status = text(row.status, "OPEN"); const canSettle = row.type === "MANUAL" && ["PLANNED", "OPEN", "PENDING", "PARTIALLY_PAID", "OVERDUE", "DUE"].includes(status); const invoiceHref = row.type === "INVOICE" ? `/pagamentos/${text(row.id).replace(/^invoice:/, "")}` : null; return <tr key={text(row.id, String(index))}><td><strong>{invoiceHref ? <Link href={invoiceHref}>{text(row.description ?? row.name)}</Link> : text(row.description ?? row.name)}</strong><small>{[text(row.sourceLabel ?? row.source, "Manual"), row.financialAccountName].filter(Boolean).join(" · ")}</small></td><td>{text(row.counterparty ?? row.counterpartyName ?? row.accountName ?? row.customerName)}</td><td>{text(row.categoryName ?? row.category)}</td><td>{date(row.competenceAt ?? row.competenceDate ?? row.occurredAt, timeZone)}</td><td>{date(row.dueAt ?? row.dueDate, timeZone)}</td><td><StatusBadge tone={statusTone(status)}>{statusLabel(status)}</StatusBadge></td><td className={styles.number}>{money(["OPEN", "PARTIALLY_PAID"].includes(status) ? row.outstandingCents ?? row.amountCents ?? row.totalCents : row.amountCents ?? row.totalCents)}</td>{onSettle ? <td>{canSettle ? <Button onClick={() => onSettle(row)} size="sm" variant="secondary">Liquidar</Button> : invoiceHref && ["OPEN", "PARTIALLY_PAID"].includes(status) ? <Link className="button button-secondary" href={invoiceHref}>Registrar recebimento</Link> : "—"}</td> : null}</tr>; })}</tbody></table></div>;
 }
 
-export function FinanceWorkspace({ initialScreen, section, month, year, goals }: Readonly<{ initialScreen: FinanceScreenView; section: FinanceSection; month: number; year: number; goals?: ReactNode }>) {
+export function FinanceWorkspace({ initialScreen, section, month, year, goals, cashFlowFilters }: Readonly<{ initialScreen: FinanceScreenView; section: FinanceSection; month: number; year: number; goals?: ReactNode; cashFlowFilters?: CashFlowFilters | null }>) {
   const router = useRouter();
   const screen = object(initialScreen);
   const metrics = object(screen.metrics ?? screen.summary);
@@ -83,7 +90,7 @@ export function FinanceWorkspace({ initialScreen, section, month, year, goals }:
   const income = entries.filter((row) => text(row.direction ?? row.nature, "") === "INCOME" && row.reportingKind !== "BALANCE_ONLY" && row.reportingKind !== "EXPENSE_REFUND");
   const expenses = entries.filter((row) => text(row.direction ?? row.nature, "") === "EXPENSE" && row.reportingKind !== "BALANCE_ONLY");
   const pending = entries.filter((row) => ["PLANNED", "OPEN", "PENDING", "PARTIALLY_PAID", "OVERDUE", "DUE"].includes(text(row.status, "")));
-  const href = (id: FinanceSection) => `/financeiro?section=${id}&month=${month}&year=${year}`;
+  const href = (id: FinanceSection) => id === "fluxo-caixa" ? "/financeiro?section=fluxo-caixa" : `/financeiro?section=${id}&month=${month}&year=${year}`;
   const currentYear = new Date().getFullYear();
 
   async function command(payload: Record<string, unknown>, success: string, onSuccess?: () => void, onError?: (message: string) => void) {
@@ -134,14 +141,14 @@ export function FinanceWorkspace({ initialScreen, section, month, year, goals }:
   return <div className={styles.workspace}>
     <header className={styles.hero}><div><p>Gestão financeira</p><h1>Financeiro</h1><span>Caixa, resultados, recebimentos e comissões conectados ao CRM.</span></div><div><small>Atualizado em</small><strong>{date(screen.generatedAt ?? new Date().toISOString(), timeZone)}</strong></div></header>
     <nav aria-label="Seções do financeiro" className={styles.tabs}>{tabs.filter((tab) => tab.id !== "metricas-metas" || permissions.commissionsManage === true).map((tab) => <Link aria-current={section === tab.id ? "page" : undefined} href={href(tab.id)} key={tab.id}>{tab.label}</Link>)}</nav>
-    <form className={styles.period} method="get"><input name="section" type="hidden" value={section}/><select aria-label="Mês" defaultValue={month} name="month">{monthNames.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}</select><select aria-label="Ano" defaultValue={year} name="year">{Array.from({ length: 7 }, (_, index) => currentYear - 3 + index).map((value) => <option key={value}>{value}</option>)}</select><Button size="sm" type="submit" variant="secondary">Atualizar</Button>{canManage ? <Button onClick={() => setDialog("entry")} size="sm" type="button"><Icon name="mais" size={14}/> Novo lançamento</Button> : null}</form>
+    {section !== "fluxo-caixa" ? <form className={styles.period} method="get"><input name="section" type="hidden" value={section}/><select aria-label="Mês" defaultValue={month} name="month">{monthNames.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}</select><select aria-label="Ano" defaultValue={year} name="year">{Array.from({ length: 7 }, (_, index) => currentYear - 3 + index).map((value) => <option key={value}>{value}</option>)}</select><Button size="sm" type="submit" variant="secondary">Atualizar</Button>{canManage ? <Button onClick={() => setDialog("entry")} size="sm" type="button"><Icon name="mais" size={14}/> Novo lançamento</Button> : null}</form> : null}
     {notice ? <p className={notice.kind === "error" ? styles.error : styles.success} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
 
     {section === "dashboard" ? <><Dashboard metrics={metrics} cards={dashboardMetrics} cashFlow={cashFlow.filter((row) => text(row.bucket, "") <= asOfDate)} cashProjection={cashProjection} expenses={expenses.filter((row) => row.status !== "CANCELLED")} href={href} />{accounts.length ? <Accounts rows={accounts} canManage={false}/> : null}</> : null}
     {section === "lancamentos" ? <Panel title="Todos os lançamentos" description={`${entries.length} registros do período e títulos em aberto`}><EntryTable timeZone={timeZone} empty="Nenhum lançamento encontrado" onSettle={canManage ? setSettling : undefined} rows={entries}/></Panel> : null}
     {section === "entradas" ? <Panel title="Entradas" description="Receitas previstas e recebimentos confirmados" action={canManage ? <Button onClick={() => setDialog("entry")} size="sm">Nova entrada</Button> : null}><EntryTable timeZone={timeZone} empty="Nenhuma entrada no período" onSettle={canManage ? setSettling : undefined} rows={income}/></Panel> : null}
     {section === "despesas" ? <><ApprovalQueue canManage={canManage} command={command} rows={expenses.filter((row) => row.approvalStatus === "PENDING")}/><Panel title="Despesas" description="Custos, despesas recorrentes e pagamentos" action={canManage ? <Button onClick={() => setDialog("entry")} size="sm">Nova despesa</Button> : null}><EntryTable timeZone={timeZone} empty="Nenhuma despesa no período" onSettle={canManage ? setSettling : undefined} rows={expenses}/></Panel></> : null}
-    {section === "fluxo-caixa" ? <CashFlow rows={cashFlow} metrics={metrics}/> : null}
+    {section === "fluxo-caixa" && cashFlowFilters ? <CashFlow report={object(screen.cashFlowReport)} accounts={accounts} filters={cashFlowFilters} reconciliationHref={href("conciliacao")}/> : null}
     {section === "dre" ? <Dre rows={dre} metrics={metrics}/> : null}
     {section === "contas" ? <><p className={styles.info}>Recebimentos de clientes ainda sem conta bancária vinculada: {money(metrics.unallocatedPaymentBalanceCents)}. Integram o caixa total, mas não o saldo destas contas.</p><Accounts rows={accounts} canManage={canManage} onCreate={() => setDialog("account")}/></> : null}
     {section === "pagar-receber" ? <PayablesReceivables timeZone={timeZone} rows={pending} canManage={canManage} onSettle={setSettling}/> : null}
@@ -171,10 +178,104 @@ function Dashboard({ metrics, cards, cashFlow, cashProjection, expenses, href }:
     <div className={styles.chartGrid}><Panel title="Receitas vs despesas" description="Últimos movimentos do período"><CashBars rows={cashFlow}/></Panel><Panel title="Distribuição de despesas" description="Despesas brutas por categoria"><ExpenseDistribution rows={expenses}/></Panel></div></>;
 }
 
-function CashBars({ rows }: Readonly<{ rows: Row[] }>) { if (!rows.length) return <EmptyState compact title="Sem série de caixa" description="A série aparecerá após os primeiros lançamentos liquidados."/>; const max = rows.reduce((value, row) => { const next = Number(cents(row.incomeCents ?? row.inflowCents) + cents(row.expenseCents ?? row.outflowCents)); return Math.max(value, next); }, 1); return <div className={styles.bars}>{rows.slice(-12).map((row, index) => <div key={text(row.bucket ?? row.date, String(index))}><div><i style={{ height: `${Math.max(2, Number(cents(row.incomeCents ?? row.inflowCents)) / max * 100)}%` }}/><i data-expense style={{ height: `${Math.max(2, Number(cents(row.expenseCents ?? row.outflowCents)) / max * 100)}%` }}/></div><small>{text(row.label ?? row.bucket ?? row.date)}</small></div>)}</div>; }
+function CashBars({ rows }: Readonly<{ rows: Row[] }>) {
+  if (!rows.length) return <EmptyState compact title="Sem série de caixa" description="A série aparecerá após os primeiros lançamentos liquidados."/>;
+  const bars = rows.slice(-12).map((row) => ({
+    label: text(row.label ?? row.bucket ?? row.date),
+    income: cents(row.incomeCents ?? row.inflowCents),
+    expense: cents(row.expenseCents ?? row.outflowCents),
+  }));
+  const max = Math.max(1, ...bars.flatMap(({ income, expense }) => [Math.abs(Number(income)), Math.abs(Number(expense))]));
+  const height = (amount: bigint) => `${Math.abs(Number(amount)) / max * 100}%`;
+  return <div className={styles.bars} aria-hidden="true">{bars.map(({ label, income, expense }, index) =>
+    <div key={`${label}-${index}`} title={`${label} · Entradas: ${money(income)} · Saídas líquidas: ${money(expense)}`}>
+      <div><i style={{ height: height(income) }}/><i data-expense={expense > 0n || undefined} style={{ height: height(expense) }}/></div>
+      <small>{label}</small>
+    </div>)}</div>;
+}
 function MiniLine({ rows }: Readonly<{ rows: Row[] }>) { const values = rows.slice(-20).map((row) => Number(cents(row.balanceCents ?? row.projectedBalanceCents))); if (!values.length) return <div className={styles.lineEmpty}/>; const min = Math.min(...values), max = Math.max(...values), span = max - min || 1; const points = values.map((value, index) => `${index / Math.max(1, values.length - 1) * 100},${45 - (value - min) / span * 38}`).join(" "); return <svg aria-label="Evolução do saldo projetado" className={styles.miniLine} role="img" viewBox="0 0 100 50" preserveAspectRatio="none"><polyline fill="none" points={points} stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke"/></svg>; }
 function ExpenseDistribution({ rows }: Readonly<{ rows: Row[] }>) { const grouped = new Map<string, bigint>(); for (const row of rows) { const key = text(row.categoryName ?? row.category, "Sem categoria"); grouped.set(key, (grouped.get(key) ?? 0n) + cents(row.amountCents)); } const values = [...grouped].sort((a,b) => Number(b[1]-a[1])).slice(0,6); const total = values.reduce((sum, item) => sum + item[1], 0n); if (!values.length) return <EmptyState compact title="Sem despesas" description="A distribuição será calculada por categoria."/>; return <ul className={styles.distribution}>{values.map(([label,value]) => <li key={label}><span>{label}</span><progress max={Number(total || 1n)} value={Number(value)}/><strong>{money(value)}</strong></li>)}</ul>; }
-function CashFlow({ rows, metrics }: Readonly<{ rows: Row[]; metrics: Row }>) { return <><section className={styles.metrics}><MetricCard label="Saldo inicial" value={money(metrics.openingBalanceCents)} hint="Início do período"/><MetricCard label="Entradas realizadas" value={money(metrics.inflowsCents ?? metrics.incomeCents)} hint="Caixa confirmado" tone="positive"/><MetricCard label="Saídas realizadas" value={money(metrics.outflowsCents ?? metrics.expenseCents)} hint="Caixa confirmado" tone="negative"/><MetricCard label="Saldo final" value={money(metrics.closingBalanceCents ?? metrics.cashBalanceCents)} hint="Movimentações realizadas"/></section><Panel title="Fluxo de caixa diário realizado" description="Caixa por data efetiva de liquidação"><CashBars rows={rows}/>{rows.length ? <div className={styles.tableWrap}><table><thead><tr><th>Período</th><th>Entradas</th><th>Saídas</th><th>Saldo</th></tr></thead><tbody>{rows.map((row,index) => <tr key={text(row.bucket ?? row.date,String(index))}><td>{text(row.label ?? row.bucket ?? row.date)}</td><td>{money(row.incomeCents ?? row.inflowCents)}</td><td>{money(row.expenseCents ?? row.outflowCents)}</td><td>{money(row.balanceCents ?? row.projectedBalanceCents)}</td></tr>)}</tbody></table></div> : null}</Panel></>; }
+function CashFlow({ report, accounts, filters, reconciliationHref }: Readonly<{
+  report: Row;
+  accounts: Row[];
+  filters: CashFlowFilters;
+  reconciliationHref: string;
+}>) {
+  const days = list(report.days);
+  const totals = object(report.totals);
+  const accountId = text(report.accountId, "");
+  const { from, to, today, statementFilter, invalidPeriod } = filters;
+  const rangeHref = (range: { from: string; to: string }, account = accountId) =>
+    `/financeiro?${new URLSearchParams({ section: "fluxo-caixa", ...range, ...(account ? { account } : {}) })}`;
+  const month = { from: today.slice(0, 7) + "-01", to: today };
+  const change = cents(report.closingCents) - cents(report.openingCents);
+  const movementDays = days.filter((day) => cents(day.incomeCents) !== 0n || cents(day.expenseCents) !== 0n);
+  const dateLabel = (value: string) => value.split("-").reverse().join("/");
+  const columns = [
+    { key: "incomeCents", label: "Entradas" },
+    { key: "expenseCents", label: "Saídas líquidas" },
+    { key: "transferCents", label: "Repasses líquidos" },
+    { key: "adjustmentCents", label: "Ajustes de saldo" },
+  ];
+
+  return <>
+    <form action="/financeiro" className={`${styles.period} ${styles.cashFilters}`} key={`${from}/${to}/${accountId}`} method="get">
+      <input name="section" type="hidden" value="fluxo-caixa"/>
+      <label>De<input name="from" type="date" min="2000-01-01" max={today} defaultValue={from} required/></label>
+      <label>Até<input name="to" type="date" min="2000-01-01" max={today} defaultValue={to} required/></label>
+      <label>Conta<select name="account" defaultValue={accountId}>
+        <option value="">Todas as contas</option>
+        {accounts.map((account) => <option value={text(account.id)} key={text(account.id)}>{text(account.name)}</option>)}
+      </select></label>
+      <Button type="submit" size="sm">Aplicar filtros</Button>
+      <Link href={rangeHref(month)}>Mês atual</Link>
+      {statementFilter ? <Link href={rangeHref(statementFilter)}>Período dos extratos</Link> : null}
+    </form>
+    {invalidPeriod ? <p className={styles.error} role="alert">Selecione um período de até 365 dias, com data final até hoje.</p> : null}
+    {statementFilter ? <p className={styles.info}>
+      Movimentações conciliadas nos extratos entre {dateLabel(statementFilter.from)} e {dateLabel(statementFilter.to)}.
+    </p> : null}
+    <section aria-label="Resumo do fluxo de caixa" className={`${styles.metrics} ${styles.cashMetrics}`}>
+      <MetricCard label="Saldo inicial" value={money(report.openingCents)} hint={`Antes de ${dateLabel(from)}`}/>
+      <MetricCard label="Entradas realizadas" value={money(totals.incomeCents)} hint="Recebimentos liquidados" tone="positive"/>
+      <MetricCard label="Saídas realizadas" value={money(totals.expenseCents)} hint="Pagamentos líquidos de estornos" tone="negative"/>
+      <MetricCard label="Variação do saldo" value={money(change)} hint="Inclui repasses e ajustes" tone={change < 0n ? "negative" : "positive"}/>
+      <MetricCard label="Saldo final registrado" value={money(report.closingCents)} hint={`Em ${dateLabel(to)}`}/>
+    </section>
+    <Panel title="Fluxo de caixa diário realizado" description={`${dateLabel(from)} a ${dateLabel(to)} · por data de liquidação`}
+      action={<Link href={reconciliationHref}>Conciliação</Link>}>
+      {movementDays.length ? <>
+        <p className={styles.cashChartLabel}>Entradas e saídas nos últimos {Math.min(movementDays.length, 12)} dias com movimento</p>
+        <CashBars rows={movementDays}/>
+      </> : <p className={styles.info}>Nenhuma entrada ou saída operacional no período selecionado.</p>}
+      <div className={styles.tableWrap}>
+        <table aria-label="Movimentação diária">
+          <thead><tr>
+            <th scope="col">Data</th>
+            {columns.map(({ key, label }) => <th scope="col" className={styles.number} key={key}>{label}</th>)}
+            <th scope="col" className={styles.number}>Saldo</th>
+          </tr></thead>
+          <tbody>{days.map((day) => <tr key={text(day.bucket)}>
+            <td>{text(day.label)}</td>
+            {columns.map(({ key }) => <td className={styles.number} key={key}>{money(day[key])}</td>)}
+            <td className={styles.number}>{money(day.balanceCents)}</td>
+          </tr>)}</tbody>
+          <tfoot><tr>
+            <th scope="row">Totais do período</th>
+            {columns.map(({ key }) => <td className={styles.number} key={key}>{money(totals[key])}</td>)}
+            <td className={styles.number}>{money(report.closingCents)}</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </Panel>
+    {accounts.length ? <Panel title="Saldos registrados por conta" description={`Posição em ${dateLabel(to)}`}>
+      <div className={styles.accountGrid}>{accounts.map((account) => <article key={text(account.id)}>
+        <h3><Link href={rangeHref({ from, to }, text(account.id))}>{text(account.name)}</Link></h3>
+        <strong>{money(account.balanceCents)}</strong>
+      </article>)}</div>
+    </Panel> : null}
+  </>;
+}
 function Dre({ rows, metrics }: Readonly<{ rows: Row[]; metrics: Row }>) { return <><p className={styles.info}>DRE gerencial por competência. Recebimentos e pagamentos pertencem ao fluxo de caixa.</p><Panel title="Demonstrativo de Resultado" description="Valores classificados pelas categorias do período">{rows.length ? <div className={styles.dre}>{rows.map((row,index) => <div data-total={row.total === true || undefined} key={text(row.id ?? row.categoryId ?? row.code,String(index))}><span>{text(row.label ?? row.name ?? row.category)}</span><strong>{money(row.amountCents ?? row.valueCents ?? row.resultCents)}</strong></div>)}</div> : <EmptyState compact title="DRE indisponível" description="Classifique receitas e despesas para formar o demonstrativo."/>}</Panel><section className={styles.metrics}><MetricCard label="Receita líquida" value={money(metrics.netRevenueCents ?? metrics.incomeCents)} hint="Competência" tone="positive"/><MetricCard label="Margem bruta" value={money(metrics.grossProfitCents ?? metrics.resultCents)} hint="Após custos diretos"/><MetricCard label="Resultado líquido" value={money(metrics.netIncomeCents ?? metrics.resultCents)} hint="Fechamento gerencial" tone={cents(metrics.netIncomeCents ?? metrics.resultCents)>=0n?"positive":"negative"}/></section></>; }
 function Accounts({ rows, canManage, onCreate }: Readonly<{ rows: Row[]; canManage: boolean; onCreate?: () => void }>) { return <Panel title="Contas financeiras" description="Bancos, carteiras e caixas usados nas liquidações" action={canManage ? <Button onClick={onCreate} size="sm">Nova conta</Button> : null}>{rows.length ? <div className={styles.accountGrid}>{rows.map((row,index) => <article key={text(row.id,String(index))}><div><Icon name="receita" size={18}/><StatusBadge tone={text(row.status,"ACTIVE") === "ACTIVE" ? "success" : "neutral"}>{statusLabel(text(row.status,"ACTIVE"))}</StatusBadge></div><span>{text(row.type,"Conta")}</span><h3>{text(row.name)}</h3><strong>{money(row.balanceCents ?? row.currentBalanceCents)}</strong><small>Saldo disponível</small></article>)}</div> : <EmptyState compact title="Nenhuma conta cadastrada" description="Crie uma conta para registrar entradas e saídas de caixa."/>}</Panel>; }
 function PayablesReceivables({ rows, canManage, onSettle, timeZone }: Readonly<{ rows: Row[]; canManage: boolean; timeZone: string; onSettle: (row: Row) => void }>) { const receivable = rows.filter((row) => text(row.direction ?? row.nature, "") === "INCOME"); const payable = rows.filter((row) => text(row.direction ?? row.nature, "") === "EXPENSE"); return <div className={styles.twoColumns}><Panel title="Contas a receber" description={`${receivable.length} títulos em aberto`}><EntryTable timeZone={timeZone} empty="Nada a receber" onSettle={canManage ? onSettle : undefined} rows={receivable}/></Panel><Panel title="Contas a pagar" description={`${payable.length} títulos em aberto`}><EntryTable timeZone={timeZone} empty="Nada a pagar" onSettle={canManage ? onSettle : undefined} rows={payable}/></Panel></div>; }
