@@ -96,10 +96,22 @@ describe("financeiro integrado", () => {
     const account = await service.command(admin, { action: "CREATE_ACCOUNT", name: "Banco conciliação", type: "BANK", openingBalanceCents: "0" }) as { id: string };
     const category = await service.command(admin, { action: "CREATE_CATEGORY", key: "despesa_recorrente", name: "Despesa recorrente", kind: "EXPENSE", dreGroup: "despesas_operacionais" }) as { id: string };
     const costCenter = await service.command(admin, { action: "CREATE_COST_CENTER", key: "operacoes", name: "Operações" }) as { id: string };
-    const recurrence = await service.command(admin, { action: "CREATE_RECURRENCE", categoryId: category.id, financialAccountId: account.id, costCenterId: costCenter.id, direction: "EXPENSE", description: "Licença recorrente", counterparty: "Fornecedor SaaS", amountCents: "12345", firstDueAt: "2026-09-30", installmentCount: 2, requiresApproval: true }) as { id: string };
+    const command = {
+      action: "CREATE_RECURRENCE", categoryId: category.id, financialAccountId: account.id, costCenterId: costCenter.id,
+      direction: "EXPENSE", description: "Licença recorrente", counterparty: "Fornecedor SaaS", counterpartyType: "SUPPLIER",
+      amountCents: "12345", firstCompetenceAt: "2026-09-01", firstDueAt: "2026-09-30", installmentCount: 2,
+      requiresApproval: true, tags: ["software"], notes: "Licença anual", idempotencyKey: "finance:test:recurring-details",
+    };
+    await expect(service.command(sdr, command)).rejects.toMatchObject({ code: "ACCESS_DENIED" });
+    const [recurrence, replay] = await Promise.all([service.command(admin, command), service.command(admin, command)]) as [{ id: string }, { id: string }];
+    expect(replay.id).toBe(recurrence.id);
     const installments = await database.financialEntry.findMany({ where: { workspaceId, recurrenceId: recurrence.id }, orderBy: { installmentNumber: "asc" } });
     expect(installments).toHaveLength(2);
     expect(installments[0]).toMatchObject({ costCenterId: costCenter.id, installmentNumber: 1, approvalStatus: "PENDING", status: "PLANNED" });
+    expect(installments[1]).toMatchObject({
+      counterpartyType: "SUPPLIER", tags: ["software"], notes: "Licença anual",
+      competenceAt: new Date("2026-10-01T03:00:00.000Z"), dueAt: new Date("2026-10-30T03:00:00.000Z"),
+    });
     await service.command(admin, { action: "REVIEW_EXPENSE", entryId: installments[0]!.id, decision: "APPROVE", reason: "Contrato e valor conferidos.", expectedRevision: 1 });
     await service.command(admin, { action: "IMPORT_BANK_STATEMENT", financialAccountId: account.id, fileName: "extrato-setembro.csv", csv: "data;descricao;valor\n30/09/2026;Licenca SaaS;-123,45" });
     expect(await database.bankStatementLine.findFirstOrThrow({ where: { workspaceId, description: "Licenca SaaS" } })).toMatchObject({ status: "MATCHED", financialEntryId: installments[0]!.id });

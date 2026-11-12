@@ -15,6 +15,8 @@ const description = (row: Row) => text(row.description);
 const category = (row: Row) => text(row.categoryName, "Sem categoria");
 const account = (row: Row) => text(row.financialAccountName, "Sem conta vinculada");
 const contact = (row: Row) => text(row.counterparty ?? row.customerName);
+const entryTags = (row: Row) => Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === "string") : [];
+const contactTypes: Record<string, string> = { CUSTOMER: "Cliente", SUPPLIER: "Fornecedor", OTHER: "Outro" };
 const direction = (row: Row) => text(row.direction);
 const amount = (row: Row) => cents(openStatuses.has(text(row.status)) ? row.outstandingCents ?? row.amountCents : row.amountCents);
 const status = (row: Row) => {
@@ -59,7 +61,7 @@ export function FinanceEntries({ rows, period, timeZone, onSettle }: Readonly<{
     && (!filters.category || category(row) === filters.category)
     && (!filters.direction || direction(row) === filters.direction)
     && (!filters.status || status(row) === filters.status)
-    && (!query || fold([description(row), category(row), account(row), contact(row)].join(" ")).includes(query)),
+    && (!query || fold([description(row), category(row), account(row), contact(row), ...entryTags(row)].join(" ")).includes(query)),
   );
   const { income, expense } = totalsFor(visible, period);
   const result = income - expense;
@@ -90,7 +92,7 @@ export function FinanceEntries({ rows, period, timeZone, onSettle }: Readonly<{
         <p aria-live="polite">{visible.length.toLocaleString("pt-BR")} de {rows.length.toLocaleString("pt-BR")} registros</p>
       </header>
       <div className={styles.filters} role="group" aria-label="Filtros de lançamentos">
-        <label>Buscar<input aria-label="Buscar lançamentos" type="search" placeholder="Descrição, conta ou contato" value={filters.search}
+        <label>Buscar<input aria-label="Buscar lançamentos" type="search" placeholder="Descrição, conta, contato ou tag" value={filters.search}
           onChange={(event) => setFilters({ ...filters, search: event.target.value })}/></label>
         {options.map((filter) => <label key={filter.key}>{filter.title}
           <select aria-label={filter.title} value={filters[filter.key]} onChange={(event) => setFilters({ ...filters, [filter.key]: event.target.value })}>
@@ -118,6 +120,9 @@ export function FinanceEntries({ rows, period, timeZone, onSettle }: Readonly<{
             const due = date(row.dueAt, timeZone);
             const settled = date(row.settledAt, timeZone);
             const competence = date(row.competenceAt, timeZone);
+            const tags = entryTags(row);
+            const notes = text(row.notes, "");
+            const contactType = contactTypes[text(row.counterpartyType, "")];
             return <tr role="row" key={text(row.id)}>
               <td role="cell" data-label="Vencimento" className={styles.due}>
                 {due}
@@ -127,11 +132,15 @@ export function FinanceEntries({ rows, period, timeZone, onSettle }: Readonly<{
               <td role="cell" data-label="Descrição" className={styles.description}>
                 <strong>{invoiceHref ? <Link href={invoiceHref}>{description(row)}</Link> : description(row)}</strong>
                 <small>{text(row.sourceLabel)}</small>
+                {tags.length ? <small>{tags.join(" · ")}</small> : null}
+                {notes ? <details className={styles.notes}><summary>Observações</summary><p>{notes}</p></details> : null}
               </td>
               <td role="cell" data-label="Categoria"><span className={styles.category}
                 data-tone={row.reportingKind === "BALANCE_ONLY" ? "neutral" : expenseRow ? "expense" : "income"}>{category(row)}</span></td>
               <td role="cell" data-label="Conta" className={styles.account}>{text(row.financialAccountName)}</td>
-              <td role="cell" data-label="Contato" className={styles.contact}>{contact(row)}</td>
+              <td role="cell" data-label="Contato" className={styles.contact}>
+                {contact(row)}{contactType ? <small>{contactType}</small> : null}
+              </td>
               <td role="cell" data-label="Valor" className={styles.value}>
                 <strong data-tone={expenseRow ? "expense" : "income"}>{value > 0n && !expenseRow ? "+" : ""}{money(expenseRow ? -value : value)}</strong>
                 {row.status === "PARTIALLY_PAID" ? <small>Em aberto</small> : null}

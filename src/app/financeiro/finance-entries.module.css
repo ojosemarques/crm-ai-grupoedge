@@ -54,3 +54,6 @@
   .tableWrap td.description::before { content: none; }
   .tableWrap td.value { text-align: left; }
 }
+
+.notes { margin-top: 4px; font-size: 11px; }
+.notes p { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -272,7 +272,7 @@ export function createFinanceService(options: Options) {
     const categoryName = new Map(categories.map((item) => [item.id, item.name]));
     const accountName = new Map(financialAccounts.map((item) => [item.id, item.name]));
     const normalizedEntries = [
-      ...entries.map((item) => ({ id: item.id, type: "MANUAL" as const, sourceLabel: item.recurrenceId ? `Parcela ${item.installmentNumber ?? ""}` : "Lançamento manual", categoryId: item.categoryId, categoryName: categoryName.get(item.categoryId) ?? "Sem categoria", reportingKind: reportingKind(item.categoryId), financialAccountId: item.financialAccountId, financialAccountName: accountName.get(item.financialAccountId), ...(view?.entries ? { reconciled: reconciledIds.has(item.id) } : {}), customerAccountId: item.customerAccountId, costCenterId: item.costCenterId, recurrenceId: item.recurrenceId, approvalStatus: item.approvalStatus, approvalReason: item.approvalReason, customerName: null, direction: item.direction, status: item.status, description: item.description, counterparty: item.counterparty, amountCents: money(item.amountCents), competenceAt: iso(item.competenceAt), dueAt: iso(item.dueAt), settledAt: iso(item.settledAt), revision: item.revision })),
+      ...entries.map((item) => ({ id: item.id, type: "MANUAL" as const, sourceLabel: item.recurrenceId ? `Parcela ${item.installmentNumber ?? ""}` : "Lançamento manual", categoryId: item.categoryId, categoryName: categoryName.get(item.categoryId) ?? "Sem categoria", reportingKind: reportingKind(item.categoryId), financialAccountId: item.financialAccountId, financialAccountName: accountName.get(item.financialAccountId), ...(view?.entries ? { reconciled: reconciledIds.has(item.id) } : {}), customerAccountId: item.customerAccountId, costCenterId: item.costCenterId, recurrenceId: item.recurrenceId, approvalStatus: item.approvalStatus, approvalReason: item.approvalReason, customerName: null, direction: item.direction, status: item.status, description: item.description, counterparty: item.counterparty, counterpartyType: item.counterpartyType, tags: item.tags, notes: item.notes, amountCents: money(item.amountCents), competenceAt: iso(item.competenceAt), dueAt: iso(item.dueAt), settledAt: iso(item.settledAt), revision: item.revision })),
       ...invoices.map((item) => ({ id: `invoice:${item.id}`, type: "INVOICE" as const, sourceLabel: "Cobrança de cliente", categoryId: null, categoryName: "Receita de cliente", financialAccountId: null, customerAccountId: item.accountId, customerName: item.accountNameSnapshot, direction: "INCOME" as const, status: item.status, description: item.descriptionSnapshot, counterparty: item.accountNameSnapshot, amountCents: money(item.totalCents), outstandingCents: money(item.totalCents - item.paidCents), competenceAt: item.billingPeriodStart.toISOString(), dueAt: item.dueAt.toISOString(), settledAt: iso(item.paidAt), revision: item.revision })),
       ...payments.flatMap((item) => {
         const rows: Array<Record<string, unknown>> = [];
@@ -442,7 +442,7 @@ export function createFinanceService(options: Options) {
     // HTML date inputs describe a civil day in the workspace, not UTC midnight.
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
       const input = raw as Record<string, unknown>;
-      const dateFields = ["competenceAt", "dueAt", "settledAt", "effectiveFrom", "firstDueAt", "through"].filter((key) => typeof input[key] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input[key] as string));
+      const dateFields = ["competenceAt", "dueAt", "settledAt", "effectiveFrom", "firstDueAt", "firstCompetenceAt", "through"].filter((key) => typeof input[key] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input[key] as string));
       if (dateFields.length) {
         const workspace = await options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
         raw = { ...input, ...Object.fromEntries(dateFields.map((key) => [key, workspaceDayRange(input[key] as string, workspace.timeZone).start])) };
@@ -456,6 +456,18 @@ export function createFinanceService(options: Options) {
     if (command.action === "CREATE_RECURRENCE") {
       const input = createRecurrenceSchema.parse(command); await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_MANAGE, resource(context.workspaceId));
       return options.database.$transaction(async (tx) => {
+        if (input.idempotencyKey) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`finance-entry:${context.workspaceId}:${input.idempotencyKey}`}, 0))`;
+          const firstEntry = await tx.financialEntry.findUnique({ where: {
+            workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey: input.idempotencyKey },
+          }, select: { recurrenceId: true } });
+          if (firstEntry) {
+            if (!firstEntry.recurrenceId) fail("A chave já foi usada em outro lançamento.", "FINANCE_IDEMPOTENCY_CONFLICT");
+            return tx.financialRecurrence.findUniqueOrThrow({ where: {
+              workspaceId_id: { workspaceId: context.workspaceId, id: firstEntry.recurrenceId },
+            } });
+          }
+        }
         const [category, account, costCenter] = await Promise.all([
           tx.financialCategory.findFirst({ where: { id: input.categoryId, workspaceId: context.workspaceId, kind: input.direction, active: true } }),
           tx.financialAccount.findFirst({ where: { id: input.financialAccountId, workspaceId: context.workspaceId, active: true } }),
@@ -463,7 +475,20 @@ export function createFinanceService(options: Options) {
         ]);
         if (!category || !account || (input.costCenterId && !costCenter)) fail("Categoria, conta ou centro de custo inválido.", "FINANCE_RECURRENCE_REFERENCE");
         const recurrence = await tx.financialRecurrence.create({ data: { workspaceId: context.workspaceId, categoryId: input.categoryId, financialAccountId: input.financialAccountId, costCenterId: input.costCenterId, direction: input.direction, description: input.description, counterparty: input.counterparty, amountCents: input.amountCents, installmentCount: input.installmentCount, firstDueAt: input.firstDueAt, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
-        await tx.financialEntry.createMany({ data: Array.from({ length: input.installmentCount }, (_, index) => { const dueAt = addMonths(input.firstDueAt, index); return { workspaceId: context.workspaceId, categoryId: input.categoryId, financialAccountId: input.financialAccountId, costCenterId: input.costCenterId, recurrenceId: recurrence.id, installmentNumber: index + 1, direction: input.direction, description: `${input.description} (${index + 1}/${input.installmentCount})`, counterparty: input.counterparty, amountCents: input.amountCents, competenceAt: dueAt, dueAt, approvalStatus: input.direction === "EXPENSE" && input.requiresApproval ? "PENDING" as const : "NOT_REQUIRED" as const, idempotencyKey: `finance:recurrence:${recurrence.id}:${index + 1}`, createdByActorId: context.actorId, updatedByActorId: context.actorId }; }) });
+        await tx.financialEntry.createMany({ data: Array.from({ length: input.installmentCount }, (_, index) => {
+          const dueAt = addMonths(input.firstDueAt, index);
+          const suffix = ` (${index + 1}/${input.installmentCount})`;
+          return {
+            workspaceId: context.workspaceId, categoryId: input.categoryId, financialAccountId: input.financialAccountId,
+            costCenterId: input.costCenterId, recurrenceId: recurrence.id, installmentNumber: index + 1,
+            direction: input.direction, description: input.description.slice(0, 240 - suffix.length) + suffix,
+            counterparty: input.counterparty, counterpartyType: input.counterpartyType, tags: input.tags, notes: input.notes,
+            amountCents: input.amountCents, competenceAt: input.firstCompetenceAt ? addMonths(input.firstCompetenceAt, index) : dueAt, dueAt,
+            approvalStatus: input.direction === "EXPENSE" && input.requiresApproval ? "PENDING" as const : "NOT_REQUIRED" as const,
+            idempotencyKey: (index === 0 && input.idempotencyKey) || `finance:recurrence:${recurrence.id}:${index + 1}`,
+            createdByActorId: context.actorId, updatedByActorId: context.actorId,
+          };
+        }) });
         return recurrence;
       });
     }
@@ -506,8 +531,12 @@ export function createFinanceService(options: Options) {
       const input = createFinancialEntrySchema.parse(command);
       await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_MANAGE, resource(context.workspaceId));
       return options.database.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`finance-entry:${context.workspaceId}:${input.idempotencyKey}`}, 0))`;
         const replay = await tx.financialEntry.findUnique({ where: { workspaceId_idempotencyKey: { workspaceId: context.workspaceId, idempotencyKey: input.idempotencyKey } } });
-        if (replay) return replay;
+        if (replay) {
+          if (replay.recurrenceId) fail("A chave já foi usada em uma recorrência.", "FINANCE_IDEMPOTENCY_CONFLICT");
+          return replay;
+        }
         const [category, account, customer] = await Promise.all([
           tx.financialCategory.findFirst({ where: { id: input.categoryId, workspaceId: context.workspaceId, active: true } }),
           tx.financialAccount.findFirst({ where: { id: input.financialAccountId, workspaceId: context.workspaceId, active: true } }),
@@ -517,7 +546,7 @@ export function createFinanceService(options: Options) {
         if (!account) fail("Conta financeira não encontrada.", "FINANCE_ACCOUNT_NOT_FOUND", 404);
         if (input.customerAccountId && !customer) fail("Cliente não encontrado neste workspace.", "FINANCE_CUSTOMER_NOT_FOUND", 404);
         if (input.costCenterId && !(await tx.financialCostCenter.findFirst({ where: { id: input.costCenterId, workspaceId: context.workspaceId, active: true } }))) fail("Centro de custo não encontrado.", "FINANCE_COST_CENTER_NOT_FOUND", 404);
-        return tx.financialEntry.create({ data: { workspaceId: context.workspaceId, categoryId: input.categoryId, financialAccountId: input.financialAccountId, customerAccountId: input.customerAccountId, costCenterId: input.costCenterId, direction: input.direction, status: input.status, description: input.description, counterparty: input.counterparty, amountCents: input.amountCents, competenceAt: input.competenceAt, dueAt: input.dueAt, settledAt: input.settledAt, approvalStatus: input.direction === "EXPENSE" && input.requiresApproval ? "PENDING" : "NOT_REQUIRED", idempotencyKey: input.idempotencyKey, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
+        return tx.financialEntry.create({ data: { workspaceId: context.workspaceId, categoryId: input.categoryId, financialAccountId: input.financialAccountId, customerAccountId: input.customerAccountId, costCenterId: input.costCenterId, direction: input.direction, status: input.status, description: input.description, counterparty: input.counterparty, counterpartyType: input.counterpartyType, tags: input.tags, notes: input.notes, amountCents: input.amountCents, competenceAt: input.competenceAt, dueAt: input.dueAt, settledAt: input.settledAt, approvalStatus: input.direction === "EXPENSE" && input.requiresApproval ? "PENDING" : "NOT_REQUIRED", idempotencyKey: input.idempotencyKey, createdByActorId: context.actorId, updatedByActorId: context.actorId } });
       });
     }
     if (command.action === "SETTLE_ENTRY") {

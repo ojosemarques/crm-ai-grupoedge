@@ -42,6 +42,12 @@ export const createFinancialAccountSchema = z.object({
   openingBalanceCents: z.coerce.bigint().default(0n),
 }).strict();
 
+const entryDetails = {
+  counterpartyType: z.enum(["CUSTOMER", "SUPPLIER", "OTHER"]).nullable().default(null),
+  tags: z.array(text(1, 40)).max(12).default([]),
+  notes: text(1, 2000).nullable().default(null),
+};
+
 export const createFinancialEntrySchema = z.object({
   action: z.literal("CREATE_ENTRY"),
   categoryId: id,
@@ -52,6 +58,7 @@ export const createFinancialEntrySchema = z.object({
   status: z.enum(["PLANNED", "SETTLED"]).default("PLANNED"),
   description: text(3, 240),
   counterparty: text(2, 160).nullable().default(null),
+  ...entryDetails,
   amountCents: cents,
   competenceAt: z.coerce.date(),
   dueAt: z.coerce.date(),
@@ -100,6 +107,8 @@ export const createCostCenterSchema = z.object({ action: z.literal("CREATE_COST_
 export const createRecurrenceSchema = z.object({
   action: z.literal("CREATE_RECURRENCE"), categoryId: id, financialAccountId: id, costCenterId: id.nullable().default(null),
   direction: z.enum(["INCOME", "EXPENSE"]), description: text(3, 240), counterparty: text(2, 160).nullable().default(null), amountCents: cents,
+  ...entryDetails,
+  firstCompetenceAt: z.coerce.date().optional(), idempotencyKey: idempotencyKey.optional(),
   firstDueAt: z.coerce.date(), installmentCount: z.number().int().min(2).max(120), requiresApproval: z.boolean().default(false),
 }).strict();
 export const importBankStatementSchema = z.object({

@@ -14540,6 +14540,9 @@ model FinancialEntry {
   status             FinancialEntryStatus    @default(PLANNED)
   description        String
   counterparty       String?
+  counterpartyType   String?
+  tags               String[]                @default([])
+  notes              String?
   amountCents        BigInt
   currency           Currency                @default(BRL)
   competenceAt       DateTime                @db.Timestamptz(3)
