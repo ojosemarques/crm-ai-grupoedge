@@ -1,0 +1,72 @@
+.dashboard {
+  --fin-blue: #3978ee;
+  --fin-green: #20af66;
+  --fin-red: #e4515c;
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.metrics { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.metric, .panel {
+  min-width: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+}
+.metric { display: grid; align-content: start; gap: 9px; padding: 15px 16px; color: var(--foreground); text-decoration: none; }
+.metric[data-featured] { background: color-mix(in srgb, var(--fin-blue) 8%, var(--card)); border-color: color-mix(in srgb, var(--fin-blue) 26%, var(--border)); }
+.metric:hover { border-color: var(--fin-blue); }
+.metric:focus-visible, .panel a:focus-visible, .historyDetails summary:focus-visible { outline: 2px solid var(--fin-blue); outline-offset: 3px; }
+.metricTop { display: flex; gap: 6px; justify-content: space-between; align-items: start; font-size: 11px; color: var(--muted-foreground); }
+.metricTop svg { flex: none; }
+.metric > strong { font-size: clamp(15px, 1.55vw, 21px); letter-spacing: -0.04em; overflow-wrap: anywhere; }
+.metric small, .panelHeader p, .dueSummary, .empty { color: var(--muted-foreground); font-size: 11px; }
+.dashboard [data-tone="positive"] { color: color-mix(in srgb, var(--fin-green) 72%, var(--foreground)); }
+.dashboard [data-tone="negative"] { color: color-mix(in srgb, var(--fin-red) 80%, var(--foreground)); }
+.charts, .operations { display: grid; gap: 16px; align-items: stretch; }
+.charts { grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); }
+.operations { grid-template-columns: minmax(0, 1.25fr) repeat(3, minmax(0, 1fr)); }
+.panel { padding: 18px; }
+.panelHeader { display: flex; align-items: start; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.panelHeader h2 { font-size: 13px; font-weight: 650; }
+.panelHeader p { margin-top: 4px; }
+.panelHeader a { flex: none; padding: 5px; border-radius: 7px; color: var(--fin-blue); }
+.panelHeader a:hover { background: var(--surface-subtle); }
+.history { height: 248px; min-width: 0; }
+.projection { height: 128px; min-width: 0; }
+.donut { position: relative; height: 160px; max-width: 250px; margin: 0 auto 12px; }
+.donutPlot { height: 100%; }
+.donut > span { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; pointer-events: none; }
+.donut small, .projectionTotals span { color: var(--muted-foreground); font-size: 10px; }
+.donut strong { font-size: 14px; }
+.legend, .dueList, .accounts { display: grid; gap: 8px; padding: 0; list-style: none; }
+.legend li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 36px; align-items: center; gap: 7px; font-size: 10px; }
+.legend i { width: 7px; height: 7px; border-radius: 50%; }
+.legend small { text-align: right; color: var(--muted-foreground); font-size: 10px; }
+.dueAmount { font-size: 20px; letter-spacing: -0.035em; }
+.dueSummary { margin-top: 5px; }
+.overdue { margin-top: 5px; color: color-mix(in srgb, var(--fin-red) 80%, var(--foreground)); font-size: 11px; }
+.dueList { margin-top: 12px; }
+.dueList li, .accounts li > div { display: flex; justify-content: space-between; gap: 6px; font-size: 10px; }
+.dueList li span, .accounts li span { min-width: 0; overflow-wrap: anywhere; }
+.dueList li strong, .accounts li strong { white-space: nowrap; }
+.dueList small { color: var(--muted-foreground); }
+.more { display: inline-block; margin-top: 10px; color: var(--fin-blue); font-size: 11px; }
+.accounts li progress { width: 100%; height: 5px; accent-color: var(--fin-blue); }
+.projectionTotals { display: flex; gap: 12px; justify-content: space-between; flex-wrap: wrap; margin-bottom: 4px; }
+.projectionTotals > div { display: grid; gap: 3px; font-size: 13px; }
+.empty { padding: 12px 0; }
+.historyDetails { color: var(--muted-foreground); font-size: 11px; margin-top: 8px; }
+.historyDetails summary { cursor: pointer; width: fit-content; }
+.historyTable { overflow: auto; margin-top: 6px; }
+.historyTable table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+.historyTable :is(td, th) { padding: 5px; text-align: right; border-bottom: 1px solid var(--border); }
+.historyTable :is(td, th):first-child { text-align: left; }
+@media (max-width: 1160px) { .operations { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .charts { grid-template-columns: 1fr; } }
+@media (max-width: 580px) {
+  .operations { grid-template-columns: 1fr; }
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .metric, .panel { padding: 12px; }
+  .history { height: 213px; }
+}

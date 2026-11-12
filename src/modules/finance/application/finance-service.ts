@@ -21,12 +21,13 @@ import {
   reviewExpenseSchema,
 } from "@/modules/finance/domain/finance-contracts";
 import { paymentCashCents, PAYMENT_PROVIDER_KEY } from "@/modules/payments/domain/payment-contracts";
+import { dashboardCashHistory, dashboardDueTitles, dashboardMonths } from "@/modules/finance/domain/finance-dashboard";
 import { buildDre, dailyCashFlow, type CashMovement } from "@/modules/finance/domain/finance-reporting";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
-import { workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
+import { addLocalDays, workspaceDateAt, workspaceDayRange } from "@/shared/core/time/workspace-time";
 import { applyCommercialCompensationCommand } from "./commercial-compensation-payment";
 import { readCommercialCompensationScreen } from "./commercial-compensation-screen";
 import { readCommercialGoalsScreen } from "./commercial-goals-screen";
@@ -163,7 +164,7 @@ export function createFinanceService(options: Options) {
     return { from: dates._min.occurredAt, to: dates._max.occurredAt };
   }
 
-  async function screen(context: AuthenticatedContext, raw: unknown = {}, cashView?: Readonly<{ accountId: string | undefined }>) {
+  async function screen(context: AuthenticatedContext, raw: unknown = {}, view?: Readonly<{ accountId?: string | undefined; dashboard?: boolean }>) {
     await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_READ, resource(context.workspaceId));
     const query = financeQuerySchema.parse(raw);
     const workspace = await options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
@@ -171,10 +172,15 @@ export function createFinanceService(options: Options) {
     const from = query.from ?? fallback.from;
     const to = query.to ?? fallback.to;
     financeQuerySchema.parse({ from, to });
-    const projectionTo = new Date(to.getTime() + 30 * 86_400_000);
+    const today = workspaceDateAt(options.now(), workspace.timeZone);
+    const months = view?.dashboard ? dashboardMonths(from, workspace.timeZone) : [];
+    const historyFrom = months[0] ? workspaceDayRange(`${months[0]}-01`, workspace.timeZone).start : null;
+    const projectionTo = view?.dashboard
+      ? workspaceDayRange(addLocalDays(workspaceDateAt(to, workspace.timeZone), 30), workspace.timeZone).start
+      : new Date(to.getTime() + 30 * 86_400_000);
     const canManage = (await options.authorization.authorize(context, PermissionKeys.FINANCE_MANAGE, resource(context.workspaceId))).allowed;
     const canManageCommissions = (await options.authorization.authorize(context, PermissionKeys.FINANCE_COMMISSIONS, resource(context.workspaceId))).allowed;
-    const [categories, financialAccounts, entries, invoices, payments, subscriptions, movements, opportunities, rules, commissions, members, priorManualBalances, costCenters, recurrences, statementImports, statementLines, attachments, compensation] = await Promise.all([
+    const [categories, financialAccounts, entries, invoices, payments, subscriptions, movements, opportunities, rules, commissions, members, priorManualBalances, costCenters, recurrences, statementImports, statementLines, attachments, compensation, historyEntries] = await Promise.all([
       options.database.financialCategory.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
       options.database.financialAccount.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
       options.database.financialEntry.findMany({ where: { workspaceId: context.workspaceId, OR: [{ competenceAt: { gte: from, lt: to } }, { dueAt: { gte: from, lt: to } }, { settledAt: { gte: from, lt: to } }, { status: "PLANNED" }] }, orderBy: [{ dueAt: "desc" }, { createdAt: "desc" }] }),
@@ -193,6 +199,10 @@ export function createFinanceService(options: Options) {
       options.database.bankStatementLine.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ occurredAt: "desc" }, { id: "asc" }], take: 500 }),
       options.database.financialAttachment.findMany({ where: { workspaceId: context.workspaceId }, select: { id: true, financialEntryId: true, fileName: true, mimeType: true, sizeBytes: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: 500 }),
       canManageCommissions ? readCommercialCompensationScreen(options.database, context.workspaceId, from, to, workspace.timeZone, query.compensation) : [],
+      historyFrom ? options.database.financialEntry.findMany({
+        where: { workspaceId: context.workspaceId, status: "SETTLED", settledAt: { gte: historyFrom, lt: from } },
+        select: { settledAt: true, financialAccountId: true, categoryId: true, direction: true, amountCents: true },
+      }) : [],
     ]);
 
     const receiptEvents = payments.length ? await options.database.paymentEvent.findMany({ where: { workspaceId: context.workspaceId, paymentId: { in: payments.map((item) => item.id) }, type: "PAYMENT_CONFIRMED" }, select: { paymentId: true, safeMetadata: true } }) : [];
@@ -210,7 +220,7 @@ export function createFinanceService(options: Options) {
       return categoryKey.get(categoryId)?.startsWith("estorno_despesa_") ? "EXPENSE_REFUND" : "STANDARD";
     };
     const settledInPeriod = entries.filter((item) => item.status === "SETTLED" && item.settledAt !== null && item.settledAt >= from && item.settledAt < to);
-    const manualCashMovements: CashMovement[] = settledInPeriod.map((item) => {
+    const cashMovementForEntry = (item: typeof historyEntries[number]): CashMovement => {
       const movement = { at: item.settledAt!, accountId: item.financialAccountId };
       if (reportingKind(item.categoryId) === "EXPENSE_REFUND" && item.direction === "INCOME") {
         return { ...movement, direction: "EXPENSE", amountCents: -item.amountCents };
@@ -220,7 +230,8 @@ export function createFinanceService(options: Options) {
         return { ...movement, direction: item.direction, amountCents: item.amountCents, balanceKind: group === "movimentacao_interna" ? "TRANSFER" : "ADJUSTMENT" };
       }
       return { ...movement, direction: item.direction, amountCents: item.amountCents };
-    });
+    };
+    const manualCashMovements = settledInPeriod.map(cashMovementForEntry);
     const manualCashTotal = (direction: CashMovement["direction"]) => manualCashMovements
       .filter((item) => !item.balanceKind && item.direction === direction)
       .reduce((sum, item) => sum + item.amountCents, 0n);
@@ -277,14 +288,14 @@ export function createFinanceService(options: Options) {
       }),
     ];
     const cashFlow = dailyCashFlow(from, to, cashOpeningBalance, cashMovements, workspace.timeZone);
-    const selectedAccount = cashView && financialAccounts.find((item) => item.id === cashView.accountId);
+    const selectedAccount = view?.accountId && financialAccounts.find((item) => item.id === view.accountId);
     const reportOpening = selectedAccount
       ? selectedAccount.openingBalanceCents + priorManualBalance(selectedAccount.id) + accountPaymentBalance(selectedAccount.id, from)
       : cashOpeningBalance;
     const reportDays = selectedAccount
       ? dailyCashFlow(from, to, reportOpening, cashMovements.filter((item) => item.accountId === selectedAccount.id), workspace.timeZone)
       : cashFlow;
-    const cashFlowReport = cashView ? {
+    const cashFlowReport = view && !view.dashboard ? {
       accountId: selectedAccount ? selectedAccount.id : null,
       openingCents: money(reportOpening),
       closingCents: reportDays.at(-1)?.balanceCents ?? money(reportOpening),
@@ -296,8 +307,11 @@ export function createFinanceService(options: Options) {
       }), { incomeCents: "0", expenseCents: "0", transferCents: "0", adjustmentCents: "0" }),
       days: reportDays,
     } : null;
+    const dashboardOpenEntries = view?.dashboard
+      ? entries.filter((item) => item.status === "PLANNED" && item.approvalStatus !== "REJECTED" && reportingKind(item.categoryId) !== "BALANCE_ONLY")
+      : null;
     const projectionMovements: CashMovement[] = [
-      ...entries.filter((item) => item.status === "PLANNED" && item.dueAt < projectionTo).map((item) => ({ at: item.dueAt < to ? to : item.dueAt, direction: item.direction, amountCents: item.amountCents })),
+      ...(dashboardOpenEntries ?? entries).filter((item) => item.status === "PLANNED" && item.dueAt < projectionTo).map((item) => ({ at: item.dueAt < to ? to : item.dueAt, direction: item.direction, amountCents: item.amountCents })),
       ...invoices.filter((item) => ["OPEN", "PARTIALLY_PAID"].includes(item.status) && item.dueAt < projectionTo).map((item) => ({ at: item.dueAt < to ? to : item.dueAt, direction: "INCOME" as const, amountCents: item.totalCents - item.paidCents })),
     ];
     const cashProjection = dailyCashFlow(to, projectionTo, cashBalance, projectionMovements, workspace.timeZone);
@@ -313,6 +327,55 @@ export function createFinanceService(options: Options) {
       receivedCents: money(received), incomeCents: money(received + reversals), expenseCents: money(manualExpenses + reversals), resultCents: money(received - manualExpenses), cashBalanceCents: money(cashBalance), mrrCents: money(mrr), tcvCents: money(tcv), netRevenueCents: money(statement.netRevenue), grossProfitCents: money(statement.grossProfit), netIncomeCents: money(statement.netIncome), receivableOpenCents: money(openManual("INCOME") + invoices.reduce((sum, item) => sum + item.totalCents - item.paidCents, 0n)), payableOpenCents: money(openManual("EXPENSE")), commissionCents: money(commissions.reduce((sum, item) => sum + item.amountCents, 0n)), commissionGeneratedCents: money(periodCommissions.reduce((sum, item) => sum + item.amountCents, 0n)), commissionPendingCents: money(commissionTotal("PENDING")), commissionApprovedCents: money(commissionTotal("APPROVED")), commissionPaidCents: money(commissionTotal("PAID")), newMrrCents: money(movements.filter((item) => item.type === "NEW").reduce((sum, item) => sum + item.deltaMrrCents, 0n)), churnMrrCents: money(movements.filter((item) => item.type === "CHURN").reduce((sum, item) => sum + -item.deltaMrrCents, 0n)), unmatchedStatementLines: statementLines.filter((item) => item.status === "UNMATCHED").length, pendingExpenseApprovals: entries.filter((item) => item.approvalStatus === "PENDING").length,
     };
 
+    const accountBalances = financialAccounts.map((item) => ({
+      id: item.id, name: item.name, type: item.type, openingBalanceCents: money(item.openingBalanceCents),
+      balanceCents: money(item.openingBalanceCents + manualBalance(item.id) + accountPaymentBalance(item.id)), active: item.active,
+    }));
+    const dashboard = view?.dashboard ? (() => {
+      const history = dashboardCashHistory(months, to, [
+        ...historyEntries.map(cashMovementForEntry), ...cashMovements,
+      ], workspace.timeZone);
+      const expenseGroups = new Map<string, bigint>();
+      for (const entry of settledInPeriod) {
+        if (entry.direction !== "EXPENSE" || reportingKind(entry.categoryId) === "BALANCE_ONLY") continue;
+        const name = categoryName.get(entry.categoryId) ?? "Sem categoria";
+        expenseGroups.set(name, (expenseGroups.get(name) ?? 0n) + entry.amountCents);
+      }
+      if (reversals > 0n) expenseGroups.set("Estornos de recebimentos", (expenseGroups.get("Estornos de recebimentos") ?? 0n) + reversals);
+      const expenses = [...expenseGroups].sort((a, b) => a[1] === b[1] ? a[0].localeCompare(b[0], "pt-BR") : a[1] > b[1] ? -1 : 1);
+      const mainExpenses = expenses.slice(0, 5);
+      const remaining = expenses.slice(5).reduce((sum, [, amount]) => sum + amount, 0n);
+      if (remaining > 0n) mainExpenses.push(["Demais categorias", remaining]);
+      const planned = dashboardOpenEntries ?? [];
+      const title = (item: typeof planned[number]) => ({
+        id: item.id, name: item.counterparty ?? item.description,
+        due: workspaceDateAt(item.dueAt, workspace.timeZone), amount: item.amountCents,
+      });
+      const nextWeek = addLocalDays(today, 7);
+      const payable = dashboardDueTitles(planned.filter((item) => item.direction === "EXPENSE").map(title), today, nextWeek);
+      const receivable = dashboardDueTitles([
+        ...planned.filter((item) => item.direction === "INCOME").map(title),
+        ...invoices.filter((item) => ["OPEN", "PARTIALLY_PAID"].includes(item.status) && item.totalCents > item.paidCents).map((item) => ({
+          id: item.id, name: item.accountNameSnapshot, due: workspaceDateAt(item.dueAt, workspace.timeZone), amount: item.totalCents - item.paidCents,
+        })),
+      ], today, nextWeek);
+      const currentMonth = months.at(-1) === today.slice(0, 7);
+      const projection = currentMonth ? [{ bucket: today, balanceCents: money(cashBalance) }, ...cashProjection] : [];
+      const commercial = compensation.filter((item) => item.kind === "SALE_COMMISSION" || item.kind === "LEGACY_STAGE");
+      const commission = canManageCommissions ? {
+        generatedCents: money(commercial.length ? commercial.filter((item) => item.generatedInPeriod).reduce((sum, item) => sum + BigInt(item.amountCents), 0n) : BigInt(summary.commissionGeneratedCents)),
+        paidCents: money(commercial.length ? commercial.reduce((sum, item) => sum + BigInt(item.periodPaidCents), 0n)
+          : commissions.filter((item) => item.paidAt && item.paidAt >= from && item.paidAt < to).reduce((sum, item) => sum + item.amountCents, 0n)),
+      } : null;
+      return {
+        history, projection, currentMonth, asOf: workspaceDateAt(new Date(to.getTime() - 1), workspace.timeZone), payable, receivable, commission, accounts: accountBalances,
+        expenses: mainExpenses.map(([name, amount]) => ({ name, cents: money(amount) })),
+        openingCents: money(cashOpeningBalance), cashCents: money(cashBalance), salesCents: money(tcv),
+        incomeCents: summary.incomeCents, expenseCents: summary.expenseCents, resultCents: summary.resultCents,
+        grossCents: history.at(-1)?.grossCents ?? "0", unallocatedCents: summary.unallocatedPaymentBalanceCents,
+      };
+    })() : null;
+
     return Object.freeze({
       generatedAt: options.now().toISOString(),
       timeZone: workspace.timeZone,
@@ -323,10 +386,11 @@ export function createFinanceService(options: Options) {
       cashFlow,
       cashFlowReport,
       cashProjection,
+      dashboard,
       projectionPeriod: { from: to.toISOString(), to: projectionTo.toISOString() },
       dre,
       categories: categories.map((item) => ({ id: item.id, key: item.key, name: item.name, kind: item.kind, dreGroup: item.dreGroup, active: item.active })),
-      accounts: financialAccounts.map((item) => ({ id: item.id, name: item.name, type: item.type, openingBalanceCents: money(item.openingBalanceCents), balanceCents: money(item.openingBalanceCents + manualBalance(item.id) + accountPaymentBalance(item.id)), active: item.active })),
+      accounts: accountBalances,
       entries: normalizedEntries,
       receivables: invoices.map((item) => ({ id: item.id, invoiceNumber: item.invoiceNumber, customerAccountId: item.accountId, customerName: item.accountNameSnapshot, totalCents: money(item.totalCents), paidCents: money(item.paidCents), openCents: money(item.totalCents - item.paidCents), dueAt: item.dueAt.toISOString(), status: item.status })),
       members: members.map((item) => ({ id: item.id, name: item.user.displayName })),
@@ -524,6 +588,8 @@ export function createFinanceService(options: Options) {
 }
 
 let service: ReturnType<typeof createFinanceService> | undefined;
+export type FinanceDashboardData = NonNullable<Awaited<ReturnType<ReturnType<typeof createFinanceService>["screen"]>>["dashboard"]>;
+
 export function getFinanceService() {
   service ??= createFinanceService({ database: getDatabaseClient(), authorization: getAuthorizationService(), now: () => new Date() });
   return service;

@@ -26,12 +26,19 @@ export default async function FinancePage({ searchParams }: Readonly<{ searchPar
   const today = workspaceDateAt(now, workspace.timeZone);
   const [currentYear, currentMonth] = today.split("-").map(Number);
   const section = sections.has(query.section as FinanceSection) ? query.section as FinanceSection : "dashboard";
-  const month = integer(query.month, currentMonth!, 1, 12);
-  const year = integer(query.year, currentYear!, 2000, section === "metricas-metas" ? 2099 : 2200);
+  let month = integer(query.month, currentMonth!, 1, 12);
+  let year = integer(query.year, currentYear!, 2000, section === "metricas-metas" ? 2099 : 2200);
+  if (section === "dashboard" && (year > currentYear! || (year === currentYear && month > currentMonth!))) {
+    year = currentYear!;
+    month = currentMonth!;
+  }
   const monthStart = new Date(Date.UTC(year, month - 1, 1)).toISOString().slice(0, 10);
   const nextMonth = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
   let from = workspaceDayRange(monthStart, workspace.timeZone).start;
-  let to = workspaceDayRange(nextMonth, workspace.timeZone).start;
+  const currentDashboard = section === "dashboard" && year === currentYear && month === currentMonth;
+  let to = currentDashboard
+    ? workspaceDayRange(today, workspace.timeZone).end
+    : workspaceDayRange(nextMonth, workspace.timeZone).start;
   let cashFlowFilters: CashFlowFilters | null = null;
   let screen: Awaited<ReturnType<ReturnType<typeof getFinanceService>["screen"]>>;
   let goals: Awaited<ReturnType<ReturnType<typeof getFinanceService>["goals"]>> | null = null;
@@ -60,7 +67,7 @@ export default async function FinancePage({ searchParams }: Readonly<{ searchPar
       to = workspaceDayRange(period.to, workspace.timeZone).end;
       cashFlowFilters = { ...period, today, statementFilter, invalidPeriod: (custom && !valid) || (!custom && monthStart > today) };
     }
-    screen = await finance.screen(context, { from, to }, cashFlowFilters ? { accountId: query.account } : undefined);
+    screen = await finance.screen(context, { from, to }, cashFlowFilters ? { accountId: query.account } : section === "dashboard" ? { dashboard: true } : undefined);
     if (section === "metricas-metas") goals = await finance.goals(context, `${year}-${String(month).padStart(2, "0")}`);
   } catch (error) {
     if (error instanceof AccessDeniedError) redirect("/acesso-negado");
