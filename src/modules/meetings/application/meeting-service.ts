@@ -120,7 +120,7 @@ const scheduleSchema = z.object({
   closerId: z.string().uuid(),
   title: z.string().trim().min(2).max(200),
   startsAtLocal: localDateTimeSchema,
-  durationMinutes: z.union([z.literal(30), z.literal(40)]),
+  durationMinutes: z.union([z.literal(30), z.literal(40), z.literal(60)]),
   observation: z.string().trim().max(5_000).nullable().optional(),
   participantEmail: participantEmailSchema.nullable().optional(),
   participantEmails: participantEmailsSchema.optional(),

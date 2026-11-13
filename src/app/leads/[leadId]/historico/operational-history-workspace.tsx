@@ -1465,7 +1465,7 @@ export function OperationalHistoryWorkspace({
                   <label className="text-sm sm:col-span-2">{taskKind === "MEETING" ? "Data e horário da reunião" : "Prazo"}<input className={inputClass} name="dueAt" required type="datetime-local" /></label>
                   {taskKind === "MEETING" ? <>
                     <label className="text-sm">Closer<select className={inputClass} defaultValue={meetings.closerOptions.find((closer) => closer.id === operations.lead.ownerMemberId)?.id ?? (meetings.closerOptions.length === 1 ? meetings.closerOptions[0]!.id : "")} name="closerId" required><option value="">Selecione o responsável</option>{meetings.closerOptions.map((closer) => <option key={closer.id} value={closer.id}>{closer.name}</option>)}</select></label>
-                    <label className="text-sm">Duração<select className={inputClass} defaultValue={meetings.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
+                    <label className="text-sm">Duração<select className={inputClass} defaultValue={meetings.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option><option value="60">1 hora (60 minutos)</option></select></label>
                     <MeetingParticipantField className="text-sm sm:col-span-2" inputClassName={inputClass} />
                     <p className="text-sm text-muted-foreground sm:col-span-2">A reunião será criada na Agenda com tarefa vinculada. Cada closer precisa <Link className="underline" href="/integracoes/calendario">conectar a própria conta Google</Link> para sincronizá-la.</p>
                     {!meetings.canSchedule ? (

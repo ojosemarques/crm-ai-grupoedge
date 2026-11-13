@@ -386,6 +386,7 @@ test("cria tarefa de reunião no card com participante persistido na Agenda", as
   await task.getByLabel("Título", { exact: true }).fill("Reunião com convidado pelo card");
   await task.getByRole("combobox", { name: "Closer", exact: true }).selectOption({ index: 1 });
   await task.getByLabel("Data e horário da reunião").fill("2035-02-12T14:00");
+  await task.getByRole("combobox", { name: "Duração", exact: true }).selectOption({ label: "1 hora (60 minutos)" });
   await task.getByLabel("E-mail do participante (opcional)").fill("convidado-tarefa@example.test");
   await task.getByRole("button", { name: "Adicionar convidado" }).click();
   await task.getByLabel("E-mail do convidado 2", { exact: true }).fill("segundo-tarefa@example.test");
@@ -405,7 +406,7 @@ test("cria tarefa de reunião no card com participante persistido na Agenda", as
   const persisted = await browserRequest(page).get(`/api/leads/${leadId}/meetings`);
   expect(persisted.ok()).toBe(true);
   expect(await persisted.json()).toMatchObject({ result: { meetings: expect.arrayContaining([
-    expect.objectContaining({ id: body.result.meetingId, participantEmail: "convidado-tarefa@example.test" }),
+    expect.objectContaining({ id: body.result.meetingId, durationMinutes: 60, startsAt: "2035-02-12T17:00:00.000Z", endsAt: "2035-02-12T18:00:00.000Z", participantEmail: "convidado-tarefa@example.test" }),
   ]) } });
 
   await page.getByRole("status").getByRole("link", { name: "Abrir na agenda" }).click();
@@ -439,6 +440,7 @@ test("agenda abre o dia e mostra a reunião criada para outro closer", async ({ 
   await dialog.getByRole("option", { name: new RegExp(leadName) }).click();
   await dialog.getByRole("combobox", { name: "Closer", exact: true }).selectOption(targetCloser.id);
   await dialog.getByLabel("Data e horário").fill("2035-02-14T09:00");
+  await dialog.getByLabel("Duração").selectOption({ label: "1 hora (60 minutos)" });
   await dialog.getByLabel("Título", { exact: true }).fill("Reunião com dois convidados pela Agenda");
   await dialog.getByLabel("E-mail do participante (opcional)").fill("primeiro-agenda@example.test");
   await dialog.getByRole("button", { name: "Adicionar convidado" }).click();
@@ -452,6 +454,7 @@ test("agenda abre o dia e mostra a reunião criada para outro closer", async ({ 
   await expect(page).toHaveURL("/agenda?date=2035-02-14&view=day");
   await page.getByRole("button").filter({ hasText: "Reunião com dois convidados pela Agenda" }).click();
   const saved = page.getByRole("dialog", { name: "Reunião com dois convidados pela Agenda" });
+  await expect(saved.getByText("60 minutos", { exact: true })).toBeVisible();
   await expect(saved.getByText(/Participante: primeiro-agenda@example.test/)).toBeVisible();
   await expect(saved.getByText(/Participante: segundo-agenda@example.test/)).toBeVisible();
   await expect(saved.getByText(/removido-agenda@example.test/)).not.toBeVisible();

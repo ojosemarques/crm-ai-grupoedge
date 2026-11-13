@@ -117,6 +117,5 @@ export function calendarPayloadHash(value: unknown) {
 
 export function calendarDurationMinutes(startsAt: Date, endsAt: Date) {
   const value = Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000);
-  if (value !== 30 && value !== 40) return null;
-  return value as 30 | 40;
+  return value === 30 || value === 40 || value === 60 ? value : null;
 }

@@ -37,9 +37,10 @@ describe("contratos do calendário local", () => {
     expect(calendarCallbackSchema.safeParse({ ...base, operation: "CANCEL", meetingId: workspaceId }).success).toBe(false);
   });
 
-  it("aceita somente durações oficiais de 30 ou 40 minutos", () => {
+  it("aceita somente durações oficiais de 30, 40 ou 60 minutos", () => {
     expect(calendarDurationMinutes(now, new Date(now.getTime() + 30 * 60_000))).toBe(30);
     expect(calendarDurationMinutes(now, new Date(now.getTime() + 40 * 60_000))).toBe(40);
+    expect(calendarDurationMinutes(now, new Date(now.getTime() + 60 * 60_000))).toBe(60);
     expect(calendarDurationMinutes(now, new Date(now.getTime() + 35 * 60_000))).toBeNull();
   });
 

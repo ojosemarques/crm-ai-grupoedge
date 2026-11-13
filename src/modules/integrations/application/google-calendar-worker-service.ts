@@ -8,6 +8,7 @@ import {
   normalizeGoogleCalendarEvent,
   type NormalizedGoogleCalendarEvent,
 } from "@/modules/integrations/application/google-calendar-pull";
+import { calendarDurationMinutes } from "@/modules/integrations/domain/calendar-contracts";
 import { loadGoogleCalendarConfiguration } from "@/modules/integrations/domain/google-calendar-contracts";
 import { calculateRetryDelaySeconds } from "@/modules/integrations/domain/integration-policy";
 import type { MeetingParticipantResponseStatusValue } from "@/modules/meetings/domain/meeting-contracts";
@@ -489,12 +490,12 @@ export function createGoogleCalendarWorkerService(options: Options) {
     }
     if (event.externalEtag && link.externalEtag === event.externalEtag) return true;
     if (link.meeting.status !== "SCHEDULED" && link.meeting.status !== "CONFIRMED") return true;
-    const durationMinutes = Math.round((event.endsAt.getTime() - event.startsAt.getTime()) / 60_000);
     const changed = link.meeting.title !== event.title
       || link.meeting.startsAt.getTime() !== event.startsAt.getTime()
       || link.meeting.endsAt.getTime() !== event.endsAt.getTime();
     if (!changed) return true;
-    if (durationMinutes !== 30 && durationMinutes !== 40) {
+    const durationMinutes = calendarDurationMinutes(event.startsAt, event.endsAt);
+    if (durationMinutes === null) {
       await markLinkConflict(account, link.id, "GOOGLE_CALENDAR_DURATION_UNSUPPORTED");
       return false;
     }

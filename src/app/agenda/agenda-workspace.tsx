@@ -323,7 +323,7 @@ export function AgendaWorkspace({ initialLead, initialMeetingId, initialScreen }
         <label>Oportunidade<select className={inputClass} name="opportunityId"><option value="">Sem vínculo explícito</option>{selectedLead?.opportunities.map((opportunity) => <option key={opportunity.id} value={opportunity.id}>{opportunity.name}</option>)}</select></label>
         <label className={styles.fullWidth}>Título<input className={inputClass} name="title" required /></label>
         <label>Data e horário<input className={inputClass} defaultValue={`${screen.selectedDate}T09:00`} name="startsAtLocal" required type="datetime-local" /></label>
-        <label>Duração<select className={inputClass} defaultValue={screen.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
+        <label>Duração<select className={inputClass} defaultValue={screen.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option><option value="60">1 hora (60 minutos)</option></select></label>
         <MeetingParticipantField className={styles.fullWidth} inputClassName={inputClass} />
         <label className={styles.fullWidth}>Observação<textarea className={inputClass} name="observation" rows={3} /></label>
         <p className={styles.fullWidth}>Horários em {screen.timeZone}.</p><Button className={styles.fullWidth} disabled={pending} type="submit">{pending ? "Agendando…" : "Confirmar agendamento"}</Button>

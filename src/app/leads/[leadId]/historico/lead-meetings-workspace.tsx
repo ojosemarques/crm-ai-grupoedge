@@ -98,7 +98,7 @@ export function LeadMeetingsWorkspace({
             <label className="text-sm">Oportunidade<select className={inputClass} defaultValue={screen.opportunityOptions.length === 1 ? screen.opportunityOptions[0]!.id : ""} name="opportunityId"><option value="">Sem vínculo explícito</option>{screen.opportunityOptions.map((opportunity) => <option key={opportunity.id} value={opportunity.id}>{opportunity.name}</option>)}</select></label>
             <label className="text-sm">Título<input className={inputClass} name="title" required /></label>
             <label className="text-sm">Data e horário<input className={inputClass} name="startsAtLocal" required type="datetime-local" /></label>
-            <label className="text-sm">Duração<select className={inputClass} defaultValue={screen.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option></select></label>
+            <label className="text-sm">Duração<select className={inputClass} defaultValue={screen.defaultDurationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option><option value="60">1 hora (60 minutos)</option></select></label>
             <MeetingParticipantField className="text-sm" inputClassName={inputClass} />
             <label className="text-sm">Observação<textarea className={inputClass} name="observation" /></label>
             <Button disabled={pending} type="submit">{pending ? "Agendando…" : "Agendar reunião"}</Button>

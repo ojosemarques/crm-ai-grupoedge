@@ -1,6 +1,6 @@
 # meetings
 
-Agenda interna da CRM-15. O módulo concentra agendamento de 30/40 minutos,
+Agenda interna da CRM-15. O módulo concentra agendamento de 30, 40 ou 60 minutos,
 inclusive com reuniões simultâneas para o mesmo closer, confirmação, remarcação,
 cancelamento, comparecimento, no-show, histórico append-only e briefing persistido.
 

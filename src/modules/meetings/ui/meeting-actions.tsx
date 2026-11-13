@@ -154,7 +154,7 @@ export function MeetingActions({
               <label className="text-sm sm:col-span-2">Título<input className={inputClass} defaultValue={meeting.title} name="title" required /></label>
               <label className="text-sm">Status{active ? <input name="status" type="hidden" value={editStatus} /> : null}<select className={inputClass} disabled={active} name={active ? undefined : "status"} onChange={(event) => setEditStatus(event.target.value as typeof meeting.status)} value={editStatus}><option value="SCHEDULED">Agendada</option><option value="CONFIRMED">Confirmada</option><option value="COMPLETED">Realizada</option><option value="CANCELLED">Cancelada</option><option value="NO_SHOW">No-show</option></select></label>
               <label className="text-sm">Data e hora<input className={inputClass} defaultValue={localDateTimeInput(meeting.startsAt, meeting.timeZone)} name="startsAtLocal" required type="datetime-local" /></label>
-              <label className="text-sm">Duração<select className={inputClass} defaultValue={meeting.durationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option>{meeting.durationMinutes === 60 && <option value="60">60 minutos</option>}</select></label>
+              <label className="text-sm">Duração<select className={inputClass} defaultValue={meeting.durationMinutes} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option><option value="60">1 hora (60 minutos)</option></select></label>
               <MeetingParticipantField className="text-sm sm:col-span-2" defaultEmails={meeting.participants.map((guest) => guest.email)} inputClassName={inputClass} />
               <label className="text-sm">Resultado ou motivo final<textarea className={inputClass} defaultValue={meeting.outcome ?? ""} minLength={3} name="outcome" required={editStatus === "COMPLETED" || editStatus === "NO_SHOW"} /></label>
               {editStatus === "COMPLETED" && meeting.canChooseLeadDestination ? <LeadDestinationField /> : null}
@@ -170,7 +170,7 @@ export function MeetingActions({
           ) : action === "RESCHEDULE" ? (
             <>
               <label className="text-sm">Nova data e hora<input className={inputClass} name="startsAtLocal" required type="datetime-local" /></label>
-              <label className="text-sm">Duração<select className={inputClass} defaultValue={meeting.durationMinutes === 60 ? 60 : 30} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option>{meeting.durationMinutes === 60 && <option value="60">60 minutos</option>}</select></label>
+              <label className="text-sm">Duração<select className={inputClass} defaultValue={meeting.durationMinutes === 60 ? 60 : 30} name="durationMinutes"><option value="30">30 minutos</option><option value="40">40 minutos</option><option value="60">1 hora (60 minutos)</option></select></label>
               <label className="text-sm sm:col-span-2">Motivo<textarea className={inputClass} name="reason" required /></label>
             </>
           ) : (
