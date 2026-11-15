@@ -48,8 +48,9 @@ export function AgendaPicker({ receipt, native = false }: AgendaPickerProps) {
       const data: Availability = await response.json();
       if (controller.signal.aborted) return;
       setAvailability(data);
-      setDay((day) => day && data.days.includes(day) ? day : data.today);
-      setMonth((month) => month && data.days.some((day) => day.startsWith(month)) ? month : data.today.slice(0, 7));
+      const initialDay = data.days.includes(data.today) ? data.today : data.days[0] ?? data.today;
+      setDay((day) => day && data.days.includes(day) ? day : initialDay);
+      setMonth((month) => month && data.days.some((day) => day.startsWith(month)) ? month : initialDay.slice(0, 7));
       setBooked(data.booked);
       setRedirect(data.redirect ?? null);
       setLoadError("");

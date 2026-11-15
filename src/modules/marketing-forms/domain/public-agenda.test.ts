@@ -5,10 +5,10 @@ describe("agenda pública", () => {
   it("abre no dia de Brasília, vira o mês e omite horários passados", () => {
     const { today, days, slots } = publicAgendaWindow(new Date("2026-11-01T00:15:00Z"));
     expect(today).toBe("2026-10-31");
-    expect(days).toEqual(["2026-10-31", "2026-11-01", "2026-11-02"]);
-    expect(slots[0]?.startsAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
-    expect(slots.at(-1)?.endsAt.toISOString()).toBe("2026-11-02T22:00:00.000Z");
-    expect(slots.filter((slot) => slot.day === "2026-11-01").map((slot) => slot.hour))
+    expect(days).toEqual(["2026-11-02", "2026-11-03", "2026-11-04"]);
+    expect(slots[0]?.startsAt.toISOString()).toBe("2026-11-02T12:00:00.000Z");
+    expect(slots.at(-1)?.endsAt.toISOString()).toBe("2026-11-04T22:00:00.000Z");
+    expect(slots.filter((slot) => slot.day === "2026-11-02").map((slot) => slot.hour))
       .toEqual([9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
   });
 
@@ -24,6 +24,12 @@ describe("agenda pública", () => {
       { startsAt: new Date("2026-11-09T13:00:00Z"), endsAt: new Date("2026-11-09T14:00:00Z") },
       { startsAt: new Date("2026-11-09T15:00:00Z"), endsAt: new Date("2026-11-09T15:30:00Z") },
     ])).toBe(true);
+  });
+
+  it("pula sábado e domingo na janela que começa na sexta", () => {
+    const { days, slots } = publicAgendaWindow(new Date("2026-11-13T11:00:00Z"));
+    expect(days).toEqual(["2026-11-13", "2026-11-16", "2026-11-17"]);
+    expect([...new Set(slots.map(({ day }) => day))]).toEqual(days);
   });
 
   it("não oferece um horário que já começou", () => {

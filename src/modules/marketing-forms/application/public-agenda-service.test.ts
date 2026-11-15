@@ -113,6 +113,15 @@ describe("reserva pelo formulário", () => {
     });
   });
 
+  it("recusa uma reserva solicitada diretamente para sábado ou domingo", async () => {
+    vi.setSystemTime(new Date("2026-11-13T11:00:00Z"));
+    for (const startsAt of ["2026-11-14T14:00:00.000Z", "2026-11-15T14:00:00.000Z"]) {
+      await expect(bookPublicAgenda(receipt, { startsAt })).rejects.toMatchObject({ statusCode: 409 });
+    }
+    expect(setup.google).not.toHaveBeenCalled();
+    expect(setup.schedule).not.toHaveBeenCalled();
+  });
+
   it("nega um recibo inexistente antes de consultar o Google", async () => {
     setup.db.marketingFormReceipt.findMany.mockResolvedValue([]);
     await expect(listPublicAgenda(receipt)).rejects.toMatchObject({ statusCode: 404 });

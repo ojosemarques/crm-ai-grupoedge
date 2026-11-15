@@ -13,7 +13,11 @@ export type BusyInterval = { startsAt: Date; endsAt: Date };
 
 export function publicAgendaWindow(now: Date) {
   const today = workspaceDateAt(now, PUBLIC_AGENDA_ZONE);
-  const days = [today, addLocalDays(today, 1), addLocalDays(today, 2)];
+  const days: string[] = [];
+  for (let day = today; days.length < 3; day = addLocalDays(day, 1)) {
+    const weekday = new Date(`${day}T00:00:00Z`).getUTCDay();
+    if (weekday >= 1 && weekday <= 5) days.push(day);
+  }
   const lastStartHour = Math.floor((19 * 60 - PUBLIC_AGENDA_MINUTES) / 60);
   const slots = days.flatMap((day) => Array.from({ length: lastStartHour - 9 + 1 }, (_, index): AgendaSlot => {
     const hour = index + 9;
