@@ -72,3 +72,6 @@ credentials/
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+/dist/
+.vinext/
+.cloudflare/

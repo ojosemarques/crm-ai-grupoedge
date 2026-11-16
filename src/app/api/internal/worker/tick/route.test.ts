@@ -72,7 +72,7 @@ describe("POST /api/internal/worker/tick", () => {
   it("processa só conversões do workspace configurado com a credencial do cron", async () => {
     const workspaceId = "8d47f37b-99cd-42e7-9084-ebd330e7af62";
     const cronSecret = "c".repeat(48);
-    vi.stubEnv("VERCEL_ENV", "production");
+    vi.stubEnv("APP_ENV", "production");
     vi.stubEnv("SERVERLESS_WORKER_ENABLED", "false");
     vi.stubEnv("META_ADS_CONVERSIONS_WORKER_ENABLED", "true");
     vi.stubEnv("META_ADS_REPORTING_WORKSPACE_ID", workspaceId);
@@ -114,7 +114,7 @@ describe("POST /api/internal/worker/tick", () => {
 
   it("coleta diagnóstico Meta no modo geral somente após autenticação", async () => {
     const workspaceId = "8d47f37b-99cd-42e7-9084-ebd330e7af62";
-    vi.stubEnv("VERCEL_ENV", "production");
+    vi.stubEnv("APP_ENV", "production");
     vi.stubEnv("META_ADS_CONVERSIONS_DIAGNOSTICS_ENABLED", "true");
     vi.stubEnv("META_ADS_REPORTING_WORKSPACE_ID", workspaceId);
     getDeliveryDiagnostics.mockResolvedValue({ meetingCompletedTransitions: 0 });

@@ -18,9 +18,13 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+function isProductionRuntime(): boolean {
+  return process.env.APP_ENV === "production" || process.env.VERCEL_ENV === "production";
+}
+
 async function recoverMetaMeeting(request: Request, correlationId: string) {
   const leadId = process.env.META_ADS_CONVERSIONS_RECOVERY_LEAD_ID;
-  if (request.method !== "GET" || process.env.VERCEL_ENV !== "production" || !leadId) return;
+  if (request.method !== "GET" || !isProductionRuntime() || !leadId) return;
   const target = z.object({ workspaceId: z.uuid(), leadId: z.uuid() }).safeParse({
     workspaceId: process.env.META_ADS_REPORTING_WORKSPACE_ID, leadId,
   });
@@ -38,7 +42,7 @@ async function recoverMetaMeeting(request: Request, correlationId: string) {
 
 async function provisionMetaWrite(request: Request, correlationId: string) {
   const testCode = process.env.META_ADS_CONVERSIONS_PROVISION_TEST_CODE;
-  if (request.method !== "GET" || process.env.VERCEL_ENV !== "production" || !testCode) return;
+  if (request.method !== "GET" || !isProductionRuntime() || !testCode) return;
   const workspace = z.uuid().safeParse(process.env.META_ADS_REPORTING_WORKSPACE_ID);
   if (!workspace.success) throw new ConfigurationError(["META_ADS_REPORTING_WORKSPACE_ID"]);
   try {
@@ -50,7 +54,7 @@ async function provisionMetaWrite(request: Request, correlationId: string) {
 }
 
 async function logMetaDiagnostics(correlationId: string) {
-  if (process.env.VERCEL_ENV !== "production" || process.env.META_ADS_CONVERSIONS_DIAGNOSTICS_ENABLED !== "true") return;
+  if (!isProductionRuntime() || process.env.META_ADS_CONVERSIONS_DIAGNOSTICS_ENABLED !== "true") return;
   const workspace = z.uuid().safeParse(process.env.META_ADS_REPORTING_WORKSPACE_ID);
   if (!workspace.success) {
     logger.warn({ correlationId }, "META_CONVERSION_DIAGNOSTICS_WORKSPACE_MISSING");
@@ -68,7 +72,7 @@ async function runTick(request: Request): Promise<NextResponse> {
   const correlationId = resolveCorrelationId(request.headers);
   let runtimeWorker: ReturnType<typeof createDefaultWorkerBatchRunner> | undefined;
   try {
-    if (request.method === "GET" && process.env.VERCEL_ENV === "production"
+    if (request.method === "GET" && isProductionRuntime()
       && process.env.SERVERLESS_WORKER_ENABLED === "false"
       && process.env.META_ADS_CONVERSIONS_WORKER_ENABLED === "true") {
       const secret = process.env.CRON_SECRET?.trim() ?? "";
