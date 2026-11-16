@@ -74,6 +74,8 @@ const screenQuerySchema = z.object({
   stateCode: z.string().trim().regex(/^(?:|[A-Za-z]{2})$/).optional().default("").transform((value) => value.toUpperCase()),
 }).strict();
 
+export const preSalesPipelineFilters = screenQuerySchema.omit({ pipelineId: true });
+
 const leadStateSchema = z.object({ leadId: z.string().uuid() }).strict();
 
 const stagePageSchema = screenQuerySchema.extend({

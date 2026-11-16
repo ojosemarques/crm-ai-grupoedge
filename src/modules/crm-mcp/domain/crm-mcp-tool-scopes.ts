@@ -8,5 +8,8 @@ export const crmMcpToolScopes: Readonly<Record<string, string>> = Object.freeze(
   consultar_auditoria: "audit:read", consultar_integracoes: "integrations:read",
   consultar_meta_ads: "integrations:read", consultar_aquisicao: "metrics:read",
   consultar_leads_anuncios: "crm:read", consultar_metricas_anuncios: "metrics:read",
+  consultar_pipeline_anuncios: "crm:read", consultar_atividades_anuncios: "crm:read",
+  consultar_indicadores_anuncios: "metrics:read", detalhar_dashboard_anuncios: "metrics:read",
+  detalhar_indicador_anuncios: "metrics:read", detalhar_funil_anuncios: "metrics:read",
   consultar_logs_operacionais: "operations:read", consultar_alertas_incidentes: "operations:read",
 });

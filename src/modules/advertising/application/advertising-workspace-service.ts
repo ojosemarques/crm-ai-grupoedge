@@ -49,6 +49,53 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
   authorization: AuthorizationPort;
   now: () => Date;
 }>) {
+  async function readActivities(context: AuthenticatedContext, lead: Prisma.LeadWhereInput, page: number) {
+    const pageSize = 25;
+    const where = { workspaceId: context.workspaceId, deletedAt: null, lead };
+    const [total, tasks] = await Promise.all([
+      options.database.task.count({ where }),
+      options.database.task.findMany({
+        where,
+        orderBy: [{ dueAt: "desc" }, { createdAt: "desc" }, { id: "asc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          title: true,
+          kind: true,
+          status: true,
+          result: true,
+          dueAt: true,
+          completedAt: true,
+          lead: { select: { id: true, fullName: true } },
+          assignee: { select: { id: true, user: { select: { displayName: true } } } },
+        },
+      }),
+    ]);
+    return {
+      total,
+      page,
+      pageSize,
+      items: tasks.map((task) => ({
+        ...task,
+        dueAt: task.dueAt.toISOString(),
+        completedAt: task.completedAt?.toISOString() ?? null,
+        assignee: task.assignee ? { id: task.assignee.id, name: task.assignee.user.displayName } : null,
+      })),
+    };
+  }
+
+  async function getActivities(context: AuthenticatedContext, pipelineId: string, page: number) {
+    const visibility = await resolveLeadVisibilityScope(options.database, options.authorization, context, PermissionKeys.LEADS_READ);
+    return readActivities(context, {
+      workspaceId: context.workspaceId,
+      pipelineId,
+      pipeline: { workspaceId: context.workspaceId, entityType: "LEAD", name: ADVERTISING_PIPELINE_NAME, deletedAt: null },
+      deletedAt: null,
+      AND: [leadVisibilityWhere(context, visibility)],
+    }, page);
+  }
+
   async function getScreen(context: AuthenticatedContext, raw: unknown) {
     const query = querySchema.parse(raw);
     const [pipeline, workspace, visibility] = await Promise.all([
@@ -94,9 +141,8 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
       AND: [visibilityWhere],
     } satisfies Prisma.LeadWhereInput;
     const pageSize = 25;
-    const activityPageSize = 25;
 
-    const [leadTotal, stageCounts, leads, taskTotal, tasks] = await Promise.all([
+    const [leadTotal, stageCounts, leads, activities] = await Promise.all([
       options.database.lead.count({ where: leadWhere }),
       options.database.lead.groupBy({ by: ["currentStageId"], where: leadWhere, _count: { _all: true } }),
       options.database.lead.findMany({
@@ -118,26 +164,7 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
           owner: { select: { id: true, user: { select: { displayName: true } } } },
         },
       }),
-      options.database.task.count({
-        where: { workspaceId: context.workspaceId, deletedAt: null, lead: leadWhere },
-      }),
-      options.database.task.findMany({
-        where: { workspaceId: context.workspaceId, deletedAt: null, lead: leadWhere },
-        orderBy: [{ dueAt: "desc" }, { createdAt: "desc" }, { id: "asc" }],
-        skip: (query.activityPage - 1) * activityPageSize,
-        take: activityPageSize,
-        select: {
-          id: true,
-          title: true,
-          kind: true,
-          status: true,
-          result: true,
-          dueAt: true,
-          completedAt: true,
-          lead: { select: { id: true, fullName: true } },
-          assignee: { select: { id: true, user: { select: { displayName: true } } } },
-        },
-      }),
+      readActivities(context, leadWhere, query.activityPage),
     ]);
     const formResponses = await responsesByLead(options.database, context.workspaceId, leads.map((lead) => lead.id));
 
@@ -238,17 +265,7 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
           owner: lead.owner ? { id: lead.owner.id, name: lead.owner.user.displayName } : null,
         })),
       },
-      activities: {
-        total: taskTotal,
-        page: query.activityPage,
-        pageSize: activityPageSize,
-        items: tasks.map((task) => ({
-          ...task,
-          dueAt: task.dueAt.toISOString(),
-          completedAt: task.completedAt?.toISOString() ?? null,
-          assignee: task.assignee ? { id: task.assignee.id, name: task.assignee.user.displayName } : null,
-        })),
-      },
+      activities,
       metrics: {
         quizBreakdown,
         quizOverlap,
@@ -281,7 +298,7 @@ export function createAdvertisingWorkspaceService(options: Readonly<{
     });
   }
 
-  return Object.freeze({ getScreen });
+  return Object.freeze({ getScreen, getActivities });
 }
 
 let singleton: ReturnType<typeof createAdvertisingWorkspaceService> | undefined;

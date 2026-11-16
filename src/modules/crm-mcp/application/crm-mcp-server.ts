@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
+import { ActivityResult, ActivityType } from "@/generated/prisma/client";
+import { getCommercialHistoryService } from "@/modules/activities/application/commercial-history-service";
 import { getOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
 import { getAdvertisingWorkspaceService } from "@/modules/advertising/application/advertising-workspace-service";
 import { auditOrigins, actorTypes, processViolationSeverities, processViolationStatuses, processViolationTypes } from "@/modules/audit/domain/audit-contracts";
@@ -14,6 +16,7 @@ import { getMetaAdsService } from "@/modules/integrations/application/meta-ads-s
 import { getLeadListService } from "@/modules/leads/application/lead-list-service";
 import { getMeetingService } from "@/modules/meetings/application/meeting-service";
 import { getMediaPerformanceService } from "@/modules/marketing/application/media-performance-service";
+import { getPreSalesPipelineService, preSalesPipelineFilters } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { prospectingMetricsPeriodPresets } from "@/modules/prospecting/domain/prospecting-metrics-period";
 import { getDashboardMetricsService } from "@/modules/metrics/application/dashboard-metrics-service";
@@ -30,7 +33,7 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 import { logger } from "@/shared/core/logging/logger";
 import { redactTelemetryValue } from "@/shared/core/security/redaction";
 
-export const CRM_MCP_VERSION = "1.0.0";
+export const CRM_MCP_VERSION = "1.1.0";
 const uuid = z.string().uuid();
 const text = z.string().trim().max(200);
 const date = z.iso.date();
@@ -53,6 +56,16 @@ const filters = z.object({
 }).strict();
 const rangeShape = { from: timestamp, to: timestamp };
 const metricQuery = z.object({ ...rangeShape, filters: filters.optional() }).strict();
+const advertisingDashboardShape = {
+  ...periodShape, form: ids, stage: ids, channel: z.array(text).max(20).optional(), integratedMember: uuid.optional(),
+};
+const advertisingMetricQuery = metricQuery.extend({
+  filters: filters.omit({ pipelineIds: true }).extend({ formIds: ids }).optional(),
+});
+const frontMeasures = [
+  "entries", "participations", "people", "booked", "assigned", "completed", "booking-cohort", "completion-cohort",
+  "time-first-action", "time-first-response", "time-booking", "time-result",
+] as const;
 
 export function assertCrmMcpPeriod(input: { from?: string | undefined; to?: string | undefined; preset?: string | undefined; fromDate?: string | undefined; toDate?: string | undefined }) {
   const from = input.from ?? input.fromDate;
@@ -147,20 +160,73 @@ export function createCrmMcpServer(identity: CrmMcpIdentity) {
     assertCrmMcpPeriod({ fromDate: input.periodStart, toDate: input.periodEnd });
     return getMediaPerformanceService().getScreen(context, input);
   });
-  async function advertising(input: { page?: number | undefined; metricsPreset?: typeof prospectingMetricsPeriodPresets[number] | undefined; metricsFrom?: string | undefined; metricsTo?: string | undefined }) {
-    assertCrmMcpPeriod({ preset: input.metricsPreset, fromDate: input.metricsFrom, toDate: input.metricsTo });
+  async function advertisingPipelineId() {
     const pipeline = await getDatabaseClient().pipeline.findFirst({ where: { workspaceId: context.workspaceId, entityType: "LEAD", name: ADVERTISING_PIPELINE_NAME, deletedAt: null }, select: { id: true } });
     if (!pipeline) throw new ApplicationError("O pipeline de Anúncios ainda não está configurado neste workspace.", { code: "CRM_MCP_ADVERTISING_NOT_CONFIGURED", statusCode: 404, expose: true });
-    return getAdvertisingWorkspaceService().getScreen(context, { ...input, pipelineId: pipeline.id });
+    return pipeline.id;
   }
+
+  async function advertisingQuery(input: z.output<typeof advertisingMetricQuery>) {
+    assertCrmMcpPeriod(input);
+    return { ...input, filters: { ...input.filters, pipelineIds: [await advertisingPipelineId()] } };
+  }
+
   add("consultar_leads_anuncios", "crm:read", "Leads e etapas de Trabalho > Anúncios, com respostas dos formulários e visibilidade do membro delegado. Páginas de 25 registros; total refere-se ao estoque atual.", z.object({ page: paging.page }).strict(), async (input) => {
-    const screen = await advertising(input);
+    const screen = await getAdvertisingWorkspaceService().getScreen(context, { ...input, pipelineId: await advertisingPipelineId() });
     return { pipeline: screen.pipeline, stock: screen.stock };
   });
-  add("consultar_metricas_anuncios", "metrics:read", "Indicadores comerciais de Trabalho > Anúncios: leads recebidos, contatos, reuniões, propostas, vendas e receita por vendedor no período. Não representa métricas reportadas pela Meta.", z.object({ metricsPreset: z.enum(prospectingMetricsPeriodPresets).default("LAST_30_DAYS"), metricsFrom: date.optional(), metricsTo: date.optional() }).strict(), async (input) => {
-    const screen = await advertising(input);
+  add("consultar_metricas_anuncios", "metrics:read", "Métricas de Trabalho > Anúncios: recebimentos, formulários, atividade comercial, reuniões, propostas, vendas, receita, metas e visão em tempo real. Para mídia paga, use consultar_aquisicao.", z.object({ metricsPreset: z.enum(prospectingMetricsPeriodPresets).default("LAST_30_DAYS"), metricsFrom: date.optional(), metricsTo: date.optional() }).strict(), async (input) => {
+    assertCrmMcpPeriod({ preset: input.metricsPreset, fromDate: input.metricsFrom, toDate: input.metricsTo });
+    const screen = await getAdvertisingWorkspaceService().getScreen(context, { ...input, pipelineId: await advertisingPipelineId() });
     return { pipeline: screen.pipeline, metrics: screen.metrics, timeZone: screen.timeZone };
   });
+  add("consultar_pipeline_anuncios", "crm:read", "Indicadores por etapa de Trabalho > Anúncios > Pipeline: volume, conversão, tempo médio, limites, leads parados ou sem contato/tarefa e ações previstas para hoje. Para os registros, use consultar_leads_anuncios.", preSalesPipelineFilters, async (input) => {
+    assertCrmMcpPeriod({ preset: input.arrivalPreset, fromDate: input.arrivalFrom || undefined, toDate: input.arrivalTo || undefined });
+    const screen = await getPreSalesPipelineService().getScreen(context, { ...input, pipelineId: await advertisingPipelineId() });
+    return {
+      pipelineId: screen.pipelineId, pipelineName: screen.pipelineName, timeZone: screen.timeZone, filters: input,
+      stages: screen.stages.map(({ id, code, name, position, count, health }) => ({ id, code, name, position, count, health })),
+    };
+  });
+  add("consultar_atividades_anuncios", "crm:read", "Tarefas e histórico de eventos de Trabalho > Anúncios, paginados separadamente. from/to (ISO 8601, fim exclusivo), type e result filtram o histórico. Tarefas refletem o estado atual.", z.object({
+    taskPage: paging.page, historyPage: paging.page, from: timestamp.optional(), to: timestamp.optional(),
+    type: z.enum(ActivityType).optional(), result: z.enum(ActivityResult).optional(),
+  }).strict(), async ({ taskPage, historyPage, ...filters }) => {
+    assertCrmMcpPeriod(filters);
+    const pipelineId = await advertisingPipelineId();
+    const [tasks, history] = await Promise.all([
+      getAdvertisingWorkspaceService().getActivities(context, pipelineId, taskPage),
+      getCommercialHistoryService().getHistory(context, { ...filters, pipelineName: ADVERTISING_PIPELINE_NAME, pipelineId, page: historyPage }),
+    ]);
+    return { pipelineId, tasks, history };
+  });
+  add("consultar_indicadores_anuncios", "metrics:read", "Dashboard de Anúncios com indicadores integrados, funil, séries, conversões, desempenho, SLA e tempos até ação, resposta, agendamento e resultado. Consulte as ferramentas de detalhes de Anúncios para ver evidências.", z.object(advertisingDashboardShape).strict(), async (input) => {
+    assertCrmMcpPeriod(input);
+    const screen = await getDashboardMetricsService().getScreen(context, { ...input, mode: "ADVERTISING", pipeline: [await advertisingPipelineId()] });
+    const { commercialSummary, integrated, integratedOperation, ...dashboard } = screen;
+    const summarizeIntegrated = ({ values, registryVersion, generatedAt, quality }: typeof integrated) => ({
+      values, registryVersion, generatedAt,
+      quality: { totalFacts: quality.totalFacts, unattributedFacts: quality.unattributedFacts, coverageBasisPoints: quality.coverageBasisPoints, freshnessAt: quality.freshnessAt },
+    });
+    return summarizeCrmMcpDashboard({
+      ...dashboard, integrated: summarizeIntegrated(integrated),
+      ...(input.integratedMember ? { integratedOperation: summarizeIntegrated(integratedOperation) } : {}),
+      commercialSummary: commercialSummary ? {
+        total: commercialSummary.total, fronts: commercialSummary.fronts,
+        channels: commercialSummary.channels, selectedMemberIds: commercialSummary.selectedMemberIds,
+      } : undefined,
+    });
+  });
+  add("detalhar_dashboard_anuncios", "metrics:read", "Registros de um recorte do dashboard de Anúncios. Use view e os mesmos filtros de consultar_indicadores_anuncios.", z.object({ ...advertisingDashboardShape, view: text.min(1).max(160), ...paging }).strict(), async (input) => {
+    assertCrmMcpPeriod(input);
+    return getDashboardMetricsService().getDrilldown(context, { ...input, mode: "ADVERTISING", pipeline: [await advertisingPipelineId()] });
+  });
+  add("detalhar_indicador_anuncios", "metrics:read", "Evidências de um indicador integrado de Anúncios. Envie metricId sem o prefixo integrated:, período/filtros do dashboard e continue por nextCursor.", z.object({
+    metricId: text.min(1), query: advertisingMetricQuery, cursor: uuid.optional(), limit: z.number().int().min(1).max(100).default(50),
+  }).strict(), async (input) => getMetricsService().getIntegratedDrilldown(context, { ...input, query: await advertisingQuery(input.query) }));
+  add("detalhar_funil_anuncios", "metrics:read", "Evidências do funil de Anúncios: entradas, participações, pessoas, reuniões e tempos da primeira ação, resposta, agendamento e resultado. Tempos em segundos; 50 registros por página.", z.object({
+    measure: z.enum(frontMeasures), query: advertisingMetricQuery, memberId: uuid.optional(), page: paging.page,
+  }).strict(), async (input) => getMetricsService().getCommercialFrontEvidence(context, { ...input, query: await advertisingQuery(input.query) }));
   add("consultar_logs_operacionais", "operations:read", "Telemetria persistida pelo CRM, paginada e sanitizada; não inclui stdout/stderr da hospedagem.", z.object({ ...rangeShape, operation: text.optional(), ...paging }).strict(), async (input) => {
     assertCrmMcpPeriod(input);
     await getAuthorizationService().assertAuthorized(context, PermissionKeys.OPERATIONS_READ, { workspaceId: context.workspaceId, resourceType: "Operations" });

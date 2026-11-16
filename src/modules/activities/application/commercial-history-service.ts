@@ -9,6 +9,7 @@ import { z } from "zod";
 
 const schema = z.object({
   pipelineName: z.enum(["Anúncios", "Prospecção Ativa"]),
+  pipelineId: z.string().uuid().optional(),
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   type: z.enum(ActivityType).optional(), result: z.enum(ActivityResult).optional(),
   from: z.coerce.date().optional(), to: z.coerce.date().optional(),
@@ -27,7 +28,10 @@ export function createCommercialHistoryService(options: Readonly<{
       workspaceId: context.workspaceId, deletedAt: null,
       ...(query.type ? { type: query.type } : {}), ...(query.result ? { result: query.result } : {}),
       ...(query.from || query.to ? { occurredAt: { ...(query.from ? { gte: query.from } : {}), ...(query.to ? { lt: query.to } : {}) } } : {}),
-      lead: { workspaceId: context.workspaceId, deletedAt: null, pipeline: { name: query.pipelineName, workspaceId: context.workspaceId }, AND: [leadVisibilityWhere(context, scope)] },
+      lead: { workspaceId: context.workspaceId, deletedAt: null, pipeline: {
+        ...(query.pipelineId ? { id: query.pipelineId, deletedAt: null } : {}),
+        name: query.pipelineName, workspaceId: context.workspaceId,
+      }, AND: [leadVisibilityWhere(context, scope)] },
     };
     const [total, items] = await Promise.all([
       options.database.activity.count({ where }),

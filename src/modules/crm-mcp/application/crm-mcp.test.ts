@@ -9,11 +9,23 @@ import { assertCrmMcpPeriod, createCrmMcpServer, sanitizeCrmMcpResult, summarize
 const mocks = vi.hoisted(() => ({
   overview: vi.fn(), revenueDrilldown: vi.fn(), authorize: vi.fn(), audit: vi.fn(),
   logs: vi.fn(), count: vi.fn(), media: vi.fn(), advertising: vi.fn(), pipeline: vi.fn(), meta: vi.fn(),
+  dashboard: vi.fn(), dashboardDrilldown: vi.fn(), integratedDrilldown: vi.fn(), frontEvidence: vi.fn(),
+  board: vi.fn(), tasks: vi.fn(), history: vi.fn(),
 }));
-vi.mock("@/modules/metrics/application/metrics-service", () => ({ getMetricsService: () => ({ getIntegratedOverview: mocks.overview }) }));
+vi.mock("@/modules/metrics/application/metrics-service", () => ({ getMetricsService: () => ({
+  getIntegratedOverview: mocks.overview, getIntegratedDrilldown: mocks.integratedDrilldown, getCommercialFrontEvidence: mocks.frontEvidence,
+}) }));
+vi.mock("@/modules/metrics/application/dashboard-metrics-service", () => ({ getDashboardMetricsService: () => ({
+  getScreen: mocks.dashboard, getDrilldown: mocks.dashboardDrilldown,
+}) }));
 vi.mock("@/modules/metrics/application/revenue-metrics-service", () => ({ getRevenueMetricsService: () => ({ getDrilldown: mocks.revenueDrilldown }) }));
 vi.mock("@/modules/marketing/application/media-performance-service", () => ({ getMediaPerformanceService: () => ({ getScreen: mocks.media }) }));
-vi.mock("@/modules/advertising/application/advertising-workspace-service", () => ({ getAdvertisingWorkspaceService: () => ({ getScreen: mocks.advertising }) }));
+vi.mock("@/modules/advertising/application/advertising-workspace-service", () => ({ getAdvertisingWorkspaceService: () => ({ getScreen: mocks.advertising, getActivities: mocks.tasks }) }));
+vi.mock("@/modules/activities/application/commercial-history-service", () => ({ getCommercialHistoryService: () => ({ getHistory: mocks.history }) }));
+vi.mock("@/modules/pipelines/application/pre-sales-pipeline-service", async (original) => ({
+  ...await original<typeof import("@/modules/pipelines/application/pre-sales-pipeline-service")>(),
+  getPreSalesPipelineService: () => ({ getScreen: mocks.board }),
+}));
 vi.mock("@/modules/integrations/application/meta-ads-service", () => ({ getMetaAdsService: () => ({ screen: mocks.meta }) }));
 vi.mock("@/modules/users/permissions/authorization-service", () => ({ getAuthorizationService: () => ({ assertAuthorized: mocks.authorize }) }));
 vi.mock("@/shared/core/database/client", () => ({ getDatabaseClient: () => ({ auditLog: { create: mocks.audit }, telemetryRecord: { findMany: mocks.logs, count: mocks.count }, pipeline: { findFirst: mocks.pipeline } }) }));
@@ -81,11 +93,11 @@ describe("CRM MCP authentication boundary", () => {
 describe("CRM MCP protocol and read tools", () => {
   it("completes the MCP initialize handshake", async () => {
     const response = await rpc("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } });
-    expect(response.result.serverInfo).toEqual({ name: "Grupo Edge CRM", version: "1.0.0" });
+    expect(response.result.serverInfo).toEqual({ name: "Grupo Edge CRM", version: "1.1.0" });
   });
-  it("lists 24 read-only tools and valid JSON schemas", async () => {
+  it("lists 30 read-only tools and valid JSON schemas", async () => {
     const response = await rpc("tools/list");
-    expect(response.result.tools).toHaveLength(24);
+    expect(response.result.tools).toHaveLength(30);
     for (const tool of response.result.tools) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
       expect(tool.inputSchema.type).toBe("object");
@@ -121,6 +133,55 @@ describe("CRM MCP protocol and read tools", () => {
     const response = await rpc("tools/call", { name: "consultar_aquisicao", arguments: { periodStart: "2026-10-28", periodEnd: "2026-10-28" } });
     expect(response.result.isError).toBe(true);
     expect(JSON.stringify(response)).not.toContain("private-access-token");
+  });
+  it("returns advertising pipeline health without returning lead cards", async () => {
+    mocks.pipeline.mockResolvedValue({ id: roleId });
+    mocks.board.mockResolvedValue({ pipelineId: roleId, stages: [{ id: memberId, count: 2, health: { averageHoursInStage: 10 }, leads: [{ id: userId }] }] });
+    const response = await rpc("tools/call", { name: "consultar_pipeline_anuncios", arguments: { stageCode: "NEW", stateCode: "sp" } }, ["crm:read"]);
+    expect(response.result.structuredContent.data.stages).toEqual([{ id: memberId, count: 2, health: { averageHoursInStage: 10 } }]);
+    expect(mocks.board).toHaveBeenCalledWith(identity.context, expect.objectContaining({ pipelineId: roleId, stageCode: "NEW", stateCode: "SP" }));
+  });
+  it("paginates advertising tasks and history using the delegated lead scope", async () => {
+    mocks.pipeline.mockResolvedValue({ id: roleId });
+    mocks.tasks.mockResolvedValue({ page: 2, items: [] });
+    mocks.history.mockResolvedValue({ page: 3, items: [] });
+    const response = await rpc("tools/call", { name: "consultar_atividades_anuncios", arguments: { taskPage: 2, historyPage: 3, ...query } }, ["crm:read"]);
+    expect(response.result.structuredContent.data).toMatchObject({ tasks: { page: 2 }, history: { page: 3 } });
+    expect(mocks.tasks).toHaveBeenCalledWith(identity.context, roleId, 2);
+    expect(mocks.history).toHaveBeenCalledWith(identity.context, { pipelineName: "Anúncios", pipelineId: roleId, page: 3, ...query });
+  });
+  it.each([
+    ["detalhar_indicador_anuncios", { metricId: "call.attempted" }, mocks.integratedDrilldown],
+    ["detalhar_funil_anuncios", { measure: "time-first-action" }, mocks.frontEvidence],
+  ] as const)("pins %s to Anúncios and rejects another pipeline", async (name, args, delegatedRead) => {
+    mocks.pipeline.mockResolvedValue({ id: roleId });
+    delegatedRead.mockClear().mockResolvedValue({ records: [] });
+    const injected = await rpc("tools/call", { name, arguments: { ...args, query: { ...query, filters: { pipelineIds: [memberId] } } } });
+    expect(injected.result?.isError || injected.error).toBeTruthy();
+    expect(delegatedRead).not.toHaveBeenCalled();
+    const response = await rpc("tools/call", { name, arguments: { ...args, query } });
+    expect(response.result.structuredContent.data.records).toEqual([]);
+    expect(delegatedRead).toHaveBeenCalledWith(identity.context, expect.objectContaining({ query: { ...query, filters: { pipelineIds: [roleId] } } }));
+  });
+  it("reads only the advertising dashboard and omits workspace reconciliation totals", async () => {
+    mocks.pipeline.mockResolvedValue({ id: roleId });
+    mocks.dashboard.mockResolvedValue({
+      commercialSummary: { total: { timing: [{ id: "time-booking" }] }, unclassifiedCount: 99 },
+      integrated: { values: [], quality: { totalFacts: 2, reconciliationExpectedCount: 99 } },
+    });
+    mocks.dashboardDrilldown.mockResolvedValue({ records: [] });
+    const dashboard = await rpc("tools/call", { name: "consultar_indicadores_anuncios", arguments: {} });
+    expect(dashboard.result.structuredContent.data).toMatchObject({ commercialSummary: { total: { timing: [{ id: "time-booking" }] } }, integrated: { quality: { totalFacts: 2 } } });
+    expect(JSON.stringify(dashboard)).not.toMatch(/unclassifiedCount|reconciliationExpectedCount/);
+    expect(mocks.dashboard).toHaveBeenCalledWith(identity.context, expect.objectContaining({ mode: "ADVERTISING", pipeline: [roleId] }));
+    const detail = await rpc("tools/call", { name: "detalhar_dashboard_anuncios", arguments: { view: "sample" } });
+    expect(detail.result.structuredContent.data.records).toEqual([]);
+    expect(mocks.dashboardDrilldown).toHaveBeenCalledWith(identity.context, expect.objectContaining({ view: "sample", mode: "ADVERTISING", pipeline: [roleId] }));
+    mocks.pipeline.mockResolvedValueOnce(null);
+    mocks.dashboard.mockClear();
+    const missing = await rpc("tools/call", { name: "consultar_indicadores_anuncios", arguments: {} });
+    expect(missing.result.isError).toBe(true);
+    expect(mocks.dashboard).not.toHaveBeenCalled();
   });
   it("limits discovery and execution to credential scopes", async () => {
     const response = await rpc("tools/list", {}, ["metrics:read"]);
