@@ -149,6 +149,10 @@ pelo Git e com permissão 0600. Não cole tokens em prompts, logs ou commits.
 | `detalhar_dashboard_anuncios` | Evidências por `view` do dashboard de Anúncios, com os mesmos filtros | `metrics:read` |
 | `detalhar_indicador_anuncios` | Fatos de um `metricId` do catálogo de indicadores integrados, com `nextCursor` | `metrics:read` |
 | `detalhar_funil_anuncios` | Entradas, participações, pessoas, reuniões e amostras dos tempos até primeira ação, resposta, agendamento e resultado | `metrics:read` |
+| `consultar_tempo_anuncios` | Placar da frente Anúncios em `/tempo`, com visão geral, ranking, metas, série diária e funil | `metrics:read` |
+| `consultar_financeiro` | `report` = `dashboard`, `fluxo-caixa` ou `dre`; `accountId` opcional para caixa realizado por conta | `crm:read` |
+| `listar_financeiro` | `section` e paginação de lançamentos, entradas, despesas, cobrança, pagar/receber, cadastros, extratos, conciliação, comprovantes e comissões | `crm:read` |
+| `consultar_metas_financeiras` | Métricas, metas e remuneração comercial da competência `month` (`YYYY-MM`) | `crm:read` |
 | `consultar_logs_operacionais` | Telemetria persistida: operação, resultado, duração, correlação, período e paginação | `operations:read` |
 | `consultar_alertas_incidentes` | Alertas e incidentes persistidos, com paginação | `operations:read` |
 
@@ -188,6 +192,18 @@ auditoria, com `clientId` e ferramenta, sem argumentos nem resultados.
   `to` de `query` no retorno do dashboard. Reaplique as dimensões em
   `query.filters` sem `pipelineIds`. Os tempos do funil são em segundos e o
   tempo médio por etapa do pipeline é em horas.
+- O placar de Anúncios usa `periodPreset` (`TODAY`, `YESTERDAY`,
+  `THIS_WEEK`, `LAST_WEEK`, `CUSTOM`). `CUSTOM` exige `periodFrom` e
+  `periodTo` em datas locais inclusivas. A consulta exige `realtime.read`
+  e mantém a visibilidade de métricas do membro delegado.
+- O Financeiro exige `finance.read`. Comissões individuais, regras,
+  remuneração e metas financeiras também exigem `finance.commissions`.
+  `from` e `to` são timestamps ISO 8601 no intervalo `[from,to)`.
+  O fluxo realizado pode ser filtrado por conta. A projeção é do workspace.
+- Em `listar_financeiro`, continue até `hasMore=false`. Em
+  `extratos`, `conciliacao` e `comprovantes`, `recordId` seleciona,
+  respectivamente, a conta, o extrato ou o lançamento. Comprovantes
+  retornam metadados e o caminho de download autenticado no site do CRM.
 - Na fila de atividades, a página limita separadamente as fontes de tarefas
   e reuniões antes dos filtros canônicos de visibilidade. Pode haver páginas
   vazias ou com menos itens; continue até `pagination.hasMore=false`. As

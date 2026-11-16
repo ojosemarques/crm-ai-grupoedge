@@ -154,6 +154,37 @@ export async function reconcileCommissionsInTransaction(tx: Transaction, context
 }
 
 export function createFinanceService(options: Options) {
+  async function listSupportingRecords(
+    context: AuthenticatedContext,
+    input: Readonly<{ section: "extratos" | "conciliacao" | "comprovantes"; page: number; pageSize: number; recordId?: string | undefined; from?: string | undefined; to?: string | undefined }>,
+  ) {
+    await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_READ, resource(context.workspaceId));
+    const { section, page, pageSize, recordId } = input;
+    const workspaceId = context.workspaceId;
+    const paging = { skip: (page - 1) * pageSize, take: pageSize + 1 };
+    const range = input.from && input.to ? { gte: new Date(input.from), lt: new Date(input.to) } : undefined;
+    if (section === "extratos") {
+      return options.database.bankStatementImport.findMany({
+        where: { workspaceId, ...(recordId ? { financialAccountId: recordId } : {}), ...(range ? { createdAt: range } : {}) }, ...paging,
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        select: { id: true, financialAccountId: true, fileName: true, importedRows: true, matchedRows: true, createdAt: true },
+      });
+    }
+    if (section === "conciliacao") {
+      return options.database.bankStatementLine.findMany({
+        where: { workspaceId, ...(recordId ? { importId: recordId } : {}), ...(range ? { occurredAt: range } : {}) }, ...paging,
+        orderBy: [{ occurredAt: "desc" }, { id: "asc" }],
+        select: { id: true, importId: true, financialEntryId: true, occurredAt: true, description: true, amountCents: true, status: true },
+      });
+    }
+    const attachments = await options.database.financialAttachment.findMany({
+      where: { workspaceId, ...(recordId ? { financialEntryId: recordId } : {}), ...(range ? { createdAt: range } : {}) }, ...paging,
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+      select: { id: true, financialEntryId: true, fileName: true, mimeType: true, sizeBytes: true, createdAt: true },
+    });
+    return attachments.map((attachment) => ({ ...attachment, downloadPath: `/api/finance/attachments/${attachment.id}` }));
+  }
+
   async function statementMovementDates(context: AuthenticatedContext, until: Date) {
     await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_READ, resource(context.workspaceId));
     const dates = await options.database.bankStatementLine.aggregate({
@@ -169,10 +200,11 @@ export function createFinanceService(options: Options) {
     const query = financeQuerySchema.parse(raw);
     const workspace = await options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
     const fallback = defaultPeriod(options.now(), workspace.timeZone);
-    const from = query.from ?? fallback.from;
-    const to = query.to ?? fallback.to;
-    financeQuerySchema.parse({ from, to });
     const today = workspaceDateAt(options.now(), workspace.timeZone);
+    const from = query.from ?? fallback.from;
+    const currentCashView = view && (view.dashboard || "accountId" in view);
+    const to = query.to ?? (currentCashView ? workspaceDayRange(today, workspace.timeZone).end : fallback.to);
+    financeQuerySchema.parse({ from, to });
     const months = view?.dashboard ? dashboardMonths(from, workspace.timeZone) : [];
     const historyFrom = months[0] ? workspaceDayRange(`${months[0]}-01`, workspace.timeZone).start : null;
     const projectionTo = view?.dashboard
@@ -180,7 +212,7 @@ export function createFinanceService(options: Options) {
       : new Date(to.getTime() + 30 * 86_400_000);
     const canManage = (await options.authorization.authorize(context, PermissionKeys.FINANCE_MANAGE, resource(context.workspaceId))).allowed;
     const canManageCommissions = (await options.authorization.authorize(context, PermissionKeys.FINANCE_COMMISSIONS, resource(context.workspaceId))).allowed;
-    const [categories, financialAccounts, entries, invoices, payments, subscriptions, movements, opportunities, rules, commissions, members, priorManualBalances, costCenters, recurrences, statementImports, statementLines, attachments, compensation, historyEntries] = await Promise.all([
+    const [categories, financialAccounts, entries, invoices, payments, subscriptions, movements, opportunities, rules, commissions, members, priorManualBalances, costCenters, recurrences, statementImports, statementLines, attachments, compensation, historyEntries, unmatchedStatementLines] = await Promise.all([
       options.database.financialCategory.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
       options.database.financialAccount.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
       options.database.financialEntry.findMany({ where: { workspaceId: context.workspaceId, OR: [{ competenceAt: { gte: from, lt: to } }, { dueAt: { gte: from, lt: to } }, { settledAt: { gte: from, lt: to } }, { status: "PLANNED" }] }, orderBy: [{ dueAt: "desc" }, { createdAt: "desc" }] }),
@@ -203,6 +235,7 @@ export function createFinanceService(options: Options) {
         where: { workspaceId: context.workspaceId, status: "SETTLED", settledAt: { gte: historyFrom, lt: from } },
         select: { settledAt: true, financialAccountId: true, categoryId: true, direction: true, amountCents: true },
       }) : [],
+      options.database.bankStatementLine.count({ where: { workspaceId: context.workspaceId, status: "UNMATCHED" } }),
     ]);
 
     const todayEnd = view?.entries ? workspaceDayRange(today, workspace.timeZone).end : to;
@@ -339,7 +372,7 @@ export function createFinanceService(options: Options) {
     const periodCommissions = commissions.filter((item) => item.earnedAt >= from && item.earnedAt < to);
     const summary = {
       openingBalanceCents: money(cashOpeningBalance), closingBalanceCents: money(cashBalance), projectedCashCents: cashProjection.at(-1)?.balanceCents ?? money(cashBalance), unallocatedPaymentBalanceCents: money(paymentBalance(to) - financialAccounts.reduce((sum, account) => sum + accountPaymentBalance(account.id), 0n)), marginPercent: statement.netRevenue > 0n ? `${Number(statement.netIncome * 10_000n / statement.netRevenue) / 100}%` : "—",
-      receivedCents: money(received), incomeCents: money(received + reversals), expenseCents: money(manualExpenses + reversals), resultCents: money(received - manualExpenses), cashBalanceCents: money(cashBalance), mrrCents: money(mrr), tcvCents: money(tcv), netRevenueCents: money(statement.netRevenue), grossProfitCents: money(statement.grossProfit), netIncomeCents: money(statement.netIncome), receivableOpenCents: money(openManual("INCOME") + invoices.reduce((sum, item) => sum + item.totalCents - item.paidCents, 0n)), payableOpenCents: money(openManual("EXPENSE")), commissionCents: money(commissions.reduce((sum, item) => sum + item.amountCents, 0n)), commissionGeneratedCents: money(periodCommissions.reduce((sum, item) => sum + item.amountCents, 0n)), commissionPendingCents: money(commissionTotal("PENDING")), commissionApprovedCents: money(commissionTotal("APPROVED")), commissionPaidCents: money(commissionTotal("PAID")), newMrrCents: money(movements.filter((item) => item.type === "NEW").reduce((sum, item) => sum + item.deltaMrrCents, 0n)), churnMrrCents: money(movements.filter((item) => item.type === "CHURN").reduce((sum, item) => sum + -item.deltaMrrCents, 0n)), unmatchedStatementLines: statementLines.filter((item) => item.status === "UNMATCHED").length, pendingExpenseApprovals: entries.filter((item) => item.approvalStatus === "PENDING").length,
+      receivedCents: money(received), incomeCents: money(received + reversals), expenseCents: money(manualExpenses + reversals), resultCents: money(received - manualExpenses), cashBalanceCents: money(cashBalance), mrrCents: money(mrr), tcvCents: money(tcv), netRevenueCents: money(statement.netRevenue), grossProfitCents: money(statement.grossProfit), netIncomeCents: money(statement.netIncome), receivableOpenCents: money(openManual("INCOME") + invoices.reduce((sum, item) => sum + item.totalCents - item.paidCents, 0n)), payableOpenCents: money(openManual("EXPENSE")), commissionCents: money(commissions.reduce((sum, item) => sum + item.amountCents, 0n)), commissionGeneratedCents: money(periodCommissions.reduce((sum, item) => sum + item.amountCents, 0n)), commissionPendingCents: money(commissionTotal("PENDING")), commissionApprovedCents: money(commissionTotal("APPROVED")), commissionPaidCents: money(commissionTotal("PAID")), newMrrCents: money(movements.filter((item) => item.type === "NEW").reduce((sum, item) => sum + item.deltaMrrCents, 0n)), churnMrrCents: money(movements.filter((item) => item.type === "CHURN").reduce((sum, item) => sum + -item.deltaMrrCents, 0n)), unmatchedStatementLines, pendingExpenseApprovals: entries.filter((item) => item.approvalStatus === "PENDING").length,
     };
 
     const accountBalances = financialAccounts.map((item) => ({
@@ -628,7 +661,7 @@ export function createFinanceService(options: Options) {
     return readCommercialGoalsScreen(options.database, { workspaceId: context.workspaceId, month: monthSchema.parse(month), now: options.now() });
   }
 
-  return Object.freeze({ screen, statementMovementDates, goals, command, addAttachment, getAttachment });
+  return Object.freeze({ screen, statementMovementDates, listSupportingRecords, goals, command, addAttachment, getAttachment });
 }
 
 let service: ReturnType<typeof createFinanceService> | undefined;

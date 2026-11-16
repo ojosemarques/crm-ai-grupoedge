@@ -195,11 +195,11 @@ export function createRealtimeDashboardService(options: RealtimeDashboardService
     });
   }
 
-  async function advertisingSnapshot(context: AuthenticatedContext): Promise<RealtimeDashboardSnapshot> {
+  async function advertisingSnapshot(context: AuthenticatedContext, periodQuery: unknown = {}): Promise<RealtimeDashboardSnapshot> {
     const workspace = await options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
-    const periods = resolveRealtimeDashboardPeriods(options.now(), workspace.timeZone);
+    const periods = resolveRealtimeDashboardPeriods(options.now(), workspace.timeZone, periodQuery);
     const scope = await resolveIntegratedActivityReadScope(options, context, periods.queryFrom, periods.queryTo);
-    return snapshotForWorkspace(context.workspaceId, "ADVERTISING", scope);
+    return snapshotForWorkspace(context.workspaceId, "ADVERTISING", scope, periodQuery);
   }
 
   async function screen(context: AuthenticatedContext, front: RealtimeDashboardFront = "PROSPECTING", periodQuery: unknown = {}): Promise<RealtimeDashboardScreen> {

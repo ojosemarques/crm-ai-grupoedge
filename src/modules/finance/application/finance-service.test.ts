@@ -5,6 +5,27 @@ import { createFinanceService, reconcileCommissionsInTransaction } from "./finan
 const context = { workspaceId: "workspace", actorId: "actor" } as AuthenticatedContext;
 
 describe("finance service", () => {
+  it("limita o extrato autorizado por workspace, período e página sem selecionar dados brutos", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const assertAuthorized = vi.fn().mockRejectedValueOnce(new Error("denied"));
+    const service = createFinanceService({
+      database: { bankStatementLine: { findMany } } as never,
+      authorization: { assertAuthorized } as never,
+      now: () => new Date(),
+    });
+    const query = { section: "conciliacao" as const, page: 3, pageSize: 10, recordId: "import", from: "2026-11-01T03:00:00Z", to: "2026-11-02T03:00:00Z" };
+    await expect(service.listSupportingRecords(context, query)).rejects.toThrow("denied");
+    expect(findMany).not.toHaveBeenCalled();
+    await expect(service.listSupportingRecords(context, query)).resolves.toEqual([]);
+    expect(assertAuthorized).toHaveBeenCalledWith(context, "finance.read", { workspaceId: "workspace", resourceType: "Finance" });
+    const [request] = findMany.mock.calls[0]!;
+    expect(request).toMatchObject({
+      where: { workspaceId: "workspace", importId: "import", occurredAt: { gte: new Date(query.from), lt: new Date(query.to) } },
+      skip: 20, take: 11,
+    });
+    expect(request.select).not.toHaveProperty("rawData");
+  });
+
   it("inclui saldo histórico, títulos vencidos e projeção sem duplicar entradas antigas", async () => {
     const entry = { id: "entry", categoryId: "category", financialAccountId: "bank", customerAccountId: null, direction: "INCOME", status: "SETTLED", description: "Receita", counterparty: null, amountCents: 200n, competenceAt: new Date("2026-09-02"), dueAt: new Date("2026-09-02"), settledAt: new Date("2026-08-31"), revision: 1 };
     const database = {
@@ -28,12 +49,13 @@ describe("finance service", () => {
       financialCostCenter: { findMany: vi.fn().mockResolvedValue([]) },
       financialRecurrence: { findMany: vi.fn().mockResolvedValue([]) },
       bankStatementImport: { findMany: vi.fn().mockResolvedValue([]) },
-      bankStatementLine: { findMany: vi.fn().mockResolvedValue([]) },
+      bankStatementLine: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(501) },
       financialAttachment: { findMany: vi.fn().mockResolvedValue([]) },
     };
     const service = createFinanceService({ database: database as never, authorization: { assertAuthorized: vi.fn(), authorize: vi.fn().mockResolvedValue({ allowed: true }) } as never, now: () => new Date("2026-09-30T15:00:00.000Z") });
     const result = await service.screen(context);
     expect(result.summary).toMatchObject({ openingBalanceCents: "1200", cashBalanceCents: "1200", payableOpenCents: "300", projectedCashCents: "900" });
+    expect(result.summary.unmatchedStatementLines).toBe(501);
     expect(result.accounts[0]?.balanceCents).toBe("1200");
     database.workspace.findUniqueOrThrow.mockResolvedValue({ timeZone: "America/Sao_Paulo" });
     expect((await service.screen(context)).period).toEqual({ from: "2026-09-01T03:00:00.000Z", to: "2026-10-01T03:00:00.000Z" });

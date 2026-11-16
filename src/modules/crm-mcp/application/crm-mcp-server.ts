@@ -8,7 +8,10 @@ import { getAdvertisingWorkspaceService } from "@/modules/advertising/applicatio
 import { auditOrigins, actorTypes, processViolationSeverities, processViolationStatuses, processViolationTypes } from "@/modules/audit/domain/audit-contracts";
 import type { CrmMcpIdentity } from "@/modules/crm-mcp/application/crm-mcp-authentication";
 import { readCrmMcpAudit } from "@/modules/crm-mcp/application/crm-mcp-audit";
+import { financeListSections, readCrmMcpFinanceList, readCrmMcpFinanceReport } from "@/modules/crm-mcp/application/crm-mcp-finance";
 import { crmMcpToolScopes } from "@/modules/crm-mcp/domain/crm-mcp-tool-scopes";
+import { getFinanceService } from "@/modules/finance/application/finance-service";
+import { compensationFilters } from "@/modules/finance/domain/finance-contracts";
 import { getForecastService } from "@/modules/forecast/application/forecast-service";
 import { getGoalService } from "@/modules/goals/application/goal-service";
 import { getIntegrationPlatformService } from "@/modules/integrations/application/integration-platform-service";
@@ -25,6 +28,9 @@ import { getRevenueMetricsService } from "@/modules/metrics/application/revenue-
 import { integratedMetricRegistry, INTEGRATED_METRIC_REGISTRY_VERSION } from "@/modules/metrics/domain/integrated-metric-registry";
 import { getOpportunityService } from "@/modules/opportunities/application/opportunity-service";
 import { getSalesGateService } from "@/modules/opportunities/application/sales-gate-service";
+import { monthSchema } from "@/modules/ote/domain/ote-calculator";
+import { getRealtimeDashboardService } from "@/modules/realtime-dashboard/application/realtime-dashboard-service";
+import { realtimePeriodQuerySchema } from "@/modules/realtime-dashboard/domain/realtime-period-filter";
 import { getAuthorizationService } from "@/modules/users/permissions/authorization-service";
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getWorkspaceExperienceService } from "@/modules/workspace-experience/application/workspace-experience-service";
@@ -33,7 +39,7 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 import { logger } from "@/shared/core/logging/logger";
 import { redactTelemetryValue } from "@/shared/core/security/redaction";
 
-export const CRM_MCP_VERSION = "1.1.0";
+export const CRM_MCP_VERSION = "1.2.0";
 const uuid = z.string().uuid();
 const text = z.string().trim().max(200);
 const date = z.iso.date();
@@ -55,6 +61,7 @@ const filters = z.object({
   cadenceStepKeys: z.array(text).max(50).optional(), executionModes: z.array(z.enum(["MANUAL", "AUTOMATION", "SYSTEM"])).max(3).optional(),
 }).strict();
 const rangeShape = { from: timestamp, to: timestamp };
+const optionalRange = { from: timestamp.optional(), to: timestamp.optional() };
 const metricQuery = z.object({ ...rangeShape, filters: filters.optional() }).strict();
 const advertisingDashboardShape = {
   ...periodShape, form: ids, stage: ids, channel: z.array(text).max(20).optional(), integratedMember: uuid.optional(),
@@ -227,6 +234,27 @@ export function createCrmMcpServer(identity: CrmMcpIdentity) {
   add("detalhar_funil_anuncios", "metrics:read", "Evidências do funil de Anúncios: entradas, participações, pessoas, reuniões e tempos da primeira ação, resposta, agendamento e resultado. Tempos em segundos; 50 registros por página.", z.object({
     measure: z.enum(frontMeasures), query: advertisingMetricQuery, memberId: uuid.optional(), page: paging.page,
   }).strict(), async (input) => getMetricsService().getCommercialFrontEvidence(context, { ...input, query: await advertisingQuery(input.query) }));
+  add("consultar_tempo_anuncios", "metrics:read", "Placar de Anúncios do /tempo: visão geral, resultados, metas, funil, série diária, ranking e qualidade. Por padrão, hoje e semana corrente. CUSTOM usa datas locais inclusivas.", realtimePeriodQuerySchema, async (input) => {
+    assertCrmMcpPeriod({ preset: input.periodPreset, fromDate: input.periodFrom || undefined, toDate: input.periodTo || undefined });
+    await getAuthorizationService().assertAuthorized(context, PermissionKeys.REALTIME_READ, { workspaceId: context.workspaceId, resourceId: context.workspaceId, resourceType: "RealtimeDashboard" });
+    return { front: "ADVERTISING", ...await getRealtimeDashboardService().advertisingSnapshot(context, input) };
+  });
+  add("consultar_financeiro", "crm:read", "Relatórios do Financeiro: dashboard, fluxo de caixa realizado e projetado ou DRE por competência. from/to ISO 8601 com fim exclusivo. accountId seleciona a conta no fluxo de caixa realizado.", z.object({
+    ...optionalRange, report: z.enum(["dashboard", "fluxo-caixa", "dre"]).default("dashboard"), accountId: uuid.optional(),
+  }).strict().refine((input) => !input.accountId || input.report === "fluxo-caixa", { message: "accountId é aceito somente no fluxo de caixa." }), async (input) => {
+    assertCrmMcpPeriod(input);
+    return readCrmMcpFinanceReport(context, input);
+  });
+  add("listar_financeiro", "crm:read", "Listas paginadas de lançamentos realizados, entradas, despesas, contas a pagar/receber, cobranças, contas, categorias, centros de custo, recorrências, extratos, conciliação, comprovantes e comissões. recordId filtra extratos por conta, conciliação por extrato ou comprovantes por lançamento.", z.object({
+    ...optionalRange, ...paging, section: z.enum(financeListSections), recordId: uuid.optional(), compensation: compensationFilters.optional(),
+  }).strict().refine((input) => (!input.recordId || ["extratos", "conciliacao", "comprovantes"].includes(input.section))
+    && (!input.compensation || input.section === "remuneracao"), { message: "Use recordId em extratos, conciliação ou comprovantes e compensation em remuneração." }), async (input) => {
+    assertCrmMcpPeriod(input);
+    return readCrmMcpFinanceList(context, input);
+  });
+  add("consultar_metas_financeiras", "crm:read", "Métricas, metas, atingimento e remuneração comercial da competência de Financeiro > Métricas Metas. Informe month no formato YYYY-MM.", z.object({
+    month: monthSchema,
+  }).strict(), ({ month }) => getFinanceService().goals(context, month));
   add("consultar_logs_operacionais", "operations:read", "Telemetria persistida pelo CRM, paginada e sanitizada; não inclui stdout/stderr da hospedagem.", z.object({ ...rangeShape, operation: text.optional(), ...paging }).strict(), async (input) => {
     assertCrmMcpPeriod(input);
     await getAuthorizationService().assertAuthorized(context, PermissionKeys.OPERATIONS_READ, { workspaceId: context.workspaceId, resourceType: "Operations" });

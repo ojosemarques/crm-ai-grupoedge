@@ -11,7 +11,12 @@ const mocks = vi.hoisted(() => ({
   logs: vi.fn(), count: vi.fn(), media: vi.fn(), advertising: vi.fn(), pipeline: vi.fn(), meta: vi.fn(),
   dashboard: vi.fn(), dashboardDrilldown: vi.fn(), integratedDrilldown: vi.fn(), frontEvidence: vi.fn(),
   board: vi.fn(), tasks: vi.fn(), history: vi.fn(),
+  realtime: vi.fn(), finance: vi.fn(), supporting: vi.fn(), financeGoals: vi.fn(),
 }));
+vi.mock("@/modules/realtime-dashboard/application/realtime-dashboard-service", () => ({ getRealtimeDashboardService: () => ({ advertisingSnapshot: mocks.realtime }) }));
+vi.mock("@/modules/finance/application/finance-service", () => ({ getFinanceService: () => ({
+  screen: mocks.finance, listSupportingRecords: mocks.supporting, goals: mocks.financeGoals,
+}) }));
 vi.mock("@/modules/metrics/application/metrics-service", () => ({ getMetricsService: () => ({
   getIntegratedOverview: mocks.overview, getIntegratedDrilldown: mocks.integratedDrilldown, getCommercialFrontEvidence: mocks.frontEvidence,
 }) }));
@@ -93,11 +98,11 @@ describe("CRM MCP authentication boundary", () => {
 describe("CRM MCP protocol and read tools", () => {
   it("completes the MCP initialize handshake", async () => {
     const response = await rpc("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } });
-    expect(response.result.serverInfo).toEqual({ name: "Grupo Edge CRM", version: "1.1.0" });
+    expect(response.result.serverInfo).toEqual({ name: "Grupo Edge CRM", version: "1.2.0" });
   });
-  it("lists 30 read-only tools and valid JSON schemas", async () => {
+  it("lists 34 read-only tools and valid JSON schemas", async () => {
     const response = await rpc("tools/list");
-    expect(response.result.tools).toHaveLength(30);
+    expect(response.result.tools).toHaveLength(34);
     for (const tool of response.result.tools) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
       expect(tool.inputSchema.type).toBe("object");
@@ -133,6 +138,60 @@ describe("CRM MCP protocol and read tools", () => {
     const response = await rpc("tools/call", { name: "consultar_aquisicao", arguments: { periodStart: "2026-10-28", periodEnd: "2026-10-28" } });
     expect(response.result.isError).toBe(true);
     expect(JSON.stringify(response)).not.toContain("private-access-token");
+  });
+  it("uses the authorized advertising snapshot with a custom period and rejects another front", async () => {
+    mocks.realtime.mockClear().mockResolvedValue({ today: {}, week: { ranking: [] } });
+    const args = { periodPreset: "CUSTOM", periodFrom: "2026-11-01", periodTo: "2026-11-09" };
+    const foreignFront = await rpc("tools/call", { name: "consultar_tempo_anuncios", arguments: { ...args, front: "PROSPECTING" } }, ["metrics:read"]);
+    expect(foreignFront.result?.isError || foreignFront.error).toBeTruthy();
+    mocks.authorize.mockRejectedValueOnce(new Error("denied"));
+    const denied = await rpc("tools/call", { name: "consultar_tempo_anuncios", arguments: args }, ["metrics:read"]);
+    expect(denied.result.isError).toBe(true);
+    expect(mocks.realtime).not.toHaveBeenCalled();
+    const response = await rpc("tools/call", { name: "consultar_tempo_anuncios", arguments: args }, ["metrics:read"]);
+    expect(response.result.structuredContent.data).toMatchObject({ front: "ADVERTISING", week: { ranking: [] } });
+    expect(mocks.authorize).toHaveBeenCalledWith(identity.context, "realtime.read", { workspaceId, resourceId: workspaceId, resourceType: "RealtimeDashboard" });
+    expect(mocks.realtime).toHaveBeenCalledWith(identity.context, args);
+  });
+  it("keeps finance report data behind the CRM scope and hides restricted commission totals", async () => {
+    mocks.finance.mockClear().mockResolvedValue({
+      period: query, summary: { cashBalanceCents: "1000", commissionPaidCents: "42" }, permissions: { commissionsManage: false }, dashboard: { commission: null },
+    });
+    const denied = await rpc("tools/call", { name: "consultar_financeiro", arguments: {} }, ["metrics:read"]);
+    expect(denied.result?.isError || denied.error).toBeTruthy();
+    expect(mocks.finance).not.toHaveBeenCalled();
+    const allowed = await rpc("tools/call", { name: "consultar_financeiro", arguments: query }, ["crm:read"]);
+    expect(allowed.result.structuredContent.data.summary).toEqual({ cashBalanceCents: "1000" });
+    expect(mocks.finance).toHaveBeenCalledWith(identity.context, query, { dashboard: true });
+  });
+  it("does not fall back to consolidated cash flow for an unknown account", async () => {
+    mocks.finance.mockResolvedValue({ cashFlowReport: { accountId: null } });
+    const response = await rpc("tools/call", {
+      name: "consultar_financeiro", arguments: { report: "fluxo-caixa", accountId: roleId },
+    }, ["crm:read"]);
+    expect(response.result.isError).toBe(true);
+  });
+  it("paginates reconciliation and checks finance commission permissions before reading individual amounts", async () => {
+    mocks.supporting.mockResolvedValue(Array.from({ length: 11 }, (_, index) => ({ id: index })));
+    const response = await rpc("tools/call", {
+      name: "listar_financeiro", arguments: { section: "conciliacao", recordId: roleId, page: 2, pageSize: 10, ...query },
+    }, ["crm:read"]);
+    const data = response.result.structuredContent.data;
+    expect(data).toMatchObject({ section: "conciliacao", hasMore: true, page: 2 });
+    expect(data.items).toHaveLength(10);
+    expect(mocks.supporting).toHaveBeenCalledWith(identity.context, { section: "conciliacao", recordId: roleId, page: 2, pageSize: 10, ...query });
+    mocks.finance.mockClear();
+    mocks.authorize.mockRejectedValueOnce(new Error("denied"));
+    const denied = await rpc("tools/call", { name: "listar_financeiro", arguments: { section: "comissoes" } }, ["crm:read"]);
+    expect(denied.result.isError).toBe(true);
+    expect(mocks.finance).not.toHaveBeenCalled();
+    expect(mocks.authorize).toHaveBeenCalledWith(identity.context, "finance.commissions", { workspaceId, resourceType: "Finance" });
+  });
+  it("delegates financial goals for the requested month to the authorized finance service", async () => {
+    mocks.financeGoals.mockResolvedValue({ people: [] });
+    const response = await rpc("tools/call", { name: "consultar_metas_financeiras", arguments: { month: "2026-11" } }, ["crm:read"]);
+    expect(response.result.structuredContent.data).toEqual({ people: [] });
+    expect(mocks.financeGoals).toHaveBeenCalledWith(identity.context, "2026-11");
   });
   it("returns advertising pipeline health without returning lead cards", async () => {
     mocks.pipeline.mockResolvedValue({ id: roleId });

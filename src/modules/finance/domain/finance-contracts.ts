@@ -5,7 +5,7 @@ const text = (min: number, max: number) => z.string().trim().min(min).max(max);
 const cents = z.coerce.bigint().positive();
 const idempotencyKey = text(8, 180);
 
-const compensationFilters = z.object({
+export const compensationFilters = z.object({
   sellerId: id.optional(),
   customerId: id.optional(),
   saleId: id.optional(),
