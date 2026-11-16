@@ -140,7 +140,16 @@ pelo Git e com permissão 0600. Não cole tokens em prompts, logs ou commits.
 | `consultar_auditoria` | Auditoria mascarada e achados de processo; filtros `audit*`, `violation*` | `audit:read` |
 | `consultar_integracoes` | Conexões, estado e capacidades sem credenciais | `integrations:read` |
 | `consultar_meta_ads` | Contas conectadas/selecionadas, última sincronização e falhas seguras | `integrations:read` |
-| `consultar_aquisicao` | Investimento, impressões, cliques, eficiência e funil da tela de aquisição | `metrics:read` |
+| `consultar_google_ads` | Contas Google Ads, hierarquia, configuração operacional, sincronizações e cursor | `integrations:read` |
+| `consultar_aquisicao` | Investimento, cliques, campanhas, criativos, série diária, análise de páginas, funil, importações e conciliação | `metrics:read` |
+| `consultar_funis_marketing` | Estratégias e etapas de aquisição, custos, conversões e cobertura | `metrics:read` |
+| `consultar_atribuicao_marketing` | Jornada por origem, campanha e criativo até venda e recebimento, modelos e pendências | `metrics:read` |
+| `listar_formularios_marketing` | Catálogo paginado de formulários CRM, status, versões, respostas e conclusão | `crm:read` |
+| `consultar_formulario_marketing` | Definição, publicação, destino, perguntas e catálogo opcional do editor por `formId` | `crm:read` |
+| `consultar_formularios_nativos` | Páginas e formulários instantâneos da Meta, recebimentos, falhas e retorno de qualidade | `crm:read` |
+| `listar_respostas_marketing` | Respostas completas e incompletas, filtradas por formulário, versão, busca, UTM, período e status | `crm:read` |
+| `detalhar_resposta_marketing` | Respostas e perguntas da versão histórica por `formId` e `responseId` da lista | `crm:read` |
+| `consultar_estatisticas_formulario` | Visualizações, inícios, conclusões, tempo mediano, abandono e escolhas por formulário | `metrics:read` |
 | `consultar_leads_anuncios` | Estoque paginado e etapas do pipeline Trabalho > Anúncios | `crm:read` |
 | `consultar_pipeline_anuncios` | Saúde e volume por etapa, tempo médio, conversão, leads parados, sem tarefa ou sem contato recente e ações do dia | `crm:read` |
 | `consultar_atividades_anuncios` | Tarefas e histórico de eventos, com páginas independentes e filtros no histórico | `crm:read` |
@@ -173,6 +182,11 @@ auditoria, com `clientId` e ferramenta, sem argumentos nem resultados.
   medianas, saldos ou contagens distintas entre janelas.
 - Em Aquisição, `totals.reach` é alcance somado por anúncio/dia, sem deduplicação
   de pessoas entre anúncios ou datas; não equivale ao alcance único da conta.
+- Mídia, funis de estratégia e atribuição usam `periodStart` e `periodEnd`
+  em datas locais inclusivas. Estatísticas e respostas de formulário usam
+  `from` e `to` ISO 8601, com fim exclusivo. Formulários exigem as
+  permissões `marketing.definitions.manage` e `marketing.journey.read`.
+  O detalhe da resposta usa o `id` retornado na listagem do MCP.
 - `advertisingFunnel.cohortSize` inclui cadastros de Anúncios e respostas
   incompletas salvas de formulários destinados a esse pipeline.
   `registeredLeadCount` e `incompleteCount` discriminam esses volumes. A conclusão

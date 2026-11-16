@@ -48,13 +48,13 @@ export function createMarketingFormService(options: Options) {
     await options.authorization.assertAuthorized(context, PermissionKeys.MARKETING_DEFINITIONS_MANAGE, resource(context, id));
   }
 
-  async function list(context: AuthenticatedContext) {
+  async function list(context: AuthenticatedContext, paging: { skip?: number; take: number } = { take: 200 }) {
     await authorizeRead(context);
     const forms = await options.database.marketingForm.findMany({
       where: { workspaceId: context.workspaceId, deletedAt: null },
       select: { id: true, name: true, publicSlug: true, status: true, revision: true, currentVersion: true, publishedAt: true, updatedAt: true },
       orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
-      take: 200,
+      ...paging,
     });
     if (!forms.length) return [];
     const [receipts, starts] = await Promise.all([

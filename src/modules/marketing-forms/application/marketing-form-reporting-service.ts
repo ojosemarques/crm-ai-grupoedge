@@ -203,11 +203,11 @@ export function createMarketingFormReportingService(options: Options) {
     };
   }
 
-  async function detail(context: AuthenticatedContext, formId: string, receiptId: string) {
+  async function readDetail(context: AuthenticatedContext, formId: string, lookup: { id: string } | { publicId: string }) {
     await assertForm(context, formId);
-    const receipt = await options.database.marketingFormReceipt.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, publicId: receiptId, deletedAt: null } });
+    const receipt = await options.database.marketingFormReceipt.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, ...lookup, deletedAt: null } });
     if (!receipt) {
-      const partial = await options.database.marketingFormPartialResponse.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, publicId: receiptId, completedAt: null, deletedAt: null } });
+      const partial = await options.database.marketingFormPartialResponse.findFirst({ where: { workspaceId: context.workspaceId, marketingFormId: formId, ...lookup, completedAt: null, deletedAt: null } });
       if (!partial) fail("Resposta não encontrada.", "MARKETING_FORM_RESPONSE_NOT_FOUND", 404);
       const version = await options.database.marketingFormVersion.findFirst({ where: { id: partial.marketingFormVersionId, workspaceId: context.workspaceId, marketingFormId: formId } });
       if (!version) fail("Versão histórica não encontrada.", "MARKETING_FORM_VERSION_NOT_FOUND", 500);
@@ -333,7 +333,12 @@ export function createMarketingFormReportingService(options: Options) {
     return { views: totals.get("FORM_VIEW") ?? 0, starts, completed, completionRate: starts ? Math.round(completed / starts * 10_000) / 100 : null, medianSeconds: submissions[0]?.medianSeconds ?? null, abandonment: abandonment.map((row) => ({ questionKey: row.questionKey, viewed: Number(row.viewed), abandoned: Number(row.abandoned) })), choices: choices.map((row) => ({ ...row, total: Number(row.total) })), grain: "sessões únicas e receipts aceitos", generatedAt: options.now().toISOString() };
   }
 
-  return Object.freeze({ list, detail, remove, csv, statistics });
+  return Object.freeze({
+    list,
+    detail: (context: AuthenticatedContext, formId: string, receiptId: string) => readDetail(context, formId, { publicId: receiptId }),
+    detailById: (context: AuthenticatedContext, formId: string, responseId: string) => readDetail(context, formId, { id: responseId }),
+    remove, csv, statistics,
+  });
 }
 
 let service: ReturnType<typeof createMarketingFormReportingService> | undefined;

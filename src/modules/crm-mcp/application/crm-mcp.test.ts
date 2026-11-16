@@ -12,7 +12,19 @@ const mocks = vi.hoisted(() => ({
   dashboard: vi.fn(), dashboardDrilldown: vi.fn(), integratedDrilldown: vi.fn(), frontEvidence: vi.fn(),
   board: vi.fn(), tasks: vi.fn(), history: vi.fn(),
   realtime: vi.fn(), finance: vi.fn(), supporting: vi.fn(), financeGoals: vi.fn(),
+  google: vi.fn(), nativeForms: vi.fn(), forms: vi.fn(), formDetails: vi.fn(), formCatalog: vi.fn(),
+  responses: vi.fn(), responseDetail: vi.fn(), formStats: vi.fn(), strategies: vi.fn(), attribution: vi.fn(), workspace: vi.fn(),
 }));
+vi.mock("@/modules/acquisition-api/application/meta-native-service", () => ({ getMetaNativeService: () => ({ list: mocks.nativeForms }) }));
+vi.mock("@/modules/integrations/application/google-ads-service", () => ({ getGoogleAdsService: () => ({ screen: mocks.google }) }));
+vi.mock("@/modules/marketing/application/strategy-funnel-service", () => ({ getStrategyFunnelService: () => ({ screen: mocks.strategies }) }));
+vi.mock("@/modules/marketing/application/marketing-attribution-service", () => ({ getMarketingAttributionService: () => ({ getScreen: mocks.attribution }) }));
+vi.mock("@/modules/marketing-forms/application/marketing-form-service", () => ({ getMarketingFormService: () => ({
+  list: mocks.forms, detail: mocks.formDetails, catalog: mocks.formCatalog,
+}) }));
+vi.mock("@/modules/marketing-forms/application/marketing-form-reporting-service", () => ({ getMarketingFormReportingService: () => ({
+  list: mocks.responses, detailById: mocks.responseDetail, statistics: mocks.formStats,
+}) }));
 vi.mock("@/modules/realtime-dashboard/application/realtime-dashboard-service", () => ({ getRealtimeDashboardService: () => ({ advertisingSnapshot: mocks.realtime }) }));
 vi.mock("@/modules/finance/application/finance-service", () => ({ getFinanceService: () => ({
   screen: mocks.finance, listSupportingRecords: mocks.supporting, goals: mocks.financeGoals,
@@ -33,7 +45,7 @@ vi.mock("@/modules/pipelines/application/pre-sales-pipeline-service", async (ori
 }));
 vi.mock("@/modules/integrations/application/meta-ads-service", () => ({ getMetaAdsService: () => ({ screen: mocks.meta }) }));
 vi.mock("@/modules/users/permissions/authorization-service", () => ({ getAuthorizationService: () => ({ assertAuthorized: mocks.authorize }) }));
-vi.mock("@/shared/core/database/client", () => ({ getDatabaseClient: () => ({ auditLog: { create: mocks.audit }, telemetryRecord: { findMany: mocks.logs, count: mocks.count }, pipeline: { findFirst: mocks.pipeline } }) }));
+vi.mock("@/shared/core/database/client", () => ({ getDatabaseClient: () => ({ auditLog: { create: mocks.audit }, telemetryRecord: { findMany: mocks.logs, count: mocks.count }, pipeline: { findFirst: mocks.pipeline }, workspace: { findUniqueOrThrow: mocks.workspace } }) }));
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const memberId = "22222222-2222-4222-8222-222222222222";
@@ -98,11 +110,11 @@ describe("CRM MCP authentication boundary", () => {
 describe("CRM MCP protocol and read tools", () => {
   it("completes the MCP initialize handshake", async () => {
     const response = await rpc("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } });
-    expect(response.result.serverInfo).toEqual({ name: "Grupo Edge CRM", version: "1.2.0" });
+    expect(response.result.serverInfo).toEqual({ name: "Grupo Edge CRM", version: "1.3.0" });
   });
-  it("lists 34 read-only tools and valid JSON schemas", async () => {
+  it("lists 43 read-only tools and valid JSON schemas", async () => {
     const response = await rpc("tools/list");
-    expect(response.result.tools).toHaveLength(34);
+    expect(response.result.tools).toHaveLength(43);
     for (const tool of response.result.tools) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
       expect(tool.inputSchema.type).toBe("object");
@@ -138,6 +150,54 @@ describe("CRM MCP protocol and read tools", () => {
     const response = await rpc("tools/call", { name: "consultar_aquisicao", arguments: { periodStart: "2026-10-28", periodEnd: "2026-10-28" } });
     expect(response.result.isError).toBe(true);
     expect(JSON.stringify(response)).not.toContain("private-access-token");
+  });
+  it("uses the workspace calendar for the strategy funnel and attribution", async () => {
+    mocks.workspace.mockResolvedValue({ timeZone: "America/Sao_Paulo" });
+    mocks.strategies.mockResolvedValue({ strategies: [] });
+    mocks.attribution.mockResolvedValue({
+      definitions: { landingPages: [], forms: [{ id: roleId, name: "Form", draftDefinition: { raw: "internal" } }] },
+      runs: [{ id: roleId, status: "COMPLETED", errorMessage: "internal" }],
+      issues: [{ id: memberId, status: "OPEN", evidence: "internal" }],
+      permissions: { canExportEvidence: false }, journey: { stages: [] },
+    });
+    const period = { periodStart: "2026-11-01", periodEnd: "2026-11-01" };
+    const expected = { periodStart: new Date("2026-11-01T03:00:00Z"), periodEnd: new Date("2026-11-02T03:00:00Z") };
+    const funnel = await rpc("tools/call", { name: "consultar_funis_marketing", arguments: period }, ["metrics:read"]);
+    expect(funnel.result.structuredContent.data).toEqual({ strategies: [] });
+    expect(mocks.strategies).toHaveBeenCalledWith(identity.context, expected);
+    const attribution = await rpc("tools/call", { name: "consultar_atribuicao_marketing", arguments: { ...period, sourceId: roleId } }, ["metrics:read"]);
+    expect(mocks.attribution).toHaveBeenCalledWith(identity.context, { ...expected, sourceId: roleId });
+    expect(attribution.result.structuredContent.data.definitions.forms).toEqual([{ id: roleId, name: "Form" }]);
+    expect(JSON.stringify(attribution)).not.toContain("internal");
+  });
+  it("honors form permissions and does not return public agenda receipt IDs", async () => {
+    mocks.responses.mockClear().mockResolvedValue({ page: 1, total: 1, items: [{ id: memberId, publicId: "private-booking-link-id", status: "INCOMPLETO" }] });
+    mocks.responseDetail.mockResolvedValue({ receipt: { publicId: "private-booking-link-id", status: "INCOMPLETO" }, answers: [] });
+    mocks.authorize.mockRejectedValueOnce(new Error("denied"));
+    const args = { name: "listar_respostas_marketing", arguments: { formId: roleId, status: "INCOMPLETO", pageSize: 1 } };
+    expect((await rpc("tools/call", args)).result.isError).toBe(true);
+    expect(mocks.responses).not.toHaveBeenCalled();
+    const response = await rpc("tools/call", args);
+    expect(response.result.structuredContent.data.items).toEqual([{ id: memberId, status: "INCOMPLETO" }]);
+    expect(mocks.authorize).toHaveBeenCalledWith(identity.context, "marketing.definitions.manage", { workspaceId, resourceType: "MarketingForm", resourceId: roleId });
+    const detail = await rpc("tools/call", { name: "detalhar_resposta_marketing", arguments: { formId: roleId, responseId: memberId } });
+    expect(mocks.responseDetail).toHaveBeenCalledWith(identity.context, roleId, memberId);
+    expect(detail.result.structuredContent.data.receipt).toEqual({ id: memberId, status: "INCOMPLETO" });
+  });
+  it("supports CRM forms, native forms and Google Ads under their respective scopes", async () => {
+    mocks.forms.mockResolvedValue(Array.from({ length: 11 }, (_, index) => ({ id: index })));
+    const forms = await rpc("tools/call", { name: "listar_formularios_marketing", arguments: { page: 2, pageSize: 10 } }, ["crm:read"]);
+    expect(forms.result.structuredContent.data).toMatchObject({ page: 2, hasMore: true });
+    expect(forms.result.structuredContent.data.items).toHaveLength(10);
+    expect(mocks.forms).toHaveBeenCalledWith(identity.context, { skip: 10, take: 11 });
+    mocks.nativeForms.mockResolvedValue([{ id: roleId, forms: [] }]);
+    expect((await rpc("tools/call", { name: "consultar_formularios_nativos" }, ["crm:read"])).result.structuredContent.data).toEqual([{ id: roleId, forms: [] }]);
+    mocks.google.mockClear().mockResolvedValue({ readiness: "NOT_CONFIGURED" });
+    const denied = await rpc("tools/call", { name: "consultar_google_ads" }, ["crm:read"]);
+    expect(denied.result?.isError || denied.error).toBeTruthy();
+    expect(mocks.google).not.toHaveBeenCalled();
+    const google = await rpc("tools/call", { name: "consultar_google_ads" }, ["integrations:read"]);
+    expect(google.result.structuredContent.data).toEqual({ readiness: "NOT_CONFIGURED" });
   });
   it("uses the authorized advertising snapshot with a custom period and rejects another front", async () => {
     mocks.realtime.mockClear().mockResolvedValue({ today: {}, week: { ranking: [] } });

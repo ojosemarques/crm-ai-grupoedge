@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { ActivityResult, ActivityType } from "@/generated/prisma/client";
+import { getMetaNativeService } from "@/modules/acquisition-api/application/meta-native-service";
 import { getCommercialHistoryService } from "@/modules/activities/application/commercial-history-service";
 import { getOperationalHistoryService } from "@/modules/activities/application/operational-history-service";
 import { getAdvertisingWorkspaceService } from "@/modules/advertising/application/advertising-workspace-service";
@@ -9,16 +10,22 @@ import { auditOrigins, actorTypes, processViolationSeverities, processViolationS
 import type { CrmMcpIdentity } from "@/modules/crm-mcp/application/crm-mcp-authentication";
 import { readCrmMcpAudit } from "@/modules/crm-mcp/application/crm-mcp-audit";
 import { financeListSections, readCrmMcpFinanceList, readCrmMcpFinanceReport } from "@/modules/crm-mcp/application/crm-mcp-finance";
+import { authorizeMarketingFormDefinition, readCrmMcpAttribution, resolveMarketingDays } from "@/modules/crm-mcp/application/crm-mcp-marketing";
 import { crmMcpToolScopes } from "@/modules/crm-mcp/domain/crm-mcp-tool-scopes";
 import { getFinanceService } from "@/modules/finance/application/finance-service";
 import { compensationFilters } from "@/modules/finance/domain/finance-contracts";
 import { getForecastService } from "@/modules/forecast/application/forecast-service";
 import { getGoalService } from "@/modules/goals/application/goal-service";
+import { getGoogleAdsService } from "@/modules/integrations/application/google-ads-service";
 import { getIntegrationPlatformService } from "@/modules/integrations/application/integration-platform-service";
 import { getMetaAdsService } from "@/modules/integrations/application/meta-ads-service";
 import { getLeadListService } from "@/modules/leads/application/lead-list-service";
 import { getMeetingService } from "@/modules/meetings/application/meeting-service";
 import { getMediaPerformanceService } from "@/modules/marketing/application/media-performance-service";
+import { getStrategyFunnelService } from "@/modules/marketing/application/strategy-funnel-service";
+import { acquisitionQuerySchema } from "@/modules/marketing/domain/marketing-contracts";
+import { getMarketingFormReportingService } from "@/modules/marketing-forms/application/marketing-form-reporting-service";
+import { getMarketingFormService } from "@/modules/marketing-forms/application/marketing-form-service";
 import { getPreSalesPipelineService, preSalesPipelineFilters } from "@/modules/pipelines/application/pre-sales-pipeline-service";
 import { ADVERTISING_PIPELINE_NAME } from "@/modules/pipelines/domain/prospecting-pipeline-profile";
 import { prospectingMetricsPeriodPresets } from "@/modules/prospecting/domain/prospecting-metrics-period";
@@ -39,7 +46,7 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 import { logger } from "@/shared/core/logging/logger";
 import { redactTelemetryValue } from "@/shared/core/security/redaction";
 
-export const CRM_MCP_VERSION = "1.2.0";
+export const CRM_MCP_VERSION = "1.3.0";
 const uuid = z.string().uuid();
 const text = z.string().trim().max(200);
 const date = z.iso.date();
@@ -62,6 +69,8 @@ const filters = z.object({
 }).strict();
 const rangeShape = { from: timestamp, to: timestamp };
 const optionalRange = { from: timestamp.optional(), to: timestamp.optional() };
+const marketingDays = z.object({ periodStart: date, periodEnd: date }).strict();
+const formReportShape = { formId: uuid, version: z.number().int().positive().optional(), ...optionalRange };
 const metricQuery = z.object({ ...rangeShape, filters: filters.optional() }).strict();
 const advertisingDashboardShape = {
   ...periodShape, form: ids, stage: ids, channel: z.array(text).max(20).optional(), integratedMember: uuid.optional(),
@@ -163,9 +172,71 @@ export function createCrmMcpServer(identity: CrmMcpIdentity) {
   add("consultar_auditoria", "audit:read", "Trilha auditável e achados persistidos de saúde do processo, com máscaras canônicas. Não executa varredura. Pagine com auditPage e violationPage.", z.object({ auditSearch: text.max(100).optional(), auditActorType: z.enum(actorTypes).optional(), auditActorId: uuid.optional(), auditOrigin: z.enum(auditOrigins).optional(), auditAction: text.optional(), auditEntityType: text.optional(), auditFrom: timestamp.optional(), auditTo: timestamp.optional(), auditPage: paging.page, violationPage: paging.page, violationType: z.enum(processViolationTypes).optional(), violationSeverity: z.enum(processViolationSeverities).optional(), violationStatus: z.enum(processViolationStatuses).optional() }).strict(), async (input) => { assertCrmMcpPeriod({ from: input.auditFrom, to: input.auditTo }); return readCrmMcpAudit(context, input); });
   add("consultar_integracoes", "integrations:read", "Conexões, capacidades e situação das integrações; credenciais nunca são retornadas.", z.object({}).strict(), () => getIntegrationPlatformService().list(context));
   add("consultar_meta_ads", "integrations:read", "Contas Meta Ads conectadas, seleção da coleta, última sincronização e erros seguros. Não retorna credenciais nem executa sincronização.", z.object({}).strict(), () => getMetaAdsService().screen(context));
-  add("consultar_aquisicao", "metrics:read", "Métricas da tela Marketing > Aquisição: investimento em centavos, impressões, cliques, CPC, leads da mídia e funil observado no CRM. Datas locais inclusivas, até 93 dias. Ausência de dado não representa zero.", z.object({ periodStart: date, periodEnd: date }).strict(), async (input) => {
+  add("consultar_google_ads", "integrations:read", "Estado do Google Ads, contas selecionadas, hierarquia, últimas sincronizações, cursor e configuração operacional.", z.object({}).strict(), () => getGoogleAdsService().screen(context));
+  add("consultar_aquisicao", "metrics:read", "Marketing > Anúncios e funil: mídia paga, investimento, série, campanhas e criativos, páginas, funil do CRM, importações e reconciliação. Datas locais inclusivas.", marketingDays, async (input) => {
     assertCrmMcpPeriod({ fromDate: input.periodStart, toDate: input.periodEnd });
     return getMediaPerformanceService().getScreen(context, input);
+  });
+  add("consultar_funis_marketing", "metrics:read", "Funis de estratégia com etapas de página, formulário, WhatsApp e CRM, volumes, conversões, custo e cobertura. Datas locais inclusivas.", marketingDays, async (input) => {
+    assertCrmMcpPeriod({ fromDate: input.periodStart, toDate: input.periodEnd });
+    return getStrategyFunnelService().screen(context, await resolveMarketingDays(context, input));
+  });
+  add("consultar_atribuicao_marketing", "metrics:read", "Aquisição e atribuição do CRM: origens, campanhas, criativos, jornada até recebimento, modelos, execuções e pendências de qualidade. Datas locais inclusivas; sem datas, últimos 30 dias.", acquisitionQuerySchema.omit({ modelKey: true }).extend({
+    periodStart: date.optional(), periodEnd: date.optional(),
+  }), async ({ periodStart, periodEnd, ...filters }) => {
+    assertCrmMcpPeriod({ fromDate: periodStart, toDate: periodEnd });
+    const period = periodStart && periodEnd ? await resolveMarketingDays(context, { periodStart, periodEnd }) : {};
+    return readCrmMcpAttribution(context, { ...filters, ...period });
+  });
+  add("listar_formularios_marketing", "crm:read", "Formulários CRM com status, versão, contagem de respostas e taxa de conclusão. Continue até hasMore=false.", z.object(paging).strict(), async ({ page, pageSize }) => {
+    await authorizeMarketingFormDefinition(context);
+    const forms = await getMarketingFormService().list(context, { skip: (page - 1) * pageSize, take: pageSize + 1 });
+    return { page, pageSize, hasMore: forms.length > pageSize, items: forms.slice(0, pageSize) };
+  });
+  add("consultar_formulario_marketing", "crm:read", "Definição do formulário CRM, incluindo perguntas, destino, publicação e rastreamento. includeCatalog inclui os destinos disponíveis no editor.", z.object({
+    formId: uuid, includeCatalog: z.boolean().default(false),
+  }).strict(), async ({ formId, includeCatalog }) => {
+    await authorizeMarketingFormDefinition(context, formId);
+    const forms = getMarketingFormService();
+    const [{ id, name, publicSlug, status, revision, currentVersion, publishedAt, updatedAt, definition, definitionValid }, catalog] = await Promise.all([
+      forms.detail(context, formId), includeCatalog ? forms.catalog(context) : undefined,
+    ]);
+    return { id, name, publicSlug, status, revision, currentVersion, publishedAt, updatedAt, definition, definitionValid, ...(catalog ? { catalog } : {}) };
+  });
+  add("consultar_formularios_nativos", "crm:read", "Formulários instantâneos da Meta, páginas conectadas, entradas recebidas, pendências, falhas e retorno de qualidade à Meta.", z.object({}).strict(), async () => {
+    await authorizeMarketingFormDefinition(context);
+    return getMetaNativeService().list(context);
+  });
+  add("listar_respostas_marketing", "crm:read", "Respostas de um formulário CRM, inclusive incompletas, com filtros por versão, status, UTM, busca e período. Use id para consultar uma resposta.", z.object({
+    ...formReportShape, page: z.number().int().min(1).max(10_000).default(1), pageSize: z.number().int().min(1).max(100).default(25),
+    status: z.enum(["RECEIVED", "PROCESSING", "ACCEPTED", "FAILED", "INCOMPLETO"]).optional(),
+    search: text.max(120).optional(), utmSource: text.optional(),
+  }).strict(), async ({ formId, ...input }) => {
+    assertCrmMcpPeriod(input);
+    await authorizeMarketingFormDefinition(context, formId);
+    const { total, page, pageSize, versions, items } = await getMarketingFormReportingService().list(context, formId, input);
+    return {
+      total, page, pageSize, versions,
+      items: items.map(({ id, marketingFormVersionId, status, version, utmSource, utmMedium, utmCampaign, submittedAt, acceptedAt, submission }) => ({
+        id, marketingFormVersionId, status, version, utmSource, utmMedium, utmCampaign, submittedAt, acceptedAt, submission,
+      })),
+    };
+  });
+  add("detalhar_resposta_marketing", "crm:read", "Perguntas e respostas registradas na versão histórica do formulário, com origem UTM e vínculo ao lead. Use o id da lista.", z.object({
+    formId: uuid, responseId: uuid,
+  }).strict(), async ({ formId, responseId }) => {
+    await authorizeMarketingFormDefinition(context, formId);
+    const { receipt, version, submission, answers } = await getMarketingFormReportingService().detailById(context, formId, responseId);
+    const { status, submittedAt, acceptedAt, utmSource, utmMedium, utmCampaign, utmContent, utmTerm, referrerHost, redirectKind } = receipt;
+    return {
+      receipt: { id: responseId, status, submittedAt, acceptedAt, utmSource, utmMedium, utmCampaign, utmContent, utmTerm, referrerHost, redirectKind },
+      version, submission, answers,
+    };
+  });
+  add("consultar_estatisticas_formulario", "metrics:read", "Visualizações, inícios, conclusões, mediana de tempo, abandono por pergunta e distribuição das escolhas. Filtre por versão e período.", z.object(formReportShape).strict(), async ({ formId, ...input }) => {
+    assertCrmMcpPeriod(input);
+    await authorizeMarketingFormDefinition(context, formId);
+    return getMarketingFormReportingService().statistics(context, formId, input);
   });
   async function advertisingPipelineId() {
     const pipeline = await getDatabaseClient().pipeline.findFirst({ where: { workspaceId: context.workspaceId, entityType: "LEAD", name: ADVERTISING_PIPELINE_NAME, deletedAt: null }, select: { id: true } });
