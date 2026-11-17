@@ -52,9 +52,10 @@ Integrações identificadas: Supabase PostgreSQL, OpenAI, Google Calendar OAuth,
 
 ## Pendências externas
 
-- O GitHub App do Cloudflare ainda não tem acesso ao repositório `crm-ai-grupoedge`.
-- Criar o Hyperdrive requer autorização específica para transmitir a credencial PostgreSQL direta ao Cloudflare.
-- Após criar o Hyperdrive: registrar seu ID como variável de build, transferir os secrets/runtime vars, conectar Workers Builds e publicar a branch.
+- O GitHub App da Cloudflare foi autorizado somente para os repositórios da migração; `crm-ai-grupoedge` está conectado à branch `codex/cloudflare-migration`.
+- Em 2026-11-16, `vercel env pull --environment=production` foi executado com sessão CLI autorizada. Das 89 variáveis retornadas, 33 secrets foram substituídos por `[SENSITIVE]`; entre eles estão `DATABASE_URL`, credenciais OAuth/MCP, OpenAI, Google Calendar, Meta, Telegram, TopSend, MillionSend/Open Dot e webhooks. O Vercel confirma que valores Secret não são legíveis depois da criação.
+- Estado: **BLOCKED — CREDENCIAIS DE ORIGEM IRRECUPERÁVEIS**. Sem `DATABASE_URL` não é possível criar o Hyperdrive sem redefinir a credencial PostgreSQL; sem os demais valores, o runtime publicado perderia integrações. Nenhuma rotação, alteração de callback ou credencial foi executada.
+- Após uma origem autorizada fornecer os valores ou cada rotação ser aprovada separadamente: criar o Hyperdrive, registrar seu ID como variável de build, transferir somente os secrets/runtime vars efetivamente usados e publicar a branch.
 - Validar na URL `workers.dev`: `/api/health`, `/api/ready`, login sem credencial, headers/cookies, páginas públicas, APIs negativas, logs sem secrets e ausência de execução do cron.
 - Manter `CLOUDFLARE_CRON_ENABLED=false` até a futura virada de domínio/agenda.
 
