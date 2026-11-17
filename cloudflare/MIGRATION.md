@@ -22,6 +22,8 @@ O Hyperdrive `grupo-edge-crm-supabase` usa o ID não sensível `d3a856bfac8a440b
 
 O Prisma Client usa `runtime = "workerd"`, carregando o query compiler WASM como módulo Cloudflare. Isso eliminou a tentativa de compilação dinâmica bloqueada pelo Workers. O build usa Node `22.23.4`, `nodejs_compat` e gera o alvo vinext.
 
+Em 2026-11-17, a migration `20261117193000_fix_auth_session_actor_guard` tornou a validação de sessão independente do `search_path` da conexão. O trigger continua exigindo o ator humano correspondente, mas consulta `crm.actors` explicitamente para funcionar também via Hyperdrive. A função foi aplicada no banco de produção e validada com criação de sessão e auditoria dentro de uma transação revertida, sem deixar dados de teste.
+
 ## Domínio e DNS
 
 `crm.edgegrupo.com` é Custom Domain de produção do Worker. Após o corte:
