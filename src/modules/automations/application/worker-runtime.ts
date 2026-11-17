@@ -74,6 +74,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
     runner: createWorkerBatchRunner({
       scanDue: lifecycleScanner.scanDue,
       processors: [
+        { key: "google-calendar-key-rotation", processNext: googleCalendarKeyRotationWorker.processNext },
         { key: "topsend-voice", processNext: topSendVoiceWorker.processNext },
         { key: "telegram-lead-alert", processNext: telegramLeadAlertWorker.processNext },
         { key: "marketing-form-partial-lead", processNext: partialLeadWorker.processNext },
@@ -90,7 +91,6 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
         { key: "payments", processNext: paymentWorker.processNext },
         { key: "closer-compensation", processNext: compensationWorker.processNext },
         { key: "calendar", processNext: calendarWorker.processNext },
-        { key: "google-calendar-key-rotation", processNext: googleCalendarKeyRotationWorker.processNext },
         { key: "google-calendar", processNext: googleCalendarWorker.processNext },
         { key: "meeting-participant-email", processNext: meetingParticipantEmailWorker.processNext },
         { key: "telephony", processNext: telephonyWorker.processNext },
