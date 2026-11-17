@@ -72,6 +72,22 @@ export default defineConfig({
     entrypoint: "./worker/index.ts",
     compatibilityDate: "2026-11-16",
     compatibilityFlags: ["nodejs_compat"],
+    observability: {
+      enabled: true,
+      redactQueryString: true,
+      issues: { enabled: true },
+      logs: {
+        enabled: true,
+        headSamplingRate: 1,
+        invocationLogs: true,
+        persist: true,
+      },
+      traces: {
+        enabled: true,
+        headSamplingRate: 0.1,
+        persist: true,
+      },
+    },
     triggers: [triggers.scheduled({ schedule: "* * * * *" })],
     assets: {
       htmlHandling: "none",
