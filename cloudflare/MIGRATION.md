@@ -4,13 +4,13 @@ Data da conclusão do núcleo e da auditoria: 2026-11-17 (America/Sao_Paulo)
 
 ## Produção
 
-- Repositório `ojosemarques/crm-ai-grupoedge`, branch `main`, commit auditado `85c0b01d2f0298b4a640e1a8c48c7bb40a860b96`.
+- Repositório `ojosemarques/crm-ai-grupoedge`, branch `main`. O corte Cloudflare-only foi publicado no commit `870695611e1144e9c180a967312cafdb78fefae4`.
 - Worker `grupo-edge-crm`, conta Cloudflare `Grupo Edge / Voukye`.
 - Domínio oficial: `https://crm.edgegrupo.com`.
 - URL técnica: `https://grupo-edge-crm.grupo-edge-voukye.workers.dev`.
-- Deployment `db488980-3977-4276-bdc4-865b157efaf9`, versão `84a45e1d-8a30-4c71-a01f-db16d592ff77`, 100% do tráfego.
+- Deployment do corte `27e12bfe-f3f6-4939-ad4d-1ef3e9350711`, versão `e5c73266-6c53-4ba3-a9e4-e84b17bd376c`, 100% do tráfego.
 - Workers Builds conectado ao GitHub, branch de produção `main`, auto-build ativo, previews desativados e último build concluído com sucesso.
-- O projeto Vercel legado `grupo-edge-crm` continua acessível somente como rollback. A integração Git foi desconectada em 2026-11-17 e não pode ser reconectada.
+- O projeto Vercel legado `grupo-edge-crm` continua acessível somente como rollback. A integração Git foi desconectada em 2026-11-17 e não pode ser reconectada. A pausa do projeto exige confirmação humana na CLI da Vercel.
 
 O núcleo web, banco, login e domínio estão publicados. Integrações sem credencial própria continuam desligadas e não bloqueiam o CRM.
 
@@ -60,6 +60,8 @@ O cron Cloudflare (`* * * * *`), o worker serverless e o MillionSend estão habi
 - HTTP em `crm.edgegrupo.com` ainda responde sem redirecionar para HTTPS; `always_use_https` está desligado na zona e o header HSTS não foi observado. Corrigir em regra restrita ao hostname ou numa mudança de zona explicitamente aprovada.
 - A zona aceita TLS mínimo 1.0. Elevar para TLS 1.2 afeta todos os hosts de `edgegrupo.com` e exige uma mudança de zona separada.
 - O deployment Vercel legado ainda responde e permanece apenas para rollback. Excluir o projeto ou o alias é destrutivo e exige autorização específica.
+- O projeto Vercel ainda não está pausado e sua configuração antiga de cron continua registrada. Para suspender tráfego e execução legados de forma reversível, executar `vercel project pause grupo-edge-crm --scope ejosemarquess-gmailcoms-projects` e confirmar digitando o nome do projeto. O rollback exige `vercel project resume` antes de restaurar tráfego.
+- O CI encontra `GHSA-fc5q-39xc-vjpf` em `picomatch@4.0.7`, transitivo do toolchain vinext/Vite. O feed exige `>=4.0.8`, mas essa versão ainda não foi publicada no npm; não ignorar o advisory nem apontar para commit Git não lançado. Atualizar a resolução assim que existir uma release oficial e repetir o gate completo.
 - A observação confirmou schedule, handler, bindings e secret do worker, mas não incluiu um log de execução do cron em produção.
 
 ## Validação executada
@@ -89,3 +91,4 @@ Nada abaixo bloqueia o núcleo publicado. Cada item exige credencial própria e 
 ## Rollback
 
 Em regressão, manter integrações externas desligadas, remover apenas o Custom Domain do Worker e restaurar `crm.edgegrupo.com` para o deployment Vercel preservado. Não reconectar o Git ao projeto Vercel, não alterar apex, `www`, MX, SPF ou outros registros de `edgegrupo.com`. Nenhuma migration de banco foi executada neste corte.
+Se o projeto Vercel estiver pausado, executar `vercel project resume grupo-edge-crm --scope ejosemarquess-gmailcoms-projects` antes de iniciar o rollback.
