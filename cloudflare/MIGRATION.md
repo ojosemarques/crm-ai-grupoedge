@@ -1,78 +1,75 @@
 # Migração Cloudflare — grupo-edge-crm
 
-## Escopo e linha de base
+Data da conclusão do núcleo: 2026-11-17 (America/Sao_Paulo)
 
-- Vercel: projeto `grupo-edge-crm` (`prj_XIAyc00k7rXhbpVDVqsdpeBVJiIF`), deployment de produção `DJWDQGNqqRARCKdovty3t9dGpQsJ`, status `Ready`.
-- Repositório: `ojosemarques/crm-ai-grupoedge`, produção na branch `main`, baseline `f094cf43e397712212152f10f5e597dbe9d6429c`.
-- Alias preservado: `crm-ai-grupoedge.vercel.app`; não há domínio próprio cadastrado no projeto.
-- Destino preparado: Worker `grupo-edge-crm`, conta Cloudflare `Grupo Edge / Voukye`, branch `codex/cloudflare-migration`.
-- A Vercel permanece operacional como origem e rollback. Nenhum domínio, alias, callback, cron Vercel ou dado de produção foi alterado.
+## Produção
 
-## Runtime e banco
+- Repositório `ojosemarques/crm-ai-grupoedge`, branch `main`, commit `54cc5d73f31cae6be5ecfbb9909f2c8a6c9e5626`.
+- Worker `grupo-edge-crm`, conta Cloudflare `Grupo Edge / Voukye`.
+- Domínio oficial: `https://crm.edgegrupo.com`.
+- URL técnica: `https://grupo-edge-crm.grupo-edge-voukye.workers.dev`.
+- Deployment `b58bed5e-fcd5-49ba-9a07-adae3094e626`, versão `8dcabea4-c996-418a-b081-a1fe08bc7472`, 100% do tráfego.
+- Rollback preservado na Vercel: projeto `grupo-edge-crm`, deployment `DJWDQGNqqRARCKdovty3t9dGpQsJ` e alias `crm-ai-grupoedge.vercel.app`.
 
-O Next.js 16 continua disponível pelo build original da Vercel e ganha um segundo alvo Cloudflare pelo vinext. O `vinext check` reconheceu 228 route handlers, 96 páginas e 98% de compatibilidade, sem issue impeditiva. A única indicação parcial é `reactStrictMode`, já padrão no App Router.
+O núcleo web, banco, login e domínio estão publicados. Integrações sem credencial própria continuam desligadas e não bloqueiam o CRM.
 
-No Cloudflare, cada requisição cria um Prisma Client isolado com uma única conexão lógica sobre Hyperdrive e agenda `$disconnect()` em `waitUntil`. O pool global de cinco conexões continua inalterado no runtime Next/Vercel. Isso evita reuso de socket entre requisições Workers e preserva o rollback.
+## Banco e runtime
 
-O Hyperdrive deve usar a conexão PostgreSQL direta do projeto Supabase `CRM POLITIZAI` (`zbzztpzviyjxpprqcegs`) com a mesma role de runtime de menor privilégio. O binding é `HYPERDRIVE`; o schema `crm` é aplicado no adaptador. O valor da conexão não é versionado nem registrado neste relatório.
+O banco é o Supabase `CRM POLITIZAI` (`zbzztpzviyjxpprqcegs`), schema `crm`. A role dedicada `crm_cloudflare_runtime` não tem superuser, `createdb`, `createrole`, replication ou bypass de RLS. Sua conexão direta foi validada antes do corte.
 
-## Build, deploy e cron
+O Hyperdrive `grupo-edge-crm-supabase` usa o ID não sensível `d3a856bfac8a440b8302b540456c2d28`, TLS obrigatório e limite de cinco conexões na origem. O binding é `HYPERDRIVE`; `DATABASE_URL` existe apenas como Secret.
 
-- Instalação: `pnpm install --frozen-lockfile` com Node `22.23.x` e pnpm `11.14.0`.
-- Compatibilidade: `pnpm check:vinext`.
-- Build Cloudflare: `pnpm build:vinext`.
-- Deploy: `pnpm deploy:vinext`.
-- Build Vercel preservado: `pnpm build`.
-- Variável de build não sensível: `CLOUDFLARE_HYPERDRIVE_ID`.
-- Compatibilidade Workers: `nodejs_compat`, data `2026-11-16`.
-- Cron Cloudflare: `* * * * *`, protegido pelo mesmo segredo do tick e por `CLOUDFLARE_CRON_ENABLED=false` até a virada. O cron Vercel continua sendo a única agenda ativa antes do corte.
+O Prisma Client usa `runtime = "workerd"`, carregando o query compiler WASM como módulo Cloudflare. Isso eliminou a tentativa de compilação dinâmica bloqueada pelo Workers. O build usa Node `22.23.4`, `nodejs_compat` e gera o alvo vinext.
 
-As dependências Cloudflare foram fixadas em versões exatas e passaram pelo audit: `vinext@1.4.4`, `@vinext/cloudflare@1.3.3`, `cf@1.0.0-beta.28`, `@cloudflare/vite-plugin@2.0.0-beta.v.12` e `vite@8.2.4`. Next foi atualizado dentro da mesma linha para `16.4.6`, eliminando advisory do audit. O runtime mínimo passou a Node `22.23.0`, requisito transitivo do tooling Cloudflare.
+## Domínio e DNS
 
-## Variáveis e integrações
+`crm.edgegrupo.com` é Custom Domain de produção do Worker. Após o corte:
 
-O `cloudflare.config.ts` declara bindings Secret para o inventário de runtime, sem valores no Git. O catálogo inclui identidade do app, política de sessão, banco, worker, OpenAI, Google Calendar, MCP/OAuth, Meta Ads, Telegram, TopSend, MillionSend/Open Dot e webhooks. O valor `CLOUDFLARE_CRON_ENABLED` deve começar como `false`.
+- health, readiness e login respondem HTTP 200;
+- readiness confirma `database: ok`;
+- entrada inválida no login retorna HTTP 400 controlado, sem erro 500;
+- `edgegrupo.com` e `www.edgegrupo.com` continuam HTTP 200;
+- MX da Hostinger e SPF da zona foram preservados.
 
-Antes do primeiro deploy, reconciliar no painel os nomes efetivos da Vercel com a lista declarada e transferir somente valores usados. Não copiar `DIRECT_URL`: ela é exclusiva do runner de migrations e não pertence ao runtime web/worker. `APP_CANONICAL_URL`, trusted hosts/origins e callbacks permanecem com os endereços atuais até a etapa de domínio; para validação temporária, acrescentar o hostname `workers.dev` sem remover a origem Vercel.
+## Secrets e flags
 
-Integrações identificadas: Supabase PostgreSQL, OpenAI, Google Calendar OAuth, Meta Ads, Telegram, TopSend, MillionSend/Open Dot, MCP/OAuth do CRM/Politizai e endpoint de checkout. Nenhum write real será usado no teste publicado; apenas health/readiness, autenticação negativa, páginas públicas e chamadas sintéticas isoladas que não persistam dados de tenant.
+Secrets presentes, conferidos somente por nome:
 
-## Evidências locais
+- `DATABASE_URL`;
+- `META_ADS_ACCESS_TOKEN`;
+- `TELEGRAM_BOT_TOKEN`;
+- `TELEGRAM_WEBHOOK_SECRET`.
 
-- `vinext check`: 98% compatível, 21 itens suportados, 1 parcial, 0 issues.
-- `vite build`: aprovado; Worker, assets, Hyperdrive e 228 APIs empacotados.
-- `next build --webpack`: aprovado; o caminho Vercel/rollback continua compilando.
-- `tsc --noEmit`: aprovado.
-- `eslint .`: aprovado.
-- Testes direcionados: 12/12 aprovados para cliente de banco por requisição e cron em produção independente de `VERCEL_ENV`.
-- Suíte Vitest: 1.303 testes aprovados de 1.308. Os 5 erros estão em `route-auto-refresh.test.ts`, já inconsistentes no baseline: o componente original usa `useRef`, mas o mock original não o exporta. Nenhum arquivo desse fluxo foi alterado pela migração.
-- Política do repositório: aprovada para 2.045 arquivos rastreados.
-- `pnpm audit --prod`: nenhuma vulnerabilidade conhecida.
-- `git diff --check`: aprovado.
+O dataset/pixel Meta está configurado como variável não sensível. `META_ADS_SERVER_CREDENTIALS_ENABLED=true` libera a credencial server-side, mas o worker de conversões e os diagnósticos permanecem desligados para não enviar eventos reais sem uma janela de teste.
 
-## Pendências externas
+Telegram possui token e segredo de webhook armazenados. `TELEGRAM_ENABLED=false` permanece seguro até existir vínculo do workspace/chat e o webhook poder ser registrado sem gerar retries ou mensagens indevidas.
 
-- O GitHub App da Cloudflare foi autorizado somente para os repositórios da migração; `crm-ai-grupoedge` está conectado à branch `codex/cloudflare-migration`.
-- Em 2026-11-16, `vercel env pull --environment=production` foi executado com sessão CLI autorizada. Das 89 variáveis retornadas, 33 secrets foram substituídos por `[SENSITIVE]`; entre eles estão `DATABASE_URL`, credenciais OAuth/MCP, OpenAI, Google Calendar, Meta, Telegram, TopSend, MillionSend/Open Dot e webhooks. O Vercel confirma que valores Secret não são legíveis depois da criação.
-- As origens alternativas foram verificadas sem ler valores: não há GitHub Actions Secrets no repositório nem nos ambientes `Production`/`Preview`; no Supabase, `vault.secrets` e `crm.integration_secret_references` têm zero registros. Portanto não existe cópia máquina-a-máquina autorizada para importar.
-- Em 2026-11-17 foram armazenados no Worker um novo segredo de webhook Telegram, o token do bot informado, o token Meta CAPI informado e o dataset/pixel correspondente. Os tokens foram validados somente com leituras (`getMe`/`/me`); nenhuma mensagem ou conversão foi enviada. `TELEGRAM_ENABLED`, `META_ADS_SERVER_CREDENTIALS_ENABLED`, workers de conversão/diagnóstico e cron Cloudflare continuam `false`.
-- Estado: **PARCIAL — META E TELEGRAM ARMAZENADOS, RUNTIME AINDA NÃO PUBLICÁVEL**. Sem `DATABASE_URL` e Hyperdrive não há web/login. A configuração Cloudflare atual também declara todo o catálogo de integrações como obrigatório; antes do primeiro deploy ela deve ser reduzida ao núcleo e às integrações efetivamente habilitadas.
-- Após uma origem autorizada fornecer os valores ou cada rotação ser aprovada separadamente: criar o Hyperdrive, registrar seu ID como variável de build, transferir somente os secrets/runtime vars efetivamente usados e publicar a branch.
-- Validar na URL `workers.dev`: `/api/health`, `/api/ready`, login sem credencial, headers/cookies, páginas públicas, APIs negativas, logs sem secrets e ausência de execução do cron.
-- Manter `CLOUDFLARE_CRON_ENABLED=false` até a futura virada de domínio/agenda.
+Cron, worker serverless, automações, Copilot, adaptadores externos, MillionSend, TopSend, demo e bootstrap administrativo continuam desativados. O gatilho agendado retorna imediatamente enquanto `CLOUDFLARE_CRON_ENABLED=false`.
 
-### Itens que faltam para finalizar o CRM
+## Validação executada
 
-1. **Banco e Hyperdrive:** obter uma nova `DATABASE_URL` da role de runtime do Supabase, criar o Hyperdrive `HYPERDRIVE`, registrar `CLOUDFLARE_HYPERDRIVE_ID` no build e configurar `DATABASE_EXPECTED_HOST`, `DATABASE_EXPECTED_NAME` e `DATABASE_EXPECTED_SCHEMA`.
-2. **Núcleo do runtime:** configurar identidade/ambiente do app, URL canônica temporária `workers.dev`, hosts/origens confiáveis, fuso, logs, cookies seguros e os kill switches de automação, adaptadores externos, demo e bootstrap administrativo.
-3. **Configuração Cloudflare:** separar bindings secretos de variáveis não sensíveis e tornar opcionais as integrações desligadas; hoje o arquivo exige todo o catálogo como Secret, inclusive flags e provedores não usados.
-4. **Segredos de produção ainda indisponíveis:** `CHECKOUT_WEBHOOK_SECRET`; OpenAI; Google Calendar; OAuth/MCP do CRM e Politizai/Open Dot; MillionSend; TopSend; HMACs de aquisição; Meta Reporting/Native quando esses módulos forem ativados; e segredos do worker/cron caso a automação seja ligada.
-5. **Publicação e validação:** publicar somente após os itens 1–3, mantendo todas as integrações externas sem credencial em `false`; então validar health, readiness, login/sessão, autorização multi-tenant, headers/cookies e APIs negativas em `workers.dev`.
+- `pnpm exec vitest run` direcionado: 17/17 testes aprovados.
+- ESLint direcionado: aprovado.
+- `pnpm build:vinext`: aprovado, incluindo Prisma WASM.
+- Cloudflare: health 200, readiness 200, login 200 e autenticação inválida 400.
+- CSP com nonce, cookies seguros, `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Permissions-Policy` e `Referrer-Policy` presentes.
+- A suíte completa continua com cinco falhas preexistentes em `route-auto-refresh.test.ts`, causadas pelo mock original sem `useRef`; esse fluxo não foi alterado.
 
-O token Meta CAPI, o dataset/pixel, o token Telegram e o segredo de webhook Telegram já estão no Worker e não fazem parte dessa lista. A ativação do Telegram também depende do runtime publicado e do registro futuro do webhook; Meta e Telegram continuam desligados para impedir writes antes da validação completa.
+## O que ainda falta no CRM
 
-## Cutover e rollback
+Nada abaixo bloqueia o núcleo publicado. Cada item exige credencial própria e decisão de ativação:
 
-Na futura janela de corte, cadastrar o domínio decidido, atualizar canonical/trusted hosts/origins e callbacks de OAuth/webhooks, validar TLS e então desativar o cron Vercel antes de ativar `CLOUDFLARE_CRON_ENABLED=true`. A virada deve validar login, sessão, autorização multi-tenant, health/readiness, integrações e um ciclo de worker controlado.
+1. **Copilot/OpenAI:** `OPENAI_API_KEY`, `OPENAI_MODEL` e ativar `COPILOT_EXTERNAL_ENABLED`.
+2. **Google Calendar:** client ID, client secret, chave de cifragem e teste dos callbacks no domínio oficial.
+3. **Google Ads:** OAuth ou service account, refresh token e developer token quando exigido.
+4. **Meta reporting/lead ads:** credencial `ads_read`, app secret, verify token, workspace, business e contas. A CAPI/pixel já está armazenada.
+5. **Telegram operacional:** vincular workspace/chat, registrar e testar o webhook; depois ativar `TELEGRAM_ENABLED`.
+6. **Worker/cron:** gerar segredo dedicado, validar um tick, retirar a agenda anterior e só então ativar os flags.
+7. **MillionSend/Open Dot:** clientes HMAC, API key, webhook secret e decisão de habilitar egress de e-mail.
+8. **MCP/OAuth:** clientes, hashes/tokens, chaves de assinatura e escopos do CRM/Politizai.
+9. **TopSend voz:** token, URL de áudio, atraso operacional e ativação.
+10. **Checkout/aquisição:** `CHECKOUT_WEBHOOK_SECRET` e HMACs das conexões realmente criadas.
 
-O rollback é desativar imediatamente o cron Cloudflare, restaurar o apontamento para `crm-ai-grupoedge.vercel.app`/deployment `DJWDQGNqqRARCKdovty3t9dGpQsJ` e reativar somente a agenda Vercel. O banco Supabase permanece a fonte única e nenhuma migration faz parte deste trabalho.
+## Rollback
+
+Em regressão, manter integrações externas desligadas, remover apenas o Custom Domain do Worker e restaurar `crm.edgegrupo.com` para o alias Vercel preservado. Não alterar apex, `www`, MX, SPF ou outros registros de `edgegrupo.com`. Nenhuma migration de banco foi executada neste corte.
