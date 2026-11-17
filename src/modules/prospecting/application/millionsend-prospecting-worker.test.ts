@@ -22,6 +22,20 @@ const job = {
 };
 
 describe("worker de prospecção MillionSend", () => {
+  it("permanece ocioso quando a integração principal está ativa sem Open Dot", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const withoutOpenDot = {
+      MILLIONSEND_ENABLED: "true",
+      MILLIONSEND_API_KEY: "ms_fixture_key",
+      APP_CANONICAL_URL: "https://crm.example.test",
+      NODE_ENV: "production",
+    };
+
+    await expect(createMillionSendProspectingWorker({ environment: withoutOpenDot, fetchImpl: fetcher }).processNext())
+      .resolves.toEqual({ status: "IDLE" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("revalida antes de enviar e registra o ID real do provedor", async () => {
     const calls: string[] = [];
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {

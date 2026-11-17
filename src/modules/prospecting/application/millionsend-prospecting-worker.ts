@@ -26,13 +26,16 @@ type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
 
 export function loadMillionSendWorkerConfig(environment: WorkerEnvironment = process.env) {
   if (environment.MILLIONSEND_ENABLED !== "true") return null;
+  const openDotClientId = environment.MILLIONSEND_OPEN_DOT_CLIENT_ID?.trim();
+  const openDotSecret = environment.MILLIONSEND_OPEN_DOT_SECRET?.trim();
+  if (!openDotClientId && !openDotSecret) return null;
   const baseUrl = z.string().url().parse(environment.APP_CANONICAL_URL);
   const parsed = new URL(baseUrl);
   if (environment.NODE_ENV === "production" && parsed.protocol !== "https:") throw new Error("MILLIONSEND_CANONICAL_URL_MUST_USE_HTTPS");
   return Object.freeze({
     baseUrl,
-    clientId: z.string().regex(/^[a-z][a-z0-9-]{2,63}$/).parse(environment.MILLIONSEND_OPEN_DOT_CLIENT_ID),
-    secret: z.string().min(32).parse(environment.MILLIONSEND_OPEN_DOT_SECRET),
+    clientId: z.string().regex(/^[a-z][a-z0-9-]{2,63}$/).parse(openDotClientId),
+    secret: z.string().min(32).parse(openDotSecret),
     apiKey: z.string().startsWith("ms_").min(12).parse(environment.MILLIONSEND_API_KEY),
   });
 }
