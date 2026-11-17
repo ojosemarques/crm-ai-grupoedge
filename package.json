@@ -30,6 +30,7 @@
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f db",
     "db:generate": "prisma generate",
+    "db:generate:workerd": "node scripts/generate-prisma-client.mjs workerd",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:staging:homologate": "tsx scripts/run-staging-homologation.ts",
@@ -72,7 +73,7 @@
     "db:studio": "prisma studio",
     "dev:vinext": "vite dev --port 3001",
     "check:vinext": "vinext check",
-    "build:vinext": "DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build?schema=crm pnpm db:generate && vite build",
+    "build:vinext": "DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build?schema=crm pnpm db:generate:workerd && vite build",
     "start:vinext": "vite preview",
     "deploy:vinext": "vinext-cloudflare deploy"
   },
