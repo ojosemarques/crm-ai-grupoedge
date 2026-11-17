@@ -15,12 +15,18 @@ describe("health checks PROD-09", () => {
 
   it("marca readiness indisponível sem revelar a falha do banco", async () => {
     const checkDatabase = vi.fn().mockRejectedValue(new Error("falha simulada do banco"));
-    await expect(createReadinessCheck({ checkDatabase, now })()).resolves.toEqual({
+    const logDatabaseError = vi.fn();
+    await expect(createReadinessCheck({ checkDatabase, logDatabaseError, now })()).resolves.toEqual({
       service: "politizai-crm",
       ready: false,
       timestamp: "2026-09-14T20:00:00.000Z",
       checks: { database: "error" },
     });
     expect(checkDatabase).toHaveBeenCalledOnce();
+    expect(logDatabaseError).toHaveBeenCalledWith({
+      errorName: "Error",
+      errorCode: null,
+      errorMessage: "falha simulada do banco",
+    });
   });
 });
