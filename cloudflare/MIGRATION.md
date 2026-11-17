@@ -55,10 +55,21 @@ Integrações identificadas: Supabase PostgreSQL, OpenAI, Google Calendar OAuth,
 - O GitHub App da Cloudflare foi autorizado somente para os repositórios da migração; `crm-ai-grupoedge` está conectado à branch `codex/cloudflare-migration`.
 - Em 2026-11-16, `vercel env pull --environment=production` foi executado com sessão CLI autorizada. Das 89 variáveis retornadas, 33 secrets foram substituídos por `[SENSITIVE]`; entre eles estão `DATABASE_URL`, credenciais OAuth/MCP, OpenAI, Google Calendar, Meta, Telegram, TopSend, MillionSend/Open Dot e webhooks. O Vercel confirma que valores Secret não são legíveis depois da criação.
 - As origens alternativas foram verificadas sem ler valores: não há GitHub Actions Secrets no repositório nem nos ambientes `Production`/`Preview`; no Supabase, `vault.secrets` e `crm.integration_secret_references` têm zero registros. Portanto não existe cópia máquina-a-máquina autorizada para importar.
-- Estado: **BLOCKED — CREDENCIAIS DE ORIGEM IRRECUPERÁVEIS**. Sem `DATABASE_URL` não é possível criar o Hyperdrive sem redefinir a credencial PostgreSQL; sem os demais valores, o runtime publicado perderia integrações. Nenhuma rotação, alteração de callback ou credencial foi executada.
+- Em 2026-11-17 foram armazenados no Worker um novo segredo de webhook Telegram, o token do bot informado, o token Meta CAPI informado e o dataset/pixel correspondente. Os tokens foram validados somente com leituras (`getMe`/`/me`); nenhuma mensagem ou conversão foi enviada. `TELEGRAM_ENABLED`, `META_ADS_SERVER_CREDENTIALS_ENABLED`, workers de conversão/diagnóstico e cron Cloudflare continuam `false`.
+- Estado: **PARCIAL — META E TELEGRAM ARMAZENADOS, RUNTIME AINDA NÃO PUBLICÁVEL**. Sem `DATABASE_URL` e Hyperdrive não há web/login. A configuração Cloudflare atual também declara todo o catálogo de integrações como obrigatório; antes do primeiro deploy ela deve ser reduzida ao núcleo e às integrações efetivamente habilitadas.
 - Após uma origem autorizada fornecer os valores ou cada rotação ser aprovada separadamente: criar o Hyperdrive, registrar seu ID como variável de build, transferir somente os secrets/runtime vars efetivamente usados e publicar a branch.
 - Validar na URL `workers.dev`: `/api/health`, `/api/ready`, login sem credencial, headers/cookies, páginas públicas, APIs negativas, logs sem secrets e ausência de execução do cron.
 - Manter `CLOUDFLARE_CRON_ENABLED=false` até a futura virada de domínio/agenda.
+
+### Itens que faltam para finalizar o CRM
+
+1. **Banco e Hyperdrive:** obter uma nova `DATABASE_URL` da role de runtime do Supabase, criar o Hyperdrive `HYPERDRIVE`, registrar `CLOUDFLARE_HYPERDRIVE_ID` no build e configurar `DATABASE_EXPECTED_HOST`, `DATABASE_EXPECTED_NAME` e `DATABASE_EXPECTED_SCHEMA`.
+2. **Núcleo do runtime:** configurar identidade/ambiente do app, URL canônica temporária `workers.dev`, hosts/origens confiáveis, fuso, logs, cookies seguros e os kill switches de automação, adaptadores externos, demo e bootstrap administrativo.
+3. **Configuração Cloudflare:** separar bindings secretos de variáveis não sensíveis e tornar opcionais as integrações desligadas; hoje o arquivo exige todo o catálogo como Secret, inclusive flags e provedores não usados.
+4. **Segredos de produção ainda indisponíveis:** `CHECKOUT_WEBHOOK_SECRET`; OpenAI; Google Calendar; OAuth/MCP do CRM e Politizai/Open Dot; MillionSend; TopSend; HMACs de aquisição; Meta Reporting/Native quando esses módulos forem ativados; e segredos do worker/cron caso a automação seja ligada.
+5. **Publicação e validação:** publicar somente após os itens 1–3, mantendo todas as integrações externas sem credencial em `false`; então validar health, readiness, login/sessão, autorização multi-tenant, headers/cookies e APIs negativas em `workers.dev`.
+
+O token Meta CAPI, o dataset/pixel, o token Telegram e o segredo de webhook Telegram já estão no Worker e não fazem parte dessa lista. A ativação do Telegram também depende do runtime publicado e do registro futuro do webhook; Meta e Telegram continuam desligados para impedir writes antes da validação completa.
 
 ## Cutover e rollback
 
