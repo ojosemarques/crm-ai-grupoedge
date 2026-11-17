@@ -44,9 +44,12 @@ const runtimeVariables = {
 } as const;
 
 const runtimeSecrets = [
+  "CRM_MCP_CLIENTS_JSON",
+  "CRM_MCP_OAUTH_SIGNING_SECRET",
   "DATABASE_URL",
   "META_ADS_ACCESS_TOKEN",
   "MILLIONSEND_API_KEY",
+  "MILLIONSEND_WEBHOOK_SECRET",
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_WEBHOOK_SECRET",
 ] as const;

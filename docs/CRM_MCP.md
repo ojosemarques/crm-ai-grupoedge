@@ -1,6 +1,6 @@
 # MCP de leitura do CRM Grupo Edge
 
-Endpoint: `https://crm-ai-grupoedge.vercel.app/api/mcp/crm`.
+Endpoint: `https://crm.edgegrupo.com/api/mcp/crm`.
 
 Transporte: **Streamable HTTP**, stateless, via `POST`, com autenticação por
 OAuth ou `Authorization: Bearer <token de máquina do bot>`. Suporta clientes MCP atuais e a
@@ -17,7 +17,7 @@ Não copie cookies de sessão nem o token de máquina para parâmetros OAuth.
 
 ## Conectar o OpenBot usando OAuth
 
-Selecione OAuth e use `https://crm-ai-grupoedge.vercel.app/api/mcp/crm`.
+Selecione OAuth e use `https://crm.edgegrupo.com/api/mcp/crm`.
 Não preencha um token de máquina nem um client secret nesse modo. Se a
 conexão antiga ficou em erro, remova-a/reconecte-a para refazer a descoberta.
 O cliente registra seus callbacks por DCR, abre o login do CRM e exibe o
@@ -27,7 +27,7 @@ e os escopos solicitados; cada consulta continua limitada pelo RBAC atual.
 Descoberta pública, separada do MCP de prospecção:
 
 - Recurso: `/.well-known/oauth-protected-resource/api/mcp/crm`.
-- Issuer: `https://crm-ai-grupoedge.vercel.app/api/oauth/crm`.
+- Issuer: `https://crm.edgegrupo.com/api/oauth/crm`.
 - Metadados do issuer: `/.well-known/oauth-authorization-server/api/oauth/crm`.
 - DCR: `POST /api/oauth/crm/register`, JSON, até 8 KiB.
 - Autorização: `/api/oauth/crm/authorize`.
@@ -77,7 +77,7 @@ registrados/concedidos não podem ser acrescentados no refresh.
 As concessões usam as tabelas OAuth já existentes, com `resource` distinto.
 Não há migration. A chave `CRM_MCP_OAUTH_SIGNING_SECRET` deve ser gerada com
 entropia criptográfica (pelo menos 32 caracteres) e salva como Secret
-server-side na Vercel. É independente da chave da prospecção e dos tokens de
+server-side no Cloudflare Worker. É independente da chave da prospecção e dos tokens de
 máquina. Rotacioná-la invalida registros e tokens OAuth antigos, exigindo nova
 conexão; os tokens de máquina permanecem válidos conforme sua configuração.
 Logs e auditoria guardam somente fingerprint do cliente, nunca tokens, códigos,
@@ -100,7 +100,7 @@ Referências: [autorização MCP](https://modelcontextprotocol.io/specification/
   "mcpServers": {
     "grupo-edge-crm": {
       "type": "http",
-      "url": "https://crm-ai-grupoedge.vercel.app/api/mcp/crm",
+      "url": "https://crm.edgegrupo.com/api/mcp/crm",
       "headers": {
         "Authorization": "Bearer SUBSTITUA_PELO_TOKEN_PRIVADO_DO_BOT"
       }
@@ -284,22 +284,15 @@ pnpm exec tsx scripts/provision-crm-mcp.ts \
   --client-id=bot-analista \
   --workspace-id=UUID_DO_WORKSPACE \
   --member-id=UUID_DO_MEMBRO_DELEGADO \
-  --base-url=https://crm-ai-grupoedge.vercel.app \
+  --base-url=https://crm.edgegrupo.com \
   --expires-days=90
 ```
 
-O script não modifica banco ou Vercel. Ele preserva os outros clientes do
+O script não modifica banco ou Cloudflare. Ele preserva os outros clientes do
 arquivo local e recusa sobrescrever uma configuração existente. Publique a
-lista completa como Secret no projeto Vercel verificado e faça novo deploy:
+lista completa como Secret no Worker `grupo-edge-crm` verificado e faça novo deploy.
 
-```bash
-vercel env add CRM_MCP_CLIENTS_JSON production --type secret \
-  --scope team_2KDCjoyS40i1b48dnlCkrjvM \
-  < .credentials/crm-mcp-clients.json
-```
-
-Para alterar uma variável já existente, use `vercel env update`. Preserve os
-clientes existentes no cofre antes de substituir a lista. Remover um cliente
+Preserve os clientes existentes no cofre antes de substituir a lista. Remover um cliente
 da variável e publicar novo deployment revoga seu token nesse deployment.
 Deployments antigos que continuem acessíveis conservam sua configuração:
 para bloqueio imediato em todas as versões, suspenda o membro delegado. Para
@@ -313,7 +306,7 @@ existia naquela versão. Não há migration nem mudança no schema para este MCP
 
 Logs disponíveis são os registros que o próprio CRM persiste: auditoria,
 telemetria, alertas e incidentes. Não inclui stdout/stderr, logs de build,
-traces completos da Vercel ou logs internos do PostgreSQL/Supabase. Esses
+traces completos da Cloudflare ou logs internos do PostgreSQL/Supabase. Esses
 provedores exigem conexão específica e não devem receber as credenciais de
 acesso ao banco por meio deste bot.
 

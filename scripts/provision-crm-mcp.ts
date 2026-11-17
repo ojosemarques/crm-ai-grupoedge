@@ -20,7 +20,7 @@ let existing: ReturnType<typeof parseCrmMcpClients> = [];
 try { existing = parseCrmMcpClients(await readFile(clientsPath, "utf8")); } catch (error) {
   if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
 }
-if (existing.some((client) => client.clientId === input.clientId)) throw new Error("Cliente já existe. Para rotacionar, remova somente esse cliente do arquivo local e execute novamente; publique a lista completa no cofre Vercel.");
+if (existing.some((client) => client.clientId === input.clientId)) throw new Error("Cliente já existe. Para rotacionar, remova somente esse cliente do arquivo local e execute novamente; publique a lista completa no cofre de produção.");
 const token = randomBytes(32).toString("base64url");
 const client = crmMcpClientSchema.parse({
   clientId: input.clientId, workspaceId: input.workspaceId, memberId: input.memberId,

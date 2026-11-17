@@ -2,8 +2,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { z } from "zod";
 
-import { createOpenDotHttpClient } from "@/modules/prospecting/application/open-dot-http-client";
-import { sha256 } from "@/modules/prospecting/domain/open-dot-policy";
+import { getProspectingEmailService } from "@/modules/prospecting/application/prospecting-email-service";
+import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 const webhookPayloadSchema = z.object({
@@ -22,6 +22,15 @@ const forwardedEvents = {
 } as const;
 
 type WebhookEnvironment = Readonly<Record<string, string | undefined>>;
+type MillionSendEventInput = Readonly<{
+  externalEventId: string;
+  providerMessageId: string;
+  type: "DELIVERED" | "BOUNCED" | "COMPLAINT";
+  occurredAt: string;
+  automaticReply: false;
+  metadata: Readonly<Record<string, never>>;
+}>;
+type MillionSendEventResult = Readonly<{ matched: boolean; eventId?: string }>;
 
 function fail(message: string, code: string, statusCode: number): never {
   throw new ApplicationError(message, { code, statusCode, expose: true });
@@ -43,13 +52,46 @@ function validSignature(expected: string, header: string): boolean {
   });
 }
 
+export function resolveMillionSendEventWorkspace(rows: readonly Readonly<{ workspaceId: string }>[]): string | null {
+  const workspaceIds = [...new Set(rows.map((row) => row.workspaceId))];
+  if (workspaceIds.length > 1) fail("A mensagem da MillionSend pertence a mais de um workspace.", "MILLIONSEND_WEBHOOK_WORKSPACE_AMBIGUOUS", 409);
+  return workspaceIds[0] ?? null;
+}
+
+async function recordMillionSendEvent(input: MillionSendEventInput): Promise<MillionSendEventResult> {
+  const database = getDatabaseClient();
+  return database.$transaction(async (transaction) => {
+    const matches = await transaction.prospectingEmailJob.findMany({
+      where: { providerMessageId: input.providerMessageId },
+      select: { workspaceId: true },
+      take: 2,
+    });
+    const workspaceId = resolveMillionSendEventWorkspace(matches);
+    if (!workspaceId) return { matched: false };
+    const actor = await transaction.actor.findFirst({
+      where: { workspaceId, type: "SYSTEM", key: "system", userId: null },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { id: true },
+    });
+    if (!actor) fail("O ator de sistema do workspace não está configurado.", "MILLIONSEND_WEBHOOK_SYSTEM_ACTOR_MISSING", 503);
+    const recorded = await getProspectingEmailService().event(transaction, {
+      clientId: "millionsend-webhook",
+      workspaceId,
+      actorId: actor.id,
+      scopes: ["EMAIL_EVENT_WRITE"],
+    }, input);
+    return { ...recorded, matched: true };
+  }, { maxWait: 5_000, timeout: 10_000 });
+}
+
 export function createMillionSendWebhookService(options: Readonly<{
   environment?: WebhookEnvironment;
-  fetchImpl?: typeof fetch;
+  recordEvent?: (input: MillionSendEventInput) => Promise<MillionSendEventResult>;
   now?: () => Date;
 }> = {}) {
   const environment = options.environment ?? process.env;
   const now = options.now ?? (() => new Date());
+  const recordEvent = options.recordEvent ?? recordMillionSendEvent;
 
   return Object.freeze({
     async ingest(input: Readonly<{ rawBody: string; id: string | null; timestamp: string | null; signature: string | null }>) {
@@ -74,22 +116,15 @@ export function createMillionSendWebhookService(options: Readonly<{
       const providerMessageId = payload.data.email_id ?? payload.data.id;
       if (!providerMessageId) fail("O evento não contém o ID da mensagem.", "MILLIONSEND_WEBHOOK_MESSAGE_ID_MISSING", 400);
 
-      const baseUrl = z.string().url().parse(environment.APP_CANONICAL_URL);
-      const openDot = createOpenDotHttpClient({
-        baseUrl,
-        clientId: z.string().regex(/^[a-z][a-z0-9-]{2,63}$/).parse(environment.MILLIONSEND_OPEN_DOT_CLIENT_ID),
-        secret: z.string().min(32).parse(environment.MILLIONSEND_OPEN_DOT_SECRET),
-        ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-        now,
-      });
-      await openDot.post("/api/integrations/open-dot/v1/email-events", {
+      const recorded = await recordEvent({
         externalEventId: input.id,
         providerMessageId,
         type: eventType,
         occurredAt: payload.created_at,
         automaticReply: false,
         metadata: {},
-      }, `ms-event:${sha256(input.id)}`);
+      });
+      if (!recorded.matched) return { accepted: true, forwarded: false, reason: "MESSAGE_NOT_TRACKED" };
       return { accepted: true, forwarded: true, type: eventType };
     },
   });
