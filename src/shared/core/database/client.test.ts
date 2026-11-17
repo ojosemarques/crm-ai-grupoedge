@@ -5,7 +5,10 @@ const prismaClients: Array<{ $disconnect: typeof disconnect }> = [];
 
 vi.mock("@/generated/prisma/client", () => ({
   PrismaClient: vi.fn(function PrismaClient() {
-    const client = { $disconnect: disconnect };
+    const client = {
+      $disconnect: disconnect,
+      workspace: { clientNumber: prismaClients.length + 1 },
+    };
     prismaClients.push(client);
     return client;
   }),
@@ -108,5 +111,31 @@ describe("cliente PostgreSQL por requisição Cloudflare", () => {
     await expect(response.body?.cancel("navegação descartada")).resolves.toBeUndefined();
     expect(cancelOrigin).toHaveBeenCalledWith("navegação descartada");
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("faz um serviço singleton usar o cliente da requisição atual", async () => {
+    const waitUntil = vi.fn();
+    const { getDatabaseClient, withRequestDatabaseClient } = await import("@/shared/core/database/client");
+    let singletonDatabase: ReturnType<typeof getDatabaseClient> | undefined;
+
+    await withRequestDatabaseClient(
+      "postgresql://hyperdrive.example.test/crm?schema=crm",
+      async () => {
+        singletonDatabase = getDatabaseClient();
+        expect(Reflect.get(singletonDatabase, "workspace")).toEqual({ clientNumber: 1 });
+      },
+      waitUntil,
+    );
+
+    await withRequestDatabaseClient(
+      "postgresql://hyperdrive.example.test/crm?schema=crm",
+      async () => {
+        expect(Reflect.get(singletonDatabase!, "workspace")).toEqual({ clientNumber: 2 });
+      },
+      waitUntil,
+    );
+
+    expect(prismaClients).toHaveLength(2);
+    expect(disconnect).toHaveBeenCalledTimes(2);
   });
 });

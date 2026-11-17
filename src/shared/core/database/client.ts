@@ -26,6 +26,18 @@ function createDatabaseClient(databaseUrl: string, max: number): PrismaClient {
   return new PrismaClient({ adapter });
 }
 
+const requestDatabaseClientProxy = new Proxy({} as PrismaClient, {
+  get(_target, property) {
+    const context = requestDatabase.getStore();
+    if (!context) {
+      throw new Error("Cliente PostgreSQL da requisição acessado fora do contexto ativo.");
+    }
+    context.client ??= createDatabaseClient(context.databaseUrl, DATABASE_POOL_MAX);
+    const value = Reflect.get(context.client, property, context.client);
+    return typeof value === "function" ? value.bind(context.client) : value;
+  },
+});
+
 function closeRequestDatabaseClient(
   context: RequestDatabaseContext,
   waitUntil: (promise: Promise<unknown>) => void,
@@ -104,7 +116,7 @@ export function getDatabaseClient(): PrismaClient {
   const requestContext = requestDatabase.getStore();
   if (requestContext) {
     requestContext.client ??= createDatabaseClient(requestContext.databaseUrl, DATABASE_POOL_MAX);
-    return requestContext.client;
+    return requestDatabaseClientProxy;
   }
 
   if (globalForDatabase.politizaiDatabaseClient) {
