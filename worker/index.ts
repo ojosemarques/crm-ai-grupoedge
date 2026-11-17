@@ -54,8 +54,12 @@ async function runScheduledTick(env: WorkerEnv, context: WorkerContext): Promise
     { method: "GET", headers: { authorization: `Bearer ${secret}` } },
   ), env, context);
 
-  if (!response.ok) {
-    throw new Error(`Tick Cloudflare recusado com HTTP ${response.status}.`);
+  try {
+    if (!response.ok) {
+      throw new Error(`Tick Cloudflare recusado com HTTP ${response.status}.`);
+    }
+  } finally {
+    await response.body?.cancel();
   }
 }
 

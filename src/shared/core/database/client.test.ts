@@ -67,4 +67,27 @@ describe("cliente PostgreSQL por requisição Cloudflare", () => {
     expect(disconnect).toHaveBeenCalledOnce();
     expect(waitUntil).toHaveBeenCalledWith(expect.any(Promise));
   });
+
+  it("mantém o cliente aberto até o stream da resposta terminar", async () => {
+    const waitUntil = vi.fn();
+    const { getDatabaseClient, withRequestDatabaseClient } = await import("@/shared/core/database/client");
+    const encoder = new TextEncoder();
+
+    const response = await withRequestDatabaseClient(
+      "postgresql://hyperdrive.example.test/crm?schema=crm",
+      async () => new Response(new ReadableStream({
+        pull(controller) {
+          getDatabaseClient();
+          controller.enqueue(encoder.encode("ok"));
+          controller.close();
+        },
+      })),
+      waitUntil,
+    );
+
+    expect(disconnect).not.toHaveBeenCalled();
+    await expect(response.text()).resolves.toBe("ok");
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(waitUntil).toHaveBeenCalledWith(expect.any(Promise));
+  });
 });

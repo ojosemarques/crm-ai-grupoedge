@@ -26,6 +26,58 @@ function createDatabaseClient(databaseUrl: string, max: number): PrismaClient {
   return new PrismaClient({ adapter });
 }
 
+function closeRequestDatabaseClient(
+  context: RequestDatabaseContext,
+  waitUntil: (promise: Promise<unknown>) => void,
+): void {
+  if (context.client) {
+    waitUntil(context.client.$disconnect());
+  }
+}
+
+function keepDatabaseUntilResponseEnds<T>(
+  result: T,
+  onComplete: () => void,
+): T {
+  if (!(result instanceof Response) || !result.body) {
+    return result;
+  }
+
+  const reader = result.body.getReader();
+  let completed = false;
+  const completeOnce = () => {
+    if (completed) return;
+    completed = true;
+    onComplete();
+  };
+
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          completeOnce();
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunk.value);
+      } catch (error) {
+        completeOnce();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        completeOnce();
+      }
+    },
+  });
+
+  return new Response(body, result) as T;
+}
+
 export async function withRequestDatabaseClient<T>(
   databaseUrl: string,
   operation: () => Promise<T>,
@@ -33,11 +85,19 @@ export async function withRequestDatabaseClient<T>(
 ): Promise<T> {
   const context: RequestDatabaseContext = { databaseUrl };
   return requestDatabase.run(context, async () => {
+    let databaseLifetimeFollowsResponse = false;
     try {
-      return await operation();
+      const result = await operation();
+      if (result instanceof Response && result.body) {
+        databaseLifetimeFollowsResponse = true;
+        return keepDatabaseUntilResponseEnds(result, () => {
+          closeRequestDatabaseClient(context, waitUntil);
+        });
+      }
+      return result;
     } finally {
-      if (context.client) {
-        waitUntil(context.client.$disconnect());
+      if (!databaseLifetimeFollowsResponse) {
+        closeRequestDatabaseClient(context, waitUntil);
       }
     }
   });
