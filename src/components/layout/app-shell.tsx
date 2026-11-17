@@ -160,7 +160,7 @@ const mobileLayoutSnapshot = () => window.matchMedia("(max-width: 800px)").match
 const serverLayoutSnapshot = () => false;
 
 function IntentLink(props: ComponentProps<typeof Link>) {
-  return <Link {...props} />;
+  return <Link prefetch={false} {...props} />;
 }
 
 export function AppShell({ children, initialSession }: Readonly<{ children: ReactNode; initialSession: AppShellSession | null }>) {
