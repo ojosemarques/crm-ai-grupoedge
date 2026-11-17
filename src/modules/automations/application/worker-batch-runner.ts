@@ -1,3 +1,5 @@
+import { logger } from "@/shared/core/logging/logger";
+
 export type WorkerProcessorResult = Readonly<{ status: string }>;
 
 export type WorkerProcessor = Readonly<{
@@ -29,12 +31,29 @@ export function createWorkerBatchRunner(options: WorkerBatchRunnerOptions) {
       const scan = await options.scanDue();
       let processed = 0;
       const outcomes: Record<string, number> = {};
+      const failedProcessors = new Set<string>();
 
       while (processed < input.maxJobs && now() < deadline) {
         let found = false;
         for (const processor of options.processors) {
           if (now() >= deadline) break;
-          const result = await processor.processNext(`${input.workerId}:${processor.key}`);
+          if (failedProcessors.has(processor.key)) continue;
+          let result: WorkerProcessorResult;
+          try {
+            result = await processor.processNext(`${input.workerId}:${processor.key}`);
+          } catch (error) {
+            failedProcessors.add(processor.key);
+            found = true;
+            processed += 1;
+            const outcome = `${processor.key}:PROCESSOR_ERROR`;
+            outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+            logger.error({
+              processorKey: processor.key,
+              errorName: error instanceof Error ? error.name : "UnknownError",
+            }, "Processador isolado após falha no lote serverless");
+            if (processed >= input.maxJobs) break;
+            continue;
+          }
           if (result.status === "IDLE") continue;
           found = true;
           processed += 1;
