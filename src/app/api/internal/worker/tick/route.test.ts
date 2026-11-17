@@ -126,7 +126,7 @@ describe("POST /api/internal/worker/tick", () => {
     expect(getDeliveryDiagnostics).toHaveBeenCalledExactlyOnceWith(workspaceId);
   });
 
-  it("processa a chamada GET autenticada enviada pelo cron da Vercel", async () => {
+  it("processa a chamada GET autenticada enviada pelo cron do Cloudflare", async () => {
     const { GET } = await import("@/app/api/internal/worker/tick/route");
     const response = await GET(cronRequest(`Bearer ${validEnvironment.SERVERLESS_WORKER_SECRET}`));
     expect(response.status).toBe(200);

@@ -55,7 +55,7 @@ async function partialForm(formKey?: string) {
   const form = await db.marketingForm.create({ data: { workspaceId, key: formKey ?? slug, name: "Form Telegram", publicSlug: slug, status: "ACTIVE", draftDefinition: definition, createdByActorId: actorId, updatedByActorId: actorId } });
   const version = await db.marketingFormVersion.create({ data: { workspaceId, marketingFormId: form.id, version: 1, schemaVersion: "marketing-form.v1", definition, definitionHash: "fixture", publishedAt: now, publishedByActorId: actorId, createdByActorId: actorId } });
   await db.marketingForm.update({ where: { id: form.id }, data: { publishedVersionId: version.id } });
-  const formService = createMarketingFormSubmissionService({ database: db, now: () => now, leadIntake: service() });
+  const formService = createMarketingFormSubmissionService({ database: db, now: () => now, leadIntake: service(), canonicalUrl: new URL("https://crm.example.test") });
   const sessionPublicId = randomUUID();
   const record = (answers: { key: string; answer: string }[]) => formService.recordEvents(slug, { versionPublicId: version.publicId, sessionPublicId, tracking: {}, events: answers.map(({ key, answer }) => ({ eventId: randomUUID(), kind: "QUESTION_ANSWERED", questionKey: key, answer, occurredAt: now.toISOString() })) });
   return { form, version, formService, sessionPublicId, record, slug };

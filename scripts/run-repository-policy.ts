@@ -13,7 +13,13 @@ const tracked = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
 const files: RepositoryFile[] = [];
 
 for (const path of tracked) {
-  const metadata = await stat(path);
+  let metadata;
+  try {
+    metadata = await stat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+    throw error;
+  }
   if (metadata.size > MAX_SCANNABLE_BYTES) {
     throw new Error(`Arquivo versionado excede o limite seguro de varredura: ${path}`);
   }

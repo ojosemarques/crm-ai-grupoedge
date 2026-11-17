@@ -16,7 +16,7 @@ export const runtime = "nodejs";
 async function serve(request: Request): Promise<Response> {
   try {
     const canonical = getApplicationConfig().environment.canonicalUrl;
-    const hosts = [...new Set([canonical.hostname, process.env.VERCEL_URL, ...(process.env.APP_TRUSTED_HOSTS ?? "").split(",")].filter((host): host is string => Boolean(host)))];
+    const hosts = [...new Set([canonical.hostname, ...(process.env.APP_TRUSTED_HOSTS ?? "").split(",")].filter((host): host is string => Boolean(host)))];
     const rejected = hostHeaderValidationResponse(request, hosts) ?? originValidationResponse(request, [canonical.hostname, "chatgpt.com", "chat.openai.com", "localhost", "127.0.0.1"]);
     if (rejected) return rejected;
     await enforceRateLimit("crm-mcp-entry", requestClientKey(request), { limit: 120, windowMs: 60_000 });

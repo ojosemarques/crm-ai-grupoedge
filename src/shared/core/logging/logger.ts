@@ -18,8 +18,8 @@ const level = allowedLogLevels.has(configuredLevel) ? configuredLevel : "info";
 export const logger = pino({
   base: {
     appEnvironment: process.env.APP_ENV ?? "local",
-    commitId: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12) ?? process.env.GIT_COMMIT_SHA?.slice(0, 12) ?? "local",
-    deploymentId: process.env.VERCEL_DEPLOYMENT_ID ?? process.env.DEPLOYMENT_ID ?? "local",
+    commitId: process.env.GIT_COMMIT_SHA?.slice(0, 12) ?? "local",
+    deploymentId: process.env.DEPLOYMENT_ID ?? "local",
     processRole: process.env.PROCESS_ROLE ?? "web",
     service: process.env.APP_NAME ?? "politizai-crm",
   },

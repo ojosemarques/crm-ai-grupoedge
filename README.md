@@ -4,19 +4,20 @@
 
 Este checkout está vinculado ao repositório
 [`ojosemarques/crm-ai-grupoedge`](https://github.com/ojosemarques/crm-ai-grupoedge),
-ao projeto Supabase `zbzztpzviyjxpprqcegs` e ao projeto Vercel
-`crm-ai-grupoedge` da equipe Grupo Edge. A configuração e os procedimentos
-atuais estão em [`docs/SUPABASE_VERCEL_DEPLOYMENT.md`](docs/SUPABASE_VERCEL_DEPLOYMENT.md).
+ao projeto Supabase `zbzztpzviyjxpprqcegs` e ao Worker Cloudflare
+`grupo-edge-crm`, da conta `Grupo Edge / Voukye`. A produção usa exclusivamente
+o Cloudflare Workers Builds a partir da branch `main`; a configuração e os
+procedimentos atuais estão em [`cloudflare/MIGRATION.md`](cloudflare/MIGRATION.md).
 Os relatórios abaixo descrevem ambientes e datas anteriores e não representam
 o estado deste novo projeto.
 
-Ambiente web protegido de staging: <https://crm-politizai-staging.vercel.app>.
-O acesso exige autenticação no team Vercel antes do login do CRM.
-Use apenas dados sintéticos; limites, credenciais locais e evidências estão em
+Produção: <https://crm.edgegrupo.com>. O projeto Vercel legado não recebe novos
+deployments e não deve ser reconectado ao Git. Os documentos históricos de
+staging permanecem apenas como evidência; use dados sintéticos e consulte
 [`docs/STAGING_DEPLOYMENT.md`](./docs/STAGING_DEPLOYMENT.md) e
 [`docs/STAGING_WORKER_REPORT.md`](./docs/STAGING_WORKER_REPORT.md) e
 [`docs/FREE_STAGING_ENVIRONMENT.md`](./docs/FREE_STAGING_ENVIRONMENT.md). Esse
-ambiente não é produção e não autoriza uso com dados reais.
+material não define um ambiente atual nem autoriza uso com dados reais.
 
 CRM interno da operação comercial permanente e pós-eleitoral da Politizai.
 
@@ -682,8 +683,8 @@ seguros, logs JSON e `DATABASE_URL` pooled com expectativas explícitas de
 host/banco/schema/TLS. Somente o papel isolado de migration recebe uma
 `DIRECT_URL` distinta; web, worker e bootstrap recusam essa credencial para
 aplicar menor privilégio. Não há fallback entre as URLs fora de local/test. O
-build da Vercel usa Node 22, pnpm 11 e Webpack em `gru1`; isso é somente
-configuração versionada, não um deployment.
+build de produção usa Cloudflare Workers Builds, Node 22, pnpm 11, vinext e
+`nodejs_compat`; `cloudflare.config.ts` declara Worker, bindings, assets e cron.
 
 O bootstrap inicial não possui rota HTTP. `pnpm admin:bootstrap` exige papel de
 processo `bootstrap`, confirmação literal, segredo temporário, chave de

@@ -4,7 +4,7 @@
     "repository": "https://github.com/composio-community/open-dot",
     "commit": "f838e17cf5c3a88ade5ceea54680a8145d048c1d"
   },
-  "crmBaseUrl": "https://crm-ai-grupoedge.vercel.app",
+  "crmBaseUrl": "https://crm.edgegrupo.com",
   "client": "client.mjs",
   "dots": [
     {

@@ -232,7 +232,7 @@ export function createCopilotService(options: Options) {
       catch (error) {
         if (error instanceof AIProviderError) {
           const messages: Record<string, string> = {
-            PROVIDER_AUTHENTICATION: "A chave OpenAI não foi aceita. Revise OPENAI_API_KEY na Vercel.",
+            PROVIDER_AUTHENTICATION: "A chave OpenAI não foi aceita. Revise OPENAI_API_KEY nos secrets do Cloudflare.",
             PROVIDER_ACCESS_DENIED: "A conta OpenAI não tem permissão para esta solicitação.",
             PROVIDER_QUOTA_EXCEEDED: "A conta OpenAI está sem cota disponível. Verifique os créditos e o limite de uso da API.",
             PROVIDER_RATE_LIMITED: "O limite temporário da OpenAI foi atingido. Aguarde antes de tentar novamente.",

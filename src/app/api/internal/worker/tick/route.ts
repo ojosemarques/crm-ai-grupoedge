@@ -19,7 +19,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 function isProductionRuntime(): boolean {
-  return process.env.APP_ENV === "production" || process.env.VERCEL_ENV === "production";
+  return process.env.APP_ENV === "production";
 }
 
 async function recoverMetaMeeting(request: Request, correlationId: string) {

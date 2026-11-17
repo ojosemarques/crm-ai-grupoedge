@@ -170,7 +170,6 @@ function allowlistedHostnames(): string[] {
     config.resource.hostname,
     "localhost",
     "127.0.0.1",
-    process.env.VERCEL_URL,
     ...(process.env.APP_TRUSTED_HOSTS ?? "").split(","),
   ].filter((value): value is string => Boolean(value?.trim())).map((value) => value.trim().split(":")[0]!))];
 }

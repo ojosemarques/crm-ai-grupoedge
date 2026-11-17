@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RouteAutoRefresh } from "./route-auto-refresh";
 
 const mocks = vi.hoisted(() => ({ refresh: vi.fn(), effect: vi.fn(), pending: false }));
-vi.mock("react", () => ({ useEffect: mocks.effect, useTransition: () => [mocks.pending, (callback: () => void) => callback()] }));
+vi.mock("react", () => ({
+  useEffect: mocks.effect,
+  useRef: <T>(value: T) => ({ current: value }),
+  useTransition: () => [mocks.pending, (callback: () => void) => callback()],
+}));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }), usePathname: () => "/aquisicao/midia", useSearchParams: () => new URLSearchParams("periodStart=2026-10-29&periodEnd=2026-10-29") }));
 
 let cleanup: (() => void) | undefined;
@@ -19,7 +23,10 @@ beforeEach(() => {
 afterEach(() => { cleanup?.(); cleanup = undefined; vi.unstubAllGlobals(); vi.useRealTimers(); });
 function mount(enabled = true) {
   RouteAutoRefresh({ enabled });
-  cleanup = mocks.effect.mock.calls[0]![0]();
+  const cleanups = mocks.effect.mock.calls
+    .map(([effect]) => effect())
+    .filter((result): result is () => void => typeof result === "function");
+  cleanup = () => cleanups.forEach((dispose) => dispose());
 }
 
 describe("atualização automática da rota", () => {

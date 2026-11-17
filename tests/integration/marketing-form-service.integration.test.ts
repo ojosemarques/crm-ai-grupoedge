@@ -30,7 +30,7 @@ const database = new PrismaClient({ adapter: createPostgresAdapter(connectionStr
 const authorization = createAuthorizationService({ database });
 const now = new Date("2033-03-15T14:30:00.000Z");
 const service = createMarketingFormService({ database, authorization, now: () => now });
-const submissionService = createMarketingFormSubmissionService({ database, now: () => now, leadIntake: createLeadIntakeService({ database, authorization, now: () => now }) });
+const submissionService = createMarketingFormSubmissionService({ database, now: () => now, leadIntake: createLeadIntakeService({ database, authorization, now: () => now }), canonicalUrl: new URL("https://crm.example.test") });
 const reportingService = createMarketingFormReportingService({ database, authorization, now: () => now });
 const advertisingSyncService = createMarketingFormAdvertisingSyncService({ database, authorization, marketingForms: service, now: () => now, ensurePipeline: ensureAdvertisingPipeline });
 
@@ -320,7 +320,7 @@ describe("serviço administrativo de formulários", () => {
       const request = fetcher.mock.calls[0];
       expect(JSON.parse(String(request?.[1]?.body)).data[0]).toMatchObject({
         event_name: "Lead", event_id: first.providerEventIds?.meta, action_source: "website",
-        event_source_url: expect.stringContaining("/f/forms-vsl"),
+        event_source_url: "https://crm.example.test/f/forms-vsl",
         user_data: { client_user_agent: "Browser de teste", fbc: expect.stringContaining(".fixture") },
       });
     } finally {

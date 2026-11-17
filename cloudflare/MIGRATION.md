@@ -1,15 +1,16 @@
 # Migração Cloudflare — grupo-edge-crm
 
-Data da conclusão do núcleo: 2026-11-17 (America/Sao_Paulo)
+Data da conclusão do núcleo e da auditoria: 2026-11-17 (America/Sao_Paulo)
 
 ## Produção
 
-- Repositório `ojosemarques/crm-ai-grupoedge`, branch `main`, commit `54cc5d73f31cae6be5ecfbb9909f2c8a6c9e5626`.
+- Repositório `ojosemarques/crm-ai-grupoedge`, branch `main`, commit auditado `85c0b01d2f0298b4a640e1a8c48c7bb40a860b96`.
 - Worker `grupo-edge-crm`, conta Cloudflare `Grupo Edge / Voukye`.
 - Domínio oficial: `https://crm.edgegrupo.com`.
 - URL técnica: `https://grupo-edge-crm.grupo-edge-voukye.workers.dev`.
-- Deployment `b58bed5e-fcd5-49ba-9a07-adae3094e626`, versão `8dcabea4-c996-418a-b081-a1fe08bc7472`, 100% do tráfego.
-- Rollback preservado na Vercel: projeto `grupo-edge-crm`, deployment `DJWDQGNqqRARCKdovty3t9dGpQsJ` e alias `crm-ai-grupoedge.vercel.app`.
+- Deployment `db488980-3977-4276-bdc4-865b157efaf9`, versão `84a45e1d-8a30-4c71-a01f-db16d592ff77`, 100% do tráfego.
+- Workers Builds conectado ao GitHub, branch de produção `main`, auto-build ativo, previews desativados e último build concluído com sucesso.
+- O projeto Vercel legado `grupo-edge-crm` continua acessível somente como rollback. A integração Git foi desconectada em 2026-11-17 e não pode ser reconectada.
 
 O núcleo web, banco, login e domínio estão publicados. Integrações sem credencial própria continuam desligadas e não bloqueiam o CRM.
 
@@ -35,16 +36,31 @@ O Prisma Client usa `runtime = "workerd"`, carregando o query compiler WASM como
 
 Secrets presentes, conferidos somente por nome:
 
+- `CRM_MCP_CLIENTS_JSON`;
+- `CRM_MCP_OAUTH_SIGNING_SECRET`;
 - `DATABASE_URL`;
+- `GOOGLE_CALENDAR_CLIENT_ID`;
+- `GOOGLE_CALENDAR_CLIENT_SECRET`;
+- `GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY`;
 - `META_ADS_ACCESS_TOKEN`;
+- `MILLIONSEND_API_KEY`;
+- `MILLIONSEND_WEBHOOK_SECRET`;
+- `SERVERLESS_WORKER_SECRET`;
 - `TELEGRAM_BOT_TOKEN`;
 - `TELEGRAM_WEBHOOK_SECRET`.
 
 O dataset/pixel Meta está configurado como variável não sensível. `META_ADS_SERVER_CREDENTIALS_ENABLED=true` libera a credencial server-side, mas o worker de conversões e os diagnósticos permanecem desligados para não enviar eventos reais sem uma janela de teste.
 
-Telegram possui token e segredo de webhook armazenados. `TELEGRAM_ENABLED=false` permanece seguro até existir vínculo do workspace/chat e o webhook poder ser registrado sem gerar retries ou mensagens indevidas.
+Telegram possui token e segredo de webhook armazenados e `TELEGRAM_ENABLED=true`.
 
-Cron, worker serverless, automações, Copilot, adaptadores externos, MillionSend, TopSend, demo e bootstrap administrativo continuam desativados. O gatilho agendado retorna imediatamente enquanto `CLOUDFLARE_CRON_ENABLED=false`.
+O cron Cloudflare (`* * * * *`), o worker serverless e o MillionSend estão habilitados. Copilot, adaptadores externos genéricos, conversões/diagnósticos Meta, TopSend, demo, bootstrap administrativo e o worker legado de automação permanecem desativados.
+
+## Pendências da auditoria
+
+- HTTP em `crm.edgegrupo.com` ainda responde sem redirecionar para HTTPS; `always_use_https` está desligado na zona e o header HSTS não foi observado. Corrigir em regra restrita ao hostname ou numa mudança de zona explicitamente aprovada.
+- A zona aceita TLS mínimo 1.0. Elevar para TLS 1.2 afeta todos os hosts de `edgegrupo.com` e exige uma mudança de zona separada.
+- O deployment Vercel legado ainda responde e permanece apenas para rollback. Excluir o projeto ou o alias é destrutivo e exige autorização específica.
+- A observação confirmou schedule, handler, bindings e secret do worker, mas não incluiu um log de execução do cron em produção.
 
 ## Validação executada
 
@@ -60,16 +76,16 @@ Cron, worker serverless, automações, Copilot, adaptadores externos, MillionSen
 Nada abaixo bloqueia o núcleo publicado. Cada item exige credencial própria e decisão de ativação:
 
 1. **Copilot/OpenAI:** `OPENAI_API_KEY`, `OPENAI_MODEL` e ativar `COPILOT_EXTERNAL_ENABLED`.
-2. **Google Calendar:** client ID, client secret, chave de cifragem e teste dos callbacks no domínio oficial.
+2. **Google Calendar:** credenciais e chave de cifragem estão vinculadas; falta evidência de um fluxo OAuth completo no domínio oficial.
 3. **Google Ads:** OAuth ou service account, refresh token e developer token quando exigido.
 4. **Meta reporting/lead ads:** credencial `ads_read`, app secret, verify token, workspace, business e contas. A CAPI/pixel já está armazenada.
-5. **Telegram operacional:** vincular workspace/chat, registrar e testar o webhook; depois ativar `TELEGRAM_ENABLED`.
-6. **Worker/cron:** gerar segredo dedicado, validar um tick, retirar a agenda anterior e só então ativar os flags.
-7. **MillionSend/Open Dot:** clientes HMAC, API key, webhook secret e decisão de habilitar egress de e-mail.
-8. **MCP/OAuth:** clientes, hashes/tokens, chaves de assinatura e escopos do CRM/Politizai.
+5. **Telegram operacional:** habilitado; ainda falta evidência do registro e de um ciclo completo do webhook no domínio oficial.
+6. **Worker/cron:** habilitado; falta evidência de logs de pelo menos um tick concluído no Cloudflare.
+7. **MillionSend/Open Dot:** API key, webhook secret e MillionSend estão habilitados; clientes HMAC/Open Dot dependem do cadastro operacional correspondente.
+8. **MCP/OAuth:** bindings de clientes e assinatura estão presentes; a validade dos clientes e escopos depende de teste autenticado.
 9. **TopSend voz:** token, URL de áudio, atraso operacional e ativação.
 10. **Checkout/aquisição:** `CHECKOUT_WEBHOOK_SECRET` e HMACs das conexões realmente criadas.
 
 ## Rollback
 
-Em regressão, manter integrações externas desligadas, remover apenas o Custom Domain do Worker e restaurar `crm.edgegrupo.com` para o alias Vercel preservado. Não alterar apex, `www`, MX, SPF ou outros registros de `edgegrupo.com`. Nenhuma migration de banco foi executada neste corte.
+Em regressão, manter integrações externas desligadas, remover apenas o Custom Domain do Worker e restaurar `crm.edgegrupo.com` para o deployment Vercel preservado. Não reconectar o Git ao projeto Vercel, não alterar apex, `www`, MX, SPF ou outros registros de `edgegrupo.com`. Nenhuma migration de banco foi executada neste corte.

@@ -15,12 +15,14 @@ import { buildMarketingWhatsAppUrl, marketingFormDefinitionSchema, marketingForm
 import { publicFormEventSchema, publicFormSubmitSchema } from "@/modules/marketing-forms/domain/public-form-contracts";
 import { mapAnswersToLead, publicFormAnswerError, validatePublicFormAnswers } from "@/modules/marketing-forms/domain/public-form-validation";
 import { getDatabaseClient } from "@/shared/core/database/client";
+import { getApplicationConfig } from "@/shared/core/config/application-config";
 import { ApplicationError } from "@/shared/core/errors/application-error";
 
 type Options = Readonly<{
   database: PrismaClient;
   now: () => Date;
   leadIntake: ReturnType<typeof getLeadIntakeService>;
+  canonicalUrl: URL;
 }>;
 
 type ResolvedForm = Readonly<{
@@ -209,7 +211,7 @@ export function createMarketingFormSubmissionService(options: Options) {
         ...(configuredConnection ? { configuredConnection } : {}),
         ...(defaultDataset ? { expectedDatasetId: defaultDataset } : {}),
         ...(defaultDataset && metaCookies.userAgent ? {
-          website: { url: `https://crm-ai-grupoedge.vercel.app/f/${rawSlug}`, userAgent: metaCookies.userAgent },
+          website: { url: new URL(`/f/${rawSlug}`, options.canonicalUrl).toString(), userAgent: metaCookies.userAgent },
         } : {}),
         browserMatchKeys: metaBrowserMatchKeys({ ...metaCookies, fbclid: input.tracking.clickIds?.fbclid, clickedAt: startedAt }),
       }) ?? browserEventId;
@@ -460,6 +462,6 @@ export function createMarketingFormSubmissionService(options: Options) {
 
 let service: ReturnType<typeof createMarketingFormSubmissionService> | undefined;
 export function getMarketingFormSubmissionService() {
-  service ??= createMarketingFormSubmissionService({ database: getDatabaseClient(), now: () => new Date(), leadIntake: getLeadIntakeService() });
+  service ??= createMarketingFormSubmissionService({ database: getDatabaseClient(), now: () => new Date(), leadIntake: getLeadIntakeService(), canonicalUrl: getApplicationConfig().environment.canonicalUrl });
   return service;
 }

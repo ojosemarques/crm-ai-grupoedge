@@ -17,7 +17,7 @@ vi.mock("@/shared/core/database/postgres-adapter", () => ({
 
 vi.mock("@/shared/core/config/application-config", () => ({
   getApplicationConfig: vi.fn(() => ({
-    DATABASE_URL: "postgresql://global.example/crm?schema=crm",
+    DATABASE_URL: "postgresql://global.example.test/crm?schema=crm",
   })),
 }));
 
@@ -32,7 +32,7 @@ describe("cliente PostgreSQL por requisição Cloudflare", () => {
     const { getDatabaseClient, withRequestDatabaseClient } = await import("@/shared/core/database/client");
 
     const result = await withRequestDatabaseClient(
-      "postgresql://hyperdrive.local/crm?schema=crm",
+      "postgresql://hyperdrive.example.test/crm?schema=crm",
       async () => {
         expect(getDatabaseClient()).toBe(getDatabaseClient());
         return "ok";
@@ -51,7 +51,7 @@ describe("cliente PostgreSQL por requisição Cloudflare", () => {
     const { getDatabaseClient, withRequestDatabaseClient } = await import("@/shared/core/database/client");
 
     await expect(withRequestDatabaseClient(
-      "postgresql://hyperdrive.local/crm?schema=crm",
+      "postgresql://hyperdrive.example.test/crm?schema=crm",
       async () => {
         getDatabaseClient();
         throw new Error("falha sintética");

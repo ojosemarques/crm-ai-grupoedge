@@ -42,7 +42,7 @@ describe("bundle do conector Politizai para Open-Dot", () => {
   it("mantém três identidades e escopos mínimos sem sobreposição de pesquisa e e-mail", async () => {
     const manifest = await loadManifest();
     expect(manifest.schemaVersion).toBe("politizai-open-dot/v1");
-    expect(manifest.crmBaseUrl).toBe("https://crm-ai-grupoedge.vercel.app");
+    expect(manifest.crmBaseUrl).toBe("https://crm.edgegrupo.com");
     expect(manifest.dots.map((dot) => dot.key)).toEqual(["research", "auditor", "email"]);
     expect(new Set(manifest.dots.map((dot) => dot.actorKey)).size).toBe(3);
 

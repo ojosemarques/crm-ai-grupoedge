@@ -11,7 +11,7 @@ Bundle versionado para configurar os três Dots separados da Politizai. Ele foi 
    - `POLITIZAI_OPEN_DOT_ROLE=research|auditor|email`;
    - `POLITIZAI_OPEN_DOT_CLIENT_ID=<clientId público>`;
    - `POLITIZAI_OPEN_DOT_SECRET=<segredo HMAC de no mínimo 32 caracteres>`;
-   - `POLITIZAI_CRM_BASE_URL=https://crm-ai-grupoedge.vercel.app`.
+   - `POLITIZAI_CRM_BASE_URL=https://crm.edgegrupo.com`.
 5. Salve como skill do Dot o uso do cliente abaixo e proíba HTTP genérico para o CRM.
 6. Não coloque credenciais nos campos Instructions, Memory, Skill, chat, rotina ou arquivo compartilhado do Open-Dot.
 
