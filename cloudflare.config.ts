@@ -29,7 +29,7 @@ const runtimeVariables = {
   META_ADS_CONVERSIONS_WORKER_ENABLED: "false",
   META_ADS_DATASET_ID: "26525824360406160",
   META_ADS_SERVER_CREDENTIALS_ENABLED: "true",
-  MILLIONSEND_ENABLED: "false",
+  MILLIONSEND_ENABLED: "true",
   NODE_ENV: "production",
   PROCESS_ROLE: "web",
   REALTIME_PUBLIC_WORKSPACE_SLUG: "",
@@ -39,11 +39,17 @@ const runtimeVariables = {
   SESSION_COOKIE_HTTP_ONLY: "true",
   SESSION_COOKIE_SAME_SITE: "lax",
   SESSION_COOKIE_SECURE: "true",
-  TELEGRAM_ENABLED: "false",
+  TELEGRAM_ENABLED: "true",
   TOPSEND_VOICE_ENABLED: "false",
 } as const;
 
-const runtimeSecrets = ["DATABASE_URL"] as const;
+const runtimeSecrets = [
+  "DATABASE_URL",
+  "META_ADS_ACCESS_TOKEN",
+  "MILLIONSEND_API_KEY",
+  "TELEGRAM_BOT_TOKEN",
+  "TELEGRAM_WEBHOOK_SECRET",
+] as const;
 
 const secretBindings = Object.fromEntries(
   runtimeSecrets.map((name) => [name, bindings.secret()]),
