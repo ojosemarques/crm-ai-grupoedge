@@ -66,12 +66,9 @@ function keepDatabaseUntilResponseEnds<T>(
         controller.error(error);
       }
     },
-    async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        completeOnce();
-      }
+    cancel(reason) {
+      void reader.cancel(reason).catch(() => undefined);
+      completeOnce();
     },
   });
 

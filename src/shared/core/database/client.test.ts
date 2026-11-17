@@ -90,4 +90,23 @@ describe("cliente PostgreSQL por requisição Cloudflare", () => {
     expect(disconnect).toHaveBeenCalledOnce();
     expect(waitUntil).toHaveBeenCalledWith(expect.any(Promise));
   });
+
+  it("não bloqueia o cancelamento quando o stream de origem não encerra", async () => {
+    const waitUntil = vi.fn();
+    const cancelOrigin = vi.fn(() => new Promise<void>(() => undefined));
+    const { getDatabaseClient, withRequestDatabaseClient } = await import("@/shared/core/database/client");
+
+    const response = await withRequestDatabaseClient(
+      "postgresql://hyperdrive.example.test/crm?schema=crm",
+      async () => {
+        getDatabaseClient();
+        return new Response(new ReadableStream({ cancel: cancelOrigin }));
+      },
+      waitUntil,
+    );
+
+    await expect(response.body?.cancel("navegação descartada")).resolves.toBeUndefined();
+    expect(cancelOrigin).toHaveBeenCalledWith("navegação descartada");
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
 });

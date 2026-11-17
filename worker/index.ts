@@ -1,7 +1,3 @@
-import vinextWorker from "vinext/server/fetch-handler";
-
-import { withRequestDatabaseClient } from "@/shared/core/database/client";
-
 type HyperdriveBinding = Readonly<{ connectionString: string }>;
 type WorkerEnv = Readonly<{
   HYPERDRIVE: HyperdriveBinding;
@@ -16,7 +12,6 @@ type FetchHandler = Readonly<{
   fetch(request: Request, env: WorkerEnv, context: WorkerContext): Promise<Response>;
 }>;
 
-const handler = vinextWorker as FetchHandler;
 const SCHEDULED_TICK_URL = "https://crm.edgegrupo.com/api/internal/worker/tick";
 
 function hyperdriveDatabaseUrl(env: WorkerEnv): string {
@@ -36,6 +31,11 @@ async function fetchWithRequestDatabase(
   env: WorkerEnv,
   context: WorkerContext,
 ): Promise<Response> {
+  const [{ default: vinextWorker }, { withRequestDatabaseClient }] = await Promise.all([
+    import("vinext/server/fetch-handler"),
+    import("@/shared/core/database/client"),
+  ]);
+  const handler = vinextWorker as FetchHandler;
   return withRequestDatabaseClient(
     hyperdriveDatabaseUrl(env),
     () => handler.fetch(request, env, context),
@@ -43,16 +43,16 @@ async function fetchWithRequestDatabase(
   );
 }
 
-async function runScheduledTick(env: WorkerEnv, context: WorkerContext): Promise<void> {
+async function runScheduledTick(env: WorkerEnv): Promise<void> {
   const secret = workerSecret(env);
   if (secret.length < 32) {
     throw new Error("Segredo do cron Cloudflare ausente ou inválido.");
   }
 
-  const response = await fetchWithRequestDatabase(new Request(
+  const response = await fetch(new Request(
     SCHEDULED_TICK_URL,
     { method: "GET", headers: { authorization: `Bearer ${secret}` } },
-  ), env, context);
+  ));
 
   try {
     if (!response.ok) {
@@ -67,7 +67,7 @@ const worker = {
   fetch: fetchWithRequestDatabase,
   scheduled(_controller: unknown, env: WorkerEnv, context: WorkerContext): void {
     if (env.CLOUDFLARE_CRON_ENABLED !== "true") return;
-    context.waitUntil(runScheduledTick(env, context));
+    context.waitUntil(runScheduledTick(env));
   },
 };
 
