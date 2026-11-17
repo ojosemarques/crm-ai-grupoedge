@@ -28,10 +28,20 @@ export function createWorkerBatchRunner(options: WorkerBatchRunnerOptions) {
     async run(input: Readonly<{ workerId: string; maxJobs: number; maxDurationMs: number }>): Promise<WorkerBatchResult> {
       const startedAt = now();
       const deadline = startedAt + input.maxDurationMs;
-      const scan = await options.scanDue();
       let processed = 0;
+      let published = 0;
       const outcomes: Record<string, number> = {};
       const failedProcessors = new Set<string>();
+      try {
+        published = (await options.scanDue()).published;
+      } catch (error) {
+        processed += 1;
+        outcomes["lifecycle-scan:SCAN_ERROR"] = 1;
+        logger.error({
+          processorKey: "lifecycle-scan",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        }, "Varredura de ciclo de vida isolada após falha no lote serverless");
+      }
 
       while (processed < input.maxJobs && now() < deadline) {
         let found = false;
@@ -73,7 +83,7 @@ export function createWorkerBatchRunner(options: WorkerBatchRunnerOptions) {
       return Object.freeze({
         code,
         processed,
-        published: scan.published,
+        published,
         elapsedMs,
         outcomes: Object.freeze({ ...outcomes }),
       });

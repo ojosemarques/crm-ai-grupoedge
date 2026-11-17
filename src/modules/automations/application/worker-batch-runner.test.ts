@@ -81,6 +81,27 @@ describe("worker batch runner", () => {
     expect(healthy).not.toHaveBeenCalled();
   });
 
+  it("isola falha da varredura de ciclo de vida e ainda processa as filas", async () => {
+    const healthy = vi.fn()
+      .mockResolvedValueOnce({ status: "SUCCEEDED" })
+      .mockResolvedValueOnce({ status: "IDLE" });
+    const runner = createWorkerBatchRunner({
+      scanDue: async () => { throw new Error("dado legado inválido"); },
+      processors: [{ key: "healthy", processNext: healthy }],
+      now: () => 100,
+    });
+
+    await expect(runner.run({ workerId: "serverless:scan", maxJobs: 10, maxDurationMs: 1_000 }))
+      .resolves.toEqual({
+        code: "BATCH_COMPLETED",
+        processed: 2,
+        published: 0,
+        elapsedMs: 0,
+        outcomes: { "lifecycle-scan:SCAN_ERROR": 1, "healthy:SUCCEEDED": 1 },
+      });
+    expect(healthy).toHaveBeenCalledTimes(2);
+  });
+
   it("para no deadline antes de iniciar outro processador", async () => {
     let instant = 0;
     const runner = createWorkerBatchRunner({
