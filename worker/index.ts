@@ -3,20 +3,21 @@ import vinextWorker from "vinext/server/fetch-handler";
 import { withRequestDatabaseClient } from "@/shared/core/database/client";
 
 type HyperdriveBinding = Readonly<{ connectionString: string }>;
-type WorkerEnv = Readonly<Record<string, string>> & {
+type WorkerEnv = Readonly<{
   HYPERDRIVE: HyperdriveBinding;
   CLOUDFLARE_CRON_ENABLED?: string;
   SERVERLESS_WORKER_ENABLED?: string;
   SERVERLESS_WORKER_SECRET?: string;
   META_ADS_CONVERSIONS_WORKER_ENABLED?: string;
   CRON_SECRET?: string;
-};
+}>;
 type WorkerContext = Readonly<{ waitUntil(promise: Promise<unknown>): void }>;
 type FetchHandler = Readonly<{
   fetch(request: Request, env: WorkerEnv, context: WorkerContext): Promise<Response>;
 }>;
 
 const handler = vinextWorker as FetchHandler;
+const SCHEDULED_TICK_URL = "https://crm.edgegrupo.com/api/internal/worker/tick";
 
 function hyperdriveDatabaseUrl(env: WorkerEnv): string {
   const url = new URL(env.HYPERDRIVE.connectionString);
@@ -49,7 +50,7 @@ async function runScheduledTick(env: WorkerEnv, context: WorkerContext): Promise
   }
 
   const response = await fetchWithRequestDatabase(new Request(
-    "https://grupo-edge-crm.internal/api/internal/worker/tick",
+    SCHEDULED_TICK_URL,
     { method: "GET", headers: { authorization: `Bearer ${secret}` } },
   ), env, context);
 

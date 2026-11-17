@@ -30,6 +30,7 @@ describe("cliente PostgreSQL por requisição Cloudflare", () => {
   it("reutiliza um único cliente na requisição e agenda o fechamento no contexto", async () => {
     const waitUntil = vi.fn();
     const { getDatabaseClient, withRequestDatabaseClient } = await import("@/shared/core/database/client");
+    const { createPostgresAdapter } = await import("@/shared/core/database/postgres-adapter");
 
     const result = await withRequestDatabaseClient(
       "postgresql://hyperdrive.example.test/crm?schema=crm",
@@ -42,6 +43,10 @@ describe("cliente PostgreSQL por requisição Cloudflare", () => {
 
     expect(result).toBe("ok");
     expect(prismaClients).toHaveLength(1);
+    expect(createPostgresAdapter).toHaveBeenCalledWith(
+      "postgresql://hyperdrive.example.test/crm?schema=crm",
+      { connectionTimeoutMillis: 10_000, max: 5 },
+    );
     expect(disconnect).toHaveBeenCalledOnce();
     expect(waitUntil).toHaveBeenCalledWith(expect.any(Promise));
   });

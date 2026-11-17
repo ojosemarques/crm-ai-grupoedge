@@ -15,9 +15,12 @@ type RequestDatabaseContext = {
 
 const requestDatabase = new AsyncLocalStorage<RequestDatabaseContext>();
 
+const DATABASE_CONNECTION_TIMEOUT_MS = 10_000;
+const DATABASE_POOL_MAX = 5;
+
 function createDatabaseClient(databaseUrl: string, max: number): PrismaClient {
   const adapter = createPostgresAdapter(databaseUrl, {
-    connectionTimeoutMillis: 2_000,
+    connectionTimeoutMillis: DATABASE_CONNECTION_TIMEOUT_MS,
     max,
   });
   return new PrismaClient({ adapter });
@@ -43,7 +46,7 @@ export async function withRequestDatabaseClient<T>(
 export function getDatabaseClient(): PrismaClient {
   const requestContext = requestDatabase.getStore();
   if (requestContext) {
-    requestContext.client ??= createDatabaseClient(requestContext.databaseUrl, 1);
+    requestContext.client ??= createDatabaseClient(requestContext.databaseUrl, DATABASE_POOL_MAX);
     return requestContext.client;
   }
 
@@ -52,7 +55,7 @@ export function getDatabaseClient(): PrismaClient {
   }
 
   const config = getApplicationConfig();
-  const client = createDatabaseClient(config.DATABASE_URL, 5);
+  const client = createDatabaseClient(config.DATABASE_URL, DATABASE_POOL_MAX);
 
   // Route handlers and server components share one bounded pool per process in
   // every environment. Without this assignment, `next start` created a new
