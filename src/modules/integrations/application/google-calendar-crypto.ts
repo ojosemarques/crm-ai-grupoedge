@@ -19,3 +19,17 @@ export function decryptGoogleCalendarSecret(value: string, secret: string) {
   decipher.setAuthTag(Buffer.from(tag, "base64url"));
   return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64url")), decipher.final()]).toString("utf8");
 }
+
+export function decryptGoogleCalendarSecretWithFallback(value: string, secrets: readonly string[]) {
+  let lastError: unknown;
+  for (const secret of [...new Set(secrets)]) {
+    try { return decryptGoogleCalendarSecret(value, secret); }
+    catch (error) { lastError = error; }
+  }
+  throw lastError instanceof Error ? lastError : new Error("GOOGLE_CALENDAR_CIPHERTEXT_INVALID");
+}
+
+export function googleCalendarCiphertextUsesKey(value: string, secret: string) {
+  try { decryptGoogleCalendarSecret(value, secret); return true; }
+  catch { return false; }
+}

@@ -11,6 +11,7 @@ const configurationSchema = z.object({
   clientId: z.string().trim().min(20),
   clientSecret: z.string().trim().min(20),
   encryptionKey: z.string().trim().min(32),
+  nextEncryptionKey: z.string().trim().min(32).optional(),
   canonicalUrl: z.string().url(),
 }).strict();
 
@@ -23,6 +24,7 @@ export function loadGoogleCalendarConfiguration(
     clientId: source.GOOGLE_CALENDAR_CLIENT_ID,
     clientSecret: source.GOOGLE_CALENDAR_CLIENT_SECRET,
     encryptionKey: source.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY,
+    nextEncryptionKey: source.GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY_NEXT || undefined,
     canonicalUrl: source.APP_CANONICAL_URL,
   });
 }

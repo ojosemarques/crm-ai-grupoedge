@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { type Prisma, type PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
-import { decryptGoogleCalendarSecret, encryptGoogleCalendarSecret } from "@/modules/integrations/application/google-calendar-crypto";
+import { decryptGoogleCalendarSecretWithFallback, encryptGoogleCalendarSecret } from "@/modules/integrations/application/google-calendar-crypto";
 import {
   GOOGLE_CALENDAR_SCOPES,
   googleCalendarRedirectUri,
@@ -15,6 +15,14 @@ import { ApplicationError } from "@/shared/core/errors/application-error";
 
 type Tx = Prisma.TransactionClient;
 type Options = Readonly<{ database: PrismaClient; now: () => Date }>;
+
+function readCalendarSecret(value: string, configuration: ReturnType<typeof loadGoogleCalendarConfiguration>) {
+  return decryptGoogleCalendarSecretWithFallback(value, [configuration.nextEncryptionKey ?? configuration.encryptionKey, configuration.encryptionKey]);
+}
+
+function writeCalendarSecret(value: string, configuration: ReturnType<typeof loadGoogleCalendarConfiguration>) {
+  return encryptGoogleCalendarSecret(value, configuration.nextEncryptionKey ?? configuration.encryptionKey);
+}
 
 function fail(message: string, code: string, statusCode = 409): never {
   throw new ApplicationError(message, { code, statusCode, expose: true });
@@ -147,7 +155,7 @@ export function createGoogleCalendarService(options: Options) {
         workspaceId: context.workspaceId,
         memberId: context.memberId,
         stateHash: digest(state),
-        codeVerifierCiphertext: encryptGoogleCalendarSecret(verifier, configuration.encryptionKey),
+        codeVerifierCiphertext: writeCalendarSecret(verifier, configuration),
         expiresAt: new Date(options.now().getTime() + 10 * 60_000),
       } });
     });
@@ -180,7 +188,7 @@ export function createGoogleCalendarService(options: Options) {
       data: { consumedAt: options.now() },
     });
     if (consumed.count !== 1) fail("A autorização já foi utilizada.", "GOOGLE_CALENDAR_STATE_REPLAY", 400);
-    const verifier = decryptGoogleCalendarSecret(stored.codeVerifierCiphertext, configuration.encryptionKey);
+    const verifier = readCalendarSecret(stored.codeVerifierCiphertext, configuration);
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -202,7 +210,7 @@ export function createGoogleCalendarService(options: Options) {
     });
     const refreshToken = typeof tokenPayload.refresh_token === "string"
       ? tokenPayload.refresh_token
-      : existing ? decryptGoogleCalendarSecret(existing.refreshTokenCiphertext, configuration.encryptionKey) : null;
+      : existing ? readCalendarSecret(existing.refreshTokenCiphertext, configuration) : null;
     if (!refreshToken) fail("O Google não forneceu acesso offline. Autorize novamente.", "GOOGLE_CALENDAR_REFRESH_TOKEN_MISSING", 400);
     const userResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
       headers: { Authorization: `Bearer ${tokenPayload.access_token}` },
@@ -221,8 +229,8 @@ export function createGoogleCalendarService(options: Options) {
         memberId: context.memberId,
         googleSubject: user.sub,
         googleEmail: user.email,
-        accessTokenCiphertext: encryptGoogleCalendarSecret(tokenPayload.access_token, configuration.encryptionKey),
-        refreshTokenCiphertext: encryptGoogleCalendarSecret(refreshToken, configuration.encryptionKey),
+        accessTokenCiphertext: writeCalendarSecret(tokenPayload.access_token, configuration),
+        refreshTokenCiphertext: writeCalendarSecret(refreshToken, configuration),
         tokenExpiresAt: new Date(options.now().getTime() + expiresIn * 1_000),
         grantedScopes,
         status: "CONNECTED",
@@ -233,8 +241,8 @@ export function createGoogleCalendarService(options: Options) {
       update: {
         googleSubject: user.sub,
         googleEmail: user.email,
-        accessTokenCiphertext: encryptGoogleCalendarSecret(tokenPayload.access_token, configuration.encryptionKey),
-        refreshTokenCiphertext: encryptGoogleCalendarSecret(refreshToken, configuration.encryptionKey),
+        accessTokenCiphertext: writeCalendarSecret(tokenPayload.access_token, configuration),
+        refreshTokenCiphertext: writeCalendarSecret(refreshToken, configuration),
         tokenExpiresAt: new Date(options.now().getTime() + expiresIn * 1_000),
         grantedScopes,
         status: "CONNECTED",
@@ -280,7 +288,7 @@ export function createGoogleCalendarService(options: Options) {
     if (!account) return { disconnected: true as const };
     try {
       const configuration = loadGoogleCalendarConfiguration();
-      const token = decryptGoogleCalendarSecret(account.accessTokenCiphertext, configuration.encryptionKey);
+      const token = readCalendarSecret(account.accessTokenCiphertext, configuration);
       await fetch("https://oauth2.googleapis.com/revoke", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },

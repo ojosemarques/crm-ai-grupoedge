@@ -3,7 +3,7 @@ import {
   createCalendarMeetingDomainService,
   resolveCalendarOperatorContext,
 } from "@/modules/integrations/application/calendar-service";
-import { decryptGoogleCalendarSecret, encryptGoogleCalendarSecret } from "@/modules/integrations/application/google-calendar-crypto";
+import { decryptGoogleCalendarSecretWithFallback, encryptGoogleCalendarSecret } from "@/modules/integrations/application/google-calendar-crypto";
 import {
   normalizeGoogleCalendarEvent,
   type NormalizedGoogleCalendarEvent,
@@ -153,6 +153,14 @@ export function createGoogleCalendarWorkerService(options: Options) {
   const pullIntervalSeconds = options.pullIntervalSeconds ?? 60;
   const fetcher = options.fetcher ?? fetch;
 
+  function readCalendarSecret(value: string, configuration: ReturnType<typeof loadGoogleCalendarConfiguration>) {
+    return decryptGoogleCalendarSecretWithFallback(value, [configuration.nextEncryptionKey ?? configuration.encryptionKey, configuration.encryptionKey]);
+  }
+
+  function writeCalendarSecret(value: string, configuration: ReturnType<typeof loadGoogleCalendarConfiguration>) {
+    return encryptGoogleCalendarSecret(value, configuration.nextEncryptionKey ?? configuration.encryptionKey);
+  }
+
   async function claim(workerId: string) {
     const now = options.now();
     return options.database.$transaction(async (tx) => {
@@ -176,9 +184,9 @@ export function createGoogleCalendarWorkerService(options: Options) {
   async function accessToken(account: NonNullable<Awaited<ReturnType<typeof options.database.googleCalendarAccount.findFirst>>>) {
     const configuration = loadGoogleCalendarConfiguration();
     if (account.tokenExpiresAt.getTime() > options.now().getTime() + 60_000) {
-      return decryptGoogleCalendarSecret(account.accessTokenCiphertext, configuration.encryptionKey);
+      return readCalendarSecret(account.accessTokenCiphertext, configuration);
     }
-    const refreshToken = decryptGoogleCalendarSecret(account.refreshTokenCiphertext, configuration.encryptionKey);
+    const refreshToken = readCalendarSecret(account.refreshTokenCiphertext, configuration);
     const response = await fetcher("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -189,7 +197,7 @@ export function createGoogleCalendarWorkerService(options: Options) {
     if (!response.ok || typeof body.access_token !== "string") throw classify(response, body);
     const expiresIn = typeof body.expires_in === "number" ? body.expires_in : 3_600;
     await options.database.googleCalendarAccount.update({ where: { id: account.id }, data: {
-      accessTokenCiphertext: encryptGoogleCalendarSecret(body.access_token, configuration.encryptionKey),
+      accessTokenCiphertext: writeCalendarSecret(body.access_token, configuration),
       tokenExpiresAt: new Date(options.now().getTime() + expiresIn * 1_000),
       status: "CONNECTED", lastErrorAt: null, lastErrorCode: null,
     } });
@@ -361,12 +369,12 @@ export function createGoogleCalendarWorkerService(options: Options) {
     }, { isolationLevel: "ReadCommitted" });
   }
 
-  function encryptedCursor(value: string | null, encryptionKey: string) {
-    return value ? encryptGoogleCalendarSecret(value, encryptionKey) : null;
+  function encryptedCursor(value: string | null, configuration: ReturnType<typeof loadGoogleCalendarConfiguration>) {
+    return value ? writeCalendarSecret(value, configuration) : null;
   }
 
-  function decryptedCursor(value: string | null, encryptionKey: string) {
-    return value ? decryptGoogleCalendarSecret(value, encryptionKey) : null;
+  function decryptedCursor(value: string | null, configuration: ReturnType<typeof loadGoogleCalendarConfiguration>) {
+    return value ? readCalendarSecret(value, configuration) : null;
   }
 
   function localDateTime(value: Date, timeZone: string) {
@@ -567,8 +575,8 @@ export function createGoogleCalendarWorkerService(options: Options) {
     workerId: string,
   ) {
     const configuration = loadGoogleCalendarConfiguration();
-    const syncToken = decryptedCursor(account.pullSyncTokenCiphertext, configuration.encryptionKey);
-    const pageToken = decryptedCursor(account.pullPageTokenCiphertext, configuration.encryptionKey);
+    const syncToken = decryptedCursor(account.pullSyncTokenCiphertext, configuration);
+    const pageToken = decryptedCursor(account.pullPageTokenCiphertext, configuration);
     const fullSync = !syncToken;
     const fullSyncStartedAt = fullSync ? account.pullStartedAt ?? options.now() : null;
     if (fullSync && !account.pullStartedAt) {
@@ -710,8 +718,8 @@ export function createGoogleCalendarWorkerService(options: Options) {
         data: {
           pullSyncTokenCiphertext: nextPageToken
             ? account.pullSyncTokenCiphertext
-            : encryptedCursor(nextSyncToken, configuration.encryptionKey),
-          pullPageTokenCiphertext: encryptedCursor(nextPageToken, configuration.encryptionKey),
+            : encryptedCursor(nextSyncToken, configuration),
+          pullPageTokenCiphertext: encryptedCursor(nextPageToken, configuration),
           pullStartedAt: nextPageToken ? fullSyncStartedAt : null,
           pullLockedAt: null,
           pullLockedBy: null,

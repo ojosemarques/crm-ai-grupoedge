@@ -13,6 +13,7 @@ import { localTelephonySimulator } from "@/modules/integrations/application/tele
 import { createCalendarWorkerService } from "@/modules/integrations/application/calendar-worker-service";
 import { localCalendarSandbox } from "@/modules/integrations/application/calendar-transport";
 import { createGoogleCalendarWorkerService } from "@/modules/integrations/application/google-calendar-worker-service";
+import { createGoogleCalendarKeyRotationWorker } from "@/modules/integrations/application/google-calendar-key-rotation";
 import { getConversionFeedbackService } from "@/modules/conversion-feedback/application/conversion-feedback-service";
 import { getMetaNativeFeedbackWorker } from "@/modules/acquisition-api/application/meta-native-feedback-worker";
 import { createCloserCompensationWorker } from "@/modules/finance/application/closer-compensation-worker";
@@ -53,6 +54,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
   const compensationWorker = createCloserCompensationWorker(common);
   const calendarWorker = createCalendarWorkerService({ ...common, adapter: localCalendarSandbox });
   const googleCalendarWorker = createGoogleCalendarWorkerService(common);
+  const googleCalendarKeyRotationWorker = createGoogleCalendarKeyRotationWorker({ database, now: common.now });
   const telephonyWorker = createTelephonyWorkerService({ ...common, adapter: localTelephonySimulator });
   const emailWorker = createEmailMessageWorkerService({ ...common, transport: localEmailSinkTransport });
   const whatsappWorker = createWhatsAppWebhookWorkerService(common);
@@ -88,6 +90,7 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
         { key: "payments", processNext: paymentWorker.processNext },
         { key: "closer-compensation", processNext: compensationWorker.processNext },
         { key: "calendar", processNext: calendarWorker.processNext },
+        { key: "google-calendar-key-rotation", processNext: googleCalendarKeyRotationWorker.processNext },
         { key: "google-calendar", processNext: googleCalendarWorker.processNext },
         { key: "meeting-participant-email", processNext: meetingParticipantEmailWorker.processNext },
         { key: "telephony", processNext: telephonyWorker.processNext },
