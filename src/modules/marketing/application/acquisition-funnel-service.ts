@@ -58,17 +58,23 @@ async function loadAcquisitionFunnelSnapshot(database: Prisma.TransactionClient,
   // Map immutable IDs separately from touchpoints so one receipt is never
   // multiplied by the number of visits, proposals or attribution dimensions.
   const leadByOpportunity = new Map(leads.flatMap((lead) => lead.opportunities.map((opportunity) => [opportunity.id, lead.id] as const)));
-  // Start with period cash events, avoiding an unbounded scan of all future
-  // installments for the cohort's subscriptions.
-  const payments = leadByOpportunity.size ? await database.payment.findMany({
-    where: { workspaceId, providerKey: { not: PAYMENT_PROVIDER_KEY }, occurredAt: { lt: end }, OR: [{ occurredAt: { gte: start, lt: end } }, { reversedAt: { gte: start, lt: end } }] },
+  const contracts = leadByOpportunity.size ? await database.commercialContract.findMany({
+    where: { workspaceId, opportunityId: { in: [...leadByOpportunity.keys()] } },
+    select: { id: true, opportunityId: true },
+  }) : [];
+  const invoices = contracts.length ? await database.invoice.findMany({
+    where: { workspaceId, contractId: { in: contracts.map((contract) => contract.id) } },
+    select: { id: true, contractId: true, currency: true },
+  }) : [];
+  // Restrict cash events to invoices owned by this cohort before applying the
+  // period cut. This keeps one acquisition request bounded to its own leads.
+  const payments = invoices.length ? await database.payment.findMany({
+    where: { workspaceId, invoiceId: { in: invoices.map((invoice) => invoice.id) }, providerKey: { not: PAYMENT_PROVIDER_KEY }, occurredAt: { lt: end }, OR: [{ occurredAt: { gte: start, lt: end } }, { reversedAt: { gte: start, lt: end } }] },
     orderBy: [{ occurredAt: "asc" }, { id: "asc" }], take: 50_001,
     select: { id: true, invoiceId: true, amountCents: true, currency: true, providerKey: true, status: true, occurredAt: true, reversedAt: true },
   }) : [];
   if (payments.length > 50_000) { payments.pop(); truncated = true; }
-  const invoices = payments.length ? await database.invoice.findMany({ where: { workspaceId, id: { in: [...new Set(payments.map((payment) => payment.invoiceId))] } }, select: { id: true, contractId: true, currency: true } }) : [];
   const invoiceById = new Map(invoices.map((invoice) => [invoice.id, invoice]));
-  const contracts = invoices.length ? await database.commercialContract.findMany({ where: { workspaceId, id: { in: [...new Set(invoices.map((invoice) => invoice.contractId))] } }, select: { id: true, opportunityId: true } }) : [];
   const leadByContract = new Map(contracts.map((contract) => [contract.id, leadByOpportunity.get(contract.opportunityId)]));
   const paymentsByLead = new Map<string, AcquisitionReceipt[]>();
   for (const payment of payments) {

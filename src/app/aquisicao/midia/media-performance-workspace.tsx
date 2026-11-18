@@ -100,7 +100,7 @@ export function MediaPerformanceWorkspace({ initial, strategyInitial, basePath =
   }
 
   return <div className={styles.workspace}>
-    <RouteAutoRefresh enabled={!importOpen && !pending} intervalMs={15 * 60_000} />
+    <RouteAutoRefresh enabled={initial.mediaSync?.enabled === true && initial.mediaSync.automatic && !importOpen && !pending} intervalMs={15 * 60_000} />
     <MarketingPeriodFilter basePath={basePath} from={initial.period.startDate} key={`${initial.period.startDate}:${initial.period.endDate}`} to={initial.period.endDate} today={workspaceDateAt(new Date(), initial.period.timeZone)} />
     {initial.mediaSync ? <p className={styles.footnote} role="status">Última coleta Meta: {initial.mediaSync.lastCollectedAt ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: initial.period.timeZone }).format(new Date(initial.mediaSync.lastCollectedAt)) : "nenhuma sincronização concluída"}. {initial.mediaSync.automatic && initial.mediaSync.enabled ? "Coleta automática a cada 15 minutos. Tela atualizada automaticamente." : "Coleta automática desativada."}</p> : null}
     {initial.mediaSync?.error ? <p className={styles.feedback} role="alert">{initial.mediaSync.enabled && initial.mediaSync.automatic ? "Coleta com falha; uma nova tentativa automática será feita após o intervalo de segurança." : "Coleta interrompida. Revalide a conexão em Integrações → Meta Ads."} {initial.mediaSync.error}</p> : null}

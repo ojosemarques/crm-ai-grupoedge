@@ -12,7 +12,7 @@ it("counts CRM leads by completion without adding anonymous responses to the CRM
     { id: "unclassified", tags: [] },
   ].map(({ id, tags }) => ({
     id, tags: tags.map((name) => ({ tag: { name } })), createdAt: start,
-    submissions: [], opportunities: [], meetings: [], source: null, campaign: null, creative: null,
+    submissions: [], opportunities: id === "completed" ? [{ id: "opportunity", amountCents: 1_000n, status: "WON", closedAt: end, deletedAt: null }] : [], meetings: [], source: null, campaign: null, creative: null,
   }));
   const transaction = {
     auditLog: { findMany: vi.fn().mockResolvedValue([]) },
@@ -33,6 +33,9 @@ it("counts CRM leads by completion without adding anonymous responses to the CRM
     lead: { findMany: vi.fn().mockResolvedValue(leads) },
     marketingTouchpoint: { findMany: vi.fn().mockResolvedValue([]) },
     commercialEntityTag: { findMany: vi.fn().mockResolvedValue([]) },
+    commercialContract: { findMany: vi.fn().mockResolvedValue([{ id: "contract", opportunityId: "opportunity" }]) },
+    invoice: { findMany: vi.fn().mockResolvedValue([{ id: "invoice", contractId: "contract", currency: "BRL" }]) },
+    payment: { findMany: vi.fn().mockResolvedValue([]) },
   };
   const database = {
     $transaction: (run: (tx: typeof transaction) => unknown) => run(transaction),
@@ -43,4 +46,7 @@ it("counts CRM leads by completion without adding anonymous responses to the CRM
     incompleteCount: 3,
     crmLeads: { total: 4, complete: 1, incomplete: 2, unclassified: 1 },
   });
+  expect(transaction.payment.findMany).toHaveBeenCalledWith(expect.objectContaining({
+    where: expect.objectContaining({ invoiceId: { in: ["invoice"] } }),
+  }));
 });
