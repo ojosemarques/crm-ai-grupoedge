@@ -271,13 +271,21 @@ export function createConversionFeedbackService(options: Options) {
   async function recoverRecentAdvertisingStageMetaConversions(workspaceId: string) {
     const now = options.now();
     const [connection, actor, stageRows] = await Promise.all([
-      options.database.integrationConnection.findFirst({
-        where: {
-          workspaceId, key: "meta-ads", providerKey: "META_ADS",
-          enabled: true, disabledAt: null, status: "CONNECTED", capabilityLevel: "CONNECTED",
-          capabilities: { some: { capability: "SYNC_PUSH", enabled: true } },
+      options.database.integrationConnection.findUnique({
+        where: { workspaceId_key: { workspaceId, key: "meta-ads" } },
+        select: {
+          id: true,
+          providerKey: true,
+          enabled: true,
+          disabledAt: true,
+          status: true,
+          capabilityLevel: true,
+          capabilities: {
+            where: { capability: "SYNC_PUSH", enabled: true },
+            select: { id: true },
+            take: 1,
+          },
         },
-        select: { id: true },
       }),
       options.database.actor.findFirst({
         where: { workspaceId, type: "SYSTEM" },
@@ -304,7 +312,14 @@ export function createConversionFeedbackService(options: Options) {
         },
       }),
     ]);
-    if (!connection) return { status: "CONNECTION_NOT_READY" as const, candidates: 0, pending: 0, queued: 0 };
+    const connectionReady = connection
+      && connection.providerKey === "META_ADS"
+      && connection.enabled
+      && connection.disabledAt === null
+      && connection.status === "CONNECTED"
+      && connection.capabilityLevel === "CONNECTED"
+      && connection.capabilities.length > 0;
+    if (!connectionReady) return { status: "CONNECTION_NOT_READY" as const, candidates: 0, pending: 0, queued: 0 };
     if (!actor) return { status: "SYSTEM_ACTOR_MISSING" as const, candidates: 0, pending: 0, queued: 0 };
 
     const candidates = new Map<string, {
