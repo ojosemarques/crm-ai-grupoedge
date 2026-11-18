@@ -7,6 +7,10 @@ import { logger } from "@/shared/core/logging/logger";
 
 export function handleRouteError(error: unknown, request?: Request): NextResponse {
   const requestId = resolveCorrelationId(request?.headers ?? new Headers());
+  const databaseErrorCode = typeof error === "object" && error !== null && "code" in error
+    && typeof error.code === "string" && /^P\d{4}$/.test(error.code)
+    ? error.code
+    : undefined;
   const applicationError = error instanceof ApplicationError
     ? error
     : error instanceof ZodError
@@ -22,6 +26,7 @@ export function handleRouteError(error: unknown, request?: Request): NextRespons
       correlationId: requestId,
       requestId,
       statusCode,
+      databaseErrorCode,
     },
     statusCode >= 500
       ? "Falha interna em uma rota da aplicação"
