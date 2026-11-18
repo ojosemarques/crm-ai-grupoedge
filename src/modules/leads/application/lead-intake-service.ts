@@ -1742,7 +1742,10 @@ export function createLeadIntakeService(options: LeadIntakeServiceOptions) {
     };
     const result = transactionOverride
       ? await executeIntake(transactionOverride)
-      : await options.database.$transaction(executeIntake);
+      : await options.database.$transaction(executeIntake, {
+          maxWait: 10_000,
+          timeout: 30_000,
+        });
 
     if (result.outcome !== "REJECTED" && options.automationPublisher && !intakeOptions?.historicalReceivedAt) {
       const publish = async (transaction: Prisma.TransactionClient) => {
