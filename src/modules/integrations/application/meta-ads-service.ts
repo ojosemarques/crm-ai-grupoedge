@@ -70,6 +70,33 @@ function subtractDays(date: string, days: number): string {
   return value.toISOString().slice(0, 10);
 }
 
+function addDays(date: string, days: number): string {
+  return subtractDays(date, -days);
+}
+
+export function resolveMetaAdsSyncWindow(input: Readonly<{
+  date?: string;
+  mode: "INITIAL" | "INCREMENTAL";
+  automatic: boolean;
+  watermarkDate: string | null;
+  today: string;
+  initialSince: string;
+  lookbackDays: number;
+}>) {
+  if (input.date) return { since: input.date, until: input.date };
+  if (input.automatic) {
+    if (!input.watermarkDate) return { since: input.initialSince, until: input.initialSince };
+    const nextDate = input.watermarkDate < input.today ? addDays(input.watermarkDate, 1) : input.today;
+    return { since: nextDate, until: nextDate };
+  }
+  return {
+    since: input.mode === "INITIAL" || !input.watermarkDate
+      ? input.initialSince
+      : subtractDays(input.watermarkDate, input.lookbackDays),
+    until: input.today,
+  };
+}
+
 function startInstant(date: string): Date { return new Date(`${date}T00:00:00-03:00`); }
 function endInstant(date: string): Date { return new Date(`${date}T23:59:59.999-03:00`); }
 
@@ -319,10 +346,16 @@ export function createMetaAdsService(options: Options) {
     const cursor = await options.database.integrationSyncCursor.findUnique({ where: { workspaceId_connectionId_direction_objectType: { workspaceId: context.workspaceId, connectionId: connection.id, direction: "PULL", objectType: OBJECT_TYPE } } });
     const today = localDate(options.now());
     if (input.date && (input.mode !== "INITIAL" || !metaAdsConfigurationSchema.shape.initialSince.safeParse(input.date).success || input.date < config.initialSince || input.date > today)) fail("A data histórica deve estar entre o início configurado e hoje, no modo inicial.", "META_SYNC_DATE_INVALID", 422);
-    const until = input.date ?? today;
     const watermarkDate = cursor?.watermark ? localDate(cursor.watermark) : null;
-    const refreshToday = automatic && input.mode === "INCREMENTAL" && watermarkDate === today;
-    const since = input.date ?? (refreshToday ? today : input.mode === "INITIAL" || !watermarkDate ? config.initialSince : subtractDays(watermarkDate, config.lookbackDays));
+    const { since, until } = resolveMetaAdsSyncWindow({
+      ...(input.date ? { date: input.date } : {}),
+      mode: input.mode,
+      automatic,
+      watermarkDate,
+      today,
+      initialSince: config.initialSince,
+      lookbackDays: config.lookbackDays,
+    });
     const nextWatermark = cursor?.watermark && cursor.watermark > endInstant(until) ? cursor.watermark : endInstant(until);
     const run = await options.database.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`meta-ads-sync:${context.workspaceId}:${connection.id}`}, 0))`;
