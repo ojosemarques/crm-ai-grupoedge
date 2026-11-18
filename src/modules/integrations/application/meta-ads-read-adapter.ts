@@ -131,10 +131,15 @@ export class MetaAdsReadAdapter {
         method: batch ? "POST" : "GET",
         headers: { Authorization: `Bearer ${credentials.accessToken}`, Accept: "application/json", ...(batch ? { "Content-Type": "application/x-www-form-urlencoded" } : {}) },
         ...(batch ? { body: new URLSearchParams({ batch: JSON.stringify(batch) }).toString() } : {}),
-        redirect: "error",
+        // Cloudflare Workers does not implement redirect: "error". Keep the
+        // request non-following and reject redirects explicitly below.
+        redirect: "manual",
         cache: "no-store",
         signal: controller.signal,
       });
+      if ((response.status >= 300 && response.status < 400) || response.type === "opaqueredirect") {
+        throw new MetaAdsAdapterError({ classification: "PERMANENT", code: "META_REDIRECT_REJECTED", safeMessage: "A Meta redirecionou uma consulta que deveria permanecer na origem autorizada." });
+      }
       const declaredSize = Number(response.headers.get("content-length") ?? "0");
       if (Number.isFinite(declaredSize) && declaredSize > META_ADS_MAX_RESPONSE_BYTES) throw new MetaAdsAdapterError({ classification: "INVALID_PAYLOAD", code: "META_RESPONSE_TOO_LARGE", safeMessage: "A resposta Meta excedeu o limite seguro e foi rejeitada." });
       const text = await response.text();

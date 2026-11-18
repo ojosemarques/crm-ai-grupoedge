@@ -126,6 +126,15 @@ describe("CRM-40 adaptador Meta Ads somente leitura", () => {
     await expect(large.testConnection(config, credentials)).rejects.toMatchObject({ failure: { code: "META_RESPONSE_TOO_LARGE" } });
   });
 
+  it("usa redirect manual compatível com Workers e rejeita redirecionamentos", async () => {
+    const fetcher = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(init?.redirect).toBe("manual");
+      return new Response(null, { status: 302, headers: { location: "https://example.invalid" } });
+    });
+    const adapter = new MetaAdsReadAdapter({ fetcher });
+    await expect(adapter.testConnection(config, credentials)).rejects.toMatchObject({ failure: { code: "META_REDIRECT_REJECTED" } });
+  });
+
   it("normaliza hierarquia e insights sem executar escrita externa", async () => {
     const methods: string[] = [];
     const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
