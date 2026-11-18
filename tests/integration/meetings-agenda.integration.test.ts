@@ -1426,6 +1426,9 @@ describe("agenda interna e reuniões", () => {
         const url = new URL(input instanceof Request ? input.url : input.toString());
         if (request === 1) {
           expect(url.searchParams.get("syncToken")).toBeNull();
+          expect(url.searchParams.get("maxResults")).toBe("25");
+          expect(url.searchParams.get("fields")).toContain("nextSyncToken");
+          expect(url.searchParams.get("fields")).not.toContain("description");
           return new Response(JSON.stringify({
             nextSyncToken: "sync-token-1",
             items: [

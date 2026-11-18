@@ -24,6 +24,12 @@ class GoogleCalendarWorkerError extends Error {
 }
 
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+const GOOGLE_CALENDAR_PULL_PAGE_SIZE = 25;
+const GOOGLE_CALENDAR_PULL_FIELDS = [
+  "nextPageToken",
+  "nextSyncToken",
+  "items(id,etag,status,summary,location,htmlLink,hangoutLink,visibility,eventType,start,end,creator(email,displayName),attendees(email,responseStatus),updated,conferenceData(entryPoints(entryPointType,uri)))",
+].join(",");
 
 function payload(value: Prisma.JsonValue): Payload {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new GoogleCalendarWorkerError("GOOGLE_CALENDAR_JOB_INVALID", false);
@@ -588,7 +594,8 @@ export function createGoogleCalendarWorkerService(options: Options) {
 
     const token = await accessToken(account);
     const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(account.calendarId)}/events`);
-    url.searchParams.set("maxResults", "100");
+    url.searchParams.set("maxResults", String(GOOGLE_CALENDAR_PULL_PAGE_SIZE));
+    url.searchParams.set("fields", GOOGLE_CALENDAR_PULL_FIELDS);
     url.searchParams.set("showDeleted", "true");
     url.searchParams.set("singleEvents", "true");
     if (syncToken) url.searchParams.set("syncToken", syncToken);
@@ -600,7 +607,7 @@ export function createGoogleCalendarWorkerService(options: Options) {
     if (response.status === 410 && syncToken) return resetExpiredPullToken(account, workerId);
     const body = await googleJson(response, 2 * 1024 * 1024);
     if (!response.ok) throw classify(response, body);
-    const items = Array.isArray(body.items) ? body.items.slice(0, 100) : [];
+    const items = Array.isArray(body.items) ? body.items.slice(0, GOOGLE_CALENDAR_PULL_PAGE_SIZE) : [];
     const nextPageToken = typeof body.nextPageToken === "string" ? body.nextPageToken : null;
     const nextSyncToken = typeof body.nextSyncToken === "string" ? body.nextSyncToken : null;
     if (!nextPageToken && !nextSyncToken) throw new GoogleCalendarWorkerError("GOOGLE_CALENDAR_CURSOR_MISSING", true);
