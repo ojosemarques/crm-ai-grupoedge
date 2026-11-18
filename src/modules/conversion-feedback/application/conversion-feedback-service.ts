@@ -19,6 +19,7 @@ type Options = Readonly<{ database: PrismaClient; secrets: SecretResolver; fetch
 
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 const META_STAGE_RECOVERY_ACTION = "marketing.meta_conversion.stage_recovered";
+const META_STAGE_RECOVERY_POLICY_VERSION = "upstream-privacy-restored-v1";
 const META_STAGE_RECOVERY_LOOKBACK_MS = 6 * 86_400_000;
 const META_STAGE_RECOVERY_SCAN_LIMIT = 2_000;
 const META_STAGE_RECOVERY_BATCH_LIMIT = 25;
@@ -350,11 +351,13 @@ export function createConversionFeedbackService(options: Options) {
       }),
       options.database.auditLog.findMany({
         where: { workspaceId, action: META_STAGE_RECOVERY_ACTION, entityType: "StageHistory", entityId: { in: candidateRows.map((candidate) => candidate.stageHistoryId) } },
-        select: { entityId: true },
+        select: { entityId: true, changes: true },
       }),
     ]);
     const existingKeys = new Set(existingEvents.map((event) => event.idempotencyKey));
-    const evaluatedIds = new Set(evaluatedStages.map((audit) => audit.entityId));
+    const evaluatedIds = new Set(evaluatedStages
+      .filter((audit) => (audit.changes as { recoveryPolicyVersion?: unknown } | null)?.recoveryPolicyVersion === META_STAGE_RECOVERY_POLICY_VERSION)
+      .map((audit) => audit.entityId));
     const pending = candidateRows.filter((candidate) => !existingKeys.has(candidate.idempotencyKey) && !evaluatedIds.has(candidate.stageHistoryId));
     let queued = 0;
     let skipped = 0;
@@ -379,7 +382,12 @@ export function createConversionFeedbackService(options: Options) {
             action: META_STAGE_RECOVERY_ACTION,
             entityType: "StageHistory",
             entityId: candidate.stageHistoryId,
-            changes: { status: recovered.status, leadId: candidate.leadId, stageCode: candidate.stageCode },
+            changes: {
+              status: recovered.status,
+              leadId: candidate.leadId,
+              stageCode: candidate.stageCode,
+              recoveryPolicyVersion: META_STAGE_RECOVERY_POLICY_VERSION,
+            },
           } });
         }
         return recovered;

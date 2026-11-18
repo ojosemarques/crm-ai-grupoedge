@@ -444,6 +444,18 @@ describe("serviço administrativo de formulários", () => {
       database, now: () => completedAt, secrets: { resolve: async () => null },
       fetcher: async () => { throw new Error("A recuperação deve enfileirar, sem chamar a Meta diretamente."); },
     });
+    const completedHistory = await database.stageHistory.findFirstOrThrow({
+      where: { workspaceId: tenantA.context.workspaceId, leadId: submission.leadId!, stage: { leadStageCode: "MEETING_COMPLETED" } },
+      orderBy: { enteredAt: "desc" },
+    });
+    await database.auditLog.create({ data: {
+      workspaceId: tenantA.context.workspaceId,
+      actorId: tenantA.systemActorId,
+      action: "marketing.meta_conversion.stage_recovered",
+      entityType: "StageHistory",
+      entityId: completedHistory.id,
+      changes: { status: "PRIVACY_BLOCKED", leadId: submission.leadId!, stageCode: "MEETING_COMPLETED" },
+    } });
     await expect(recovery.recoverRecentAdvertisingStageMetaConversions(tenantA.context.workspaceId)).resolves.toMatchObject({
       status: "RECOVERED", candidates: 2, pending: 1, queued: 1,
     });
