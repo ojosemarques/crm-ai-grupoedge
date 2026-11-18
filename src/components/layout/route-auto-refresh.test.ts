@@ -21,8 +21,8 @@ beforeEach(() => {
   vi.stubGlobal("navigator", { get onLine() { return online; } });
 });
 afterEach(() => { cleanup?.(); cleanup = undefined; vi.unstubAllGlobals(); vi.useRealTimers(); });
-function mount(enabled = true) {
-  RouteAutoRefresh({ enabled });
+function mount(enabled = true, intervalMs?: number) {
+  RouteAutoRefresh(intervalMs === undefined ? { enabled } : { enabled, intervalMs });
   const cleanups = mocks.effect.mock.calls
     .map(([effect]) => effect())
     .filter((result): result is () => void => typeof result === "function");
@@ -35,6 +35,11 @@ describe("atualização automática da rota", () => {
     vi.advanceTimersByTime(14_999); expect(mocks.refresh).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1); expect(mocks.refresh).toHaveBeenCalledOnce();
     vi.advanceTimersByTime(15_000); expect(mocks.refresh).toHaveBeenCalledTimes(2);
+  });
+  it("respeita o intervalo específico de telas com coleta menos frequente", () => {
+    mount(true, 15 * 60_000);
+    vi.advanceTimersByTime(15 * 60_000 - 1); expect(mocks.refresh).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1); expect(mocks.refresh).toHaveBeenCalledOnce();
   });
   it("não consulta em aba oculta, offline ou durante uma atualização pendente", () => {
     mount(); visibility = "hidden"; vi.advanceTimersByTime(15_000);

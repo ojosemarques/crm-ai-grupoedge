@@ -3,8 +3,9 @@
 import { useEffect, useRef, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-export function RouteAutoRefresh({ enabled = true, refreshOnReturnTo }: Readonly<{
+export function RouteAutoRefresh({ enabled = true, intervalMs = 15_000, refreshOnReturnTo }: Readonly<{
   enabled?: boolean;
+  intervalMs?: number;
   refreshOnReturnTo?: string;
 }> = {}) {
   const router = useRouter();
@@ -27,7 +28,7 @@ export function RouteAutoRefresh({ enabled = true, refreshOnReturnTo }: Readonly
         startTransition(() => router.refresh());
       }
     };
-    const timer = window.setInterval(refresh, 15_000);
+    const timer = window.setInterval(refresh, intervalMs);
     window.addEventListener("focus", refresh);
     window.addEventListener("online", refresh);
     document.addEventListener("visibilitychange", refresh);
@@ -37,6 +38,6 @@ export function RouteAutoRefresh({ enabled = true, refreshOnReturnTo }: Readonly
       window.removeEventListener("online", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [router, pathname, query, pending, enabled]);
+  }, [router, pathname, query, pending, enabled, intervalMs]);
   return null;
 }
