@@ -27,7 +27,16 @@ export async function assertMetaAdsReportingSelection(secrets: SecretResolver, r
   if (referenceKey !== META_ADS_REPORTING_TOKEN_REFERENCE) return;
   const businessId = await secrets.resolve(META_ADS_REPORTING_BUSINESS_REFERENCE);
   const allowed = (await secrets.resolve(META_ADS_REPORTING_ACCOUNTS_REFERENCE) ?? "").split(",").map((id) => id.trim()).filter(Boolean);
-  if (!businessId || businessId !== config.businessId || !allowed.length || !config.selectedAccountIds.length || config.selectedAccountIds.some((id) => !allowed.includes(id))) {
-    throw new ApplicationError("A seleção de BM e conta não corresponde à autorização de relatórios deste workspace.", { code: "META_REPORTING_TARGET_MISMATCH", statusCode: 403, expose: true });
-  }
+  const mismatch = !businessId
+    ? "BUSINESS_MISSING"
+    : businessId !== config.businessId
+      ? "BUSINESS_MISMATCH"
+      : !allowed.length
+        ? "ACCOUNT_ALLOWLIST_MISSING"
+        : !config.selectedAccountIds.length
+          ? "ACCOUNT_SELECTION_MISSING"
+          : config.selectedAccountIds.some((id) => !allowed.includes(id))
+            ? "ACCOUNT_MISMATCH"
+            : null;
+  if (mismatch) throw new ApplicationError("A seleção de BM e conta não corresponde à autorização de relatórios deste workspace.", { code: `META_REPORTING_TARGET_${mismatch}`, statusCode: 403, expose: true });
 }
