@@ -1825,7 +1825,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
         startsAt: updated.startsAt.toISOString(),
         ...(pipelineMove ? { leadTransition } : {}),
       });
-    });
+    }, { maxWait: 10_000, timeout: 30_000 });
   }
 
   async function act(context: AuthenticatedContext, payload: unknown) {
