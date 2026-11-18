@@ -10,6 +10,7 @@ import { getAuthorizationService } from "@/modules/users/permissions/authorizati
 import { PermissionKeys } from "@/modules/users/permissions/permission-keys";
 import { getDatabaseClient } from "@/shared/core/database/client";
 import { ApplicationError } from "@/shared/core/errors/application-error";
+import { logger } from "@/shared/core/logging/logger";
 import { assertMetaNativeTarget } from "./meta-native-target";
 import { z } from "zod";
 
@@ -154,7 +155,24 @@ export function createMetaNativeService(options: Options) {
       const result = await options.webhooks.receive({ workspaceSlug: "politizai", connectionKey: item.connection.key, rawBody, headers: { signature: `sha256=${createHmac("sha256", secret).update(rawBody).digest("hex")}` } });
       await options.database.webhookInbox.updateMany({ where: { id: item.id, lockedBy: `native-recovery:${workerId}` }, data: { lockedAt: null, lockedBy: null, lockExpiresAt: null, nextRetryAt: null, errorClass: null, errorCode: null, errorMessage: null } });
       return { status: String(result.status) };
-    } catch {
+    } catch (error) {
+      const databaseErrorCode = typeof error === "object" && error !== null && "code" in error
+        && typeof error.code === "string" && /^P\d{4}$/.test(error.code)
+        ? error.code
+        : undefined;
+      const failureReason = error instanceof Error && /unable to start a transaction/i.test(error.message)
+        ? "TRANSACTION_START_TIMEOUT"
+        : error instanceof Error && /transaction.*(?:closed|timeout|timed out)/i.test(error.message)
+          ? "TRANSACTION_EXECUTION_TIMEOUT"
+          : "UNCLASSIFIED";
+      logger.error({
+        event: "meta_native.recovery_failed",
+        inboxId: item.id,
+        connectionId: item.connectionId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        databaseErrorCode,
+        failureReason,
+      }, "Falha controlada ao recuperar lead nativo da Meta.");
       const latest = await options.database.webhookInbox.findUniqueOrThrow({ where: { id: item.id }, select: { attempts: true } });
       const attempts = Math.max(item.attempts + 1, latest.attempts);
       await options.database.webhookInbox.updateMany({ where: { id: item.id, lockedBy: `native-recovery:${workerId}` }, data: { attempts, status: attempts >= item.maxAttempts ? "DEAD_LETTER" : "RETRY_PENDING", nextRetryAt: new Date(now.getTime() + 300000), lockedAt: null, lockedBy: null, lockExpiresAt: null, errorCode: "META_NATIVE_RECOVERY_FAILED", errorMessage: "Falha ao recuperar lead nativo; revisar entrada e conexão." } });
