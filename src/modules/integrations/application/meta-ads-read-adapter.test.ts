@@ -169,6 +169,25 @@ describe("CRM-40 adaptador Meta Ads somente leitura", () => {
     }
   });
 
+  it("valida insights pelo account_id canônico quando ele difere do ID do ativo", async () => {
+    const adapter = new MetaAdsReadAdapter({ fetcher: async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/act_123456")) return ok({ id: "act_123456", account_id: "789012", name: "Conta" });
+      if (path.endsWith("/insights")) return ok({ data: [{ account_id: "789012", campaign_id: "200001", adset_id: "300001", ad_id: "400001", date_start: "2026-09-01", date_stop: "2026-09-01" }] });
+      const batch = JSON.parse(new URLSearchParams(String(init?.body)).get("batch")!) as { relative_url: string }[];
+      const objects: Record<string, unknown> = {
+        "200001": { id: "200001", account_id: "789012", name: "Campanha" },
+        "300001": { id: "300001", campaign_id: "200001", name: "Conjunto" },
+        "400001": { id: "400001", adset_id: "300001", name: "Anúncio" },
+      };
+      return ok(batch.map(({ relative_url }) => ({ code: 200, body: JSON.stringify(objects[relative_url.split("?")[0]!]!) })));
+    } });
+    await expect(adapter.pull(config, credentials, { since: "2026-09-01", until: "2026-09-01" })).resolves.toMatchObject({
+      hierarchy: { accounts: [{ id: "act_123456", account_id: "789012" }] },
+      insights: [{ account_id: "789012" }],
+    });
+  });
+
   it("deduplica IDs e lê lotes de até 50 objetos referenciados no período", async () => {
     const batches: string[][] = [];
     const ads = Array.from({ length: 51 }, (_, index) => ({ id: String(400001 + index), adset_id: "300001", name: "Anúncio" }));

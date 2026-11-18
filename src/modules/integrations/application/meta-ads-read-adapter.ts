@@ -228,14 +228,15 @@ export class MetaAdsReadAdapter {
     for (const accountId of config.selectedAccountIds) {
       const account = metaAdsAccountSchema.parse(await this.#request(config, credentials, `/${accountId}`, { fields: "id,account_id,name,account_status,currency,timezone_name" }));
       const insightPage = await this.#all(config, credentials, `/${accountId}/insights`, "account_id,account_name,account_currency,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,date_start,date_stop,spend,impressions,reach,clicks,inline_link_clicks,actions,action_values", metaAdsInsightSchema, { level: "ad", time_increment: "1", time_range: JSON.stringify({ since: window.since, until: window.until }) });
-      if (account.id !== accountId || insightPage.rows.some((row) => `act_${row.account_id}` !== accountId)) throw new MetaAdsAdapterError({ classification: "INVALID_PAYLOAD", code: "META_ACCOUNT_ID_MISMATCH", safeMessage: "A Meta retornou dados de outra conta. Nenhum dado foi importado." });
+      const canonicalAccountId = account.account_id ?? account.id.slice("act_".length);
+      if (account.id !== accountId || insightPage.rows.some((row) => row.account_id !== canonicalAccountId)) throw new MetaAdsAdapterError({ classification: "INVALID_PAYLOAD", code: "META_ACCOUNT_ID_MISMATCH", safeMessage: "A Meta retornou dados de outra conta. Nenhum dado foi importado." });
       // Read only hierarchy referenced by this window, never the entire account
       // catalog (which can contain thousands of unrelated historical objects).
       const campaignPage = await this.#nodes(config, credentials, insightPage.rows.map((row) => row.campaign_id), "id,account_id,name,status,start_time,stop_time", metaAdsCampaignSchema);
       const adSetPage = await this.#nodes(config, credentials, insightPage.rows.map((row) => row.adset_id), "id,campaign_id,name,status", metaAdsAdSetSchema);
       const adPage = await this.#nodes(config, credentials, insightPage.rows.map((row) => row.ad_id), "id,adset_id,name,status,creative{id,name}", metaAdsAdSchema);
       const campaignIds = new Set(campaignPage.rows.map((row) => row.id)); const adSetIds = new Set(adSetPage.rows.map((row) => row.id));
-      if (campaignPage.rows.some((row) => row.account_id && `act_${row.account_id}` !== accountId) || adSetPage.rows.some((row) => !campaignIds.has(row.campaign_id)) || adPage.rows.some((row) => !adSetIds.has(row.adset_id))) throw new MetaAdsAdapterError({ classification: "INVALID_PAYLOAD", code: "META_HIERARCHY_MISMATCH", safeMessage: "A hierarquia Meta não corresponde à conta e ao período solicitados." });
+      if (campaignPage.rows.some((row) => row.account_id && row.account_id !== canonicalAccountId) || adSetPage.rows.some((row) => !campaignIds.has(row.campaign_id)) || adPage.rows.some((row) => !adSetIds.has(row.adset_id))) throw new MetaAdsAdapterError({ classification: "INVALID_PAYLOAD", code: "META_HIERARCHY_MISMATCH", safeMessage: "A hierarquia Meta não corresponde à conta e ao período solicitados." });
       requestCount += campaignPage.requests + adSetPage.requests + adPage.requests + insightPage.requests + 1;
       campaigns.push(...campaignPage.rows); adSets.push(...adSetPage.rows); ads.push(...adPage.rows); insights.push(...insightPage.rows);
       accounts.push(account);
