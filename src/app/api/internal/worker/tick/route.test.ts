@@ -4,9 +4,10 @@ const run = vi.fn();
 const disconnect = vi.fn();
 const processMeta = vi.fn();
 const getDeliveryDiagnostics = vi.fn();
+const recoverRecentAdvertisingStageMetaConversions = vi.fn();
 
 vi.mock("@/modules/conversion-feedback/application/conversion-feedback-service", () => ({
-  getConversionFeedbackService: () => ({ processNext: processMeta, getDeliveryDiagnostics }),
+  getConversionFeedbackService: () => ({ processNext: processMeta, getDeliveryDiagnostics, recoverRecentAdvertisingStageMetaConversions }),
 }));
 
 vi.mock("@/modules/automations/application/worker-runtime", () => ({
@@ -61,6 +62,7 @@ describe("POST /api/internal/worker/tick", () => {
       elapsedMs: 12,
       outcomes: { "automations:SUCCEEDED": 1 },
     });
+    recoverRecentAdvertisingStageMetaConversions.mockResolvedValue({ status: "RECOVERED", candidates: 0, pending: 0, queued: 0 });
     disconnect.mockResolvedValue(undefined);
   });
 
@@ -82,10 +84,12 @@ describe("POST /api/internal/worker/tick", () => {
     const { GET } = await import("@/app/api/internal/worker/tick/route");
     expect((await GET(cronRequest(`Bearer ${validEnvironment.SERVERLESS_WORKER_SECRET}`))).status).toBe(401);
     expect(processMeta).not.toHaveBeenCalled();
+    expect(recoverRecentAdvertisingStageMetaConversions).not.toHaveBeenCalled();
     const response = await GET(cronRequest(`Bearer ${cronSecret}`));
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ status: "DELIVERED_EXTERNAL" });
     expect(processMeta).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/^meta-cron:/), workspaceId);
+    expect(recoverRecentAdvertisingStageMetaConversions).toHaveBeenCalledExactlyOnceWith(workspaceId);
     expect(run).not.toHaveBeenCalled();
   });
 

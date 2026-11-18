@@ -18,6 +18,10 @@ type Fetcher = typeof fetch;
 type Options = Readonly<{ database: PrismaClient; secrets: SecretResolver; fetcher: Fetcher; now: () => Date }>;
 
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+const META_STAGE_RECOVERY_ACTION = "marketing.meta_conversion.stage_recovered";
+const META_STAGE_RECOVERY_LOOKBACK_MS = 6 * 86_400_000;
+const META_STAGE_RECOVERY_SCAN_LIMIT = 2_000;
+const META_STAGE_RECOVERY_BATCH_LIMIT = 25;
 
 function fail(message: string, code: string, statusCode = 409): never {
   throw new ApplicationError(message, { code, statusCode, expose: true });
@@ -263,6 +267,114 @@ function classifyMetaFailure(response: Response, body: unknown) {
 export function createConversionFeedbackService(options: Options) {
   const authorization = getAuthorizationService();
   const authorize = (context: AuthenticatedContext, permission: (typeof PermissionKeys)[keyof typeof PermissionKeys]) => authorization.assertAuthorized(context, permission, resource(context));
+
+  async function recoverRecentAdvertisingStageMetaConversions(workspaceId: string) {
+    const now = options.now();
+    const [connection, actor, stageRows] = await Promise.all([
+      options.database.integrationConnection.findFirst({
+        where: {
+          workspaceId, key: "meta-ads", providerKey: "META_ADS",
+          enabled: true, disabledAt: null, status: "CONNECTED", capabilityLevel: "CONNECTED",
+          capabilities: { some: { capability: "SYNC_PUSH", enabled: true } },
+        },
+        select: { id: true },
+      }),
+      options.database.actor.findFirst({
+        where: { workspaceId, type: "SYSTEM" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { id: true },
+      }),
+      options.database.stageHistory.findMany({
+        where: {
+          workspaceId,
+          enteredAt: { gte: new Date(now.getTime() - META_STAGE_RECOVERY_LOOKBACK_MS), lte: now },
+          leadId: { not: null },
+          pipeline: { name: ADVERTISING_PIPELINE_NAME },
+          stage: { leadStageCode: { in: ["MEETING_SCHEDULED", "MEETING_COMPLETED", "PROPOSAL"] } },
+          lead: { is: { deletedAt: null, contactId: { not: null } } },
+        },
+        orderBy: [{ enteredAt: "asc" }, { id: "asc" }],
+        take: META_STAGE_RECOVERY_SCAN_LIMIT,
+        select: {
+          id: true,
+          leadId: true,
+          enteredAt: true,
+          stage: { select: { leadStageCode: true } },
+          lead: { select: { contactId: true } },
+        },
+      }),
+    ]);
+    if (!connection) return { status: "CONNECTION_NOT_READY" as const, candidates: 0, pending: 0, queued: 0 };
+    if (!actor) return { status: "SYSTEM_ACTOR_MISSING" as const, candidates: 0, pending: 0, queued: 0 };
+
+    const candidates = new Map<string, {
+      stageHistoryId: string; leadId: string; contactId: string; stageCode: string; occurredAt: Date; idempotencyKey: string;
+    }>();
+    for (const row of stageRows) {
+      if (!row.leadId || !row.lead?.contactId) continue;
+      const stageCode = row.stage.leadStageCode;
+      const eventName = metaAdvertisingStageEvent(stageCode);
+      if (!stageCode || !eventName) continue;
+      const idempotencyKey = metaConversionDeduplicationKey({ workspaceId, conversionId: row.leadId, eventName });
+      if (!candidates.has(idempotencyKey)) candidates.set(idempotencyKey, {
+        stageHistoryId: row.id,
+        leadId: row.leadId,
+        contactId: row.lead.contactId,
+        stageCode,
+        occurredAt: row.enteredAt,
+        idempotencyKey,
+      });
+    }
+    if (candidates.size === 0) return { status: "RECOVERED" as const, candidates: 0, pending: 0, queued: 0 };
+
+    const candidateRows = [...candidates.values()];
+    const [existingEvents, evaluatedStages] = await Promise.all([
+      options.database.outboxEvent.findMany({
+        where: { workspaceId, idempotencyKey: { in: candidateRows.map((candidate) => candidate.idempotencyKey) } },
+        select: { idempotencyKey: true },
+      }),
+      options.database.auditLog.findMany({
+        where: { workspaceId, action: META_STAGE_RECOVERY_ACTION, entityType: "StageHistory", entityId: { in: candidateRows.map((candidate) => candidate.stageHistoryId) } },
+        select: { entityId: true },
+      }),
+    ]);
+    const existingKeys = new Set(existingEvents.map((event) => event.idempotencyKey));
+    const evaluatedIds = new Set(evaluatedStages.map((audit) => audit.entityId));
+    const pending = candidateRows.filter((candidate) => !existingKeys.has(candidate.idempotencyKey) && !evaluatedIds.has(candidate.stageHistoryId));
+    let queued = 0;
+    let skipped = 0;
+
+    for (const candidate of pending.slice(0, META_STAGE_RECOVERY_BATCH_LIMIT)) {
+      const result = await options.database.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`lead-distribution:${workspaceId}:${candidate.leadId}`}, 0))`;
+        const recovered = await queueAdvertisingStageMetaConversion(tx, {
+          workspaceId,
+          actorId: actor.id,
+          leadId: candidate.leadId,
+          contactId: candidate.contactId,
+          stageCode: candidate.stageCode,
+          stageHistoryId: candidate.stageHistoryId,
+          occurredAt: candidate.occurredAt,
+          evaluatedAt: now,
+        });
+        if (recovered && recovered.status !== "CONNECTION_NOT_READY") {
+          await tx.auditLog.create({ data: {
+            workspaceId,
+            actorId: actor.id,
+            action: META_STAGE_RECOVERY_ACTION,
+            entityType: "StageHistory",
+            entityId: candidate.stageHistoryId,
+            changes: { status: recovered.status, leadId: candidate.leadId, stageCode: candidate.stageCode },
+          } });
+        }
+        return recovered;
+      });
+      if (result?.status === "QUEUED") queued += 1;
+      else skipped += 1;
+    }
+
+    return { status: "RECOVERED" as const, candidates: candidates.size, pending: pending.length, queued, skipped };
+  }
 
   async function recoverMeetingAttended(workspaceId: string, leadId: string) {
     return options.database.$transaction(async (tx) => {
@@ -589,7 +701,7 @@ export function createConversionFeedbackService(options: Options) {
     return { provider: "GOOGLE_ADS", importRead: "IMPLEMENTED_AND_GATED_BY_CONNECTION", conversionWrite: "BLOCKED_NOT_VALIDATED_IN_TRIAL_OR_API", canQueue: false, missingEvidence: ["Conta de avaliação ou credencial Google Ads com permissão de upload", "Teste real da ação de conversão e deduplicação pelo order_id"], externalEgress: false };
   }
 
-  return Object.freeze({ getReconciliation, validateMetaWriteCapability, provisionMetaWriteFromCron, recoverMeetingAttended, queueMetaConversion, cancelPending, processNext, getDeliveryDiagnostics, googleWriteGate });
+  return Object.freeze({ getReconciliation, validateMetaWriteCapability, provisionMetaWriteFromCron, recoverRecentAdvertisingStageMetaConversions, recoverMeetingAttended, queueMetaConversion, cancelPending, processNext, getDeliveryDiagnostics, googleWriteGate });
 }
 
 let singleton: ReturnType<typeof createConversionFeedbackService> | null = null;

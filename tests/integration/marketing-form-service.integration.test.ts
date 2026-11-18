@@ -421,11 +421,22 @@ describe("serviço administrativo de formulários", () => {
       const pipelineId = tenantA.pipelineId;
       const actorId = tenantA.systemActorId;
       await tx.pipeline.update({ where: { id: pipelineId }, data: { name: "Anúncios" } });
-      const stage = await tx.pipelineStage.create({ data: {
-        workspaceId, pipelineId, leadStageCode: "MEETING_COMPLETED", name: "Reunião realizada", position: 10, type: "OPEN",
-        createdByActorId: actorId, updatedByActorId: actorId,
+      const scheduledAt = new Date(completedAt.getTime() - 500);
+      const [scheduledStage, stage] = await Promise.all([
+        tx.pipelineStage.create({ data: {
+          workspaceId, pipelineId, leadStageCode: "MEETING_SCHEDULED", name: "Reunião agendada", position: 9, type: "OPEN",
+          createdByActorId: actorId, updatedByActorId: actorId,
+        } }),
+        tx.pipelineStage.create({ data: {
+          workspaceId, pipelineId, leadStageCode: "MEETING_COMPLETED", name: "Reunião realizada", position: 10, type: "OPEN",
+          createdByActorId: actorId, updatedByActorId: actorId,
+        } }),
+      ]);
+      await tx.stageHistory.updateMany({ where: { workspaceId, leadId, exitedAt: null }, data: { exitedAt: scheduledAt, exitedByActorId: actorId } });
+      await tx.stageHistory.create({ data: {
+        workspaceId, pipelineId, leadId, stageId: scheduledStage.id, enteredAt: scheduledAt, exitedAt: completedAt,
+        enteredByActorId: actorId, exitedByActorId: actorId,
       } });
-      await tx.stageHistory.updateMany({ where: { workspaceId, leadId, exitedAt: null }, data: { exitedAt: completedAt, exitedByActorId: actorId } });
       await tx.lead.update({ where: { id: leadId }, data: { currentStageId: stage.id } });
       await tx.stageHistory.create({ data: { workspaceId, pipelineId, leadId, stageId: stage.id, enteredAt: completedAt, enteredByActorId: actorId } });
     });
@@ -433,8 +444,13 @@ describe("serviço administrativo de formulários", () => {
       database, now: () => completedAt, secrets: { resolve: async () => null },
       fetcher: async () => { throw new Error("A recuperação deve enfileirar, sem chamar a Meta diretamente."); },
     });
+    await expect(recovery.recoverRecentAdvertisingStageMetaConversions(tenantA.context.workspaceId)).resolves.toMatchObject({
+      status: "RECOVERED", candidates: 2, pending: 1, queued: 1,
+    });
+    await expect(recovery.recoverRecentAdvertisingStageMetaConversions(tenantA.context.workspaceId)).resolves.toMatchObject({
+      status: "RECOVERED", candidates: 2, pending: 0, queued: 0,
+    });
     await expect(recovery.recoverMeetingAttended(tenantB.context.workspaceId, submission.leadId!)).resolves.toEqual({ status: "RECOVERY_TARGET_NOT_ELIGIBLE" });
-    await expect(recovery.recoverMeetingAttended(tenantA.context.workspaceId, submission.leadId!)).resolves.toEqual({ status: "QUEUED" });
     await expect(recovery.recoverMeetingAttended(tenantA.context.workspaceId, submission.leadId!)).resolves.toMatchObject({ status: "PENDING" });
     await database.pipeline.update({ where: { id: tenantA.pipelineId }, data: { name: "Captação" } });
     await queueStage("PROPOSAL");

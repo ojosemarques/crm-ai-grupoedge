@@ -40,6 +40,21 @@ async function recoverMetaMeeting(request: Request, correlationId: string) {
   }
 }
 
+async function recoverRecentMetaStages(request: Request, correlationId: string) {
+  if (request.method !== "GET" || !isProductionRuntime()) return;
+  const workspace = z.uuid().safeParse(process.env.META_ADS_REPORTING_WORKSPACE_ID);
+  if (!workspace.success) {
+    logger.warn({ correlationId }, "META_CONVERSION_STAGE_RECOVERY_WORKSPACE_MISSING");
+    return;
+  }
+  try {
+    const result = await getConversionFeedbackService().recoverRecentAdvertisingStageMetaConversions(workspace.data);
+    logger.info({ correlationId, recovery: result }, "META_CONVERSION_STAGE_RECOVERY");
+  } catch {
+    logger.warn({ correlationId }, "META_CONVERSION_STAGE_RECOVERY_FAILED");
+  }
+}
+
 async function provisionMetaWrite(request: Request, correlationId: string) {
   const testCode = process.env.META_ADS_CONVERSIONS_PROVISION_TEST_CODE;
   if (request.method !== "GET" || !isProductionRuntime() || !testCode) return;
@@ -82,6 +97,7 @@ async function runTick(request: Request): Promise<NextResponse> {
       const workspace = z.uuid().safeParse(process.env.META_ADS_REPORTING_WORKSPACE_ID);
       if (!workspace.success) throw new ConfigurationError(["META_ADS_REPORTING_WORKSPACE_ID"]);
       await provisionMetaWrite(request, correlationId);
+      await recoverRecentMetaStages(request, correlationId);
       await recoverMetaMeeting(request, correlationId);
       const service = getConversionFeedbackService();
       const { status } = await service.processNext(`meta-cron:${correlationId}`, workspace.data);
@@ -95,6 +111,7 @@ async function runTick(request: Request): Promise<NextResponse> {
     assertServerlessWorkerRequest(request, policy);
     assertServerlessWorkerEnabled(policy);
     await provisionMetaWrite(request, correlationId);
+    await recoverRecentMetaStages(request, correlationId);
     await recoverMetaMeeting(request, correlationId);
     const config = getApplicationConfig();
     runtimeWorker = createDefaultWorkerBatchRunner(config);
