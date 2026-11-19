@@ -45,6 +45,43 @@ export const mediaPerformanceFactScreenSelect = {
   missingMetrics: true,
 } satisfies Prisma.MarketingPerformanceFactSelect;
 
+type MediaPerformanceScreenFact = Prisma.MarketingPerformanceFactGetPayload<{
+  select: typeof mediaPerformanceFactScreenSelect;
+}>;
+
+export async function readCurrentMediaPerformanceFacts(
+  database: Pick<PrismaClient, "$queryRaw">,
+  workspaceId: string,
+  start: Date,
+  end: Date,
+): Promise<MediaPerformanceScreenFact[]> {
+  return database.$queryRaw<MediaPerformanceScreenFact[]>(Prisma.sql`
+    SELECT
+      fact."id", fact."channelId", fact."campaignId", fact."creativeId",
+      fact."grainKey", fact."revision", fact."status", fact."periodStart",
+      fact."currency", fact."spendCents", fact."impressions", fact."reach",
+      fact."clicks", fact."linkClicks", fact."landingPageViews",
+      fact."reportedLeads", fact."reportedPurchases",
+      fact."reportedRevenueCents", fact."sourceProvider", fact."missingMetrics"
+    FROM "marketing_performance_facts" AS fact
+    INNER JOIN (
+      SELECT "grainKey", MAX("revision") AS "revision"
+      FROM "marketing_performance_facts"
+      WHERE "workspaceId" = ${workspaceId}::uuid
+        AND "periodStart" >= ${start}
+        AND "periodStart" < ${end}
+      GROUP BY "grainKey"
+    ) AS latest
+      ON latest."grainKey" = fact."grainKey"
+      AND latest."revision" = fact."revision"
+    WHERE fact."workspaceId" = ${workspaceId}::uuid
+      AND fact."periodStart" >= ${start}
+      AND fact."periodStart" < ${end}
+      AND fact."status" = 'CONFIRMED'
+    ORDER BY fact."grainKey" ASC
+  `);
+}
+
 function grain(row: MediaRow) {
   return [row.date,row.channelKey,row.accountKey ?? "-",row.campaignKey ?? "-",row.adGroupKey ?? "-",row.adKey ?? "-",row.creativeKey ?? "-",row.currency,row.timeZone].join("|");
 }
@@ -168,7 +205,9 @@ export function createMediaPerformanceService(options: Options) {
     }, { isolationLevel: "Serializable" });
   }
 
-  async function currentFacts(workspaceId: string, start: Date, end: Date) { return latestFacts(await options.database.marketingPerformanceFact.findMany({ where: { workspaceId, periodStart: { gte: start, lt: end } }, orderBy: [{ grainKey: "asc" },{ revision: "desc" }], select: mediaPerformanceFactScreenSelect })); }
+  async function currentFacts(workspaceId: string, start: Date, end: Date) {
+    return readCurrentMediaPerformanceFacts(options.database, workspaceId, start, end);
+  }
   async function periodSummary(workspaceId: string, start: Date, end: Date) {
     const excludedIds = await excludedMetricLeadIds(options.database, workspaceId);
     const current = await currentFacts(workspaceId,start,end);
