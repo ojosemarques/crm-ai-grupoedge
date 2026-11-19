@@ -73,9 +73,9 @@
     "db:studio": "prisma studio",
     "dev:vinext": "vite dev --port 3001",
     "check:vinext": "vinext check",
-    "build:vinext": "DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build?schema=crm pnpm db:generate:workerd && vite build",
+    "build:vinext": "node scripts/clean-vinext-build.mjs && DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build?schema=crm pnpm db:generate:workerd && vite build && node scripts/verify-meta-ads-worker-bundle.mjs",
     "start:vinext": "vite preview",
-    "deploy:vinext": "vinext-cloudflare deploy"
+    "deploy:vinext": "pnpm build:vinext && vinext-cloudflare deploy --skip-build"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.3.0",
