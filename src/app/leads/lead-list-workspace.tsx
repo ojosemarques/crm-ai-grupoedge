@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   useCallback,
@@ -17,6 +16,7 @@ import {
   type FilterOption,
 } from "@/app/leads/lead-list-filter-controls";
 import styles from "@/app/leads/leads-list.module.css";
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";

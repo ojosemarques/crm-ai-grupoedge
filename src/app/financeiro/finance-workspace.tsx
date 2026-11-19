@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent, type ReactNode } from "react";

@@ -1,5 +1,5 @@
 import { commercialFrontEvidenceHref } from "@/modules/metrics/domain/commercial-front-links";
-import Link from "next/link";
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 import type { DashboardScreen } from "@/modules/metrics/domain/dashboard-contracts";
 import styles from "./dashboard.module.css";
 

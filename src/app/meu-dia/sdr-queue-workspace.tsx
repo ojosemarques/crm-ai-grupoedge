@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   type FormEvent,
@@ -13,6 +12,7 @@ import {
 } from "react";
 
 import styles from "@/app/meu-dia/meu-dia.module.css";
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";

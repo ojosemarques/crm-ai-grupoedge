@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 import type { ReactNode } from "react";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { RevenueDrilldownPage, RevenueMetricDefinition, RevenueMetricState, RevenueMetricUnit, RevenueMetricValue, RevenueMetricsScreen } from "@/modules/metrics/domain/revenue-metrics-contracts";

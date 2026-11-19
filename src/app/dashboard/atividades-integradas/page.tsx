@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/layout/page-header";

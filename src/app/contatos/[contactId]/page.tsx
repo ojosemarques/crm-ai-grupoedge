@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 import { notFound, redirect } from "next/navigation";
 import { Icon } from "@/components/ui/icon";
 import styles from "./contact.module.css";

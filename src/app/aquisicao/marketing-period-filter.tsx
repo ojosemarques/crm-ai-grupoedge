@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useId, useState } from "react";
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 import { marketingDateRanges, marketingPeriodShortcuts } from "@/modules/marketing/domain/marketing-date-range";
 import styles from "./marketing-period-filter.module.css";
 

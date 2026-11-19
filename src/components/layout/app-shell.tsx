@@ -1,13 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { CopilotDrawer } from "@/components/layout/copilot-drawer";
 import { GlobalSearch } from "@/components/layout/global-search";
 import { isPublicShellRoute, isStandaloneShellRoute } from "@/components/layout/app-shell-routes";
 import { announceCompanySwitch, useCompanySession } from "@/components/layout/use-company-session";
+import { IntentLink } from "@/components/navigation/intent-link";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { cn } from "@/shared/core/ui/class-names";
@@ -158,10 +158,6 @@ function subscribeToMobileLayout(onChange: () => void) {
 
 const mobileLayoutSnapshot = () => window.matchMedia("(max-width: 800px)").matches;
 const serverLayoutSnapshot = () => false;
-
-function IntentLink(props: ComponentProps<typeof Link>) {
-  return <Link prefetch={false} {...props} />;
-}
 
 export function AppShell({ children, initialSession }: Readonly<{ children: ReactNode; initialSession: AppShellSession | null }>) {
   const pathname = usePathname();

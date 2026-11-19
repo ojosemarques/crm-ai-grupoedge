@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 import { redirect } from "next/navigation";
 
 import { AccountListWorkspace } from "@/app/contas/account-list-workspace";

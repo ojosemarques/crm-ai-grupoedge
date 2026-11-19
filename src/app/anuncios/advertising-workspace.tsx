@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 
 import styles from "@/app/email-agente/prospecting-workspace.module.css";
 import { LeadFormResponseDetails } from "@/components/leads/lead-form-response-details";

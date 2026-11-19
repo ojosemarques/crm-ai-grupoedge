@@ -1,5 +1,5 @@
 import { CommercialFrontPanel } from "./commercial-front-panel";
-import Link from "next/link";
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 import { commercialFrontLabels, commercialFrontPaths } from "@/modules/metrics/domain/commercial-front";
 
 import { CommercialEvolutionChart, CommercialFlowChart, KpiSparkline, RevenueSalesChart } from "@/app/dashboard/dashboard-charts";

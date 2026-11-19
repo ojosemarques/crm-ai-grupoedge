@@ -1,5 +1,4 @@
-import Link from "next/link";
-
+import { IntentLink as Link } from "@/components/navigation/intent-link";
 import type { BusinessPipelineOption } from "@/modules/pipelines/application/business-pipeline-navigation";
 
 export function BusinessPipelineSwitcher({
