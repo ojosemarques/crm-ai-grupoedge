@@ -87,6 +87,7 @@ export default defineConfig({
     entrypoint: "./worker/index.ts",
     compatibilityDate: "2026-11-16",
     compatibilityFlags: ["nodejs_compat"],
+    placement: { region: "aws:ca-central-1" },
     observability: {
       enabled: true,
       redactQueryString: true,
