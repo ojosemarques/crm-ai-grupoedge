@@ -22,6 +22,29 @@ const resource = (context: AuthenticatedContext) => ({ workspaceId: context.work
 function fail(message: string, code: string, statusCode = 409): never { throw new ApplicationError(message, { code, statusCode, expose: true }); }
 const number = (value: bigint | number) => Number(value);
 
+export const mediaPerformanceFactScreenSelect = {
+  id: true,
+  channelId: true,
+  campaignId: true,
+  creativeId: true,
+  grainKey: true,
+  revision: true,
+  status: true,
+  periodStart: true,
+  currency: true,
+  spendCents: true,
+  impressions: true,
+  reach: true,
+  clicks: true,
+  linkClicks: true,
+  landingPageViews: true,
+  reportedLeads: true,
+  reportedPurchases: true,
+  reportedRevenueCents: true,
+  sourceProvider: true,
+  missingMetrics: true,
+} satisfies Prisma.MarketingPerformanceFactSelect;
+
 function grain(row: MediaRow) {
   return [row.date,row.channelKey,row.accountKey ?? "-",row.campaignKey ?? "-",row.adGroupKey ?? "-",row.adKey ?? "-",row.creativeKey ?? "-",row.currency,row.timeZone].join("|");
 }
@@ -145,7 +168,7 @@ export function createMediaPerformanceService(options: Options) {
     }, { isolationLevel: "Serializable" });
   }
 
-  async function currentFacts(workspaceId: string, start: Date, end: Date) { return latestFacts(await options.database.marketingPerformanceFact.findMany({ where: { workspaceId, periodStart: { gte: start, lt: end } }, orderBy: [{ grainKey: "asc" },{ revision: "desc" }] })); }
+  async function currentFacts(workspaceId: string, start: Date, end: Date) { return latestFacts(await options.database.marketingPerformanceFact.findMany({ where: { workspaceId, periodStart: { gte: start, lt: end } }, orderBy: [{ grainKey: "asc" },{ revision: "desc" }], select: mediaPerformanceFactScreenSelect })); }
   async function periodSummary(workspaceId: string, start: Date, end: Date) {
     const excludedIds = await excludedMetricLeadIds(options.database, workspaceId);
     const current = await currentFacts(workspaceId,start,end);
