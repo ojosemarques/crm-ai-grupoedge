@@ -40,6 +40,7 @@ const AUTO_SYNC_INTERVAL_MS = 15 * 60_000;
 const AUTO_SYNC_RETRY_MS = 5 * 60_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const AUTO_SYNC_OUTAGE_RETRY_MS = 60 * 60_000;
+const REPORTING_TARGET_ERROR_PREFIX = "META_REPORTING_TARGET_";
 // Allow more than the 60-second serverless worker limit before taking over.
 const SYNC_EXPIRY_MS = 5 * 60_000;
 const expiredSync = {
@@ -449,15 +450,38 @@ export function createMetaAdsService(options: Options) {
   async function processDue() {
     const now = options.now().getTime();
     const dueBefore = new Date(now - AUTO_SYNC_INTERVAL_MS);
+    const currentMinute = new Date(Math.floor(now / 60_000) * 60_000);
+    const catchUpBefore = startInstant(localDate(options.now()));
     const retryBefore = new Date(now - AUTO_SYNC_RETRY_MS);
     const expiredBefore = new Date(now - SYNC_EXPIRY_MS);
     const connections = await options.database.integrationConnection.findMany({
       where: {
-        key: CONNECTION_KEY, providerKey: META_ADS_PROVIDER_KEY, enabled: true, capabilityLevel: "CONNECTED", disabledAt: null,
+        key: CONNECTION_KEY, providerKey: META_ADS_PROVIDER_KEY, capabilityLevel: "CONNECTED", disabledAt: null,
         OR: [
-          { status: "CONNECTED", OR: [{ lastSucceededAt: null }, { lastSucceededAt: { lt: dueBefore } }] },
-          { status: "DEGRADED", currentErrorClass: { in: retryableFailures }, lastErroredAt: { lte: retryBefore } },
-          { status: "SYNCING", syncRuns: { some: { objectType: OBJECT_TYPE, status: "RUNNING", startedAt: { lte: expiredBefore } } } },
+          {
+            enabled: true,
+            OR: [
+              {
+                status: "CONNECTED",
+                OR: [
+                  { lastSucceededAt: null },
+                  { lastSucceededAt: { lt: dueBefore } },
+                  {
+                    lastSucceededAt: { lt: currentMinute },
+                    syncCursors: { some: { direction: "PULL", objectType: OBJECT_TYPE, OR: [{ watermark: null }, { watermark: { lt: catchUpBefore } }] } },
+                  },
+                ],
+              },
+              { status: "DEGRADED", currentErrorClass: { in: retryableFailures }, lastErroredAt: { lte: retryBefore } },
+              { status: "SYNCING", syncRuns: { some: { objectType: OBJECT_TYPE, status: "RUNNING", startedAt: { lte: expiredBefore } } } },
+            ],
+          },
+          {
+            enabled: false,
+            status: "NEEDS_ATTENTION",
+            currentErrorCode: { startsWith: REPORTING_TARGET_ERROR_PREFIX },
+            lastErroredAt: { lte: dueBefore },
+          },
         ],
       },
       include, orderBy: { lastSucceededAt: "asc" }, take: 50,
@@ -487,7 +511,21 @@ export function createMetaAdsService(options: Options) {
       }
       const context: AuthenticatedContext = { workspaceId: connection.workspaceId, workspaceSlug: member.workspace.slug, sessionId: `meta-sync:${connection.id}`, userId: member.userId, memberId: member.id, actorId: actor.id, roleId: member.roleId, roleKey: member.role.key, roleName: member.role.name, displayName: member.user.displayName };
       try {
-        const result = await runSync(context, { mode: "INCREMENTAL", correlationId: `meta-auto-${Math.floor(options.now().getTime() / 900_000)}-${connection.id}` }, true);
+        const recoveringReportingTarget = !connection.enabled
+          && connection.status === "NEEDS_ATTENTION"
+          && connection.currentErrorCode?.startsWith(REPORTING_TARGET_ERROR_PREFIX) === true;
+        if (recoveringReportingTarget) {
+          const tokenReference = connection.secrets.find((item) => item.alias === META_ADS_ACCESS_TOKEN_ALIAS && item.present);
+          if (!tokenReference) continue;
+          try {
+            await assertMetaAdsReportingSelection(options.secrets, tokenReference.referenceKey, connection.workspaceId, config);
+          } catch (error) {
+            if (error instanceof ApplicationError) continue;
+            throw error;
+          }
+          await testConnection(context);
+        }
+        const result = await runSync(context, { mode: "INCREMENTAL", correlationId: `meta-auto-${Math.floor(options.now().getTime() / 60_000)}-${connection.id}` }, true);
         if (result.status === "SUCCEEDED") logger.info({
           operation: "meta_ads_sync", since: result.windowStart?.toISOString(), until: result.windowEnd?.toISOString(),
           readCount: result.readCount, createdCount: result.createdCount, updatedCount: result.updatedCount,

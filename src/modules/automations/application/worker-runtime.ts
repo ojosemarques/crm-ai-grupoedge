@@ -74,12 +74,14 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
     runner: createWorkerBatchRunner({
       scanDue: lifecycleScanner.scanDue,
       processors: [
+        // Availability-critical Meta jobs must run before the one-job serverless batch is exhausted.
+        { key: "meta-ads", processNext: getMetaAdsService().processDue },
+        { key: "meta-conversions", processNext: metaConversionWorker.processNext },
         { key: "google-calendar-key-rotation", processNext: googleCalendarKeyRotationWorker.processNext },
         { key: "topsend-voice", processNext: topSendVoiceWorker.processNext },
         { key: "telegram-lead-alert", processNext: telegramLeadAlertWorker.processNext },
         { key: "marketing-form-partial-lead", processNext: partialLeadWorker.processNext },
         { key: "meta-native-intake-recovery", processNext: getMetaNativeService().recoverNext },
-        { key: "meta-ads", processNext: getMetaAdsService().processDue },
         { key: "millionsend-prospecting-email", processNext: millionSendProspectingWorker.processNext },
         { key: "prospecting-reconciliation", processNext: prospectingReconciliationWorker.processNext },
         { key: "prospecting-planner", processNext: prospectingPlannerWorker.processNext },
@@ -97,7 +99,6 @@ export function createDefaultWorkerBatchRunner(config: ApplicationConfig) {
         { key: "email", processNext: emailWorker.processNext },
         { key: "whatsapp", processNext: whatsappWorker.processNext },
         { key: "automations", processNext: automationWorker.processNext },
-        { key: "meta-conversions", processNext: metaConversionWorker.processNext },
         { key: "meta-native-feedback", processNext: getMetaNativeFeedbackWorker().processNext },
         { key: "marketing-audit", processNext: getMediaPerformanceService().processDailyReconciliation },
       ],

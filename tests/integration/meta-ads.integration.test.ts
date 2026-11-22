@@ -254,6 +254,65 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     } finally { pull.mockRestore(); }
   });
 
+  it("revalida e retoma automaticamente uma conexão bloqueada pelo validador obsoleto", async () => {
+    const fixture = fixtureAdapter("777777");
+    let clock = new Date(now.getTime() + 5 * 3_600_000);
+    const service = createMetaAdsService({
+      database,
+      adapter: fixture.adapter,
+      secrets: new EphemeralSecretResolver({
+        META_ADS_REPORTING_ACCESS_TOKEN: "reporting-only",
+        META_ADS_REPORTING_WORKSPACE_ID: workspaceId,
+        META_ADS_REPORTING_BUSINESS_ID: "777777",
+        META_ADS_REPORTING_ACCOUNT_IDS: "act_123456",
+      }),
+      now: () => clock,
+    });
+    const prior = await database.integrationConnection.findUniqueOrThrow({ where: { workspaceId_key: { workspaceId, key: "meta-ads" } } });
+    const configured = await service.configure(admin, {
+      revision: prior.revision,
+      config: { selectedAccountIds: ["act_123456"], businessId: "777777", autoSyncEnabled: true, initialSince: "2046-04-19" },
+    });
+    await service.testConnection(admin);
+    await database.integrationSyncCursor.upsert({
+      where: { workspaceId_connectionId_direction_objectType: { workspaceId, connectionId: configured.id, direction: "PULL", objectType: "meta_ads_daily_insights" } },
+      create: { workspaceId, connectionId: configured.id, direction: "PULL", objectType: "meta_ads_daily_insights", cursor: "2046-04-18", watermark: new Date("2046-04-19T02:59:59.999Z"), updatedByActorId: admin.actorId },
+      update: { cursor: "2046-04-18", watermark: new Date("2046-04-19T02:59:59.999Z"), updatedByActorId: admin.actorId },
+    });
+    await database.integrationConnection.update({
+      where: { id: configured.id },
+      data: {
+        status: "NEEDS_ATTENTION",
+        enabled: false,
+        currentErrorClass: "PERMISSION",
+        currentErrorCode: "META_REPORTING_TARGET_MISMATCH",
+        currentErrorMessage: "A seleção de BM e conta não corresponde à autorização de relatórios deste workspace.",
+        lastErroredAt: new Date(clock.getTime() - 16 * 60_000),
+      },
+    });
+    const testConnection = vi.spyOn(fixture.adapter, "testConnection");
+    const pull = vi.spyOn(fixture.adapter, "pull");
+    try {
+      expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
+      expect(testConnection).toHaveBeenCalledTimes(1);
+      expect(pull).toHaveBeenCalledWith(expect.anything(), expect.anything(), { since: "2046-04-19", until: "2046-04-19" });
+      expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({
+        status: "CONNECTED",
+        enabled: true,
+        currentErrorClass: null,
+        currentErrorCode: null,
+      });
+      clock = new Date(clock.getTime() + 60_000);
+      fixture.setInsightDate("2046-04-20");
+      expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
+      expect(pull).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), { since: "2046-04-20", until: "2046-04-20" });
+      expect(await service.processDue()).toEqual({ status: "IDLE" });
+    } finally {
+      testConnection.mockRestore();
+      pull.mockRestore();
+    }
+  });
+
   it("retoma uma coleta abandonada e mantém o gasto novo se a tentativa antiga responder", async () => {
     const fixture = fixtureAdapter();
     let clock = new Date("2046-04-20T20:31:00Z");
