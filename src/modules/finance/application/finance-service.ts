@@ -196,7 +196,12 @@ export function createFinanceService(options: Options) {
     return { from: dates._min.occurredAt, to: dates._max.occurredAt };
   }
 
-  async function screen(context: AuthenticatedContext, raw: unknown = {}, view?: Readonly<{ accountId?: string | undefined; dashboard?: boolean; entries?: boolean }>) {
+  async function screen(context: AuthenticatedContext, raw: unknown = {}, view?: Readonly<{
+    accountId?: string | undefined;
+    dashboard?: boolean;
+    entries?: boolean;
+    section?: string;
+  }>) {
     await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_READ, resource(context.workspaceId));
     const query = financeQuerySchema.parse(raw);
     const workspace = await options.database.workspace.findUniqueOrThrow({ where: { id: context.workspaceId }, select: { timeZone: true } });
@@ -213,30 +218,37 @@ export function createFinanceService(options: Options) {
       : new Date(to.getTime() + 30 * 86_400_000);
     const canManage = (await options.authorization.authorize(context, PermissionKeys.FINANCE_MANAGE, resource(context.workspaceId))).allowed;
     const canManageCommissions = (await options.authorization.authorize(context, PermissionKeys.FINANCE_COMMISSIONS, resource(context.workspaceId))).allowed;
+    const fullScreen = view?.section === undefined;
+    const needs = (...sections: readonly string[]) => fullScreen || sections.includes(view.section!);
+    const needsEntries = needs("dashboard", "lancamentos", "entradas", "despesas", "fluxo-caixa", "dre", "contas", "pagar-receber", "conciliacao", "comprovantes", "comissoes");
+    const needsInvoices = needs("dashboard", "entradas", "dre", "pagar-receber");
+    const needsPayments = needs("dashboard", "lancamentos", "entradas", "despesas", "fluxo-caixa", "contas", "pagar-receber");
+    const needsCashBalances = needs("dashboard", "fluxo-caixa", "contas");
+    const needsCommissions = needs("dashboard", "comissoes");
     const [categories, financialAccounts, entries, invoices, payments, subscriptions, movements, opportunities, rules, commissions, members, priorManualBalances, costCenters, recurrences, statementImports, statementLines, attachments, compensation, historyEntries, unmatchedStatementLines] = await Promise.all([
       options.database.financialCategory.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
       options.database.financialAccount.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
-      options.database.financialEntry.findMany({ where: { workspaceId: context.workspaceId, OR: [{ competenceAt: { gte: from, lt: to } }, { dueAt: { gte: from, lt: to } }, { settledAt: { gte: from, lt: to } }, { status: "PLANNED" }] }, orderBy: [{ dueAt: "desc" }, { createdAt: "desc" }] }),
-      options.database.invoice.findMany({ where: { workspaceId: context.workspaceId, status: { notIn: ["VOIDED", "CANCELLED", "DRAFT"] }, OR: [{ billingPeriodStart: { gte: from, lt: to } }, { status: { in: ["OPEN", "PARTIALLY_PAID"] } }] }, orderBy: [{ dueAt: "asc" }] }),
-      options.database.payment.findMany({ where: { workspaceId: context.workspaceId, providerKey: { not: PAYMENT_PROVIDER_KEY }, OR: [{ occurredAt: { lt: to } }, { reversedAt: { lt: to } }] } }),
-      options.database.subscription.findMany({ where: { workspaceId: context.workspaceId, status: { in: ["ACTIVE", "CANCELLATION_SCHEDULED"] } } }),
-      options.database.revenueMovement.findMany({ where: { workspaceId: context.workspaceId, effectiveAt: { gte: from, lt: to } } }),
-      options.database.opportunity.findMany({ where: { workspaceId: context.workspaceId, status: "WON", closedAt: { gte: from, lt: to }, deletedAt: null } }),
-      options.database.commissionRule.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { effectiveFrom: "desc" }] }),
-      options.database.commission.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ earnedAt: "desc" }] }),
-      options.database.workspaceMember.findMany({ where: { workspaceId: context.workspaceId, status: "ACTIVE", deletedAt: null }, select: { id: true, user: { select: { displayName: true } } }, orderBy: { user: { displayName: "asc" } } }),
-      options.database.financialEntry.groupBy({ by: ["financialAccountId", "direction"], where: { workspaceId: context.workspaceId, status: "SETTLED", settledAt: { lt: from } }, _sum: { amountCents: true } }),
+      needsEntries ? options.database.financialEntry.findMany({ where: { workspaceId: context.workspaceId, OR: [{ competenceAt: { gte: from, lt: to } }, { dueAt: { gte: from, lt: to } }, { settledAt: { gte: from, lt: to } }, { status: "PLANNED" }] }, orderBy: [{ dueAt: "desc" }, { createdAt: "desc" }] }) : [],
+      needsInvoices ? options.database.invoice.findMany({ where: { workspaceId: context.workspaceId, status: { notIn: ["VOIDED", "CANCELLED", "DRAFT"] }, OR: [{ billingPeriodStart: { gte: from, lt: to } }, { status: { in: ["OPEN", "PARTIALLY_PAID"] } }] }, orderBy: [{ dueAt: "asc" }] }) : [],
+      needsPayments ? options.database.payment.findMany({ where: { workspaceId: context.workspaceId, providerKey: { not: PAYMENT_PROVIDER_KEY }, OR: [{ occurredAt: { lt: to } }, { reversedAt: { lt: to } }] } }) : [],
+      needs("dashboard") ? options.database.subscription.findMany({ where: { workspaceId: context.workspaceId, status: { in: ["ACTIVE", "CANCELLATION_SCHEDULED"] } } }) : [],
+      needs("dashboard") ? options.database.revenueMovement.findMany({ where: { workspaceId: context.workspaceId, effectiveAt: { gte: from, lt: to } } }) : [],
+      needs("dashboard") ? options.database.opportunity.findMany({ where: { workspaceId: context.workspaceId, status: "WON", closedAt: { gte: from, lt: to }, deletedAt: null } }) : [],
+      needs("comissoes") ? options.database.commissionRule.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { effectiveFrom: "desc" }] }) : [],
+      needsCommissions ? options.database.commission.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ earnedAt: "desc" }] }) : [],
+      needs("comissoes") ? options.database.workspaceMember.findMany({ where: { workspaceId: context.workspaceId, status: "ACTIVE", deletedAt: null }, select: { id: true, user: { select: { displayName: true } } }, orderBy: { user: { displayName: "asc" } } }) : [],
+      needsCashBalances ? options.database.financialEntry.groupBy({ by: ["financialAccountId", "direction"], where: { workspaceId: context.workspaceId, status: "SETTLED", settledAt: { lt: from } }, _sum: { amountCents: true } }) : [],
       options.database.financialCostCenter.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
-      options.database.financialRecurrence.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { firstDueAt: "desc" }] }),
-      options.database.bankStatementImport.findMany({ where: { workspaceId: context.workspaceId }, orderBy: { createdAt: "desc" }, take: 30 }),
-      options.database.bankStatementLine.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ occurredAt: "desc" }, { id: "asc" }], take: 500 }),
-      options.database.financialAttachment.findMany({ where: { workspaceId: context.workspaceId }, select: { id: true, financialEntryId: true, fileName: true, mimeType: true, sizeBytes: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: 500 }),
-      canManageCommissions ? readCommercialCompensationScreen(options.database, context.workspaceId, from, to, workspace.timeZone, query.compensation) : [],
+      needs("recorrencias") ? options.database.financialRecurrence.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ active: "desc" }, { firstDueAt: "desc" }] }) : [],
+      needs("conciliacao") ? options.database.bankStatementImport.findMany({ where: { workspaceId: context.workspaceId }, orderBy: { createdAt: "desc" }, take: 30 }) : [],
+      needs("conciliacao") ? options.database.bankStatementLine.findMany({ where: { workspaceId: context.workspaceId }, orderBy: [{ occurredAt: "desc" }, { id: "asc" }], take: 500 }) : [],
+      needs("comprovantes") ? options.database.financialAttachment.findMany({ where: { workspaceId: context.workspaceId }, select: { id: true, financialEntryId: true, fileName: true, mimeType: true, sizeBytes: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: 500 }) : [],
+      canManageCommissions && needsCommissions ? readCommercialCompensationScreen(options.database, context.workspaceId, from, to, workspace.timeZone, query.compensation) : [],
       historyFrom ? options.database.financialEntry.findMany({
         where: { workspaceId: context.workspaceId, status: "SETTLED", settledAt: { gte: historyFrom, lt: from } },
         select: { settledAt: true, financialAccountId: true, categoryId: true, direction: true, amountCents: true },
       }) : [],
-      options.database.bankStatementLine.count({ where: { workspaceId: context.workspaceId, status: "UNMATCHED" } }),
+      needs("dashboard", "conciliacao") ? options.database.bankStatementLine.count({ where: { workspaceId: context.workspaceId, status: "UNMATCHED" } }) : 0,
     ]);
 
     const todayEnd = view?.entries ? workspaceDayRange(today, workspace.timeZone).end : to;

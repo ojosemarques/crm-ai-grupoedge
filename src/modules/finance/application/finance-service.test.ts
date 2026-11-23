@@ -5,6 +5,53 @@ import { createFinanceService, reconcileCommissionsInTransaction } from "./finan
 const context = { workspaceId: "workspace", actorId: "actor" } as AuthenticatedContext;
 
 describe("finance service", () => {
+  it("carrega somente os domínios necessários para a seção financeira ativa", async () => {
+    const optionalFindMany = () => vi.fn().mockResolvedValue([]);
+    const database = {
+      workspace: { findUniqueOrThrow: vi.fn().mockResolvedValue({ timeZone: "America/Sao_Paulo" }) },
+      financialCategory: { findMany: vi.fn().mockResolvedValue([]) },
+      financialAccount: { findMany: vi.fn().mockResolvedValue([]) },
+      financialCostCenter: { findMany: vi.fn().mockResolvedValue([]) },
+      financialEntry: { findMany: optionalFindMany(), groupBy: optionalFindMany() },
+      invoice: { findMany: optionalFindMany() },
+      payment: { findMany: optionalFindMany() },
+      subscription: { findMany: optionalFindMany() },
+      revenueMovement: { findMany: optionalFindMany() },
+      opportunity: { findMany: optionalFindMany() },
+      commissionRule: { findMany: optionalFindMany() },
+      commission: { findMany: optionalFindMany() },
+      workspaceMember: { findMany: optionalFindMany() },
+      financialRecurrence: { findMany: optionalFindMany() },
+      bankStatementImport: { findMany: optionalFindMany() },
+      bankStatementLine: { findMany: optionalFindMany(), count: vi.fn().mockResolvedValue(0) },
+      financialAttachment: { findMany: optionalFindMany() },
+    };
+    const service = createFinanceService({
+      database: database as never,
+      authorization: { assertAuthorized: vi.fn(), authorize: vi.fn().mockResolvedValue({ allowed: true }) } as never,
+      now: () => new Date("2026-11-23T12:00:00.000Z"),
+    });
+
+    const result = await service.screen(context, {}, { section: "categorias" });
+
+    expect(result.categories).toEqual([]);
+    expect(database.financialCategory.findMany).toHaveBeenCalledOnce();
+    expect(database.financialAccount.findMany).toHaveBeenCalledOnce();
+    expect(database.financialCostCenter.findMany).toHaveBeenCalledOnce();
+    expect(database.financialEntry.findMany).not.toHaveBeenCalled();
+    expect(database.invoice.findMany).not.toHaveBeenCalled();
+    expect(database.payment.findMany).not.toHaveBeenCalled();
+    expect(database.bankStatementLine.findMany).not.toHaveBeenCalled();
+    expect(database.bankStatementLine.count).not.toHaveBeenCalled();
+    expect(database.financialAttachment.findMany).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    await service.screen(context, {}, { section: "despesas" });
+    expect(database.financialEntry.findMany).toHaveBeenCalledOnce();
+    expect(database.payment.findMany).toHaveBeenCalledOnce();
+    expect(database.invoice.findMany).not.toHaveBeenCalled();
+  });
+
   it("apaga lançamento isolado no workspace com permissão e auditoria", async () => {
     const entryId = "11111111-1111-4111-8111-111111111111";
     const entry = {

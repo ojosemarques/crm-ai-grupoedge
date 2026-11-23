@@ -346,6 +346,32 @@ describe("fila priorizada do SDR", () => {
     expect(screen.sections.every((section) => section.items.length === 0)).toBe(true);
   });
 
+  it("monta as dez filas com uma única varredura operacional", async () => {
+    let operationalQueueQueries = 0;
+    const instrumentedDatabase = new Proxy(database, {
+      get(target, property, receiver) {
+        if (property !== "$queryRaw") return Reflect.get(target, property, receiver);
+        return (...args: Parameters<typeof database.$queryRaw>) => {
+          const statement = args[0] as { strings?: readonly string[] };
+          if (statement.strings?.join("").includes("WITH queue_rows AS MATERIALIZED")) {
+            operationalQueueQueries += 1;
+          }
+          return target.$queryRaw(...args);
+        };
+      },
+    });
+    const service = createSdrQueueService({
+      database: instrumentedDatabase,
+      authorization,
+      now: () => now,
+    });
+
+    const screen = await service.getScreen(isolatedSdrContext, {});
+
+    expect(screen.sections).toHaveLength(10);
+    expect(operationalQueueQueries).toBe(1);
+  });
+
   it("retira do Meu Dia tarefas de SLA e leads em conversa iniciada", async () => {
     const before = await queueService().getScreen(isolatedSdrContext, {});
     const slaLead = await createLead(`CRM10 SLA fora do Meu Dia ${randomUUID().slice(0, 8)}`, "P2", false);

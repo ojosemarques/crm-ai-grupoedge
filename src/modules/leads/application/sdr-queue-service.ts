@@ -68,6 +68,7 @@ type SdrQueueServiceOptions = Readonly<{
 }>;
 
 type RawQueueRow = Readonly<{
+  sectionKey: SdrQueueBucket;
   id: string;
   fullName: string;
   jobTitle: string | null;
@@ -166,7 +167,7 @@ function bucketSql(bucket: SdrQueueBucket, now: Date, selectedLocalDate: string)
   }
 }
 
-function operationalOrderSql(now: Date): Prisma.Sql {
+function operationalPrioritySql(now: Date): Prisma.Sql {
   return Prisma.sql`
     CASE
       WHEN next_task."sourceKey" LIKE 'active-prospecting:%'
@@ -183,13 +184,7 @@ function operationalOrderSql(now: Date): Prisma.Sql {
       WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P2' THEN 7
       WHEN stage."position" = 0 AND COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") = 'P3' THEN 8
       ELSE 9
-    END ASC,
-    CASE WHEN l."awaitingHumanResponse" THEN l."lastInboundResponseAt" END DESC NULLS LAST,
-    CASE WHEN stage."position" = 0 THEN latest_cycle."receivedAt" END ASC NULLS LAST,
-    CASE WHEN COALESCE(next_task."dueAt", l."nextActionAt") < ${now} THEN COALESCE(next_task."dueAt", l."nextActionAt") END ASC NULLS LAST,
-    COALESCE(next_task."dueAt", l."nextActionAt") ASC NULLS LAST,
-    l."createdAt" ASC,
-    l."id" ASC
+    END
   `;
 }
 
@@ -422,47 +417,126 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       AND ${leadVisibilitySql(context, scope)}
       ${memberFilter}
     `;
-    const order = operationalOrderSql(now);
-    const rowsBySection = await Promise.all(
-      sectionDefinitions.map((definition) =>
-        options.database.$queryRaw<RawQueueRow[]>(Prisma.sql`
-          SELECT
-            l."id",
-            l."fullName",
-            l."jobTitle",
-            COALESCE(l."latestInterestSummary", l."interestSummary") AS "pain",
-            COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") AS "priorityCode",
-            latest_score."score",
-            COALESCE(latest_score."reason", latest_cycle."priorityName") AS "priorityReason",
-            COALESCE(owner_user."displayName", responsible_queue."name") AS "responsibleName",
-            CASE WHEN owner."id" IS NULL THEN 'QUEUE' ELSE 'MEMBER' END AS "responsibleType",
-            pipeline."name" AS "pipelineName",
-            stage."name" AS "stageName",
-            stage."position" AS "stagePosition",
-            COALESCE(latest_cycle."receivedAt", l."createdAt") AS "receivedAt",
-            latest_cycle."firstHumanAttemptAt",
-            ${slaSeconds} AS "slaSeconds",
-            latest_cycle."healthyMaxSeconds",
-            latest_cycle."attentionMaxSeconds",
-            l."lastActivityAt",
-            latest_activity."subject" AS "lastActivitySubject",
-            COALESCE(projected_task."id", l."nextActionTaskId")::text AS "nextActionTaskId",
-            COALESCE(projected_task."dueAt", l."nextActionAt") AS "nextActionAt",
-            COALESCE(projected_task."title", l."nextActionDescription") AS "nextActionDescription",
-            projected_task."kind"::text AS "nextActionKind",
-            projected_task."sourceKey" AS "nextActionSourceKey",
-            l."awaitingHumanResponse",
-            l."lastInboundResponseAt",
-            meeting_today."id"::text AS "meetingTodayId",
-            meeting_today."startsAt" AS "meetingTodayStartsAt",
-            COUNT(*) OVER()::integer AS "sectionTotal"
-          ${joins}
-          WHERE ${baseWhere} AND ${bucketSql(definition.key, now, selectedLocalDate)}
-          ORDER BY ${order}
-          LIMIT ${definition.limit}
-        `),
+    const queueRows = await options.database.$queryRaw<RawQueueRow[]>(Prisma.sql`
+      WITH queue_rows AS MATERIALIZED (
+        SELECT
+          l."id",
+          l."fullName",
+          l."jobTitle",
+          COALESCE(l."latestInterestSummary", l."interestSummary") AS "pain",
+          COALESCE(latest_score."priorityBandCode"::text, latest_cycle."priorityCode") AS "priorityCode",
+          latest_score."score",
+          COALESCE(latest_score."reason", latest_cycle."priorityName") AS "priorityReason",
+          COALESCE(owner_user."displayName", responsible_queue."name") AS "responsibleName",
+          CASE WHEN owner."id" IS NULL THEN 'QUEUE' ELSE 'MEMBER' END AS "responsibleType",
+          pipeline."name" AS "pipelineName",
+          stage."name" AS "stageName",
+          stage."position" AS "stagePosition",
+          COALESCE(latest_cycle."receivedAt", l."createdAt") AS "receivedAt",
+          latest_cycle."firstHumanAttemptAt",
+          ${slaSeconds} AS "slaSeconds",
+          latest_cycle."healthyMaxSeconds",
+          latest_cycle."attentionMaxSeconds",
+          l."lastActivityAt",
+          latest_activity."subject" AS "lastActivitySubject",
+          COALESCE(projected_task."id", l."nextActionTaskId")::text AS "nextActionTaskId",
+          COALESCE(projected_task."dueAt", l."nextActionAt") AS "nextActionAt",
+          COALESCE(projected_task."title", l."nextActionDescription") AS "nextActionDescription",
+          projected_task."kind"::text AS "nextActionKind",
+          projected_task."sourceKey" AS "nextActionSourceKey",
+          l."awaitingHumanResponse",
+          l."lastInboundResponseAt",
+          meeting_today."id"::text AS "meetingTodayId",
+          meeting_today."startsAt" AS "meetingTodayStartsAt",
+          ${operationalPrioritySql(now)} AS "operationalPriority",
+          CASE WHEN l."awaitingHumanResponse" THEN l."lastInboundResponseAt" END AS "responseOrderAt",
+          CASE WHEN stage."position" = 0 THEN latest_cycle."receivedAt" END AS "newLeadOrderAt",
+          CASE
+            WHEN COALESCE(next_task."dueAt", l."nextActionAt") < ${now}
+              THEN COALESCE(next_task."dueAt", l."nextActionAt")
+          END AS "overdueOrderAt",
+          l."createdAt" AS "leadCreatedAt",
+          ${bucketSql("NEW", now, selectedLocalDate)} AS "isNew",
+          ${bucketSql("P1", now, selectedLocalDate)} AS "isP1",
+          ${bucketSql("WAITING_CALL", now, selectedLocalDate)} AS "isWaitingCall",
+          ${bucketSql("RESPONDED", now, selectedLocalDate)} AS "isResponded",
+          ${bucketSql("RETURN_TODAY", now, selectedLocalDate)} AS "isReturnToday",
+          ${bucketSql("OVERDUE", now, selectedLocalDate)} AS "isOverdue",
+          ${bucketSql("MEETINGS_TODAY", now, selectedLocalDate)} AS "isMeetingToday",
+          ${bucketSql("STALE_CONTACT", now, selectedLocalDate)} AS "isStaleContact",
+          ${bucketSql("MISSING_NEXT_ACTION", now, selectedLocalDate)} AS "isMissingNextAction"
+        ${joins}
+        WHERE ${baseWhere}
       ),
-    );
+      section_rows AS (
+        SELECT queue_rows.*, section."key" AS "sectionKey", section."limit" AS "sectionLimit"
+        FROM queue_rows
+        CROSS JOIN LATERAL (VALUES
+          ('NOW', TRUE, 20),
+          ('NEW', queue_rows."isNew", 8),
+          ('P1', queue_rows."isP1", 8),
+          ('WAITING_CALL', queue_rows."isWaitingCall", 8),
+          ('RESPONDED', queue_rows."isResponded", 8),
+          ('RETURN_TODAY', queue_rows."isReturnToday", 8),
+          ('OVERDUE', queue_rows."isOverdue", 8),
+          ('MEETINGS_TODAY', queue_rows."isMeetingToday", 8),
+          ('STALE_CONTACT', queue_rows."isStaleContact", 8),
+          ('MISSING_NEXT_ACTION', queue_rows."isMissingNextAction", 8)
+        ) AS section("key", "included", "limit")
+        WHERE section."included"
+      ),
+      ranked_rows AS (
+        SELECT
+          section_rows.*,
+          COUNT(*) OVER (PARTITION BY "sectionKey")::integer AS "sectionTotal",
+          ROW_NUMBER() OVER (
+            PARTITION BY "sectionKey"
+            ORDER BY
+              "operationalPriority" ASC,
+              "responseOrderAt" DESC NULLS LAST,
+              "newLeadOrderAt" ASC NULLS LAST,
+              "overdueOrderAt" ASC NULLS LAST,
+              "nextActionAt" ASC NULLS LAST,
+              "leadCreatedAt" ASC,
+              "id" ASC
+          ) AS "sectionPosition"
+        FROM section_rows
+      )
+      SELECT
+        "sectionKey",
+        "id",
+        "fullName",
+        "jobTitle",
+        "pain",
+        "priorityCode",
+        "score",
+        "priorityReason",
+        "responsibleName",
+        "responsibleType",
+        "pipelineName",
+        "stageName",
+        "stagePosition",
+        "receivedAt",
+        "firstHumanAttemptAt",
+        "slaSeconds",
+        "healthyMaxSeconds",
+        "attentionMaxSeconds",
+        "lastActivityAt",
+        "lastActivitySubject",
+        "nextActionTaskId",
+        "nextActionAt",
+        "nextActionDescription",
+        "nextActionKind",
+        "nextActionSourceKey",
+        "awaitingHumanResponse",
+        "lastInboundResponseAt",
+        "meetingTodayId",
+        "meetingTodayStartsAt",
+        "sectionTotal"
+      FROM ranked_rows
+      WHERE "sectionPosition" <= "sectionLimit"
+      ORDER BY "sectionKey", "sectionPosition"
+    `);
     const today = selectedDay;
     const todayLocal = selectedLocalDate;
     const productivityMemberSql = productivityMemberIds.length === 0
@@ -838,8 +912,14 @@ export function createSdrQueueService(options: SdrQueueServiceOptions) {
       [...politiciansTouchedRows, ...coldPendingRows, ...returnRows].map((row) => row.leadId),
     );
 
-    const sections: SdrQueueSection[] = sectionDefinitions.map((definition, index) => {
-      const rawRows = rowsBySection[index] ?? [];
+    const rowsBySection = new Map<SdrQueueBucket, RawQueueRow[]>();
+    for (const row of queueRows) {
+      const sectionRows = rowsBySection.get(row.sectionKey) ?? [];
+      sectionRows.push(row);
+      rowsBySection.set(row.sectionKey, sectionRows);
+    }
+    const sections: SdrQueueSection[] = sectionDefinitions.map((definition) => {
+      const rawRows = rowsBySection.get(definition.key) ?? [];
       const items: SdrQueueItem[] = rawRows.map((row) => {
         const priorityCode: SdrQueueItem["priorityCode"] =
           row.priorityCode === "P1" || row.priorityCode === "P2" || row.priorityCode === "P3"
