@@ -40,7 +40,22 @@
 .category[data-tone="income"] { background: color-mix(in srgb, var(--entry-income) 11%, var(--card)); color: color-mix(in srgb, var(--entry-income) 70%, var(--foreground)); }
 .category[data-tone="expense"] { background: color-mix(in srgb, var(--entry-expense) 10%, var(--card)); color: color-mix(in srgb, var(--entry-expense) 74%, var(--foreground)); }
 .matched { font-size: 11px; white-space: nowrap; }
+.actionsHeader, .actionsCell { width: 46px; text-align: right !important; }
+.actionsCell { position: relative; }
+.rowMenu { display: inline-block; position: relative; }
+.rowMenu summary { align-items: center; background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--muted-foreground); cursor: pointer; display: inline-flex; font-size: 14px; font-weight: 700; height: 30px; justify-content: center; list-style: none; opacity: 0; width: 32px; }
+.rowMenu summary::-webkit-details-marker { display: none; }
+.rowMenu summary:hover, .rowMenu summary:focus-visible, .rowMenu[open] summary { background: var(--surface-subtle); border-color: var(--border); color: var(--foreground); opacity: 1; }
+.tableWrap tbody tr:hover .rowMenu summary, .tableWrap tbody tr:focus-within .rowMenu summary { opacity: 1; }
+.rowMenuPanel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 28px rgb(15 23 42 / 16%); min-width: 172px; padding: 5px; position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; }
+.rowMenuPanel button { align-items: center; background: transparent; border: 0; border-radius: 7px; color: var(--destructive, #b42318); cursor: pointer; display: flex; font-size: 11px; gap: 7px; padding: 8px 9px; text-align: left; width: 100%; }
+.rowMenuPanel button:hover, .rowMenuPanel button:focus-visible { background: color-mix(in srgb, var(--entry-expense) 10%, var(--card)); }
+.rowMenuPanel button:disabled { cursor: not-allowed; opacity: .55; }
+.deletePrompt { margin-top: 12px; font-size: 13px; }
+.deleteWarning { color: var(--entry-expense); font-size: 12px; margin-top: 10px; }
+.deleteActions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 20px; }
 .empty { padding: 17px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 12px; }
+@media (hover: none) { .rowMenu summary { opacity: 1; } }
 @media (max-width: 760px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .metric { padding: 11px; }
@@ -52,6 +67,8 @@
   .tableWrap td.description { grid-column: 1 / -1; grid-row: 1; font-size: 14px; }
   .tableWrap td.description::before { content: none; }
   .tableWrap td.value { text-align: left; }
+  .tableWrap td.actionsCell { align-self: end; grid-column: 2; grid-row: 1; justify-self: end; }
+  .tableWrap td.actionsCell::before { content: none; }
 }
 
 .notes { margin-top: 4px; font-size: 11px; }

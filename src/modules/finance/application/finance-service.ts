@@ -7,6 +7,7 @@ import {
   createFinancialAccountSchema,
   createFinancialCategorySchema,
   createFinancialEntrySchema,
+  deleteFinancialEntrySchema,
   financeCommandSchema,
   financeQuerySchema,
   financialAttachmentMetadataSchema,
@@ -595,6 +596,55 @@ export function createFinanceService(options: Options) {
       const result = await options.database.financialEntry.updateMany({ where: { id: input.entryId, workspaceId: context.workspaceId, status: "PLANNED", revision: input.expectedRevision, ...(input.status === "SETTLED" ? { approvalStatus: { in: ["NOT_REQUIRED", "APPROVED"] } } : {}) }, data: input.status === "SETTLED" ? { status: "SETTLED", settledAt: input.settledAt, revision: { increment: 1 }, updatedByActorId: context.actorId } : { status: "CANCELLED", cancelledAt: options.now(), cancellationReason: input.reason, revision: { increment: 1 }, updatedByActorId: context.actorId } });
       if (result.count !== 1) fail("Lançamento alterado ou indisponível.", "FINANCE_ENTRY_CONFLICT");
       return options.database.financialEntry.findFirstOrThrow({ where: { id: input.entryId, workspaceId: context.workspaceId } });
+    }
+    if (command.action === "DELETE_ENTRY") {
+      const input = deleteFinancialEntrySchema.parse(command);
+      await options.authorization.assertAuthorized(context, PermissionKeys.FINANCE_MANAGE, resource(context.workspaceId, input.entryId));
+      return options.database.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`finance-entry-delete:${context.workspaceId}:${input.entryId}`}, 0))`;
+        const entry = await tx.financialEntry.findFirst({
+          where: { id: input.entryId, workspaceId: context.workspaceId },
+          select: {
+            id: true, categoryId: true, financialAccountId: true, direction: true, status: true,
+            description: true, amountCents: true, competenceAt: true, dueAt: true, settledAt: true, revision: true,
+          },
+        });
+        if (!entry) fail("Lançamento não encontrado.", "FINANCE_ENTRY_NOT_FOUND", 404);
+        if (entry.revision !== input.expectedRevision) fail("O lançamento foi alterado. Atualize a página antes de apagar.", "FINANCE_ENTRY_CONFLICT");
+        const [bankLines, attachments, allocations] = await Promise.all([
+          tx.bankStatementLine.count({ where: { workspaceId: context.workspaceId, financialEntryId: entry.id } }),
+          tx.financialAttachment.count({ where: { workspaceId: context.workspaceId, financialEntryId: entry.id } }),
+          tx.commercialCompensationAllocation.count({ where: { workspaceId: context.workspaceId, financialEntryId: entry.id } }),
+        ]);
+        if (bankLines || attachments || allocations) {
+          fail("Este lançamento possui conciliação, comprovante ou vínculo de comissão e não pode ser apagado.", "FINANCE_ENTRY_DELETE_BLOCKED");
+        }
+        await tx.auditLog.create({ data: {
+          workspaceId: context.workspaceId,
+          actorId: context.actorId,
+          action: "finance.entry.deleted",
+          entityType: "FinancialEntry",
+          entityId: entry.id,
+          reason: "Exclusão manual pela tela de lançamentos.",
+          changes: {
+            categoryId: entry.categoryId,
+            financialAccountId: entry.financialAccountId,
+            direction: entry.direction,
+            status: entry.status,
+            description: entry.description,
+            amountCents: entry.amountCents.toString(),
+            competenceAt: entry.competenceAt.toISOString(),
+            dueAt: entry.dueAt.toISOString(),
+            settledAt: entry.settledAt?.toISOString() ?? null,
+            revision: entry.revision,
+          },
+        } });
+        const deleted = await tx.financialEntry.deleteMany({
+          where: { workspaceId: context.workspaceId, id: entry.id, revision: input.expectedRevision },
+        });
+        if (deleted.count !== 1) fail("O lançamento foi alterado. Atualize a página antes de apagar.", "FINANCE_ENTRY_CONFLICT");
+        return { id: entry.id, deleted: true };
+      }, { isolationLevel: "Serializable" });
     }
     if (command.action === "CREATE_COMMISSION_RULE") {
       const input = createCommissionRuleSchema.parse(command);

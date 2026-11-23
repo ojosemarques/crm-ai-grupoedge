@@ -5,6 +5,93 @@ import { createFinanceService, reconcileCommissionsInTransaction } from "./finan
 const context = { workspaceId: "workspace", actorId: "actor" } as AuthenticatedContext;
 
 describe("finance service", () => {
+  it("apaga lançamento isolado no workspace com permissão e auditoria", async () => {
+    const entryId = "11111111-1111-4111-8111-111111111111";
+    const entry = {
+      id: entryId, categoryId: "category", financialAccountId: "account", direction: "EXPENSE", status: "SETTLED",
+      description: "Despesa duplicada", amountCents: 1_800n, competenceAt: new Date("2026-11-23T03:00:00Z"),
+      dueAt: new Date("2026-11-23T03:00:00Z"), settledAt: new Date("2026-11-23T03:00:00Z"), revision: 2,
+    };
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      financialEntry: { findFirst: vi.fn().mockResolvedValue(entry), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      bankStatementLine: { count: vi.fn().mockResolvedValue(0) },
+      financialAttachment: { count: vi.fn().mockResolvedValue(0) },
+      commercialCompensationAllocation: { count: vi.fn().mockResolvedValue(0) },
+      auditLog: { create: vi.fn().mockResolvedValue({ id: "audit" }) },
+    };
+    const database = { $transaction: vi.fn((callback) => callback(tx)) };
+    const assertAuthorized = vi.fn();
+    const service = createFinanceService({ database: database as never, authorization: { assertAuthorized } as never, now: () => new Date() });
+
+    await expect(service.command(context, { action: "DELETE_ENTRY", entryId, expectedRevision: 2 })).resolves.toEqual({ id: entryId, deleted: true });
+    expect(assertAuthorized).toHaveBeenCalledWith(context, "finance.manage", { workspaceId: "workspace", resourceType: "Finance", resourceId: entryId });
+    expect(tx.financialEntry.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: entryId, workspaceId: "workspace" } }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "finance.entry.deleted", entityId: entryId }) }));
+    expect(tx.financialEntry.deleteMany).toHaveBeenCalledWith({ where: { workspaceId: "workspace", id: entryId, revision: 2 } });
+  });
+
+  it("nega exclusão sem autorização antes de abrir transação", async () => {
+    const database = { $transaction: vi.fn() };
+    const service = createFinanceService({
+      database: database as never,
+      authorization: { assertAuthorized: vi.fn().mockRejectedValue(new Error("denied")) } as never,
+      now: () => new Date(),
+    });
+    await expect(service.command(context, { action: "DELETE_ENTRY", entryId: "11111111-1111-4111-8111-111111111111", expectedRevision: 1 })).rejects.toThrow("denied");
+    expect(database.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("bloqueia exclusão de lançamento conciliado", async () => {
+    const entryId = "11111111-1111-4111-8111-111111111111";
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      financialEntry: { findFirst: vi.fn().mockResolvedValue({
+        id: entryId, categoryId: "category", financialAccountId: "account", direction: "EXPENSE", status: "SETTLED",
+        description: "Despesa conciliada", amountCents: 1_800n, competenceAt: new Date(), dueAt: new Date(), settledAt: new Date(), revision: 1,
+      }), deleteMany: vi.fn() },
+      bankStatementLine: { count: vi.fn().mockResolvedValue(1) },
+      financialAttachment: { count: vi.fn().mockResolvedValue(0) },
+      commercialCompensationAllocation: { count: vi.fn().mockResolvedValue(0) },
+      auditLog: { create: vi.fn() },
+    };
+    const service = createFinanceService({
+      database: { $transaction: vi.fn((callback) => callback(tx)) } as never,
+      authorization: { assertAuthorized: vi.fn() } as never,
+      now: () => new Date(),
+    });
+
+    await expect(service.command(context, { action: "DELETE_ENTRY", entryId, expectedRevision: 1 })).rejects.toThrow("possui conciliação");
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+    expect(tx.financialEntry.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("interrompe a exclusão quando a revisão muda durante a operação", async () => {
+    const entryId = "11111111-1111-4111-8111-111111111111";
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      financialEntry: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: entryId, categoryId: "category", financialAccountId: "account", direction: "EXPENSE", status: "PLANNED",
+          description: "Despesa concorrente", amountCents: 1_800n, competenceAt: new Date(), dueAt: new Date(), settledAt: null, revision: 1,
+        }),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      bankStatementLine: { count: vi.fn().mockResolvedValue(0) },
+      financialAttachment: { count: vi.fn().mockResolvedValue(0) },
+      commercialCompensationAllocation: { count: vi.fn().mockResolvedValue(0) },
+      auditLog: { create: vi.fn().mockResolvedValue({ id: "audit" }) },
+    };
+    const service = createFinanceService({
+      database: { $transaction: vi.fn((callback) => callback(tx)) } as never,
+      authorization: { assertAuthorized: vi.fn() } as never,
+      now: () => new Date(),
+    });
+
+    await expect(service.command(context, { action: "DELETE_ENTRY", entryId, expectedRevision: 1 })).rejects.toThrow("foi alterado");
+    expect(tx.financialEntry.deleteMany).toHaveBeenCalledWith({ where: { workspaceId: "workspace", id: entryId, revision: 1 } });
+  });
+
   it("limita o extrato autorizado por workspace, período e página sem selecionar dados brutos", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
     const assertAuthorized = vi.fn().mockRejectedValueOnce(new Error("denied"));

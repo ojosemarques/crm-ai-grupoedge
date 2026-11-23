@@ -94,6 +94,12 @@ export const settleFinancialEntrySchema = z.discriminatedUnion("status", [
   }).strict(),
 ]);
 
+export const deleteFinancialEntrySchema = z.object({
+  action: z.literal("DELETE_ENTRY"),
+  entryId: id,
+  expectedRevision: z.number().int().positive(),
+}).strict();
+
 export const createCommissionRuleSchema = z.object({
   action: z.literal("CREATE_COMMISSION_RULE"),
   sellerMemberId: id,
@@ -157,6 +163,7 @@ export const financeCommandSchema = z.discriminatedUnion("action", [
   createFinancialCategorySchema,
   createFinancialAccountSchema,
   createFinancialEntrySchema,
+  deleteFinancialEntrySchema,
   z.object({ action: z.literal("SETTLE_ENTRY"), entryId: id, status: z.enum(["SETTLED", "CANCELLED"]), settledAt: z.coerce.date().optional(), reason: text(8, 500).optional(), expectedRevision: z.number().int().positive() }).strict(),
   createCommissionRuleSchema,
   updateCommissionSchema,

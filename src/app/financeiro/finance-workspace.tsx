@@ -102,10 +102,12 @@ export function FinanceWorkspace({ initialScreen, section, month, year, goals, c
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(apiMessage(body, "Não foi possível concluir a operação."));
       setNotice({ kind: "success", message: success }); setDialog(null); setSettling(null); setPayingCommission(null); onSuccess?.(); router.refresh();
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha inesperada.";
       setNotice({ kind: "error", message });
       onError?.(message);
+      return false;
     }
     finally { setBusy(false); }
   }
@@ -137,7 +139,8 @@ export function FinanceWorkspace({ initialScreen, section, month, year, goals, c
     {notice ? <p className={notice.kind === "error" ? styles.error : styles.success} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
 
     {section === "dashboard" && dashboard ? <FinanceDashboard data={dashboard} href={href}/> : null}
-    {section === "lancamentos" ? <FinanceEntries key={`${year}-${month}`} rows={entries} timeZone={timeZone} /> : null}
+    {section === "lancamentos" ? <FinanceEntries key={`${year}-${month}`} rows={entries} timeZone={timeZone} canManage={canManage} busy={busy}
+      onDelete={(row) => command({ action: "DELETE_ENTRY", entryId: row.id, expectedRevision: Number(row.revision ?? 1) }, "Lançamento apagado com sucesso.")} /> : null}
     {section === "entradas" ? <Panel title="Entradas" description="Receitas previstas e recebimentos confirmados" action={canManage ? <Button onClick={() => openEntry("INCOME")} size="sm">Nova entrada</Button> : null}><EntryTable timeZone={timeZone} empty="Nenhuma entrada no período" onSettle={canManage ? setSettling : undefined} rows={income}/></Panel> : null}
     {section === "despesas" ? <><ApprovalQueue canManage={canManage} command={command} rows={expenses.filter((row) => row.approvalStatus === "PENDING")}/><Panel title="Despesas" description="Custos, despesas recorrentes e pagamentos" action={canManage ? <Button onClick={() => openEntry("EXPENSE")} size="sm">Nova despesa</Button> : null}><EntryTable timeZone={timeZone} empty="Nenhuma despesa no período" onSettle={canManage ? setSettling : undefined} rows={expenses}/></Panel></> : null}
     {section === "fluxo-caixa" && cashFlowFilters ? <CashFlow report={object(screen.cashFlowReport)} accounts={accounts} filters={cashFlowFilters} reconciliationHref={href("conciliacao")}/> : null}

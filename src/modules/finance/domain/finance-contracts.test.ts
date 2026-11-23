@@ -2,11 +2,19 @@ import { describe, expect, it } from "vitest";
 import {
   commissionAmountCents,
   createFinancialEntrySchema,
+  deleteFinancialEntrySchema,
   financeQuerySchema,
   nextCommissionStatus,
 } from "./finance-contracts";
 
 describe("finance domain", () => {
+  it("valida exclusão otimista de lançamento", () => {
+    expect(deleteFinancialEntrySchema.parse({ action: "DELETE_ENTRY", entryId: "11111111-1111-4111-8111-111111111111", expectedRevision: 2 })).toEqual({
+      action: "DELETE_ENTRY", entryId: "11111111-1111-4111-8111-111111111111", expectedRevision: 2,
+    });
+    expect(() => deleteFinancialEntrySchema.parse({ action: "DELETE_ENTRY", entryId: "fora-do-workspace", expectedRevision: 0 })).toThrow();
+  });
+
   it("calcula comissão em basis points com arredondamento de centavo", () => {
     expect(commissionAmountCents(10_001n, 250)).toBe(250n);
     expect(commissionAmountCents(10_020n, 250)).toBe(251n);

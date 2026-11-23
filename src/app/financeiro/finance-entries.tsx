@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -38,8 +39,15 @@ function totalsFor(rows: Row[]) {
   return { income, expense };
 }
 
-export function FinanceEntries({ rows, timeZone }: Readonly<{ rows: Row[]; timeZone: string }>) {
+export function FinanceEntries({ rows, timeZone, canManage, busy, onDelete }: Readonly<{
+  rows: Row[];
+  timeZone: string;
+  canManage: boolean;
+  busy: boolean;
+  onDelete: (row: Row) => Promise<boolean>;
+}>) {
   const [filters, setFilters] = useState(emptyFilters);
+  const [pendingDelete, setPendingDelete] = useState<Row | null>(null);
   const query = fold(filters.search.trim());
   const visible = rows.filter((row) =>
     (!filters.account || account(row) === filters.account)
@@ -94,6 +102,7 @@ export function FinanceEntries({ rows, timeZone }: Readonly<{ rows: Row[]; timeZ
           <thead role="rowgroup"><tr role="row">
             {["Data da movimentação", "Descrição", "Categoria", "Conta", "Contato", "Valor", "Status", "Conciliação"].map((column) =>
               <th scope="col" role="columnheader" key={column}>{column}</th>)}
+            {canManage ? <th aria-label="Ações" className={styles.actionsHeader} scope="col" role="columnheader"/> : null}
           </tr></thead>
           <tbody role="rowgroup">{visible.map((row) => {
             const entryStatus = status(row);
@@ -131,10 +140,27 @@ export function FinanceEntries({ rows, timeZone }: Readonly<{ rows: Row[]; timeZ
                 {row.reconciled === true ? <span className={styles.matched}>Conciliado</span>
                   : row.type === "MANUAL" && row.status === "SETTLED" ? <span className={styles.muted}>Sem vínculo</span> : "—"}
               </td>
+              {canManage ? <td role="cell" data-label="Ações" className={styles.actionsCell}>
+                {row.type === "MANUAL" ? <details className={styles.rowMenu}>
+                  <summary aria-label={`Ações para ${description(row)}`} title="Ações">•••</summary>
+                  <div className={styles.rowMenuPanel}>
+                    <button disabled={busy} onClick={() => setPendingDelete(row)} type="button"><Icon name="lixeira" size={14}/> Apagar lançamento</button>
+                  </div>
+                </details> : null}
+              </td> : null}
             </tr>;
           })}</tbody>
         </table>
       </div> : <p className={styles.empty}>{rows.length ? "Nenhum lançamento corresponde aos filtros." : "Nenhuma movimentação realizada no período."}</p>}
     </section>
+    {pendingDelete ? <AccessibleDialog busy={busy} labelledBy="delete-finance-entry-title" onDismiss={() => setPendingDelete(null)}>
+      <h2 id="delete-finance-entry-title">Apagar lançamento?</h2>
+      <p className={styles.deletePrompt}><strong>{description(pendingDelete)}</strong><br/>{money(pendingDelete.amountCents)}</p>
+      <p className={styles.deleteWarning}>Esta ação é definitiva e ficará registrada na auditoria.</p>
+      <div className={styles.deleteActions}>
+        <Button disabled={busy} onClick={() => void onDelete(pendingDelete).then((deleted) => { if (deleted) setPendingDelete(null); })} type="button" variant="destructive">{busy ? "Apagando…" : "Apagar lançamento"}</Button>
+        <Button disabled={busy} onClick={() => setPendingDelete(null)} type="button" variant="secondary">Cancelar</Button>
+      </div>
+    </AccessibleDialog> : null}
   </div>;
 }
