@@ -1,34 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ComponentProps } from "react";
+import type { ComponentProps } from "react";
 
 type IntentLinkProps = Omit<ComponentProps<typeof Link>, "prefetch"> & Readonly<{
   prefetch?: false;
 }>;
 
-export function resolveIntentPrefetch(
-  intent: boolean,
-  disabled = false,
-): false | null {
-  return intent && !disabled ? null : false;
+export function resolveIntentPrefetch(): false {
+  return false;
 }
 
 /**
- * Evita renderizar rotas dinâmicas caras só porque o link entrou no viewport.
- * O prefetch volta ao padrão do Next.js quando o ponteiro indica intenção real.
+ * O runtime Cloudflare renderiza as rotas dinâmicas completas durante o prefetch.
+ * Manter o prefetch desligado evita concorrência com a navegação realmente solicitada.
  */
-export function IntentLink({ onMouseEnter, prefetch, ...props }: IntentLinkProps) {
-  const [intent, setIntent] = useState(false);
-
-  return (
-    <Link
-      {...props}
-      onMouseEnter={(event) => {
-        onMouseEnter?.(event);
-        if (!event.defaultPrevented && prefetch !== false) setIntent(true);
-      }}
-      prefetch={resolveIntentPrefetch(intent, prefetch === false)}
-    />
-  );
+export function IntentLink(props: IntentLinkProps) {
+  return <Link {...props} prefetch={resolveIntentPrefetch()} />;
 }

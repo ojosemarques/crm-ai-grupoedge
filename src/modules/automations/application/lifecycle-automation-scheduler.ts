@@ -1,8 +1,10 @@
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
-import type {
-  InternalAutomationEvent,
-  PublicationResult,
+import {
+  automationConditionsSchema,
+  type InternalAutomationEvent,
+  type PublicationResult,
 } from "@/modules/automations/domain/automation-contracts";
+import { matchesAutomationConditions } from "@/modules/automations/domain/automation-policy";
 import { addLocalDays, addWorkspaceCalendarDays, parseWorkspaceLocalDateTime, workspaceDateAt } from "@/shared/core/time/workspace-time";
 
 export type TransactionalAutomationPublisher = Readonly<{
@@ -18,6 +20,32 @@ type LifecycleEventBase = Readonly<{
   occurredAt: Date;
   actorId: string;
 }>;
+
+const EXISTING_RUN_LOOKUP_BATCH_SIZE = 1_000;
+
+type LifecycleCandidate = Readonly<{
+  idempotencyKey: string;
+  event: InternalAutomationEvent;
+}>;
+
+async function findExistingRunKeys(
+  database: PrismaClient,
+  workspaceId: string,
+  keys: readonly string[],
+): Promise<ReadonlySet<string>> {
+  const existing = new Set<string>();
+  for (let offset = 0; offset < keys.length; offset += EXISTING_RUN_LOOKUP_BATCH_SIZE) {
+    const rows = await database.automationRun.findMany({
+      where: {
+        workspaceId,
+        idempotencyKey: { in: keys.slice(offset, offset + EXISTING_RUN_LOOKUP_BATCH_SIZE) },
+      },
+      select: { idempotencyKey: true },
+    });
+    for (const row of rows) existing.add(row.idempotencyKey);
+  }
+  return existing;
+}
 
 async function cancelRuns(
   transaction: Prisma.TransactionClient,
@@ -318,53 +346,80 @@ export function createLifecycleAutomationScanner(options: Readonly<{
       const settings = workspace.commercialSettings[0];
       if (!settings) continue;
       const stagnationCut = new Date(now.getTime() - settings.leadStagnationDays * 86_400_000);
-      const leads = await options.database.lead.findMany({
+      const commonLeadFilter: Prisma.LeadWhereInput = {
+        workspaceId: workspace.id,
+        status: { in: ["OPEN", "QUALIFIED"] },
+        deletedAt: null,
+      };
+      const rules = await options.database.automationRule.findMany({
         where: {
           workspaceId: workspace.id,
-          status: { in: ["OPEN", "QUALIFIED"] },
+          triggerType: { in: ["LEAD_STAGNANT", "LEAD_WITHOUT_NEXT_ACTION"] },
+          status: "ACTIVE",
           deletedAt: null,
         },
-        select: {
-          id: true,
-          updatedAt: true,
-          nextActionTaskId: true,
-          stageHistory: {
-            where: { exitedAt: null },
-            orderBy: [{ enteredAt: "desc" }, { id: "desc" }],
-            take: 1,
-            select: { id: true, enteredAt: true },
-          },
-          tasks: {
-            where: { status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null },
-            take: 1,
-            select: { id: true },
-          },
-        },
+        select: { id: true, triggerType: true, conditions: true },
       });
-      for (const lead of leads) {
+      if (rules.length === 0) continue;
+      const [stagnantLeads, leadsWithoutNextAction] = await Promise.all([
+        options.database.lead.findMany({
+          where: {
+            ...commonLeadFilter,
+            stageHistory: { some: { exitedAt: null, enteredAt: { lte: stagnationCut } } },
+          },
+          select: {
+            id: true,
+            stageHistory: {
+              where: { exitedAt: null },
+              orderBy: [{ enteredAt: "desc" }, { id: "desc" }],
+              take: 1,
+              select: { id: true, enteredAt: true },
+            },
+          },
+        }),
+        options.database.lead.findMany({
+          where: {
+            ...commonLeadFilter,
+            OR: [
+              { nextActionTaskId: null },
+              { tasks: { none: { status: { in: ["OPEN", "IN_PROGRESS"] }, deletedAt: null } } },
+            ],
+          },
+          select: { id: true, updatedAt: true },
+        }),
+      ]);
+      const candidates: LifecycleCandidate[] = [];
+      for (const lead of stagnantLeads) {
         const history = lead.stageHistory[0];
         if (history && history.enteredAt <= stagnationCut) {
-          const result = await options.publish({
-            workspaceId: workspace.id,
-            triggerType: "LEAD_STAGNANT",
-            idempotencyKey: `lead-stagnant:${lead.id}:${history.id}:settings-${settings.revision}`,
-            occurredAt: now,
-            priority: 45,
-            payload: {
-              eventType: "LEAD_STAGNANT",
-              leadId: lead.id,
-              stageHistoryId: history.id,
-              settingsRevision: settings.revision,
-              thresholdDays: settings.leadStagnationDays,
+          const idempotencyKey = `lead-stagnant:${lead.id}:${history.id}:settings-${settings.revision}`;
+          candidates.push({
+            idempotencyKey,
+            event: {
+              workspaceId: workspace.id,
+              triggerType: "LEAD_STAGNANT",
+              idempotencyKey,
+              occurredAt: now,
+              priority: 45,
+              payload: {
+                eventType: "LEAD_STAGNANT",
+                leadId: lead.id,
+                stageHistoryId: history.id,
+                settingsRevision: settings.revision,
+                thresholdDays: settings.leadStagnationDays,
+              },
             },
           });
-          published += result.scheduled.filter((item) => !item.duplicated).length;
         }
-        if (!lead.nextActionTaskId || lead.tasks.length === 0) {
-          const result = await options.publish({
+      }
+      for (const lead of leadsWithoutNextAction) {
+        const idempotencyKey = `lead-without-next-action:${lead.id}:${lead.updatedAt.toISOString()}`;
+        candidates.push({
+          idempotencyKey,
+          event: {
             workspaceId: workspace.id,
             triggerType: "LEAD_WITHOUT_NEXT_ACTION",
-            idempotencyKey: `lead-without-next-action:${lead.id}:${lead.updatedAt.toISOString()}`,
+            idempotencyKey,
             occurredAt: now,
             priority: 90,
             payload: {
@@ -372,9 +427,29 @@ export function createLifecycleAutomationScanner(options: Readonly<{
               leadId: lead.id,
               detectedUpdatedAt: lead.updatedAt.toISOString(),
             },
-          });
-          published += result.scheduled.filter((item) => !item.duplicated).length;
-        }
+          },
+        });
+      }
+      const candidatesWithRunKeys = candidates.map((candidate) => ({
+        candidate,
+        runKeys: rules.flatMap((rule) => {
+          if (rule.triggerType !== candidate.event.triggerType) return [];
+          const conditions = automationConditionsSchema.safeParse(rule.conditions);
+          if (!conditions.success || !matchesAutomationConditions(candidate.event.payload, conditions.data)) {
+            return [];
+          }
+          return [`${candidate.idempotencyKey}:rule:${rule.id}`];
+        }),
+      }));
+      const existingKeys = await findExistingRunKeys(
+        options.database,
+        workspace.id,
+        candidatesWithRunKeys.flatMap(({ runKeys }) => runKeys),
+      );
+      for (const { candidate, runKeys } of candidatesWithRunKeys) {
+        if (runKeys.length === 0 || runKeys.every((key) => existingKeys.has(key))) continue;
+        const result = await options.publish(candidate.event);
+        published += result.scheduled.filter((item) => !item.duplicated).length;
       }
     }
     return Object.freeze({ workspaces: workspaces.length, published });
