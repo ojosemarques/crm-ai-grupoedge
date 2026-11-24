@@ -105,6 +105,11 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     expect(secretRows.map((item) => item.referenceKey).sort()).toEqual(["META_ADS_ACCESS_TOKEN", "META_ADS_APP_SECRET"]);
     expect(JSON.stringify(secretRows)).not.toContain("fixture-only");
     await expect(service.testConnection(admin)).resolves.toMatchObject({ connected: true, accessibleAccounts: [{ id: "act_123456" }] });
+    let connectionAfterTest = await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } });
+    expect(connectionAfterTest.lastSucceededAt).toBeNull();
+    await service.setPaused(admin, connectionAfterTest.revision, true);
+    connectionAfterTest = await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } });
+    await expect(service.setPaused(admin, connectionAfterTest.revision, false)).resolves.toMatchObject({ status: "CONNECTED", enabled: true });
 
     const first = await service.runSync(admin, { mode: "INITIAL", correlationId: "meta-initial-fixture-001" });
     expect(first).toMatchObject({ status: "SUCCEEDED", readCount: 1, createdCount: 1, updatedCount: 0 });
@@ -179,10 +184,12 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     const existing = await database.integrationConnection.findUnique({ where: { workspaceId_key: { workspaceId, key: "meta-ads" } } });
     const configured = await service.configure(admin, { ...(existing ? { revision: existing.revision } : {}), config: { selectedAccountIds: ["act_123456"], businessId: "777777", autoSyncEnabled: true, initialSince: "2046-04-19" } });
     expect(await database.integrationSecretReference.findFirstOrThrow({ where: { workspaceId, connectionId: configured.id, alias: "access-token", disabledAt: null } })).toMatchObject({ referenceKey: "META_ADS_REPORTING_ACCESS_TOKEN" });
+    const lastSucceededBeforeTest = (await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).lastSucceededAt;
     await service.testConnection(admin);
+    expect((await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).lastSucceededAt).toEqual(lastSucceededBeforeTest);
     expect((await service.screen(admin)).config).toMatchObject({ businessId: "777777", autoSyncEnabled: true });
     expect((await service.screen(admin)).accounts[0]).toMatchObject({ selected: true });
-    expect(await service.processDue()).toEqual({ status: "IDLE" });
+    expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
     clock = new Date(clock.getTime() + 16 * 60_000);
     expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
     expect(await service.processDue()).toEqual({ status: "IDLE" });
@@ -201,7 +208,7 @@ describe("CRM-40 conector Meta Ads read-only", () => {
     clock = new Date(clock.getTime() + 6 * 60_000);
     expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
     expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({ status: "CONNECTED", enabled: true, currentErrorCode: null });
-    expect(pull).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), { since: "2046-04-20", until: "2046-04-20" });
+    expect(pull).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), { since: "2046-04-19", until: "2046-04-20" });
     const today = await media.getScreen(admin, { periodStart: "2046-04-20", periodEnd: "2046-04-20" });
     expect(today.totals).toMatchObject({ spendCents: 1025, impressions: 1000 });
     expect(today.mediaSync).toMatchObject({ lastCollectedAt: clock.toISOString(), error: null });
@@ -290,11 +297,9 @@ describe("CRM-40 conector Meta Ads read-only", () => {
         lastErroredAt: new Date(clock.getTime() - 16 * 60_000),
       },
     });
-    const testConnection = vi.spyOn(fixture.adapter, "testConnection");
     const pull = vi.spyOn(fixture.adapter, "pull");
     try {
       expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
-      expect(testConnection).toHaveBeenCalledTimes(1);
       expect(pull).toHaveBeenCalledWith(expect.anything(), expect.anything(), { since: "2046-04-19", until: "2046-04-19" });
       expect(await database.integrationConnection.findUniqueOrThrow({ where: { id: configured.id } })).toMatchObject({
         status: "CONNECTED",
@@ -305,10 +310,9 @@ describe("CRM-40 conector Meta Ads read-only", () => {
       clock = new Date(clock.getTime() + 60_000);
       fixture.setInsightDate("2046-04-20");
       expect(await service.processDue()).toEqual({ status: "SUCCEEDED" });
-      expect(pull).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), { since: "2046-04-20", until: "2046-04-20" });
+      expect(pull).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), { since: "2046-04-19", until: "2046-04-20" });
       expect(await service.processDue()).toEqual({ status: "IDLE" });
     } finally {
-      testConnection.mockRestore();
       pull.mockRestore();
     }
   });

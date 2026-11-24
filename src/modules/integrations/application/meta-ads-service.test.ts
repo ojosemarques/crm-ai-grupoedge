@@ -13,7 +13,7 @@ describe("janela de sincronização Meta Ads", () => {
     })).toEqual({ since: "2026-11-16", until: "2026-11-16" });
   });
 
-  it("atualiza somente o dia corrente quando o cron já está em dia", () => {
+  it("revalida ontem e hoje quando o cron já está em dia", () => {
     expect(resolveMetaAdsSyncWindow({
       mode: "INCREMENTAL",
       automatic: true,
@@ -21,7 +21,7 @@ describe("janela de sincronização Meta Ads", () => {
       today: "2026-11-18",
       initialSince: "2026-09-22",
       lookbackDays: 7,
-    })).toEqual({ since: "2026-11-18", until: "2026-11-18" });
+    })).toEqual({ since: "2026-11-17", until: "2026-11-18" });
   });
 
   it("mantém lookback e intervalo amplo somente na execução manual", () => {

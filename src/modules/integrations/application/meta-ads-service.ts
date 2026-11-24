@@ -38,6 +38,8 @@ const CONNECTION_KEY = "meta-ads";
 const OBJECT_TYPE = "meta_ads_daily_insights";
 const AUTO_SYNC_INTERVAL_MS = 15 * 60_000;
 const AUTO_SYNC_RETRY_MS = 5 * 60_000;
+const REPORTING_TARGET_RECOVERY_MS = 60_000;
+const AUTO_SYNC_FINALIZATION_LOOKBACK_DAYS = 1;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const AUTO_SYNC_OUTAGE_RETRY_MS = 60 * 60_000;
 const REPORTING_TARGET_ERROR_PREFIX = "META_REPORTING_TARGET_";
@@ -88,7 +90,11 @@ export function resolveMetaAdsSyncWindow(input: Readonly<{
   if (input.automatic) {
     if (!input.watermarkDate) return { since: input.initialSince, until: input.initialSince };
     const nextDate = input.watermarkDate < input.today ? addDays(input.watermarkDate, 1) : input.today;
-    return { since: nextDate, until: nextDate };
+    if (nextDate < input.today) return { since: nextDate, until: nextDate };
+    return {
+      since: subtractDays(input.today, Math.min(input.lookbackDays, AUTO_SYNC_FINALIZATION_LOOKBACK_DAYS)),
+      until: input.today,
+    };
   }
   return {
     since: input.mode === "INITIAL" || !input.watermarkDate
@@ -282,7 +288,7 @@ export function createMetaAdsService(options: Options) {
           const internal = await tx.marketingAdAccount.upsert({ where: { workspaceId_channelId_key: { workspaceId: context.workspaceId, channelId: channel.id, key: account.id } }, create: { workspaceId: context.workspaceId, channelId: channel.id, key: account.id, name: account.name, currency: account.currency ?? "BRL", timeZone: account.timezone_name ?? "America/Sao_Paulo", status: accountStatus(account.account_status), createdByActorId: context.actorId, updatedByActorId: context.actorId }, update: { name: account.name, currency: account.currency ?? "BRL", timeZone: account.timezone_name ?? "America/Sao_Paulo", status: accountStatus(account.account_status), updatedByActorId: context.actorId } });
           await tx.externalObjectMapping.upsert({ where: { workspaceId_connectionId_externalObjectType_externalId: { workspaceId: context.workspaceId, connectionId: connection.id, externalObjectType: "meta_ad_account", externalId: account.id } }, create: { workspaceId: context.workspaceId, connectionId: connection.id, externalObjectType: "meta_ad_account", externalId: account.id, internalEntityType: "MARKETING_AD_ACCOUNT", internalEntityId: internal.id, externalVersion: config.graphApiVersion, externalHash: factHash({ id: account.id, name: account.name }), firstRecognizedAt: now, lastRecognizedAt: now, createdByActorId: context.actorId, updatedByActorId: context.actorId }, update: { lastRecognizedAt: now, externalVersion: config.graphApiVersion, updatedByActorId: context.actorId } });
         }
-        await tx.integrationConnection.update({ where: { id: connection.id }, data: { status: "CONNECTED", capabilityLevel: "CONNECTED", enabled: true, disabledAt: null, lastTestedAt: now, lastSucceededAt: now, lastErroredAt: null, currentErrorClass: null, currentErrorCode: null, currentErrorMessage: null, revision: { increment: 1 }, updatedByActorId: context.actorId } });
+        await tx.integrationConnection.update({ where: { id: connection.id }, data: { status: "CONNECTED", capabilityLevel: "CONNECTED", enabled: true, disabledAt: null, lastTestedAt: now, lastErroredAt: null, currentErrorClass: null, currentErrorCode: null, currentErrorMessage: null, revision: { increment: 1 }, updatedByActorId: context.actorId } });
         await audit(tx, context, { action: "integration.meta_ads.connection_tested", entityId: connection.id, changes: { accessibleAccountCount: result.accounts.length, selectedAccountCount: selected.size, graphApiVersion: config.graphApiVersion, requestCount: result.requestCount, readOnly: true, secretIncluded: false } });
       });
       return { connected: true as const, accessibleAccounts: result.accounts.map((account) => ({ id: account.id, name: account.name, currency: account.currency ?? null, timeZone: account.timezone_name ?? null })), graphApiVersion: config.graphApiVersion };
@@ -439,7 +445,7 @@ export function createMetaAdsService(options: Options) {
     await authorize(context, PermissionKeys.INTEGRATIONS_MANAGE);
     const connection = await findConnection(context); if (!connection) fail("Conexão Meta não encontrada.", "META_CONNECTION_NOT_CONFIGURED", 404);
     if (connection.revision !== revision) fail("A conexão Meta foi alterada por outra pessoa. Atualize a página.", "META_REVISION_CONFLICT");
-    if (!paused && !connection.lastSucceededAt) fail("Teste de conexão aprovado é obrigatório antes de retomar.", "META_CONNECTION_TEST_REQUIRED");
+    if (!paused && !connection.lastTestedAt) fail("Teste de conexão aprovado é obrigatório antes de retomar.", "META_CONNECTION_TEST_REQUIRED");
     return options.database.$transaction(async (tx) => {
       const updated = await tx.integrationConnection.update({ where: { id: connection.id }, data: { status: paused ? "PAUSED" : "CONNECTED", enabled: !paused, disabledAt: paused ? options.now() : null, revision: { increment: 1 }, updatedByActorId: context.actorId }, include });
       await audit(tx, context, { action: paused ? "integration.meta_ads.paused" : "integration.meta_ads.resumed", entityId: connection.id, changes: { enabled: !paused } });
@@ -453,6 +459,7 @@ export function createMetaAdsService(options: Options) {
     const currentMinute = new Date(Math.floor(now / 60_000) * 60_000);
     const catchUpBefore = startInstant(localDate(options.now()));
     const retryBefore = new Date(now - AUTO_SYNC_RETRY_MS);
+    const reportingTargetRecoveryBefore = new Date(now - REPORTING_TARGET_RECOVERY_MS);
     const expiredBefore = new Date(now - SYNC_EXPIRY_MS);
     const connections = await options.database.integrationConnection.findMany({
       where: {
@@ -464,7 +471,10 @@ export function createMetaAdsService(options: Options) {
               {
                 status: "CONNECTED",
                 OR: [
-                  { lastSucceededAt: null },
+                  {
+                    lastSucceededAt: null,
+                    OR: [{ lastTestedAt: null }, { lastTestedAt: { lt: dueBefore } }],
+                  },
                   { lastSucceededAt: { lt: dueBefore } },
                   {
                     lastSucceededAt: { lt: currentMinute },
@@ -480,7 +490,7 @@ export function createMetaAdsService(options: Options) {
             enabled: false,
             status: "NEEDS_ATTENTION",
             currentErrorCode: { startsWith: REPORTING_TARGET_ERROR_PREFIX },
-            lastErroredAt: { lte: dueBefore },
+            lastErroredAt: { lte: reportingTargetRecoveryBefore },
           },
         ],
       },
@@ -498,8 +508,9 @@ export function createMetaAdsService(options: Options) {
           select: { watermark: true },
         });
         const today = localDate(options.now());
+        const finalizationSince = subtractDays(today, Math.min(config.lookbackDays, AUTO_SYNC_FINALIZATION_LOOKBACK_DAYS));
         const narrowsWindow = cursor?.watermark && localDate(cursor.watermark) === today
-          && attempt?.syncRun?.windowStart && localDate(attempt.syncRun.windowStart) < today;
+          && attempt?.syncRun?.windowStart && localDate(attempt.syncRun.windowStart) < finalizationSince;
         const cooldown = failures >= MAX_CONSECUTIVE_FAILURES && !narrowsWindow ? AUTO_SYNC_OUTAGE_RETRY_MS : AUTO_SYNC_RETRY_MS;
         if (connection.lastErroredAt.getTime() + Math.max(cooldown, (attempt?.retryAfterSeconds ?? 0) * 1000) > options.now().getTime()) continue;
       }
@@ -523,7 +534,29 @@ export function createMetaAdsService(options: Options) {
             if (error instanceof ApplicationError) continue;
             throw error;
           }
-          await testConnection(context);
+          await options.database.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM integration_connections WHERE id=${connection.id}::uuid AND "workspaceId"=${connection.workspaceId}::uuid FOR UPDATE`;
+            const current = await tx.integrationConnection.findUniqueOrThrow({ where: { workspaceId_id: { workspaceId: connection.workspaceId, id: connection.id } } });
+            if (current.status !== "NEEDS_ATTENTION" || current.enabled || !current.currentErrorCode?.startsWith(REPORTING_TARGET_ERROR_PREFIX)) return;
+            await tx.integrationConnection.update({
+              where: { id: connection.id },
+              data: {
+                status: "CONNECTED",
+                enabled: true,
+                lastErroredAt: null,
+                currentErrorClass: null,
+                currentErrorCode: null,
+                currentErrorMessage: null,
+                revision: { increment: 1 },
+                updatedByActorId: context.actorId,
+              },
+            });
+            await audit(tx, context, {
+              action: "integration.meta_ads.reporting_target_recovered",
+              entityId: connection.id,
+              changes: { selectedAccountCount: config.selectedAccountIds.length, externalValidation: false },
+            });
+          });
         }
         const result = await runSync(context, { mode: "INCREMENTAL", correlationId: `meta-auto-${Math.floor(options.now().getTime() / 60_000)}-${connection.id}` }, true);
         if (result.status === "SUCCEEDED") logger.info({
