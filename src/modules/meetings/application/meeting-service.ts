@@ -155,7 +155,7 @@ const actionSchema = z.discriminatedUnion("action", [
     outcome: z.string().trim().min(3).max(5_000),
     qualification: z.enum(meetingQualifications).optional(),
     leadDestination: leadDestinationSchema.optional(),
-    nextAction: nextActionSchema,
+    nextAction: nextActionSchema.optional(),
   }).strict(),
   z.object({
     action: z.literal("NO_SHOW"),
@@ -1419,13 +1419,11 @@ export function createMeetingService(options: MeetingServiceOptions) {
           },
         });
       }
-      if (
-        parsed.data.action === "CANCEL" ||
-        parsed.data.action === "ATTENDED" ||
-        parsed.data.action === "NO_SHOW"
-      ) {
-        const nextAction = parsed.data.nextAction;
-        const dueAt = parseWorkspaceLocalDateTime(nextAction.dueAtLocal, meeting.timeZone);
+      const recoveryNextAction = parsed.data.action === "CANCEL" || parsed.data.action === "NO_SHOW" || parsed.data.action === "ATTENDED"
+        ? parsed.data.nextAction
+        : undefined;
+      if (recoveryNextAction) {
+        const dueAt = parseWorkspaceLocalDateTime(recoveryNextAction.dueAtLocal, meeting.timeZone);
         if (dueAt <= now) invalidInput("A próxima ação deve estar no futuro.");
         const recoveryTask = await transaction.task.create({
           data: {
@@ -1438,7 +1436,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
             queueId: meeting.opportunityId || meeting.lead.ownerMemberId
               ? null
               : meeting.lead.queueId,
-            title: nextAction.title,
+            title: recoveryNextAction.title,
             kind: "FOLLOW_UP",
             status: "OPEN",
             priority: parsed.data.action === "NO_SHOW" ? "HIGH" : "MEDIUM",

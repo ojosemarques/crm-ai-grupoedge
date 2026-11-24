@@ -66,8 +66,8 @@ for (const surface of ["agenda", "tarefa"] as const) {
     const destination = page.getByRole("combobox", { name: "Para onde mover o lead?", exact: true });
     await expect(destination).toHaveAttribute("required", "");
     await destination.selectOption(surface === "agenda" ? "PROPOSAL" : "MEETING_COMPLETED");
-    await page.getByLabel("Próxima ação", { exact: true }).fill("Retomar conversa com o cliente");
-    await page.getByLabel("Prazo da próxima ação", { exact: true }).fill("2040-02-10T10:00");
+    await expect(page.getByLabel("Próxima ação", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Prazo da próxima ação", { exact: true })).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath(`resultado-${surface}.png`), fullPage: true });
     await page.getByRole("button", { name: "Confirmar ação", exact: true }).click();
     await expect.poll(() => db.meeting.findUniqueOrThrow({ where: { id: meeting.id } })).toMatchObject({

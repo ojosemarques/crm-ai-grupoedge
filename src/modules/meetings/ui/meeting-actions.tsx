@@ -103,20 +103,22 @@ export function MeetingActions({
       });
       return;
     }
-    const nextAction = {
-      title: data.get("nextActionTitle"),
-      dueAtLocal: data.get("nextActionDueAtLocal"),
-    };
+    if (action === "ATTENDED") {
+      await post({
+        ...common,
+        qualification: data.get("qualification"),
+        outcome: data.get("outcome"),
+        ...(meeting.canChooseLeadDestination ? { leadDestination: data.get("leadDestination") } : {}),
+      });
+      return;
+    }
     await post({
       ...common,
-      ...(action === "ATTENDED"
-        ? {
-          qualification: data.get("qualification"),
-          outcome: data.get("outcome"),
-          ...(meeting.canChooseLeadDestination ? { leadDestination: data.get("leadDestination") } : {}),
-        }
-        : { reason: data.get("reason") }),
-      nextAction,
+      reason: data.get("reason"),
+      nextAction: {
+        title: data.get("nextActionTitle"),
+        dueAtLocal: data.get("nextActionDueAtLocal"),
+      },
     });
   }
 
@@ -186,9 +188,11 @@ export function MeetingActions({
               ) : null}
               <label className="text-sm sm:col-span-2">{action === "ATTENDED" ? "Resumo da reunião" : "Motivo"}<textarea className={inputClass} minLength={3} name={action === "ATTENDED" ? "outcome" : "reason"} required /></label>
               {action === "ATTENDED" && meeting.canChooseLeadDestination ? <LeadDestinationField /> : null}
-              <label className="text-sm">Próxima ação<input className={inputClass} name="nextActionTitle" required /></label>
-              <label className="text-sm">Prazo da próxima ação<input className={inputClass} name="nextActionDueAtLocal" required type="datetime-local" /></label>
-              <p className="text-xs text-muted-foreground sm:col-span-2">A próxima ação é explícita para que o lead não fique sem acompanhamento.</p>
+              {action !== "ATTENDED" ? <>
+                <label className="text-sm">Próxima ação<input className={inputClass} name="nextActionTitle" required /></label>
+                <label className="text-sm">Prazo da próxima ação<input className={inputClass} name="nextActionDueAtLocal" required type="datetime-local" /></label>
+                <p className="text-xs text-muted-foreground sm:col-span-2">A próxima ação é explícita para que o lead não fique sem acompanhamento.</p>
+              </> : null}
             </>
           )}
           <div className="flex gap-2 sm:col-span-2">
