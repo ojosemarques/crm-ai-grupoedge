@@ -495,6 +495,17 @@ describe("lista operacional de leads", () => {
     expect(result.list).toMatchObject({ total: 305, page: 2, pageSize: 100, totalPages: 4 });
     expect(result.list.rows).toHaveLength(100);
     expect(result.list.rows[0]?.fullName).toBe(`${prefix} 100`);
+
+    const clamped = await listService().getScreen(managerContext, {
+      q: prefix,
+      page: 99,
+      pageSize: 100,
+      sort: "name",
+      direction: "asc",
+    });
+    expect(clamped.list).toMatchObject({ total: 305, page: 4, pageSize: 100, totalPages: 4 });
+    expect(clamped.list.rows).toHaveLength(5);
+    expect(clamped.list.rows[0]?.fullName).toBe(`${prefix} 300`);
   });
 
   it("salva visualização por usuário/workspace, audita e aplica soft delete", async () => {

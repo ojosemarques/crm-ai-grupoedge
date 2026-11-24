@@ -951,22 +951,9 @@ export function createLeadListService(options: LeadListServiceOptions) {
       AND l."deletedAt" IS NULL
       AND ${leadVisibilitySql(context, scope)}
     `;
-    const [filteredCountRows, visibleCountRows] = await Promise.all([
-      options.database.$queryRaw<Array<{ count: number }>>(
-        Prisma.sql`SELECT COUNT(*)::integer AS "count" ${from} WHERE ${where}`,
-      ),
-      options.database.$queryRaw<Array<{ count: number }>>(
-        Prisma.sql`SELECT COUNT(*)::integer AS "count" FROM "leads" l WHERE ${visibleWhere}`,
-      ),
-    ]);
-    const total = filteredCountRows[0]?.count ?? 0;
-    const visibleTotal = visibleCountRows[0]?.count ?? 0;
-    const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
-    const page = Math.min(query.page, totalPages);
-    const offset = (page - 1) * query.pageSize;
     const order = sortSql(query, now);
     const seconds = slaSecondsSql(now);
-    const rows = await options.database.$queryRaw<RawLeadListRow[]>(Prisma.sql`
+    const fetchRows = (offset: number) => options.database.$queryRaw<RawLeadListRow[]>(Prisma.sql`
       SELECT
         l."id",
         l."fullName",
@@ -1018,6 +1005,22 @@ export function createLeadListService(options: LeadListServiceOptions) {
       LIMIT ${query.pageSize}
       OFFSET ${offset}
     `);
+    const requestedOffset = (query.page - 1) * query.pageSize;
+    const [filteredCountRows, visibleCountRows, requestedRows] = await Promise.all([
+      options.database.$queryRaw<Array<{ count: number }>>(
+        Prisma.sql`SELECT COUNT(*)::integer AS "count" ${from} WHERE ${where}`,
+      ),
+      options.database.$queryRaw<Array<{ count: number }>>(
+        Prisma.sql`SELECT COUNT(*)::integer AS "count" FROM "leads" l WHERE ${visibleWhere}`,
+      ),
+      fetchRows(requestedOffset),
+    ]);
+    const total = filteredCountRows[0]?.count ?? 0;
+    const visibleTotal = visibleCountRows[0]?.count ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
+    const page = Math.min(query.page, totalPages);
+    const offset = (page - 1) * query.pageSize;
+    const rows = page === query.page ? requestedRows : await fetchRows(offset);
     return {
       rows: rows.map((row) => ({
         ...row,
