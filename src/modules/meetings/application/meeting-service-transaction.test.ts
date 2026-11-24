@@ -4,6 +4,25 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import type { AuthenticatedContext } from "@/modules/auth/application/authenticated-context";
 import { createMeetingService } from "@/modules/meetings/application/meeting-service";
 
+const dependencies = vi.hoisted(() => ({
+  recordMetric: vi.fn().mockResolvedValue({ fact: {}, idempotent: false }),
+  scheduleParticipantEmails: vi.fn(),
+  enqueueGoogleSync: vi.fn(),
+}));
+
+vi.mock("@/modules/metrics/application/commercial-metric-fact-writer", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/modules/metrics/application/commercial-metric-fact-writer")>(),
+  recordCommercialMetricFactInTransaction: dependencies.recordMetric,
+}));
+vi.mock("@/modules/meetings/application/meeting-participant-email-service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/modules/meetings/application/meeting-participant-email-service")>(),
+  scheduleMeetingParticipantEmailsInTransaction: dependencies.scheduleParticipantEmails,
+}));
+vi.mock("@/modules/integrations/application/google-calendar-service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/modules/integrations/application/google-calendar-service")>(),
+  enqueueGoogleCalendarSyncInTransaction: dependencies.enqueueGoogleSync,
+}));
+
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const meetingId = "22222222-2222-4222-8222-222222222222";
 const leadId = "33333333-3333-4333-8333-333333333333";
@@ -73,5 +92,66 @@ describe("transação de resultado da reunião", () => {
       maxWait: 10_000,
       timeout: 30_000,
     });
+  });
+
+  it("remarca o agendamento público na mesma reunião e registra só a métrica de remarcação", async () => {
+    dependencies.recordMetric.mockClear();
+    dependencies.scheduleParticipantEmails.mockClear();
+    dependencies.enqueueGoogleSync.mockClear();
+    const oldStart = new Date("2026-11-25T13:00:00.000Z");
+    const newStart = new Date("2026-11-26T14:00:00.000Z");
+    const meeting = {
+      id: meetingId,
+      workspaceId,
+      leadId,
+      opportunityId: null,
+      ownerMemberId: memberId,
+      title: "Reunião de diagnóstico",
+      status: "CONFIRMED",
+      startsAt: oldStart,
+      endsAt: new Date("2026-11-25T14:00:00.000Z"),
+      durationMinutes: 60,
+      revision: 1,
+      googleCalendarLink: { memberId },
+      participants: [{ email: "lead@example.test" }],
+      lead: { ownerMemberId: memberId },
+    };
+    const transaction = {
+      meeting: {
+        findFirst: vi.fn().mockResolvedValueOnce(meeting).mockResolvedValueOnce(null),
+        update: vi.fn().mockResolvedValue({ revision: 2 }),
+        create: vi.fn(),
+      },
+      meetingHistory: { create: vi.fn().mockResolvedValue({ id: "99999999-9999-4999-8999-999999999999" }) },
+      task: { updateMany: vi.fn(), findFirst: vi.fn().mockResolvedValue({ id: "task", title: "Reunião", dueAt: newStart }) },
+      lead: { update: vi.fn() },
+      opportunity: { update: vi.fn() },
+      activity: { create: vi.fn().mockResolvedValue({ id: "activity" }) },
+      auditLog: { create: vi.fn() },
+    };
+    const service = createMeetingService({
+      database: {} as PrismaClient,
+      authorization: { authorize: vi.fn(), assertAuthorized: vi.fn() },
+      now: () => new Date("2026-11-24T13:00:00.000Z"),
+    });
+
+    const result = await service.rescheduleFromPublicForm(transaction as never, {
+      workspaceId,
+      actorId: context.actorId,
+    }, { meetingId, leadId, startsAt: newStart });
+
+    expect(result).toMatchObject({ meetingId, revision: 2, startsAt: newStart });
+    expect(transaction.meeting.create).not.toHaveBeenCalled();
+    expect(transaction.meeting.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: meetingId },
+      data: expect.objectContaining({ startsAt: newStart, revision: { increment: 1 } }),
+    }));
+    expect(dependencies.recordMetric).toHaveBeenCalledOnce();
+    expect(dependencies.recordMetric).toHaveBeenCalledWith(transaction, expect.objectContaining({
+      eventType: "MEETING_RESCHEDULED",
+      meetingId,
+    }));
+    expect(dependencies.scheduleParticipantEmails).toHaveBeenCalledWith(transaction, expect.objectContaining({ meetingId, startsAt: newStart }));
+    expect(dependencies.enqueueGoogleSync).toHaveBeenCalledWith(transaction, expect.objectContaining({ meetingId, meetingRevision: 2 }));
   });
 });

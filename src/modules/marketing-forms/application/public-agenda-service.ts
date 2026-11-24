@@ -13,22 +13,20 @@ import {
   type AgendaSlot, type BusyInterval,
 } from "../domain/public-agenda";
 
-import { agendaConfirmationRedirectSchema, buildMarketingWhatsAppUrl } from "../domain/marketing-form-contracts";
-
 import { environmentSecretResolver } from "@/modules/integrations/application/secret-resolver";
-import { createQuizAgendaToken, parseQuizAgendaToken, verifyQuizAgendaToken } from "../domain/quiz-agenda-token";
+import { createQuizAgendaToken, parseQuizAgendaToken, verifyQuizAgendaToken, verifyQuizAgendaTokenSignature } from "../domain/quiz-agenda-token";
 
 import { normalizePhone } from "@/modules/leads/domain/phone-normalizer";
 
-const nativeThankYou = "https://site.politizai.com/obrigadok#agenda-confirmada";
 const nativeConnectionKey = "meta-native-leads";
 const nativeFormPrefix = "meta-native:";
 const nativeIdentity = z.object({ name: z.string().trim().min(3).max(200), phone: z.string().trim().min(10).max(25) }).strict();
-const quizThankYou = "https://site.politizai.com/obrigadoquiz";
 const receiptSchema = z.uuid();
 const bookingSchema = z.object({ startsAt: z.iso.datetime() }).strict();
+const rescheduleSchema = bookingSchema.extend({ action: z.literal("RESCHEDULE") }).strict();
 const receiptLifetime = 72 * 60 * 60_000;
 const rotationAction = "marketing_form.agenda_shared_slot";
+const contactPhone = "5562982661279";
 
 function unavailable() {
   return new ApplicationError("Não foi possível consultar a agenda agora. Tente novamente.", {
@@ -51,9 +49,9 @@ function slotTaken(): never {
 async function resolveReceipt(db: Prisma.TransactionClient, publicId: string, now: Date) {
   if (!receiptSchema.safeParse(publicId).success) return resolveQuizReceipt(db, publicId, now);
   const receipts = await db.marketingFormReceipt.findMany({
-    where: { publicId, status: "ACCEPTED", redirectKind: "AGENDA", deletedAt: null, acceptedAt: { gte: new Date(now.getTime() - receiptLifetime) } },
+    where: { publicId, status: "ACCEPTED", redirectKind: "AGENDA", deletedAt: null },
     take: 2,
-    select: { id: true, marketingFormId: true, marketingFormVersionId: true, workspaceId: true },
+    select: { id: true, marketingFormId: true, marketingFormVersionId: true, workspaceId: true, acceptedAt: true },
   });
   const receipt = receipts[0];
   if (!receipt || receipts.length !== 1) invalidReceipt();
@@ -63,17 +61,28 @@ async function resolveReceipt(db: Prisma.TransactionClient, publicId: string, no
     db.leadFormSubmission.findFirst({
       where: {
         workspaceId, marketingFormId: receipt.marketingFormId, marketingFormReceiptId: receipt.id,
-        lead: { deletedAt: null, currentStage: { leadStageCode: { notIn: ["CLIENT", "DISQUALIFIED"] } } },
+        lead: { deletedAt: null },
       },
-      select: { leadId: true, normalizedEmail: true },
+      select: { leadId: true, normalizedEmail: true, lead: { select: { currentStage: { select: { leadStageCode: true } } } } },
     }),
     db.actor.findFirst({
       where: { workspaceId, type: "SYSTEM", key: "system", userId: null, workspace: { status: "ACTIVE", deletedAt: null } },
       select: { id: true },
     }),
   ]);
-  if (!form || !submission?.leadId || !actor) invalidReceipt();
+  if (!submission?.leadId || !actor) invalidReceipt();
+  const persistent = await hasPersistentPublicMeeting(db, workspaceId, submission.leadId, actor.id);
+  const leadStage = submission.lead?.currentStage.leadStageCode;
+  if (!persistent && (!form || leadStage === "CLIENT" || leadStage === "DISQUALIFIED"
+    || !receipt.acceptedAt || receipt.acceptedAt < new Date(now.getTime() - receiptLifetime))) invalidReceipt();
   return { workspaceId, destination: { kind: "FORM" as const, formId: receipt.marketingFormId, versionId: receipt.marketingFormVersionId }, actorId: actor.id, leadId: submission.leadId, participantEmail: participantEmailSchema.safeParse(submission.normalizedEmail).data ?? null };
+}
+
+async function hasPersistentPublicMeeting(db: Prisma.TransactionClient, workspaceId: string, leadId: string, actorId: string) {
+  return Boolean(await db.meeting.findFirst({
+    where: { workspaceId, leadId, createdByActorId: actorId, title: PUBLIC_AGENDA_TITLE, deletedAt: null },
+    select: { id: true },
+  }));
 }
 
 async function agendaConnection(db: Prisma.TransactionClient, key: string, providerKey: "FORM" | "META_LEAD_ADS") {
@@ -90,7 +99,7 @@ async function agendaConnection(db: Prisma.TransactionClient, key: string, provi
 export async function submitNativePublicAgenda(raw: unknown) {
   const { startsAt, ...identity } = nativeIdentity.extend({ startsAt: bookingSchema.shape.startsAt.optional() }).parse(raw);
   const receipt = await startNativePublicAgenda(identity);
-  return startsAt ? bookPublicAgenda(receipt, { startsAt }) : { receipt };
+  return startsAt ? { ...await bookPublicAgenda(receipt, { startsAt }), receipt } : { receipt };
 }
 
 export async function startNativePublicAgenda(raw: unknown) {
@@ -123,18 +132,22 @@ async function resolveQuizReceipt(db: Prisma.TransactionClient, token: string, n
   const native = parsed.quiz === "meta-native";
   const connectionKey = native ? nativeConnectionKey : `site-${parsed.quiz}`;
   const { workspaceId, secret } = await agendaConnection(db, connectionKey, native ? "META_LEAD_ADS" : "FORM");
-  if (!verifyQuizAgendaToken(token, secret, now)) invalidReceipt();
+  const verified = verifyQuizAgendaToken(token, secret, now);
+  if (!verified && !verifyQuizAgendaTokenSignature(token, secret)) invalidReceipt();
 
   const [submission, actor] = await Promise.all([
     db.leadFormSubmission.findFirst({
       where: { workspaceId, id: parsed.submissionId,
         ...(native ? { formIdentifier: { startsWith: nativeFormPrefix }, rawPayload: { path: ["provider"], equals: "META_LEAD_ADS" } } : { formIdentifier: connectionKey }),
-        lead: { deletedAt: null, currentStage: { leadStageCode: { notIn: ["CLIENT", "DISQUALIFIED"] } } } },
-      select: { leadId: true, normalizedEmail: true },
+        lead: { deletedAt: null } },
+      select: { leadId: true, normalizedEmail: true, lead: { select: { currentStage: { select: { leadStageCode: true } } } } },
     }),
     db.actor.findFirst({ where: { workspaceId, type: "SYSTEM", key: "system", userId: null }, select: { id: true } }),
   ]);
   if (!submission?.leadId || !actor) invalidReceipt();
+  const persistent = await hasPersistentPublicMeeting(db, workspaceId, submission.leadId, actor.id);
+  const leadStage = submission.lead?.currentStage.leadStageCode;
+  if (!persistent && (!verified || leadStage === "CLIENT" || leadStage === "DISQUALIFIED")) invalidReceipt();
   return { workspaceId, destination: native ? { kind: "NATIVE" as const } : { kind: "QUIZ" as const }, actorId: actor.id, leadId: submission.leadId, participantEmail: participantEmailSchema.safeParse(submission.normalizedEmail).data ?? null };
 }
 
@@ -143,48 +156,66 @@ type Booking = Awaited<ReturnType<typeof resolveReceipt>>;
 async function existingMeeting(db: Prisma.TransactionClient, booking: Booking) {
   return db.meeting.findFirst({
     where: {
-      workspaceId: booking.workspaceId, leadId: booking.leadId,
-      OR: [{ deletedAt: null }, { createdByActorId: booking.actorId, title: PUBLIC_AGENDA_TITLE }],
+      workspaceId: booking.workspaceId,
+      leadId: booking.leadId,
+      createdByActorId: booking.actorId,
+      title: PUBLIC_AGENDA_TITLE,
+      deletedAt: null,
     },
-    select: { createdByActorId: true, title: true, startsAt: true, status: true, deletedAt: true },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { id: true, ownerMemberId: true, startsAt: true, endsAt: true, durationMinutes: true, status: true, revision: true },
   });
 }
 
-async function confirmedBooking(db: Prisma.TransactionClient, booking: Booking, startsAt: string) {
-  if (booking.destination.kind === "NATIVE") return { booked: true as const, startsAt, redirect: { kind: "URL" as const, url: nativeThankYou } };
-  if (booking.destination.kind === "QUIZ") return { booked: true as const, startsAt, redirect: { kind: "URL" as const, url: quizThankYou } };
-  const version = await db.marketingFormVersion.findUnique({
-    where: { workspaceId_marketingFormId_id: { workspaceId: booking.workspaceId, marketingFormId: booking.destination.formId, id: booking.destination.versionId } },
-    select: { definition: true },
-  });
-  const definition = version?.definition as { redirects?: { afterAgenda?: unknown } } | null | undefined;
-  const target = agendaConfirmationRedirectSchema.safeParse(definition?.redirects?.afterAgenda).data;
-  const redirect = target && {
-    kind: target.kind,
-    url: target.kind === "URL" ? (target.url === "https://site.politizai.com/obrigadok" ? nativeThankYou : target.url) : buildMarketingWhatsAppUrl(target.phone, target.message),
+type ConfirmationMeeting = Readonly<{
+  startsAt: Date;
+  endsAt: Date;
+  durationMinutes: number;
+  status: string;
+}>;
+
+function calendarStamp(value: Date) {
+  return value.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function confirmedBooking(meeting: ConfirmationMeeting) {
+  const date = new Intl.DateTimeFormat("pt-BR", { timeZone: PUBLIC_AGENDA_ZONE, dateStyle: "full" }).format(meeting.startsAt);
+  const time = new Intl.DateTimeFormat("pt-BR", { timeZone: PUBLIC_AGENDA_ZONE, hour: "2-digit", minute: "2-digit" }).format(meeting.startsAt);
+  const message = `Olá! Agendei uma demonstração da Politizai para ${date}, às ${time} (horário de Brasília). Gostaria de confirmar meu atendimento.`;
+  const google = new URL("https://calendar.google.com/calendar/render");
+  google.searchParams.set("action", "TEMPLATE");
+  google.searchParams.set("text", PUBLIC_AGENDA_TITLE);
+  google.searchParams.set("dates", `${calendarStamp(meeting.startsAt)}/${calendarStamp(meeting.endsAt)}`);
+  google.searchParams.set("details", "Demonstração da plataforma Politizai. Nossa equipe entrará em contato para confirmar o atendimento.");
+  google.searchParams.set("ctz", PUBLIC_AGENDA_ZONE);
+  return {
+    booked: true as const,
+    confirmation: {
+      startsAt: meeting.startsAt.toISOString(),
+      endsAt: meeting.endsAt.toISOString(),
+      durationMinutes: meeting.durationMinutes,
+      timeZone: PUBLIC_AGENDA_ZONE,
+      title: PUBLIC_AGENDA_TITLE,
+      status: meeting.status,
+      canReschedule: meeting.status === "SCHEDULED" || meeting.status === "CONFIRMED",
+      whatsappUrl: `https://wa.me/${contactPhone}?text=${encodeURIComponent(message)}`,
+      googleCalendarUrl: google.toString(),
+    },
   };
-  return { booked: true as const, startsAt, ...(redirect ? { redirect } : {}) };
 }
 
-async function replayBooking(db: Prisma.TransactionClient, booking: Booking, startsAt: string) {
+async function replayBooking(db: Prisma.TransactionClient, booking: Booking) {
   const existing = await existingMeeting(db, booking);
   if (!existing) return null;
-  if (existing.createdByActorId === booking.actorId && existing.title === PUBLIC_AGENDA_TITLE
-    && !existing.deletedAt && (existing.status === "SCHEDULED" || existing.status === "CONFIRMED")
-    && existing.startsAt.toISOString() === startsAt) {
-    return confirmedBooking(db, booking, startsAt);
-  }
-  if (booking.destination.kind === "NATIVE" && !existing.deletedAt && existing.status !== "CANCELLED") {
-    return { booked: true as const, redirect: { kind: "URL" as const, url: nativeThankYou } };
-  }
-  return { booked: true as const };
+  return confirmedBooking(existing);
 }
 
-async function googleAvailability(workspaceId: string, start: Date, end: Date) {
+async function googleAvailability(workspaceId: string, start: Date, end: Date, ownerMemberId?: string) {
   const database = getDatabaseClient();
   const members = await database.workspaceMember.findMany({
     where: {
       ...commercialMemberWhere({ workspaceId, functions: ["CLOSER"] }),
+      ...(ownerMemberId ? { id: ownerMemberId } : {}),
       user: { status: "ACTIVE", deletedAt: null, normalizedEmail: { in: Object.keys(PUBLIC_AGENDA_SELLERS) } },
     },
     select: { id: true, user: { select: { normalizedEmail: true } } },
@@ -205,11 +236,12 @@ async function googleAvailability(workspaceId: string, start: Date, end: Date) {
 
 type Seller = Awaited<ReturnType<typeof googleAvailability>>[number];
 
-async function crmAvailability(db: Prisma.TransactionClient, workspaceId: string, sellers: Seller[], start: Date, end: Date) {
+async function crmAvailability(db: Prisma.TransactionClient, workspaceId: string, sellers: Seller[], start: Date, end: Date, excludeMeetingId?: string) {
   return db.meeting.findMany({
     where: {
       workspaceId, ownerMemberId: { in: sellers.map(({ id }) => id) }, deletedAt: null,
       status: { in: ["SCHEDULED", "CONFIRMED"] }, startsAt: { lt: end }, endsAt: { gt: start },
+      ...(excludeMeetingId ? { id: { not: excludeMeetingId } } : {}),
     },
     select: { ownerMemberId: true, startsAt: true, endsAt: true },
   });
@@ -220,16 +252,17 @@ function eligible(slot: AgendaSlot, sellers: Seller[], meetings: (BusyInterval &
     isSellerAvailable(slot, opensAt, intervals) && isSellerAvailable(slot, opensAt, meetings.filter((meeting) => meeting.ownerMemberId === id)));
 }
 
-export async function listPublicAgenda(publicId: string) {
+export async function listPublicAgenda(publicId: string, options: { reschedule?: boolean } = {}) {
   const database = getDatabaseClient();
   const now = new Date();
   const booking = await resolveReceipt(database, publicId, now);
   const { today, days, slots } = publicAgendaWindow(now);
   const meeting = await existingMeeting(database, booking);
   if (meeting) {
-    const redirect = booking.destination.kind !== "FORM" && !meeting.deletedAt && meeting.status !== "CANCELLED"
-      ? { kind: "URL" as const, url: booking.destination.kind === "NATIVE" ? nativeThankYou : quizThankYou } : undefined;
-    return { today, days, booked: true, slots: [], ...(redirect ? { redirect } : {}) };
+    if (options.reschedule && (meeting.status === "SCHEDULED" || meeting.status === "CONFIRMED")) {
+      return listOpenSlots(database, booking.workspaceId, { today, days, slots }, { ownerMemberId: meeting.ownerMemberId, excludeMeetingId: meeting.id, rescheduling: true });
+    }
+    return { today, days, slots: [], ...confirmedBooking(meeting) };
   }
   return listOpenSlots(database, booking.workspaceId, { today, days, slots });
 }
@@ -240,24 +273,30 @@ export async function listNativePublicAgenda() {
   return listOpenSlots(database, workspaceId, publicAgendaWindow(new Date()));
 }
 
-async function listOpenSlots(database: Prisma.TransactionClient, workspaceId: string, { today, days, slots }: ReturnType<typeof publicAgendaWindow>) {
+async function listOpenSlots(
+  database: Prisma.TransactionClient,
+  workspaceId: string,
+  { today, days, slots }: ReturnType<typeof publicAgendaWindow>,
+  options: { ownerMemberId?: string; excludeMeetingId?: string; rescheduling?: boolean } = {},
+) {
   const start = slots[0]!.startsAt;
   const end = slots.at(-1)!.endsAt;
-  const sellers = await googleAvailability(workspaceId, start, end);
-  const meetings = await crmAvailability(database, workspaceId, sellers, start, end);
+  const sellers = await googleAvailability(workspaceId, start, end, options.ownerMemberId);
+  const meetings = await crmAvailability(database, workspaceId, sellers, start, end, options.excludeMeetingId);
   return {
-    today, days, booked: false,
+    today, days, booked: false, rescheduling: options.rescheduling ?? false,
     slots: slots.filter((slot) => slot.startsAt.getTime() > Date.now() && eligible(slot, sellers, meetings).length > 0)
       .map(({ day, startsAt }) => ({ day, startsAt: startsAt.toISOString() })),
   };
 }
 
 export async function bookPublicAgenda(publicId: string, raw: unknown) {
+  if (rescheduleSchema.safeParse(raw).success) return reschedulePublicAgenda(publicId, raw);
   const database = getDatabaseClient();
   const { startsAt } = bookingSchema.parse(raw);
   const now = new Date();
   const booking = await resolveReceipt(database, publicId, now);
-  const prior = await replayBooking(database, booking, startsAt);
+  const prior = await replayBooking(database, booking);
   if (prior) return prior;
   const slot = publicAgendaWindow(now).slots.find((candidate) => candidate.startsAt.toISOString() === startsAt);
   if (!slot) slotTaken();
@@ -270,7 +309,7 @@ export async function bookPublicAgenda(publicId: string, raw: unknown) {
     // Same lock order as internal booking: calendar owners first, then the lead.
     for (const seller of sellers) await lockCloser(tx, current.workspaceId, seller.id);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`lead-distribution:${current.workspaceId}:${current.leadId}`}, 0))`;
-    const concurrent = await replayBooking(tx, current, startsAt);
+    const concurrent = await replayBooking(tx, current);
     if (concurrent) return concurrent;
     if (slot.startsAt.getTime() <= Date.now()) slotTaken();
     const meetings = await crmAvailability(tx, current.workspaceId, sellers, slot.startsAt, slot.endsAt);
@@ -291,6 +330,39 @@ export async function bookPublicAgenda(publicId: string, raw: unknown) {
       workspaceId: current.workspaceId, actorId: current.actorId, action: rotationAction,
       entityType: "Meeting", entityId: meetingId, changes: { closerId: closer.id },
     } });
-    return confirmedBooking(tx, current, startsAt);
+    return confirmedBooking({ startsAt: slot.startsAt, endsAt: slot.endsAt, durationMinutes: Math.round((slot.endsAt.getTime() - slot.startsAt.getTime()) / 60_000), status: "SCHEDULED" });
+  }, { timeout: 15_000 });
+}
+
+async function reschedulePublicAgenda(publicId: string, raw: unknown) {
+  const database = getDatabaseClient();
+  const { startsAt } = rescheduleSchema.parse(raw);
+  const booking = await resolveReceipt(database, publicId, new Date());
+  const meeting = await existingMeeting(database, booking);
+  if (!meeting || (meeting.status !== "SCHEDULED" && meeting.status !== "CONFIRMED")) invalidReceipt();
+  if (meeting.startsAt.toISOString() === startsAt) return confirmedBooking(meeting);
+  const slot = publicAgendaWindow(new Date()).slots.find((candidate) => candidate.startsAt.toISOString() === startsAt);
+  if (!slot) slotTaken();
+  const sellers = await googleAvailability(booking.workspaceId, slot.startsAt, slot.endsAt, meeting.ownerMemberId);
+  if (!sellers.length) slotTaken();
+
+  return database.$transaction(async (tx) => {
+    const current = await resolveReceipt(tx, publicId, new Date());
+    const currentMeeting = await existingMeeting(tx, current);
+    if (!currentMeeting || currentMeeting.id !== meeting.id || (currentMeeting.status !== "SCHEDULED" && currentMeeting.status !== "CONFIRMED")) invalidReceipt();
+    await lockCloser(tx, current.workspaceId, currentMeeting.ownerMemberId);
+    const meetings = await crmAvailability(tx, current.workspaceId, sellers, slot.startsAt, slot.endsAt, currentMeeting.id);
+    if (!eligible(slot, sellers, meetings).length) slotTaken();
+    const result = await getMeetingService().rescheduleFromPublicForm(tx, current, {
+      meetingId: currentMeeting.id,
+      leadId: current.leadId,
+      startsAt: slot.startsAt,
+    });
+    return confirmedBooking({
+      startsAt: result.startsAt,
+      endsAt: result.endsAt,
+      durationMinutes: currentMeeting.durationMinutes,
+      status: "SCHEDULED",
+    });
   }, { timeout: 15_000 });
 }

@@ -109,3 +109,75 @@
   color: white;
   font-weight: 700;
 }
+
+.confirmationShell {
+  min-height: 100dvh;
+  padding: clamp(20px, 5vw, 56px) 20px;
+  background: radial-gradient(circle at 50% 0, #eef7ff 0, #f6f8fa 42%, #f1f4f6 100%);
+  color: #10283f;
+  font: 16px/1.45 system-ui, sans-serif;
+}
+
+.confirmationPage { max-width: 760px; margin: 0 auto; }
+.confirmationCard,
+.actions { background: #fff; border: 1px solid #dbe5ed; box-shadow: 0 16px 45px #10283f14; }
+.confirmationCard { padding: clamp(24px, 5vw, 44px); border-radius: 28px; }
+.confirmationHeader { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.confirmationHeader h1 { margin: 0; font-size: clamp(25px, 4vw, 34px); line-height: 1.15; }
+.confirmedBadge { display: inline-flex; align-items: center; gap: 9px; padding: 10px 16px; border-radius: 999px; background: #f3f7f5; color: #153a2d; font-weight: 750; }
+.confirmedBadge i { width: 10px; height: 10px; border-radius: 50%; background: #2cba6c; }
+.meetingWhen { display: flex; align-items: center; gap: 24px; margin: 34px 0 26px; }
+.meetingWhen h2 { margin: 0 0 5px; font-size: clamp(22px, 4vw, 32px); line-height: 1.25; text-transform: capitalize; }
+.meetingWhen p { margin: 0; color: #667781; font-size: 18px; }
+.calendarBadge { flex: 0 0 88px; overflow: hidden; border: 1px solid #d9e0e5; border-radius: 19px; text-align: center; box-shadow: 0 3px 9px #10283f12; }
+.calendarBadge strong { display: block; padding: 7px; background: #10283f; color: white; font-size: 14px; letter-spacing: .08em; }
+.calendarBadge span { display: block; padding: 6px 8px 9px; font-size: 35px; line-height: 1; font-weight: 760; }
+.warning { padding: 18px 20px; border: 1px solid #f5c3c0; border-left: 4px solid #c8322d; border-radius: 14px; background: #fff7f6; color: #4e2422; }
+.warning strong { color: #c1211b; letter-spacing: .07em; }
+.warning p { margin: 7px 0 0; }
+.countdownTitle { margin: 28px 0 12px; color: #667781; font-size: 18px; }
+.countdown { display: flex; padding: 20px 8px; border-radius: 20px; background: #f5f7f8; }
+.countdown div { flex: 1; display: grid; place-items: center; border-right: 1px solid #dde3e7; }
+.countdown div:last-child { border-right: 0; }
+.countdown strong { font-size: clamp(34px, 8vw, 54px); line-height: 1; font-variant-numeric: tabular-nums; }
+.countdown span { margin-top: 7px; color: #65747c; }
+.actions { overflow: hidden; margin-top: 20px; border-radius: 22px; }
+.actions a,
+.actions button { display: grid; grid-template-columns: 48px minmax(0, 1fr) 22px; align-items: center; gap: 16px; width: 100%; min-height: 86px; padding: 15px 22px; border: 0; border-bottom: 1px solid #e1e7eb; background: #fff; color: #10283f; text-align: left; text-decoration: none; font: inherit; cursor: pointer; }
+.actions > :last-child { border-bottom: 0; }
+.actions a:hover,
+.actions button:hover { background: #f8fafb; }
+.actions a:focus-visible,
+.actions button:focus-visible { position: relative; outline: 3px solid #0b68d1; outline-offset: -3px; }
+.actions button:disabled { cursor: wait; opacity: .72; }
+.actions > a > svg,
+.actions > button > svg { width: 21px; color: #71808a; }
+.actions span:nth-child(2) { display: grid; }
+.actions strong { font-size: 18px; }
+.actions small { margin-top: 2px; color: #697982; font-size: 14px; }
+.actionIcon { display: grid; width: 48px; height: 48px; place-items: center; border-radius: 14px; background: #f1f5f7; }
+.actionIcon svg { width: 25px; height: 25px; }
+.actionIcon.whatsapp { background: #e5f8ed; color: #168746; }
+.confirmationError { margin: 14px 4px 0; color: #a32228; font-weight: 650; text-align: center; }
+
+@media (max-width: 600px) {
+  .confirmationShell { padding: 12px; }
+  .confirmationCard { padding: 22px 18px; border-radius: 22px; }
+  .confirmationHeader { align-items: flex-start; }
+  .confirmedBadge { padding: 8px 11px; font-size: 14px; }
+  .meetingWhen { gap: 15px; margin: 25px 0 20px; }
+  .calendarBadge { flex-basis: 70px; border-radius: 15px; }
+  .calendarBadge span { font-size: 29px; }
+  .meetingWhen h2 { font-size: 20px; }
+  .meetingWhen p { font-size: 15px; }
+  .warning { padding: 15px; font-size: 14px; }
+  .countdown { padding: 16px 3px; }
+  .countdown strong { font-size: 32px; }
+  .countdown span { font-size: 12px; }
+  .actions { border-radius: 18px; }
+  .actions a,
+  .actions button { grid-template-columns: 42px minmax(0, 1fr) 18px; gap: 11px; min-height: 78px; padding: 13px 15px; }
+  .actionIcon { width: 42px; height: 42px; border-radius: 12px; }
+  .actions strong { font-size: 16px; }
+  .actions small { font-size: 12px; }
+}

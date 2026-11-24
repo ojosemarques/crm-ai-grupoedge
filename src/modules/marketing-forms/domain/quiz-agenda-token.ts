@@ -27,6 +27,12 @@ export function parseQuizAgendaToken(token: string) {
 export function verifyQuizAgendaToken(token: string, secret: string, now: Date) {
   const parsed = parseQuizAgendaToken(token);
   if (!parsed || parsed.expiresAt <= now.getTime() || parsed.expiresAt > now.getTime() + lifetimeMs + 300_000) return null;
+  return verifyQuizAgendaTokenSignature(token, secret);
+}
+
+export function verifyQuizAgendaTokenSignature(token: string, secret: string) {
+  const parsed = parseQuizAgendaToken(token);
+  if (!parsed) return null;
   const lastDot = token.lastIndexOf(".");
   return timingSafeEqual(Buffer.from(token.slice(lastDot + 1)), Buffer.from(signature(token.slice(0, lastDot), secret))) ? parsed : null;
 }

@@ -17,7 +17,7 @@ const setup = vi.hoisted(() => {
     $executeRaw: vi.fn(),
     $transaction: vi.fn(),
   };
-  return { db, google: vi.fn(), lockCloser: vi.fn(), schedule: vi.fn() };
+  return { db, google: vi.fn(), lockCloser: vi.fn(), schedule: vi.fn(), reschedule: vi.fn() };
 });
 vi.mock("@/shared/core/database/client", () => ({ getDatabaseClient: () => setup.db }));
 vi.mock("@/modules/integrations/application/google-calendar-worker-service", () => ({
@@ -25,7 +25,7 @@ vi.mock("@/modules/integrations/application/google-calendar-worker-service", () 
 }));
 vi.mock("@/modules/meetings/application/meeting-service", () => ({
   lockCloser: setup.lockCloser,
-  getMeetingService: () => ({ scheduleFromPublicForm: setup.schedule }),
+  getMeetingService: () => ({ scheduleFromPublicForm: setup.schedule, rescheduleFromPublicForm: setup.reschedule }),
 }));
 
 const receipt = "9d34182c-f008-4e11-8aa0-4ed8d73f7693";
@@ -39,7 +39,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-11-09T11:50:00Z"));
-  setup.db.marketingFormReceipt.findMany.mockResolvedValue([{ id: "receipt", marketingFormId: "form", marketingFormVersionId: "published", workspaceId: "workspace" }]);
+  setup.db.marketingFormReceipt.findMany.mockResolvedValue([{ id: "receipt", marketingFormId: "form", marketingFormVersionId: "published", workspaceId: "workspace", acceptedAt: new Date() }]);
   setup.db.marketingForm.findFirst.mockResolvedValue({ id: "form" });
   setup.db.marketingFormVersion.findUnique.mockResolvedValue({ definition: {} });
   setup.db.leadFormSubmission.findFirst.mockResolvedValue({ leadId: "lead", normalizedEmail: "lead@example.com" });
@@ -54,10 +54,11 @@ beforeEach(() => {
   setup.db.meeting.findMany.mockResolvedValue([]);
   setup.db.$transaction.mockImplementation((run) => run(setup.db));
   setup.schedule.mockResolvedValue({ meetingId: "meeting" });
+  setup.reschedule.mockResolvedValue({ meetingId: "meeting", revision: 2, startsAt: new Date(shared), endsAt: new Date("2026-11-09T15:00:00.000Z") });
 });
 
 describe("reserva pelo formulário", () => {
-  it.each(["quizmandato", "chatmandato"] as const)("agenda %s e devolve a página de obrigado", async (quiz) => {
+  it.each(["quizmandato", "chatmandato"] as const)("agenda %s e devolve a confirmação persistente", async (quiz) => {
     const secret = "local-test-quiz-signing-secret";
     vi.stubEnv("ACQUISITION_TEST_QUIZ_SECRET", secret);
     setup.db.integrationConnection.findFirst.mockResolvedValue({ workspaceId: "workspace", secrets: [{ referenceKey: "ACQUISITION_TEST_QUIZ_SECRET" }] });
@@ -67,8 +68,9 @@ describe("reserva pelo formulário", () => {
       await expect(bookPublicAgenda(badToken, { startsAt: morning })).rejects.toMatchObject({ statusCode: 404 });
       expect(setup.schedule).not.toHaveBeenCalled();
       await expect(listPublicAgenda(token)).resolves.toMatchObject({ booked: false });
-      await expect(bookPublicAgenda(token, { startsAt: morning })).resolves.toEqual({
-        booked: true, startsAt: morning, redirect: { kind: "URL", url: "https://site.politizai.com/obrigadoquiz" },
+      await expect(bookPublicAgenda(token, { startsAt: morning })).resolves.toMatchObject({
+        booked: true,
+        confirmation: { startsAt: morning, whatsappUrl: expect.stringContaining("5562982661279"), googleCalendarUrl: expect.stringContaining("calendar.google.com") },
       });
       expect(setup.db.leadFormSubmission.findFirst).toHaveBeenCalledWith(expect.objectContaining({
         where: expect.objectContaining({ workspaceId: "workspace", id: receipt, formIdentifier: `site-${quiz}` }),
@@ -78,7 +80,7 @@ describe("reserva pelo formulário", () => {
     }
   });
 
-  it("vincula o formulário nativo pelo nome e WhatsApp e libera a VSL depois da reserva", async () => {
+  it("vincula o formulário nativo e devolve o link persistente depois da reserva", async () => {
     const secret = "local-test-native-signing-secret";
     vi.stubEnv("ACQUISITION_TEST_NATIVE_SECRET", secret);
     setup.db.integrationConnection.findFirst.mockResolvedValue({ workspaceId: "workspace", secrets: [{ referenceKey: "ACQUISITION_TEST_NATIVE_SECRET" }] });
@@ -95,8 +97,10 @@ describe("reserva pelo formulário", () => {
         where: expect.objectContaining({ workspaceId: "workspace", normalizedPhone: "+5511999999999", formIdentifier: { startsWith: "meta-native:" } }),
       }));
       await expect(listPublicAgenda(token)).resolves.not.toHaveProperty("redirect");
-      await expect(submitNativePublicAgenda({ name: "João Silva", phone: "(11) 99999-9999", startsAt: morning })).resolves.toEqual({
-        booked: true, startsAt: morning, redirect: { kind: "URL", url: "https://site.politizai.com/obrigadok#agenda-confirmada" },
+      await expect(submitNativePublicAgenda({ name: "João Silva", phone: "(11) 99999-9999", startsAt: morning })).resolves.toMatchObject({
+        booked: true,
+        receipt: expect.stringMatching(/^meta-native\./),
+        confirmation: { startsAt: morning },
       });
       expect(setup.schedule).toHaveBeenCalledTimes(1);
     } finally {
@@ -104,17 +108,17 @@ describe("reserva pelo formulário", () => {
     }
   });
 
-  it("libera a mesma VSL quando a reserva vem do formulário do CRM", async () => {
-    setup.db.marketingFormVersion.findUnique.mockResolvedValue({
-      definition: { redirects: { afterAgenda: { kind: "URL", url: "https://site.politizai.com/obrigadok" } } },
-    });
+  it("ignora o redirecionamento antigo do formulário e exibe a confirmação", async () => {
     await expect(bookPublicAgenda(receipt, { startsAt: morning })).resolves.toMatchObject({
-      redirect: { kind: "URL", url: "https://site.politizai.com/obrigadok#agenda-confirmada" },
+      booked: true,
+      confirmation: { startsAt: morning },
     });
+    expect(setup.db.marketingFormVersion.findUnique).not.toHaveBeenCalled();
   });
 
   it("recusa uma reserva solicitada diretamente para sábado ou domingo", async () => {
     vi.setSystemTime(new Date("2026-11-13T11:00:00Z"));
+    setup.db.marketingFormReceipt.findMany.mockResolvedValue([{ id: "receipt", marketingFormId: "form", marketingFormVersionId: "published", workspaceId: "workspace", acceptedAt: new Date() }]);
     for (const startsAt of ["2026-11-14T14:00:00.000Z", "2026-11-15T14:00:00.000Z"]) {
       await expect(bookPublicAgenda(receipt, { startsAt })).rejects.toMatchObject({ statusCode: 409 });
     }
@@ -153,22 +157,20 @@ describe("reserva pelo formulário", () => {
     expect(setup.schedule).not.toHaveBeenCalled();
   });
 
-  it("só entrega o destino do WhatsApp depois de confirmar a reserva", async () => {
-    setup.db.marketingFormVersion.findUnique.mockResolvedValue({
-      definition: { redirects: { afterAgenda: { kind: "WHATSAPP", phone: "+5511999999999", message: "Olá, confirmei." } } },
-    });
-    await expect(listPublicAgenda(receipt)).resolves.not.toHaveProperty("redirect");
+  it("entrega WhatsApp e Google Agenda apenas na confirmação", async () => {
+    await expect(listPublicAgenda(receipt)).resolves.not.toHaveProperty("confirmation");
     expect(setup.db.marketingFormVersion.findUnique).not.toHaveBeenCalled();
     const confirmation = await bookPublicAgenda(receipt, { startsAt: morning });
     expect(confirmation).toMatchObject({
       booked: true,
-      redirect: { kind: "WHATSAPP", url: "https://wa.me/5511999999999?text=Ol%C3%A1%2C+confirmei." },
+      confirmation: {
+        startsAt: morning,
+        whatsappUrl: expect.stringContaining("https://wa.me/5562982661279"),
+        googleCalendarUrl: expect.stringContaining("dates=20261109T120000Z%2F20261109T130000Z"),
+      },
     });
-    expect(setup.db.marketingFormVersion.findUnique).toHaveBeenCalledWith(expect.objectContaining({
-      where: { workspaceId_marketingFormId_id: { workspaceId: "workspace", marketingFormId: "form", id: "published" } },
-    }));
     setup.db.meeting.findFirst.mockResolvedValue({
-      createdByActorId: "system", title: "Reunião de diagnóstico", startsAt: new Date(morning), status: "SCHEDULED", deletedAt: null,
+      id: "meeting", ownerMemberId: jhon, startsAt: new Date(morning), endsAt: new Date("2026-11-09T13:00:00.000Z"), durationMinutes: 60, status: "SCHEDULED", revision: 1,
     });
     await expect(bookPublicAgenda(receipt, { startsAt: morning })).resolves.toEqual(confirmation);
     expect(setup.schedule).toHaveBeenCalledTimes(1);
@@ -176,11 +178,21 @@ describe("reserva pelo formulário", () => {
 
   it("escolhe o outro vendedor em um horário compartilhado e bloqueia repetição do lead", async () => {
     setup.db.auditLog.findFirst.mockResolvedValue({ changes: { closerId: jhon } });
-    await expect(bookPublicAgenda(receipt, { startsAt: shared })).resolves.toEqual({ booked: true, startsAt: shared });
+    await expect(bookPublicAgenda(receipt, { startsAt: shared })).resolves.toMatchObject({ booked: true, confirmation: { startsAt: shared } });
     expect(setup.schedule).toHaveBeenCalledWith(setup.db, expect.objectContaining({ actorId: "system" }), expect.objectContaining({ closerId: ede, leadId: "lead" }));
     expect(setup.db.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ changes: { closerId: ede } }) }));
-    setup.db.meeting.findFirst.mockResolvedValue({ id: "meeting" });
-    await expect(bookPublicAgenda(receipt, { startsAt: morning })).resolves.toEqual({ booked: true });
+    setup.db.meeting.findFirst.mockResolvedValue({ id: "meeting", ownerMemberId: ede, startsAt: new Date(shared), endsAt: new Date("2026-11-09T15:00:00.000Z"), durationMinutes: 60, status: "SCHEDULED", revision: 1 });
+    await expect(bookPublicAgenda(receipt, { startsAt: morning })).resolves.toMatchObject({ booked: true, confirmation: { startsAt: shared } });
     expect(setup.schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("remarca a mesma reunião sem criar um segundo agendamento", async () => {
+    setup.db.meeting.findFirst.mockResolvedValue({ id: "meeting", ownerMemberId: jhon, startsAt: new Date(morning), endsAt: new Date("2026-11-09T13:00:00.000Z"), durationMinutes: 60, status: "SCHEDULED", revision: 1 });
+    const result = await bookPublicAgenda(receipt, { action: "RESCHEDULE", startsAt: shared });
+    expect(result).toMatchObject({ booked: true, confirmation: { startsAt: shared } });
+    expect(setup.reschedule).toHaveBeenCalledWith(setup.db, expect.objectContaining({ leadId: "lead" }), {
+      meetingId: "meeting", leadId: "lead", startsAt: new Date(shared),
+    });
+    expect(setup.schedule).not.toHaveBeenCalled();
   });
 });

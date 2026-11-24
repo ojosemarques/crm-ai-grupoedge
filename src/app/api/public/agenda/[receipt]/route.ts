@@ -12,7 +12,9 @@ type Context = { params: Promise<{ receipt: string }> };
 export async function GET(request: NextRequest, { params }: Context) {
   try {
     await enforceRateLimit("public-agenda-list", requestClientKey(request), { limit: 30, windowMs: 60_000 });
-    return NextResponse.json(await listPublicAgenda((await params).receipt), { headers });
+    return NextResponse.json(await listPublicAgenda((await params).receipt, {
+      reschedule: request.nextUrl.searchParams.get("mode") === "reschedule",
+    }), { headers });
   } catch (error) {
     const response = handleRouteError(error, request);
     for (const [key, value] of Object.entries(headers)) response.headers.set(key, value);

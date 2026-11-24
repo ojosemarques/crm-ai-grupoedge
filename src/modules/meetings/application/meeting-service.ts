@@ -1167,6 +1167,206 @@ export function createMeetingService(options: MeetingServiceOptions) {
     }, input.startsAt, new Date(input.startsAt.getTime() + PUBLIC_AGENDA_MINUTES * 60_000), input.timeZone);
   }
 
+  async function rescheduleFromPublicForm(
+    transaction: Prisma.TransactionClient,
+    context: { workspaceId: string; actorId: string },
+    input: { meetingId: string; leadId: string; startsAt: Date },
+  ) {
+    const now = options.now();
+    if (input.startsAt <= now) invalidInput("O novo horário deve estar no futuro.");
+    const meeting = await transaction.meeting.findFirst({
+      where: {
+        id: input.meetingId,
+        workspaceId: context.workspaceId,
+        leadId: input.leadId,
+        createdByActorId: context.actorId,
+        title: PUBLIC_AGENDA_TITLE,
+        status: { in: ["SCHEDULED", "CONFIRMED"] },
+        deletedAt: null,
+      },
+      include: {
+        googleCalendarLink: { select: { memberId: true } },
+        participants: { orderBy: { position: "asc" } },
+        lead: { select: { ownerMemberId: true } },
+      },
+    });
+    if (!meeting) notFound("Reunião pública não encontrada.");
+    const endsAt = new Date(input.startsAt.getTime() + meeting.durationMinutes * 60_000);
+    const overlapping = await transaction.meeting.findFirst({
+      where: {
+        workspaceId: context.workspaceId,
+        ownerMemberId: meeting.ownerMemberId,
+        id: { not: meeting.id },
+        deletedAt: null,
+        status: { in: ["SCHEDULED", "CONFIRMED"] },
+        startsAt: { lt: endsAt },
+        endsAt: { gt: input.startsAt },
+      },
+      select: { id: true },
+    });
+    if (overlapping) conflict("MEETING_TIME_CONFLICT", "Este horário não está mais disponível.");
+
+    const updated = await transaction.meeting.update({
+      where: { id: meeting.id },
+      data: {
+        status: "SCHEDULED",
+        startsAt: input.startsAt,
+        endsAt,
+        confirmedAt: null,
+        revision: { increment: 1 },
+        updatedByActorId: context.actorId,
+        updatedAt: now,
+      },
+      select: { revision: true },
+    });
+    const history = await transaction.meetingHistory.create({
+      data: {
+        workspaceId: context.workspaceId,
+        meetingId: meeting.id,
+        leadId: meeting.leadId,
+        ownerMemberId: meeting.ownerMemberId,
+        meetingRevision: updated.revision,
+        action: "RESCHEDULED",
+        previousStatus: meeting.status,
+        newStatus: "SCHEDULED",
+        previousStartsAt: meeting.startsAt,
+        previousEndsAt: meeting.endsAt,
+        newStartsAt: input.startsAt,
+        newEndsAt: endsAt,
+        reason: "Horário alterado pelo lead na confirmação pública.",
+        occurredAt: now,
+        recordedByActorId: context.actorId,
+        createdAt: now,
+      },
+    });
+    await transaction.task.updateMany({
+      where: {
+        workspaceId: context.workspaceId,
+        meetingId: meeting.id,
+        status: { in: ["OPEN", "IN_PROGRESS"] },
+        deletedAt: null,
+      },
+      data: { dueAt: input.startsAt, updatedByActorId: context.actorId, updatedAt: now },
+    });
+    const nextTask = await findNextTask(transaction, context.workspaceId, meeting.leadId);
+    await transaction.lead.update({
+      where: { id: meeting.leadId },
+      data: {
+        ...taskProjection(nextTask),
+        lastActivityAt: now,
+        updatedByActorId: context.actorId,
+        updatedAt: now,
+      },
+    });
+    if (meeting.opportunityId) {
+      const opportunityTask = await transaction.task.findFirst({
+        where: {
+          workspaceId: context.workspaceId,
+          opportunityId: meeting.opportunityId,
+          status: { in: ["OPEN", "IN_PROGRESS"] },
+          deletedAt: null,
+        },
+        orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+        select: { id: true, title: true, dueAt: true },
+      });
+      await transaction.opportunity.update({
+        where: { id: meeting.opportunityId },
+        data: {
+          nextActionTaskId: opportunityTask?.id ?? null,
+          nextActionAt: opportunityTask?.dueAt ?? null,
+          nextActionDescription: opportunityTask?.title ?? null,
+          updatedByActorId: context.actorId,
+          updatedAt: now,
+        },
+      });
+    }
+    const activity = await transaction.activity.create({
+      data: {
+        workspaceId: context.workspaceId,
+        leadId: meeting.leadId,
+        opportunityId: meeting.opportunityId,
+        meetingId: meeting.id,
+        type: "MEETING",
+        direction: "INTERNAL",
+        result: "SCHEDULED",
+        subject: `Reunião remarcada: ${meeting.title}`,
+        description: "Horário alterado pelo lead na confirmação pública.",
+        occurredAt: now,
+        nextActionAt: nextTask?.dueAt ?? null,
+        nextActionDescription: nextTask?.title ?? null,
+        previousValues: { startsAt: meeting.startsAt.toISOString(), endsAt: meeting.endsAt.toISOString(), revision: meeting.revision },
+        newValues: { startsAt: input.startsAt.toISOString(), endsAt: endsAt.toISOString(), revision: updated.revision },
+        createdByActorId: context.actorId,
+        updatedByActorId: context.actorId,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    await recordCommercialMetricFactInTransaction(transaction, {
+      workspaceId: context.workspaceId,
+      eventKey: `meeting-history:${history.id}:meeting_rescheduled:v1`,
+      eventType: "MEETING_RESCHEDULED",
+      occurredAt: now,
+      sourceEntityType: "MeetingHistory",
+      sourceEntityId: history.id,
+      leadId: meeting.leadId,
+      opportunityId: meeting.opportunityId,
+      meetingId: meeting.id,
+      activityId: activity.id,
+      creditedMemberId: meeting.ownerMemberId,
+      performedByMemberId: null,
+      leadOwnerMemberIdAtEvent: meeting.lead.ownerMemberId,
+      meetingOwnerMemberIdAtEvent: meeting.ownerMemberId,
+      result: "SCHEDULED",
+      executionMode: "SYSTEM",
+    });
+    await transaction.auditLog.create({ data: {
+      workspaceId: context.workspaceId,
+      actorId: context.actorId,
+      action: "meeting.rescheduled",
+      entityType: "Meeting",
+      entityId: meeting.id,
+      occurredAt: now,
+      changes: {
+        previousStartsAt: meeting.startsAt.toISOString(),
+        newStartsAt: input.startsAt.toISOString(),
+        source: "PUBLIC_CONFIRMATION",
+      },
+      metadata: { revision: updated.revision },
+    } });
+    if (options.automationPublisher) {
+      await scheduleMeetingRemindersInTransaction(transaction, options.automationPublisher, {
+        workspaceId: context.workspaceId,
+        leadId: meeting.leadId,
+        meetingId: meeting.id,
+        meetingRevision: updated.revision,
+        startsAt: input.startsAt,
+        occurredAt: now,
+        actorId: context.actorId,
+      });
+    }
+    await scheduleMeetingParticipantEmailsInTransaction(transaction, {
+      workspaceId: context.workspaceId,
+      meetingId: meeting.id,
+      meetingRevision: updated.revision,
+      participantEmails: meeting.participants.map(({ email }) => email),
+      startsAt: input.startsAt,
+      occurredAt: now,
+      actorId: context.actorId,
+      includeInvitation: true,
+    });
+    await enqueueGoogleCalendarSyncInTransaction(transaction, {
+      workspaceId: context.workspaceId,
+      meetingId: meeting.id,
+      ownerMemberId: meeting.googleCalendarLink?.memberId ?? meeting.ownerMemberId,
+      meetingRevision: updated.revision,
+      actorId: context.actorId,
+      now,
+    });
+    await options.beforeCommit?.();
+    return Object.freeze({ meetingId: meeting.id, revision: updated.revision, startsAt: input.startsAt, endsAt });
+  }
+
   type PipelineMove = Readonly<{ leadId: string; targetStageId: string; expectedLeadUpdatedAt: Date; managerCorrection: boolean }>;
 
   async function reassign(context: AuthenticatedContext, payload: unknown) {
@@ -1993,7 +2193,7 @@ export function createMeetingService(options: MeetingServiceOptions) {
     });
   }
 
-  return Object.freeze({ getAgenda, getLeadMeetings, getScheduleLeadOption, searchLeadOptions, schedule, scheduleFromPublicForm, act, reassign, recordPipelineOutcome, getBriefing, recordTranscript });
+  return Object.freeze({ getAgenda, getLeadMeetings, getScheduleLeadOption, searchLeadOptions, schedule, scheduleFromPublicForm, rescheduleFromPublicForm, act, reassign, recordPipelineOutcome, getBriefing, recordTranscript });
 }
 
 let service: ReturnType<typeof createMeetingService> | undefined;
